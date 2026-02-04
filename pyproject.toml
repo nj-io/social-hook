@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "social-hook"
+version = "0.1.0"
+description = "Automated social media content from development activity"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Neil", email = "neil@example.com" }
+]
+keywords = ["social-media", "automation", "cli", "git"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Topic :: Internet",
+]
+dependencies = [
+    "typer[all]>=0.9.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+]
+
+[project.scripts]
+social-hook = "social_hook.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/neil/social-media-auto-hook"
+Documentation = "https://github.com/neil/social-media-auto-hook#readme"
+Repository = "https://github.com/neil/social-media-auto-hook"
+Issues = "https://github.com/neil/social-media-auto-hook/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/social_hook"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]  # Line length handled by formatter
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

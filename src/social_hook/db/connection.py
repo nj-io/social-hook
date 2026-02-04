@@ -1,0 +1,60 @@
+"""Database connection management."""
+
+import sqlite3
+from pathlib import Path
+from typing import Optional
+
+from social_hook.db.schema import create_schema
+from social_hook.errors import DatabaseError
+
+
+def get_connection(db_path: str | Path) -> sqlite3.Connection:
+    """Get a database connection with proper settings.
+
+    Args:
+        db_path: Path to the SQLite database file
+
+    Returns:
+        sqlite3.Connection with WAL mode and foreign keys enabled
+    """
+    db_path = Path(db_path)
+
+    # Ensure parent directory exists
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+
+        # Enable WAL mode for concurrent access (multiple worktrees)
+        conn.execute("PRAGMA journal_mode = WAL")
+
+        # Wait up to 5 seconds for locks before failing
+        conn.execute("PRAGMA busy_timeout = 5000")
+
+        # Enable foreign key enforcement
+        conn.execute("PRAGMA foreign_keys = ON")
+
+        # Return dict-like rows
+        conn.row_factory = sqlite3.Row
+
+        return conn
+
+    except sqlite3.Error as e:
+        raise DatabaseError(f"Failed to connect to database: {e}") from e
+
+
+def init_database(db_path: str | Path, conn: Optional[sqlite3.Connection] = None) -> sqlite3.Connection:
+    """Initialize the database with schema.
+
+    Args:
+        db_path: Path to the SQLite database file
+        conn: Optional existing connection to use
+
+    Returns:
+        sqlite3.Connection with schema applied
+    """
+    if conn is None:
+        conn = get_connection(db_path)
+
+    create_schema(conn)
+    return conn
