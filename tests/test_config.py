@@ -158,7 +158,11 @@ class TestProjectConfig:
         empty_project = temp_dir / "empty-project"
         empty_project.mkdir()
 
-        config = load_project_config(empty_project)
+        # Use temp_dir as global_base for test isolation
+        empty_global = temp_dir / "empty-global"
+        empty_global.mkdir()
+
+        config = load_project_config(empty_project, global_base=empty_global)
 
         assert config.social_context is None
         assert config.content_config == {}
@@ -212,3 +216,118 @@ platforms:
         assert "new context" in config.memories
         assert "new feedback" in config.memories
         assert "draft-002" in config.memories
+
+
+# =============================================================================
+# T9: Config Fallback (project → global)
+# =============================================================================
+
+
+class TestConfigFallback:
+    """T9: Config fallback from project to global."""
+
+    def test_fallback_to_global(self, temp_dir):
+        """Project missing config, global exists → returns global."""
+        # Setup global config (global_base IS the .social-hook equivalent)
+        global_base = temp_dir / "global-config"
+        global_base.mkdir()
+        (global_base / "social-context.md").write_text("Global voice")
+        (global_base / "content-config.yaml").write_text("platforms:\n  x:\n    enabled: true")
+
+        # Setup empty project (no .social-hook directory)
+        project_dir = temp_dir / "project"
+        project_dir.mkdir()
+
+        config = load_project_config(project_dir, global_base=global_base)
+
+        assert config.social_context == "Global voice"
+        assert config.content_config["platforms"]["x"]["enabled"] is True
+
+    def test_project_overrides_global(self, temp_dir):
+        """Both exist → project wins."""
+        # Setup global config
+        global_base = temp_dir / "global-config"
+        global_base.mkdir()
+        (global_base / "social-context.md").write_text("Global voice")
+
+        # Setup project config (project uses .social-hook subdirectory)
+        project_dir = temp_dir / "project"
+        project_config_dir = project_dir / ".social-hook"
+        project_config_dir.mkdir(parents=True)
+        (project_config_dir / "social-context.md").write_text("Project voice")
+
+        config = load_project_config(project_dir, global_base=global_base)
+
+        assert config.social_context == "Project voice"
+
+    def test_neither_exists_returns_none(self, temp_dir):
+        """Neither project nor global exists → returns None/{}."""
+        project_dir = temp_dir / "project"
+        project_dir.mkdir()
+        global_base = temp_dir / "empty-global"
+        global_base.mkdir()
+
+        config = load_project_config(project_dir, global_base=global_base)
+
+        assert config.social_context is None
+        assert config.content_config == {}
+
+    def test_memories_no_fallback(self, temp_dir):
+        """memories.md is project-only, no global fallback."""
+        # Setup global with memories (should be ignored)
+        global_base = temp_dir / "global-config"
+        global_base.mkdir()
+        (global_base / "memories.md").write_text("Global memories")
+
+        # Setup empty project
+        project_dir = temp_dir / "project"
+        project_dir.mkdir()
+
+        config = load_project_config(project_dir, global_base=global_base)
+
+        # Should NOT fall back to global memories
+        assert config.memories is None
+
+    def test_invalid_yaml_in_global_raises_error(self, temp_dir):
+        """Invalid YAML in global config raises ConfigError."""
+        # Setup global with invalid YAML
+        global_base = temp_dir / "global-config"
+        global_base.mkdir()
+        (global_base / "content-config.yaml").write_text(
+            """\
+platforms:
+  x:
+    enabled: true
+    - invalid yaml
+"""
+        )
+
+        # Setup empty project (will fall back to global)
+        project_dir = temp_dir / "project"
+        project_dir.mkdir()
+
+        with pytest.raises(ConfigError) as exc_info:
+            load_project_config(project_dir, global_base=global_base)
+
+        assert "content-config.yaml" in str(exc_info.value)
+
+    def test_partial_fallback(self, temp_dir):
+        """Project has one file, falls back to global for the other."""
+        # Setup global config with both files
+        global_base = temp_dir / "global-config"
+        global_base.mkdir()
+        (global_base / "social-context.md").write_text("Global voice")
+        (global_base / "content-config.yaml").write_text("platforms:\n  x:\n    enabled: false")
+
+        # Setup project with only content-config.yaml (not social-context.md)
+        project_dir = temp_dir / "project"
+        project_config_dir = project_dir / ".social-hook"
+        project_config_dir.mkdir(parents=True)
+        (project_config_dir / "content-config.yaml").write_text("platforms:\n  x:\n    enabled: true")
+
+        config = load_project_config(project_dir, global_base=global_base)
+
+        # social-context.md falls back to global
+        assert config.social_context == "Global voice"
+        # content-config.yaml uses project (overrides global)
+        assert config.content_config["platforms"]["x"]["enabled"] is True

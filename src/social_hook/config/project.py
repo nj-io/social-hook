@@ -26,16 +26,23 @@ class ProjectConfig:
     repo_path: Optional[str] = None
 
 
-def load_project_config(repo_path: str | Path) -> ProjectConfig:
-    """Load per-project configuration from a repository.
+def load_project_config(
+    repo_path: str | Path,
+    global_base: Optional[Path] = None,
+) -> ProjectConfig:
+    """Load per-project configuration with global fallback.
 
-    Loads from .social-hook/ subdirectory:
-    - social-context.md: Voice, style, audience, themes, pet peeves
-    - content-config.yaml: Platform settings, tools, posting rules
-    - memories.md: Accumulated feedback history
+    Lookup order for social-context.md and content-config.yaml:
+      1. {repo}/.social-hook/{file} (project-specific)
+      2. ~/.social-hook/{file} (global default)
+      3. None/{} (graceful degradation)
+
+    memories.md is project-only (no fallback).
 
     Args:
-        repo_path: Path to the project repository
+        repo_path: Path to the project repository.
+        global_base: Override for global config directory. Defaults to ~/.social-hook/.
+            This parameter exists for test isolation only - do not use in production code.
 
     Returns:
         ProjectConfig with loaded data (missing files return None/defaults)
@@ -44,29 +51,51 @@ def load_project_config(repo_path: str | Path) -> ProjectConfig:
         ConfigError: If YAML is invalid
     """
     repo_path = Path(repo_path)
-    config_dir = repo_path / ".social-hook"
+    if global_base is None:
+        global_base = Path.home() / ".social-hook"
+
+    project_config_dir = repo_path / ".social-hook"
     config = ProjectConfig(repo_path=str(repo_path))
 
-    # Load social-context.md
-    social_context_path = config_dir / "social-context.md"
-    if social_context_path.exists():
-        config.social_context = social_context_path.read_text()
+    # Load social-context.md (project → global → None)
+    config.social_context = _load_with_fallback(
+        project_config_dir / "social-context.md",
+        global_base / "social-context.md",
+    )
 
-    # Load content-config.yaml
-    content_config_path = config_dir / "content-config.yaml"
-    if content_config_path.exists():
-        try:
-            content = content_config_path.read_text()
-            config.content_config = yaml.safe_load(content) or {}
-        except yaml.YAMLError as e:
-            raise ConfigError(f"Invalid YAML in {content_config_path}: {e}") from e
+    # Load content-config.yaml (project → global → {})
+    config.content_config = _load_yaml_with_fallback(
+        project_config_dir / "content-config.yaml",
+        global_base / "content-config.yaml",
+    )
 
-    # Load memories.md
-    memories_path = config_dir / "memories.md"
+    # Load memories.md (project-only, no fallback)
+    memories_path = project_config_dir / "memories.md"
     if memories_path.exists():
-        config.memories = memories_path.read_text()
+        config.memories = memories_path.read_text(encoding="utf-8")
 
     return config
+
+
+def _load_with_fallback(project_path: Path, global_path: Path) -> Optional[str]:
+    """Load text file with project → global fallback."""
+    if project_path.exists():
+        return project_path.read_text(encoding="utf-8")
+    if global_path.exists():
+        return global_path.read_text(encoding="utf-8")
+    return None
+
+
+def _load_yaml_with_fallback(project_path: Path, global_path: Path) -> dict:
+    """Load YAML file with project → global fallback."""
+    for path in [project_path, global_path]:
+        if path.exists():
+            try:
+                content = path.read_text(encoding="utf-8")
+                return yaml.safe_load(content) or {}
+            except yaml.YAMLError as e:
+                raise ConfigError(f"Invalid YAML in {path}: {e}") from e
+    return {}
 
 
 def save_memory(
@@ -93,7 +122,7 @@ def save_memory(
     # Parse existing memories
     memories = []
     if memories_path.exists():
-        content = memories_path.read_text()
+        content = memories_path.read_text(encoding="utf-8")
         memories = _parse_memories(content)
 
     # Add new memory
@@ -152,4 +181,4 @@ def _write_memories(path: Path, memories: list[dict]) -> None:
     for m in memories:
         lines.append(f"| {m['date']} | {m['context']} | {m['feedback']} | {m['draft_id']} |")
 
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
