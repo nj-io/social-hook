@@ -1,9 +1,15 @@
-"""Tests for configuration functionality (T2, T9)."""
+"""Tests for configuration functionality (T2, T9, T20d)."""
 
 import pytest
 
 from social_hook.config import load_config, load_env, load_full_config, load_project_config
-from social_hook.config.project import save_memory
+from social_hook.config.project import (
+    ContextConfig,
+    StrategyConfig,
+    _parse_context_config,
+    _parse_strategy_config,
+    save_memory,
+)
 from social_hook.errors import ConfigError
 
 
@@ -331,3 +337,108 @@ platforms:
         assert config.social_context == "Global voice"
         # content-config.yaml uses project (overrides global)
         assert config.content_config["platforms"]["x"]["enabled"] is True
+
+
+# =============================================================================
+# T20d: Context Configuration
+# =============================================================================
+
+
+class TestContextConfig:
+    """T20d: Typed context and strategy config parsing."""
+
+    def test_default_values(self):
+        """Config with no context section uses defaults."""
+        config = ContextConfig()
+        assert config.recent_decisions == 30
+        assert config.recent_posts == 15
+        assert config.max_tokens == 150000
+        assert config.include_readme is True
+        assert config.include_claude_md is True
+        assert config.max_doc_tokens == 10000
+
+    def test_default_strategy_values(self):
+        """Strategy config with no section uses defaults."""
+        config = StrategyConfig()
+        assert config.narrative_debt_threshold == 3
+        assert config.arc_stagnation_days == 14
+        assert config.strategy_moment_max_gap_days == 7
+
+    def test_parse_context_from_dict(self):
+        """Parse context config from content-config.yaml data."""
+        data = {
+            "recent_decisions": 50,
+            "recent_posts": 20,
+            "max_tokens": 200000,
+            "include_readme": False,
+            "include_claude_md": False,
+            "max_doc_tokens": 5000,
+        }
+        config = _parse_context_config(data)
+        assert config.recent_decisions == 50
+        assert config.recent_posts == 20
+        assert config.max_tokens == 200000
+        assert config.include_readme is False
+        assert config.include_claude_md is False
+        assert config.max_doc_tokens == 5000
+
+    def test_parse_strategy_from_dict(self):
+        """Parse strategy config from content-config.yaml data."""
+        data = {
+            "narrative_debt_threshold": 5,
+            "arc_stagnation_days": 21,
+            "strategy_moment_max_gap_days": 10,
+        }
+        config = _parse_strategy_config(data)
+        assert config.narrative_debt_threshold == 5
+        assert config.arc_stagnation_days == 21
+        assert config.strategy_moment_max_gap_days == 10
+
+    def test_parse_empty_dict_returns_defaults(self):
+        """Empty dict returns default config values."""
+        config = _parse_context_config({})
+        assert config.recent_decisions == 30
+        assert config.max_tokens == 150000
+
+    def test_parse_partial_dict_fills_defaults(self):
+        """Partial dict uses provided values, defaults for rest."""
+        config = _parse_context_config({"recent_decisions": 10})
+        assert config.recent_decisions == 10
+        assert config.recent_posts == 15  # default
+
+    def test_load_project_config_parses_typed_sections(self, temp_dir):
+        """load_project_config parses context and strategy from content-config."""
+        project_dir = temp_dir / "project"
+        config_dir = project_dir / ".social-hook"
+        config_dir.mkdir(parents=True)
+        (config_dir / "content-config.yaml").write_text(
+            """\
+context:
+  recent_decisions: 50
+  max_tokens: 200000
+strategy:
+  narrative_debt_threshold: 5
+"""
+        )
+
+        global_base = temp_dir / "global"
+        global_base.mkdir()
+
+        config = load_project_config(project_dir, global_base=global_base)
+        assert config.context.recent_decisions == 50
+        assert config.context.max_tokens == 200000
+        assert config.context.recent_posts == 15  # default
+        assert config.strategy.narrative_debt_threshold == 5
+        assert config.strategy.arc_stagnation_days == 14  # default
+
+    def test_load_project_config_no_yaml_uses_defaults(self, temp_dir):
+        """No content-config.yaml still produces typed config with defaults."""
+        project_dir = temp_dir / "project"
+        project_dir.mkdir()
+        global_base = temp_dir / "global"
+        global_base.mkdir()
+
+        config = load_project_config(project_dir, global_base=global_base)
+        assert config.context.recent_decisions == 30
+        assert config.context.max_tokens == 150000
+        assert config.strategy.narrative_debt_threshold == 3

@@ -27,6 +27,30 @@ class DatabaseError(Exception):
     pass
 
 
+class AuthError(Exception):
+    """Raised when Claude API authentication fails."""
+
+    pass
+
+
+class MalformedResponseError(Exception):
+    """Raised when LLM response has no tool call or invalid tool args."""
+
+    pass
+
+
+class MaxArcsError(Exception):
+    """Raised when attempting to create a 4th active arc."""
+
+    pass
+
+
+class PromptNotFoundError(Exception):
+    """Raised when a prompt file is missing."""
+
+    pass
+
+
 def classify_error(response: Any) -> ErrorType:
     """Classify API error response for appropriate handling.
 

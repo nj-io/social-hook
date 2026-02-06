@@ -713,3 +713,37 @@ class UsageLog:
             self.cache_creation_tokens,
             self.cost_cents,
         )
+
+
+# =============================================================================
+# WS2: LLM Integration Models
+# =============================================================================
+
+
+@dataclass
+class CommitInfo:
+    """Git commit information passed to evaluation."""
+
+    hash: str
+    message: str
+    diff: str
+    files_changed: list[str] = field(default_factory=list)
+    insertions: int = 0
+    deletions: int = 0
+
+
+@dataclass
+class ProjectContext:
+    """Assembled project state for agent context."""
+
+    project: "Project"
+    social_context: Optional[str]
+    lifecycle: Optional["Lifecycle"]
+    active_arcs: list["Arc"]
+    narrative_debt: int
+    audience_introduced: bool
+    pending_drafts: list["Draft"]
+    recent_decisions: list["Decision"]
+    recent_posts: list["Post"]
+    project_summary: Optional[str]
+    memories: list[dict] = field(default_factory=list)

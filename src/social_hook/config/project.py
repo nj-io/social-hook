@@ -10,6 +10,27 @@ from social_hook.errors import ConfigError
 
 
 @dataclass
+class ContextConfig:
+    """Controls how much historical context is included in LLM prompts."""
+
+    recent_decisions: int = 30
+    recent_posts: int = 15
+    max_tokens: int = 150000
+    include_readme: bool = True
+    include_claude_md: bool = True
+    max_doc_tokens: int = 10000
+
+
+@dataclass
+class StrategyConfig:
+    """Narrative strategy thresholds."""
+
+    narrative_debt_threshold: int = 3
+    arc_stagnation_days: int = 14
+    strategy_moment_max_gap_days: int = 7
+
+
+@dataclass
 class ProjectConfig:
     """Per-project configuration loaded from project repository."""
 
@@ -24,6 +45,10 @@ class ProjectConfig:
 
     # Path to the project
     repo_path: Optional[str] = None
+
+    # Typed config sections (parsed from content_config)
+    context: ContextConfig = field(default_factory=ContextConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
 
 
 def load_project_config(
@@ -74,6 +99,10 @@ def load_project_config(
     if memories_path.exists():
         config.memories = memories_path.read_text(encoding="utf-8")
 
+    # Parse typed config sections from content_config
+    config.context = _parse_context_config(config.content_config.get("context", {}))
+    config.strategy = _parse_strategy_config(config.content_config.get("strategy", {}))
+
     return config
 
 
@@ -96,6 +125,31 @@ def _load_yaml_with_fallback(project_path: Path, global_path: Path) -> dict:
             except yaml.YAMLError as e:
                 raise ConfigError(f"Invalid YAML in {path}: {e}") from e
     return {}
+
+
+def _parse_context_config(data: dict) -> ContextConfig:
+    """Parse context section from content-config.yaml."""
+    if not data:
+        return ContextConfig()
+    return ContextConfig(
+        recent_decisions=data.get("recent_decisions", 30),
+        recent_posts=data.get("recent_posts", 15),
+        max_tokens=data.get("max_tokens", 150000),
+        include_readme=data.get("include_readme", True),
+        include_claude_md=data.get("include_claude_md", True),
+        max_doc_tokens=data.get("max_doc_tokens", 10000),
+    )
+
+
+def _parse_strategy_config(data: dict) -> StrategyConfig:
+    """Parse strategy section from content-config.yaml."""
+    if not data:
+        return StrategyConfig()
+    return StrategyConfig(
+        narrative_debt_threshold=data.get("narrative_debt_threshold", 3),
+        arc_stagnation_days=data.get("arc_stagnation_days", 14),
+        strategy_moment_max_gap_days=data.get("strategy_moment_max_gap_days", 7),
+    )
 
 
 def save_memory(

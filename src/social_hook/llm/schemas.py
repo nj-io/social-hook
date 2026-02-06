@@ -1,0 +1,328 @@
+"""Pydantic models for LLM tool call validation."""
+
+from enum import Enum
+from typing import Any, Optional
+
+from pydantic import BaseModel, ValidationError
+
+from social_hook.errors import MalformedResponseError
+
+
+# =============================================================================
+# Schema-specific Enums (str enums for Pydantic JSON serialization)
+# =============================================================================
+
+
+class DecisionTypeSchema(str, Enum):
+    """Evaluator decision types."""
+
+    post_worthy = "post_worthy"
+    not_post_worthy = "not_post_worthy"
+    consolidate = "consolidate"
+    deferred = "deferred"
+
+
+class EpisodeTypeSchema(str, Enum):
+    """Post structural categories."""
+
+    decision = "decision"
+    before_after = "before_after"
+    demo_proof = "demo_proof"
+    milestone = "milestone"
+    postmortem = "postmortem"
+    launch = "launch"
+    synthesis = "synthesis"
+
+
+class PostCategorySchema(str, Enum):
+    """How each post relates to ongoing narrative."""
+
+    arc = "arc"
+    opportunistic = "opportunistic"
+    experiment = "experiment"
+
+
+class MediaTool(str, Enum):
+    """Available media generation tools."""
+
+    mermaid = "mermaid"
+    nano_banana_pro = "nano_banana_pro"
+    playwright = "playwright"
+    ray_so = "ray_so"
+    none = "none"
+
+
+class Platform(str, Enum):
+    """Supported platforms."""
+
+    x = "x"
+    linkedin = "linkedin"
+
+
+class RouteAction(str, Enum):
+    """Gatekeeper routing actions."""
+
+    handle_directly = "handle_directly"
+    escalate_to_expert = "escalate_to_expert"
+
+
+class GatekeeperOperation(str, Enum):
+    """Operations the Gatekeeper can perform directly."""
+
+    approve = "approve"
+    schedule = "schedule"
+    reject = "reject"
+    cancel = "cancel"
+    substitute = "substitute"
+    query = "query"
+
+
+class ExpertAction(str, Enum):
+    """Actions the Expert can take."""
+
+    refine_draft = "refine_draft"
+    answer_question = "answer_question"
+    save_context_note = "save_context_note"
+
+
+# =============================================================================
+# Pydantic Models (LLM response validation)
+# =============================================================================
+
+
+class LogDecisionInput(BaseModel):
+    """Evaluator tool call: log_decision."""
+
+    decision: DecisionTypeSchema
+    reasoning: str
+    episode_type: Optional[EpisodeTypeSchema] = None
+    post_category: Optional[PostCategorySchema] = None
+    arc_id: Optional[str] = None
+    media_tool: Optional[MediaTool] = None
+
+    @classmethod
+    def to_tool_schema(cls) -> dict[str, Any]:
+        """Return JSON schema dict for Claude's tools parameter."""
+        return {
+            "name": "log_decision",
+            "description": "Record the evaluation decision for a commit",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "decision": {
+                        "type": "string",
+                        "enum": [e.value for e in DecisionTypeSchema],
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Explanation for the decision",
+                    },
+                    "episode_type": {
+                        "type": "string",
+                        "enum": [e.value for e in EpisodeTypeSchema],
+                    },
+                    "post_category": {
+                        "type": "string",
+                        "enum": [e.value for e in PostCategorySchema],
+                    },
+                    "arc_id": {
+                        "type": "string",
+                        "description": "ID of active arc, if applicable",
+                    },
+                    "media_tool": {
+                        "type": "string",
+                        "enum": [e.value for e in MediaTool],
+                    },
+                },
+                "required": ["decision", "reasoning"],
+            },
+        }
+
+    @classmethod
+    def validate(cls, data: dict[str, Any]) -> "LogDecisionInput":
+        """Validate tool call input data."""
+        try:
+            return cls.model_validate(data)
+        except ValidationError as e:
+            raise MalformedResponseError(f"Invalid log_decision input: {e}") from e
+
+
+class CreateDraftInput(BaseModel):
+    """Drafter tool call: create_draft."""
+
+    content: str
+    platform: Platform
+    reasoning: str
+    media_type: Optional[MediaTool] = None
+    media_spec: Optional[dict[str, Any]] = None
+
+    @classmethod
+    def to_tool_schema(cls) -> dict[str, Any]:
+        """Return JSON schema dict for Claude's tools parameter."""
+        return {
+            "name": "create_draft",
+            "description": "Create draft content for social media",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The post content",
+                    },
+                    "platform": {
+                        "type": "string",
+                        "enum": [e.value for e in Platform],
+                    },
+                    "media_type": {
+                        "type": "string",
+                        "enum": [e.value for e in MediaTool],
+                    },
+                    "media_spec": {
+                        "type": "object",
+                        "description": "Specification for media generation",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Why this angle/content was chosen",
+                    },
+                },
+                "required": ["content", "platform", "reasoning"],
+            },
+        }
+
+    @classmethod
+    def validate(cls, data: dict[str, Any]) -> "CreateDraftInput":
+        """Validate tool call input data."""
+        try:
+            return cls.model_validate(data)
+        except ValidationError as e:
+            raise MalformedResponseError(f"Invalid create_draft input: {e}") from e
+
+
+class RouteActionInput(BaseModel):
+    """Gatekeeper tool call: route_action."""
+
+    action: RouteAction
+    operation: Optional[GatekeeperOperation] = None
+    params: Optional[dict[str, Any]] = None
+    escalation_reason: Optional[str] = None
+    escalation_context: Optional[str] = None
+
+    @classmethod
+    def to_tool_schema(cls) -> dict[str, Any]:
+        """Return JSON schema dict for Claude's tools parameter."""
+        return {
+            "name": "route_action",
+            "description": "Route user message to appropriate handler",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [e.value for e in RouteAction],
+                    },
+                    "operation": {
+                        "type": "string",
+                        "enum": [e.value for e in GatekeeperOperation],
+                        "description": "For handle_directly: which operation",
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Parameters for the operation",
+                    },
+                    "escalation_reason": {
+                        "type": "string",
+                        "description": "For escalate: why escalating",
+                    },
+                    "escalation_context": {
+                        "type": "string",
+                        "description": "For escalate: context to pass to expert",
+                    },
+                },
+                "required": ["action"],
+            },
+        }
+
+    @classmethod
+    def validate(cls, data: dict[str, Any]) -> "RouteActionInput":
+        """Validate tool call input data."""
+        try:
+            return cls.model_validate(data)
+        except ValidationError as e:
+            raise MalformedResponseError(f"Invalid route_action input: {e}") from e
+
+
+class ExpertResponseInput(BaseModel):
+    """Expert tool call: expert_response."""
+
+    action: ExpertAction
+    reasoning: str
+    refined_content: Optional[str] = None
+    answer: Optional[str] = None
+    context_note: Optional[str] = None
+
+    @classmethod
+    def to_tool_schema(cls) -> dict[str, Any]:
+        """Return JSON schema dict for Claude's tools parameter."""
+        return {
+            "name": "expert_response",
+            "description": "Provide expert response to escalated request",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [e.value for e in ExpertAction],
+                    },
+                    "refined_content": {
+                        "type": "string",
+                        "description": "For refine_draft: the new draft content",
+                    },
+                    "answer": {
+                        "type": "string",
+                        "description": "For answer_question: response to user's question",
+                    },
+                    "context_note": {
+                        "type": "string",
+                        "description": "For save_context_note: note to save",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Why this response/refinement",
+                    },
+                },
+                "required": ["action", "reasoning"],
+            },
+        }
+
+    @classmethod
+    def validate(cls, data: dict[str, Any]) -> "ExpertResponseInput":
+        """Validate tool call input data."""
+        try:
+            return cls.model_validate(data)
+        except ValidationError as e:
+            raise MalformedResponseError(f"Invalid expert_response input: {e}") from e
+
+
+# =============================================================================
+# Tool Call Extraction
+# =============================================================================
+
+
+def extract_tool_call(response: Any, expected_tool: str) -> dict[str, Any]:
+    """Extract and validate tool call from Claude response.
+
+    Args:
+        response: Claude API response object
+        expected_tool: Expected tool name (e.g., "log_decision")
+
+    Returns:
+        Tool call input dict
+
+    Raises:
+        MalformedResponseError: If no matching tool call found
+    """
+    for content in response.content:
+        if content.type == "tool_use" and content.name == expected_tool:
+            return content.input
+    raise MalformedResponseError(f"No {expected_tool} tool call in response")

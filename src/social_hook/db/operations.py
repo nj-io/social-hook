@@ -512,6 +512,16 @@ def get_active_arcs(conn: sqlite3.Connection, project_id: str) -> list[Arc]:
     return [Arc.from_dict(dict(row)) for row in rows]
 
 
+def get_arc(conn: sqlite3.Connection, arc_id: str) -> Optional[Arc]:
+    """Get a single arc by ID."""
+    row = conn.execute(
+        "SELECT * FROM arcs WHERE id = ?", (arc_id,)
+    ).fetchone()
+    if row:
+        return Arc.from_dict(dict(row))
+    return None
+
+
 def get_arc_posts(conn: sqlite3.Connection, arc_id: str) -> list[Post]:
     """Get published posts belonging to a specific arc.
 
@@ -529,6 +539,36 @@ def get_arc_posts(conn: sqlite3.Connection, arc_id: str) -> list[Post]:
         (arc_id,),
     ).fetchall()
     return [Post.from_dict(dict(row)) for row in rows]
+
+
+# =============================================================================
+# Onboarding
+# =============================================================================
+
+
+def get_audience_introduced(conn: sqlite3.Connection, project_id: str) -> bool:
+    """Check if the audience has been introduced for a project."""
+    row = conn.execute(
+        "SELECT audience_introduced FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    if row:
+        return bool(row[0])
+    return False
+
+
+def set_audience_introduced(
+    conn: sqlite3.Connection, project_id: str, value: bool
+) -> bool:
+    """Update the audience_introduced flag for a project.
+
+    Returns True if a row was updated.
+    """
+    cursor = conn.execute(
+        "UPDATE projects SET audience_introduced = ? WHERE id = ?",
+        (1 if value else 0, project_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 # =============================================================================
