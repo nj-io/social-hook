@@ -90,7 +90,7 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
 
 
 def get_recent_decisions(
-    conn: sqlite3.Connection, project_id: str, limit: int = 10
+    conn: sqlite3.Connection, project_id: str, limit: int = 30
 ) -> list[Decision]:
     """Get recent decisions for a project."""
     rows = conn.execute(
@@ -317,7 +317,11 @@ def insert_post(conn: sqlite3.Connection, post: Post) -> str:
 def get_recent_posts(
     conn: sqlite3.Connection, project_id: str, days: int = 7
 ) -> list[Post]:
-    """Get recent posts for a project."""
+    """Get recent posts for a project within a time window.
+
+    Use case: Scheduling coordination - what was posted recently.
+    For context assembly, use get_recent_posts_for_context() instead.
+    """
     rows = conn.execute(
         """
         SELECT * FROM posts
@@ -326,6 +330,31 @@ def get_recent_posts(
         ORDER BY posted_at DESC
         """,
         (project_id, days),
+    ).fetchall()
+    return [Post.from_dict(dict(row)) for row in rows]
+
+
+def get_recent_posts_for_context(
+    conn: sqlite3.Connection, project_id: str, limit: int = 15
+) -> list[Post]:
+    """Get recent posts for LLM context assembly.
+
+    Use case: Providing historical posts to LLM for voice consistency
+    and avoiding repetition. Count-based (last N posts regardless of date).
+
+    Args:
+        conn: Database connection
+        project_id: Project ID to query
+        limit: Maximum posts to return (default: 15, per CONTEXT_MEMORY_ANALYSIS.md)
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM posts
+        WHERE project_id = ?
+        ORDER BY posted_at DESC
+        LIMIT ?
+        """,
+        (project_id, limit),
     ).fetchall()
     return [Post.from_dict(dict(row)) for row in rows]
 
@@ -483,6 +512,25 @@ def get_active_arcs(conn: sqlite3.Connection, project_id: str) -> list[Arc]:
     return [Arc.from_dict(dict(row)) for row in rows]
 
 
+def get_arc_posts(conn: sqlite3.Connection, arc_id: str) -> list[Post]:
+    """Get published posts belonging to a specific arc.
+
+    Traces: decisions (arc_id) → drafts (decision_id) → posts (draft_id).
+    Used by Drafter context assembly when post_category == 'arc'.
+    """
+    rows = conn.execute(
+        """
+        SELECT p.* FROM posts p
+        JOIN drafts d ON p.draft_id = d.id
+        JOIN decisions dec ON d.decision_id = dec.id
+        WHERE dec.arc_id = ?
+        ORDER BY p.posted_at DESC
+        """,
+        (arc_id,),
+    ).fetchall()
+    return [Post.from_dict(dict(row)) for row in rows]
+
+
 # =============================================================================
 # Narrative Debt
 # =============================================================================
@@ -595,5 +643,155 @@ def get_usage_summary(
         GROUP BY model
         """,
         (days,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# =============================================================================
+# Project Summary
+# =============================================================================
+
+
+def update_project_summary(
+    conn: sqlite3.Connection,
+    project_id: str,
+    summary: str,
+) -> bool:
+    """Update project summary.
+
+    Called by Evaluator when it determines summary needs refresh.
+    Updates both summary content and summary_updated_at timestamp.
+
+    Returns True if a row was updated.
+    """
+    cursor = conn.execute(
+        """
+        UPDATE projects
+        SET summary = ?, summary_updated_at = datetime('now')
+        WHERE id = ?
+        """,
+        (summary, project_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_project_summary(conn: sqlite3.Connection, project_id: str) -> Optional[str]:
+    """Get project summary for Gatekeeper context injection.
+
+    Returns the summary text, or None if no summary exists.
+    """
+    row = conn.execute(
+        "SELECT summary FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    if row and row[0]:
+        return row[0]
+    return None
+
+
+def get_summary_freshness(
+    conn: sqlite3.Connection, project_id: str
+) -> dict:
+    """Get summary freshness indicators for Evaluator judgment.
+
+    Returns dict with:
+    - summary_updated_at: ISO timestamp of last update (or None)
+    - commits_since_summary: count of decisions since last summary update (inclusive of same-second;
+      uses >= to avoid SQLite datetime('now') second-precision timing issues)
+    - days_since_summary: days since last summary update (or None if never)
+    """
+    row = conn.execute(
+        """
+        SELECT
+            summary_updated_at,
+            (SELECT COUNT(*) FROM decisions
+             WHERE project_id = ?
+               AND created_at >= COALESCE(p.summary_updated_at, '1970-01-01')) as commits_since
+        FROM projects p
+        WHERE id = ?
+        """,
+        (project_id, project_id),
+    ).fetchone()
+
+    if not row:
+        return {"summary_updated_at": None, "commits_since_summary": 0, "days_since_summary": None}
+
+    summary_updated_at = row[0]
+    commits_since = row[1] or 0
+
+    days_since = None
+    if summary_updated_at:
+        # Calculate days since summary
+        result = conn.execute(
+            "SELECT julianday('now') - julianday(?)",
+            (summary_updated_at,)
+        ).fetchone()
+        days_since = int(result[0]) if result else None
+
+    return {
+        "summary_updated_at": summary_updated_at,
+        "commits_since_summary": commits_since,
+        "days_since_summary": days_since,
+    }
+
+
+# =============================================================================
+# Milestone Summaries (Compaction)
+# =============================================================================
+
+
+def insert_milestone_summary(conn: sqlite3.Connection, summary: dict) -> str:
+    """Insert a milestone summary.
+
+    Note: Uses dict rather than dataclass because the compaction system
+    is not yet built. A MilestoneSummary dataclass will be added when
+    the compaction orchestration is implemented in a later workstream.
+
+    Args:
+        summary: Dict with id, project_id, milestone_type, summary, items_covered,
+                 token_count, period_start, period_end
+
+    Returns the summary ID.
+    """
+    conn.execute(
+        """
+        INSERT INTO milestone_summaries
+        (id, project_id, milestone_type, summary, items_covered, token_count, period_start, period_end)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            summary["id"],
+            summary["project_id"],
+            summary["milestone_type"],
+            summary["summary"],
+            json.dumps(summary.get("items_covered", [])),
+            summary.get("token_count", 0),
+            summary["period_start"],
+            summary["period_end"],
+        ),
+    )
+    conn.commit()
+    return summary["id"]
+
+
+def get_milestone_summaries(
+    conn: sqlite3.Connection, project_id: str, since_days: int = 180
+) -> list[dict]:
+    """Get milestone summaries for a project.
+
+    Args:
+        project_id: Project ID to query
+        since_days: How far back to look (default: 180 days / 6 months)
+
+    Returns list of summary dicts.
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM milestone_summaries
+        WHERE project_id = ?
+          AND created_at >= datetime('now', '-' || ? || ' days')
+        ORDER BY created_at DESC
+        """,
+        (project_id, since_days),
     ).fetchall()
     return [dict(row) for row in rows]

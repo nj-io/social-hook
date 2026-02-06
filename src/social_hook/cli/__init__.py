@@ -29,7 +29,7 @@ def main(
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
-        help="Run full pipeline without posting (for testing)",
+        help="Run full pipeline without posting or DB writes (for testing)",
     ),
     verbose: bool = typer.Option(
         False,

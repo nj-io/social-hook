@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -165,6 +165,22 @@ CREATE TABLE IF NOT EXISTS usage_log (
 
 CREATE INDEX IF NOT EXISTS idx_usage_project_time ON usage_log(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_time ON usage_log(created_at DESC);
+
+-- Milestone Summaries (Compacted Historical Context)
+CREATE TABLE IF NOT EXISTS milestone_summaries (
+    id              TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL REFERENCES projects(id),
+    milestone_type  TEXT NOT NULL CHECK (milestone_type IN ('post', 'release', 'weekly', 'monthly')),
+    summary         TEXT NOT NULL,
+    items_covered   TEXT NOT NULL DEFAULT '[]',  -- JSON array of item IDs
+    token_count     INTEGER NOT NULL DEFAULT 0,
+    period_start    TEXT NOT NULL,
+    period_end      TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_milestone_summaries_project ON milestone_summaries(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_milestone_summaries_type ON milestone_summaries(project_id, milestone_type);
 """
 
 
@@ -183,7 +199,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     if current < SCHEMA_VERSION:
         conn.execute(
             "INSERT INTO schema_version (version, description) VALUES (?, ?)",
-            (SCHEMA_VERSION, "initial_schema"),
+            (SCHEMA_VERSION, "add_milestone_summaries"),
         )
         conn.commit()
 

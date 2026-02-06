@@ -13,15 +13,20 @@ from social_hook.db import (
     create_schema,
     get_active_arcs,
     get_all_pending_drafts,
+    get_arc_posts,
     get_draft,
     get_draft_changes,
     get_draft_tweets,
     get_lifecycle,
+    get_milestone_summaries,
     get_narrative_debt,
     get_pending_drafts,
     get_project,
+    get_project_summary,
     get_recent_decisions,
     get_recent_posts,
+    get_recent_posts_for_context,
+    get_summary_freshness,
     get_usage_summary,
     increment_narrative_debt,
     insert_arc,
@@ -30,6 +35,7 @@ from social_hook.db import (
     insert_draft_change,
     insert_draft_tweet,
     insert_lifecycle,
+    insert_milestone_summary,
     insert_narrative_debt,
     insert_post,
     insert_project,
@@ -39,6 +45,7 @@ from social_hook.db import (
     update_arc,
     update_draft,
     update_lifecycle,
+    update_project_summary,
 )
 from social_hook.filesystem import generate_id
 from social_hook.models import (
@@ -81,7 +88,7 @@ class TestDatabaseInitialization:
         assert result[0] == 1
 
     def test_all_tables_exist(self, temp_db):
-        """Verify all 11 tables exist."""
+        """Verify all 12 tables exist."""
         tables = temp_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
@@ -99,6 +106,7 @@ class TestDatabaseInitialization:
             "narrative_debt",
             "usage_log",
             "schema_version",
+            "milestone_summaries",
         }
 
         assert table_names == expected_tables
@@ -112,9 +120,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 1."""
+        """Check schema version returns 2."""
         version = get_schema_version(temp_db)
-        assert version == 1
+        assert version == 2
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent."""
@@ -127,7 +135,7 @@ class TestDatabaseInitialization:
         version2 = get_schema_version(conn2)
         conn2.close()
 
-        assert version1 == version2 == 1
+        assert version1 == version2 == 2
 
 
 # =============================================================================
@@ -439,6 +447,44 @@ class TestDatabaseOperations:
         assert len(posts) == 1
         assert posts[0].content == "posted content"
 
+    def test_get_recent_posts_for_context(self, temp_db):
+        """get_recent_posts_for_context returns last N posts for LLM context."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="post_worthy",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="test",
+        )
+        insert_draft(temp_db, draft)
+
+        post = Post(
+            id=generate_id("post"),
+            draft_id=draft.id,
+            project_id=project.id,
+            platform="x",
+            content="posted content",
+            external_id="12345",
+        )
+        insert_post(temp_db, post)
+
+        # Test count-based retrieval
+        posts = get_recent_posts_for_context(temp_db, project.id, limit=15)
+        assert len(posts) == 1
+        assert posts[0].content == "posted content"
+
     def test_insert_and_get_usage(self, temp_db):
         """Insert usage log, get usage summary works."""
         usage = UsageLog(
@@ -599,3 +645,168 @@ class TestDatabaseOperations:
         assert len(changes) == 1
         assert changes[0].field == "content"
         assert changes[0].changed_by == "human"
+
+
+# =============================================================================
+# T10a: Project Summary Operations
+# =============================================================================
+
+
+class TestProjectSummary:
+    """Tests for project summary operations."""
+
+    def test_update_and_get_project_summary(self, temp_db):
+        """update_project_summary and get_project_summary work correctly."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        # Initially no summary
+        assert get_project_summary(temp_db, project.id) is None
+
+        # Update summary
+        summary_text = "# Project: Test\n\nA test project for unit tests."
+        result = update_project_summary(temp_db, project.id, summary_text)
+        assert result is True
+
+        # Get summary
+        retrieved = get_project_summary(temp_db, project.id)
+        assert retrieved == summary_text
+
+    def test_get_summary_freshness(self, temp_db):
+        """get_summary_freshness returns correct indicators."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        # Initially no summary
+        freshness = get_summary_freshness(temp_db, project.id)
+        assert freshness["summary_updated_at"] is None
+        assert freshness["commits_since_summary"] == 0
+        assert freshness["days_since_summary"] is None
+
+        # Update summary
+        update_project_summary(temp_db, project.id, "Test summary")
+
+        # Add a decision after summary
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="post_worthy",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        # Check freshness
+        freshness = get_summary_freshness(temp_db, project.id)
+        assert freshness["summary_updated_at"] is not None
+        assert freshness["commits_since_summary"] == 1
+        assert freshness["days_since_summary"] == 0  # Same day
+
+
+# =============================================================================
+# T10a2: Arc Posts Query
+# =============================================================================
+
+
+class TestArcPosts:
+    """Tests for arc posts query."""
+
+    def test_get_arc_posts(self, temp_db):
+        """get_arc_posts returns posts linked to an arc via decisions."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        arc = Arc(id=generate_id("arc"), project_id=project.id, theme="Test arc")
+        insert_arc(temp_db, arc)
+
+        # Create decision linked to arc
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="post_worthy",
+            reasoning="test",
+            post_category="arc",
+            arc_id=arc.id,
+        )
+        insert_decision(temp_db, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="arc post content",
+        )
+        insert_draft(temp_db, draft)
+
+        post = Post(
+            id=generate_id("post"),
+            draft_id=draft.id,
+            project_id=project.id,
+            platform="x",
+            content="arc post content",
+            external_id="12345",
+        )
+        insert_post(temp_db, post)
+
+        # Get arc posts
+        posts = get_arc_posts(temp_db, arc.id)
+        assert len(posts) == 1
+        assert posts[0].content == "arc post content"
+
+    def test_get_arc_posts_empty(self, temp_db):
+        """get_arc_posts returns empty list for nonexistent arc."""
+        posts = get_arc_posts(temp_db, "nonexistent")
+        assert posts == []
+
+
+# =============================================================================
+# T10b: Milestone Summary Operations
+# =============================================================================
+
+
+class TestMilestoneSummaries:
+    """Tests for milestone summary operations."""
+
+    def test_insert_and_get_milestone_summary(self, temp_db):
+        """insert_milestone_summary and get_milestone_summaries work correctly."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        summary = {
+            "id": generate_id("summary"),
+            "project_id": project.id,
+            "milestone_type": "post",
+            "summary": "Published post about feature X",
+            "items_covered": ["decision_1", "decision_2"],
+            "token_count": 150,
+            "period_start": "2026-01-01",
+            "period_end": "2026-01-15",
+        }
+        result = insert_milestone_summary(temp_db, summary)
+        assert result == summary["id"]
+
+        # Retrieve
+        summaries = get_milestone_summaries(temp_db, project.id)
+        assert len(summaries) == 1
+        assert summaries[0]["milestone_type"] == "post"
+        assert summaries[0]["summary"] == "Published post about feature X"
+
+    def test_milestone_type_constraint(self, temp_db):
+        """Invalid milestone_type raises IntegrityError."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        summary = {
+            "id": generate_id("summary"),
+            "project_id": project.id,
+            "milestone_type": "invalid",  # Not in CHECK constraint
+            "summary": "Test",
+            "items_covered": [],
+            "token_count": 0,
+            "period_start": "2026-01-01",
+            "period_end": "2026-01-15",
+        }
+        with pytest.raises(sqlite3.IntegrityError):
+            insert_milestone_summary(temp_db, summary)
