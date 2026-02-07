@@ -43,6 +43,9 @@ class ProjectConfig:
     # memories.md contents
     memories: Optional[str] = None
 
+    # context-notes.md contents
+    context_notes: Optional[str] = None
+
     # Path to the project
     repo_path: Optional[str] = None
 
@@ -98,6 +101,11 @@ def load_project_config(
     memories_path = project_config_dir / "memories.md"
     if memories_path.exists():
         config.memories = memories_path.read_text(encoding="utf-8")
+
+    # Load context-notes.md (project-only, no fallback)
+    context_notes_path = project_config_dir / "context-notes.md"
+    if context_notes_path.exists():
+        config.context_notes = context_notes_path.read_text(encoding="utf-8")
 
     # Parse typed config sections from content_config
     config.context = _parse_context_config(config.content_config.get("context", {}))
@@ -234,5 +242,104 @@ def _write_memories(path: Path, memories: list[dict]) -> None:
 
     for m in memories:
         lines.append(f"| {m['date']} | {m['context']} | {m['feedback']} | {m['draft_id']} |")
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# =============================================================================
+# Context Notes (expert-generated notes persisted to disk)
+# =============================================================================
+
+
+def save_context_note(
+    repo_path: str | Path,
+    note: str,
+    source: str,
+) -> None:
+    """Save a context note from the Expert agent.
+
+    Args:
+        repo_path: Path to the project repository
+        note: The context note text
+        source: Origin of the note (e.g. "expert:draft_123")
+    """
+    from datetime import date
+
+    repo_path = Path(repo_path)
+    config_dir = repo_path / ".social-hook"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    notes_path = config_dir / "context-notes.md"
+
+    notes = []
+    if notes_path.exists():
+        content = notes_path.read_text(encoding="utf-8")
+        notes = _parse_context_notes(content)
+
+    notes.append({
+        "date": date.today().isoformat(),
+        "note": note,
+        "source": source,
+    })
+
+    # Cap at 50 notes (more focused than memories)
+    if len(notes) > 50:
+        notes = notes[-50:]
+
+    _write_context_notes(notes_path, notes)
+
+
+def load_context_notes(repo_path: str | Path) -> list[dict]:
+    """Load context notes from a project's context-notes.md file.
+
+    Args:
+        repo_path: Path to the project repository
+
+    Returns:
+        List of note dicts with date, note, source keys.
+        Empty list if file doesn't exist.
+    """
+    notes_path = Path(repo_path) / ".social-hook" / "context-notes.md"
+    if not notes_path.exists():
+        return []
+    content = notes_path.read_text(encoding="utf-8")
+    return _parse_context_notes(content)
+
+
+def _parse_context_notes(content: str) -> list[dict]:
+    """Parse context-notes.md markdown table into list of dicts."""
+    notes = []
+    lines = content.strip().split("\n")
+
+    in_table = False
+    for line in lines:
+        line = line.strip()
+        if line.startswith("| Date"):
+            in_table = True
+            continue
+        if line.startswith("|---"):
+            continue
+        if in_table and line.startswith("|"):
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) >= 4:
+                notes.append({
+                    "date": parts[1],
+                    "note": parts[2],
+                    "source": parts[3],
+                })
+
+    return notes
+
+
+def _write_context_notes(path: Path, notes: list[dict]) -> None:
+    """Write context notes list back to markdown file."""
+    lines = [
+        "# Context Notes",
+        "",
+        "| Date | Note | Source |",
+        "|------|------|--------|",
+    ]
+
+    for n in notes:
+        lines.append(f"| {n['date']} | {n['note']} | {n['source']} |")
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

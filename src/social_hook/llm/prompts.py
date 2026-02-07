@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any, Optional
 
-from social_hook.config.project import ContextConfig
+from social_hook.config.project import ContextConfig, ProjectConfig, _parse_memories
 from social_hook.errors import PromptNotFoundError
 from social_hook.models import CommitInfo, ProjectContext
 
@@ -117,6 +117,17 @@ def assemble_evaluator_prompt(
     if project_context.project_summary:
         sections.append("\n---\n## Project Summary")
         sections.append(project_context.project_summary)
+
+    # Milestone summaries (compacted narrative history)
+    if project_context.milestone_summaries:
+        sections.append("\n---\n## Milestone Summaries")
+        for ms in project_context.milestone_summaries:
+            ms_type = ms.get("milestone_type", "milestone")
+            ms_text = ms.get("summary", "")
+            period = ""
+            if ms.get("period_start") and ms.get("period_end"):
+                period = f" ({ms['period_start']} to {ms['period_end']})"
+            sections.append(f"- [{ms_type}]{period}: {ms_text}")
 
     # Documentation (T20d: include_readme, include_claude_md, max_doc_tokens)
     if project_context.project.repo_path:
@@ -355,6 +366,68 @@ def assemble_expert_prompt(
         sections.append(f"Context: {escalation_context}")
 
     return "\n".join(sections)
+
+
+# =============================================================================
+# Context Assembly (data-fetching orchestrator)
+# =============================================================================
+
+
+def assemble_evaluator_context(
+    db: Any,
+    project_id: str,
+    project_config: ProjectConfig,
+    config: Optional[ContextConfig] = None,
+) -> ProjectContext:
+    """Gather all DB data into a ProjectContext for agent use.
+
+    Per TECH_ARCH L1785-1810: orchestrates reading from DB + config files.
+
+    Args:
+        db: DryRunContext (wraps db.operations; auto-prepends conn)
+        project_id: Project ID to assemble context for
+        project_config: Loaded project configuration (social_context, memories, etc.)
+        config: Context config for limits (defaults to ContextConfig())
+
+    Returns:
+        Assembled ProjectContext with all data populated
+    """
+    if config is None:
+        config = ContextConfig()
+
+    project = db.get_project(project_id)
+    lifecycle = db.get_lifecycle(project_id)
+    active_arcs = db.get_active_arcs(project_id)
+
+    debt = db.get_narrative_debt(project_id)
+    narrative_debt = debt.debt_counter if debt else 0
+
+    audience_introduced = db.get_audience_introduced(project_id)
+    pending_drafts = db.get_pending_drafts(project_id)
+    recent_decisions = db.get_recent_decisions(project_id, limit=config.recent_decisions)
+    recent_posts = db.get_recent_posts_for_context(project_id, limit=config.recent_posts)
+    project_summary = db.get_project_summary(project_id)
+    milestone_summaries = db.get_milestone_summaries(project_id)
+
+    # Parse memories from project config
+    memories = []
+    if project_config.memories:
+        memories = _parse_memories(project_config.memories)
+
+    return ProjectContext(
+        project=project,
+        social_context=project_config.social_context,
+        lifecycle=lifecycle,
+        active_arcs=active_arcs,
+        narrative_debt=narrative_debt,
+        audience_introduced=audience_introduced,
+        pending_drafts=pending_drafts,
+        recent_decisions=recent_decisions,
+        recent_posts=recent_posts,
+        project_summary=project_summary,
+        memories=memories,
+        milestone_summaries=milestone_summaries,
+    )
 
 
 def compact_by_truncation(context: str, max_tokens: int) -> str:

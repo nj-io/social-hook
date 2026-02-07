@@ -5,10 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
-from social_hook.config.project import ContextConfig
+from social_hook.config.project import ContextConfig, ProjectConfig
 from social_hook.errors import PromptNotFoundError
+from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import (
     assemble_drafter_prompt,
+    assemble_evaluator_context,
     assemble_evaluator_prompt,
     assemble_expert_prompt,
     assemble_gatekeeper_prompt,
@@ -22,6 +24,7 @@ from social_hook.models import (
     Decision,
     Draft,
     Lifecycle,
+    NarrativeDebt,
     Post,
     Project,
     ProjectContext,
@@ -502,3 +505,160 @@ class TestCompaction:
         result = compact_by_truncation(text, max_tokens=100)
         assert len(result) < len(text)
         assert "truncated" in result
+
+
+# =============================================================================
+# Milestone Summaries in Evaluator Prompt
+# =============================================================================
+
+
+class TestMilestoneSummariesInPrompt:
+    """Milestone summaries section in evaluator prompt."""
+
+    def test_milestone_summaries_included(self, sample_project_context, sample_commit):
+        sample_project_context.milestone_summaries = [
+            {
+                "milestone_type": "post",
+                "summary": "First post about auth module.",
+                "period_start": "2026-01-01",
+                "period_end": "2026-01-31",
+            },
+        ]
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "## Milestone Summaries" in result
+        assert "First post about auth module" in result
+        assert "2026-01-01 to 2026-01-31" in result
+
+    def test_no_milestone_summaries_omitted(self, sample_project_context, sample_commit):
+        sample_project_context.milestone_summaries = []
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "## Milestone Summaries" not in result
+
+    def test_multiple_milestone_summaries(self, sample_project_context, sample_commit):
+        sample_project_context.milestone_summaries = [
+            {
+                "milestone_type": "post",
+                "summary": "Auth module post.",
+                "period_start": "2026-01-01",
+                "period_end": "2026-01-15",
+            },
+            {
+                "milestone_type": "decision",
+                "summary": "Switched to JWT.",
+                "period_start": "2026-01-16",
+                "period_end": "2026-01-31",
+            },
+        ]
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "Auth module post" in result
+        assert "Switched to JWT" in result
+
+
+# =============================================================================
+# assemble_evaluator_context
+# =============================================================================
+
+
+class TestAssembleEvaluatorContext:
+    """Tests for assemble_evaluator_context data orchestration."""
+
+    def _setup(self, conn):
+        """Setup test data in DB."""
+        from social_hook.db import operations as ops
+        from social_hook.filesystem import generate_id
+
+        project = Project(id="proj_ctx1", name="test", repo_path="/tmp/test")
+        ops.insert_project(conn, project)
+
+        lifecycle = Lifecycle(project_id="proj_ctx1", phase="build", confidence=0.8)
+        ops.insert_lifecycle(conn, lifecycle)
+
+        arc = Arc(id="arc_ctx1", project_id="proj_ctx1", theme="Auth arc")
+        ops.insert_arc(conn, arc)
+
+        debt = NarrativeDebt(project_id="proj_ctx1", debt_counter=2)
+        ops.insert_narrative_debt(conn, debt)
+
+        decision = Decision(
+            id="dec_ctx1", project_id="proj_ctx1", commit_hash="abc123",
+            decision="post_worthy", reasoning="Added auth",
+        )
+        ops.insert_decision(conn, decision)
+
+        ops.update_project_summary(conn, "proj_ctx1", "A test project.")
+
+    def test_basic_assembly(self, temp_db):
+        self._setup(temp_db)
+        db = DryRunContext(temp_db, dry_run=False)
+        project_config = ProjectConfig(
+            social_context="## Voice\nTechnical.",
+            memories="# Voice Memories\n\n| Date | Context | Feedback | Draft ID |\n|------|---------|----------|----------|\n| 2026-01-30 | Tech post | \"Too formal\" | draft-001 |\n",
+        )
+
+        ctx = assemble_evaluator_context(db, "proj_ctx1", project_config)
+
+        assert ctx.project.id == "proj_ctx1"
+        assert ctx.lifecycle.phase == "build"
+        assert len(ctx.active_arcs) == 1
+        assert ctx.narrative_debt == 2
+        assert ctx.project_summary == "A test project."
+        assert ctx.social_context == "## Voice\nTechnical."
+        assert len(ctx.memories) == 1
+        assert ctx.memories[0]["context"] == "Tech post"
+
+    def test_no_narrative_debt_returns_zero(self, temp_db):
+        from social_hook.db import operations as ops
+        project = Project(id="proj_nodt", name="test", repo_path="/tmp/test")
+        ops.insert_project(temp_db, project)
+
+        db = DryRunContext(temp_db, dry_run=False)
+        project_config = ProjectConfig()
+
+        ctx = assemble_evaluator_context(db, "proj_nodt", project_config)
+        assert ctx.narrative_debt == 0
+
+    def test_empty_project_config(self, temp_db):
+        from social_hook.db import operations as ops
+        project = Project(id="proj_empty", name="test", repo_path="/tmp/test")
+        ops.insert_project(temp_db, project)
+
+        db = DryRunContext(temp_db, dry_run=False)
+        project_config = ProjectConfig()
+
+        ctx = assemble_evaluator_context(db, "proj_empty", project_config)
+        assert ctx.social_context is None
+        assert ctx.memories == []
+        assert ctx.milestone_summaries == []
+
+    def test_milestone_summaries_included(self, temp_db):
+        from social_hook.db import operations as ops
+        from social_hook.filesystem import generate_id
+
+        self._setup(temp_db)
+        summary = {
+            "id": generate_id("ms"),
+            "project_id": "proj_ctx1",
+            "milestone_type": "post",
+            "summary": "Auth module post.",
+            "period_start": "2026-01-01",
+            "period_end": "2026-01-31",
+        }
+        ops.insert_milestone_summary(temp_db, summary)
+
+        db = DryRunContext(temp_db, dry_run=False)
+        project_config = ProjectConfig()
+
+        ctx = assemble_evaluator_context(db, "proj_ctx1", project_config)
+        assert len(ctx.milestone_summaries) == 1
+        assert ctx.milestone_summaries[0]["summary"] == "Auth module post."
+
+    def test_importable_from_llm(self):
+        """Verify import works from social_hook.llm."""
+        from social_hook.llm import assemble_evaluator_context
+        assert callable(assemble_evaluator_context)

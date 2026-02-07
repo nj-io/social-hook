@@ -5,11 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from social_hook.config.project import StrategyConfig, save_memory, _parse_memories
+from social_hook.config.project import (
+    StrategyConfig,
+    load_context_notes,
+    save_context_note,
+    save_memory,
+    _parse_memories,
+    _parse_context_notes,
+)
 from social_hook.db import operations as ops
 from social_hook.errors import MaxArcsError
 from social_hook.models import Arc, Lifecycle, NarrativeDebt, Project
 from social_hook.narrative.arcs import create_arc, get_active_arcs, get_arc, update_arc
+from social_hook.narrative.memories import add_memory, parse_memories_file
 from social_hook.narrative.debt import (
     get_narrative_debt,
     increment_narrative_debt,
@@ -574,3 +582,127 @@ class TestMilestoneSummariesIntegration:
         _setup_project(temp_db)
         summaries = ops.get_milestone_summaries(temp_db, "proj_test1")
         assert summaries == []
+
+
+# =============================================================================
+# Memories Wrapper (narrative.memories module)
+# =============================================================================
+
+
+class TestMemoriesWrapper:
+    """Tests for the narrative.memories thin wrapper module."""
+
+    def test_add_memory_creates_file(self, temp_dir):
+        project_dir = temp_dir / "my-project"
+        project_dir.mkdir()
+
+        add_memory(project_dir, "Technical post", '"Too formal"', "draft_001")
+
+        memories_path = project_dir / ".social-hook" / "memories.md"
+        assert memories_path.exists()
+        content = memories_path.read_text()
+        assert "Technical post" in content
+
+    def test_parse_memories_file_returns_list(self, temp_project_dir):
+        memories = parse_memories_file(temp_project_dir)
+        assert len(memories) == 1
+        assert memories[0]["context"] == "Technical architecture"
+
+    def test_parse_memories_file_missing_returns_empty(self, temp_dir):
+        project_dir = temp_dir / "empty-project"
+        project_dir.mkdir()
+        memories = parse_memories_file(project_dir)
+        assert memories == []
+
+    def test_add_then_parse_roundtrip(self, temp_dir):
+        project_dir = temp_dir / "my-project"
+        project_dir.mkdir()
+
+        add_memory(project_dir, "First", '"fb1"', "draft_001")
+        add_memory(project_dir, "Second", '"fb2"', "draft_002")
+
+        memories = parse_memories_file(project_dir)
+        assert len(memories) == 2
+        assert memories[0]["context"] == "First"
+        assert memories[1]["context"] == "Second"
+
+    def test_importable_from_narrative(self):
+        """Verify imports work from social_hook.narrative."""
+        from social_hook.narrative import add_memory, parse_memories_file
+        assert callable(add_memory)
+        assert callable(parse_memories_file)
+
+
+# =============================================================================
+# Context Notes Persistence
+# =============================================================================
+
+
+class TestContextNotes:
+    """Tests for context note save/load functions."""
+
+    def test_save_context_note_creates_file(self, temp_dir):
+        project_dir = temp_dir / "my-project"
+        project_dir.mkdir()
+
+        save_context_note(project_dir, "User prefers casual tone", "expert:draft_001")
+
+        notes_path = project_dir / ".social-hook" / "context-notes.md"
+        assert notes_path.exists()
+        content = notes_path.read_text()
+        assert "User prefers casual tone" in content
+        assert "expert:draft_001" in content
+
+    def test_save_context_note_appends(self, temp_dir):
+        project_dir = temp_dir / "my-project"
+        project_dir.mkdir()
+
+        save_context_note(project_dir, "Note 1", "expert:draft_001")
+        save_context_note(project_dir, "Note 2", "expert:draft_002")
+
+        notes = load_context_notes(project_dir)
+        assert len(notes) == 2
+        assert notes[0]["note"] == "Note 1"
+        assert notes[1]["note"] == "Note 2"
+
+    def test_load_context_notes_missing_returns_empty(self, temp_dir):
+        project_dir = temp_dir / "empty-project"
+        project_dir.mkdir()
+        notes = load_context_notes(project_dir)
+        assert notes == []
+
+    def test_save_context_note_caps_at_50(self, temp_dir):
+        project_dir = temp_dir / "my-project"
+        project_dir.mkdir()
+
+        for i in range(55):
+            save_context_note(project_dir, f"note_{i}", f"expert:draft_{i}")
+
+        notes = load_context_notes(project_dir)
+        assert len(notes) == 50
+        # Should have the latest (note_54) and not the oldest (note_0)
+        assert any(n["note"] == "note_54" for n in notes)
+        assert not any(n["note"] == "note_0" for n in notes)
+
+    def test_parse_context_notes_from_content(self):
+        content = """\
+# Context Notes
+
+| Date | Note | Source |
+|------|------|--------|
+| 2026-01-30 | Prefers casual tone | expert:draft_001 |
+| 2026-01-31 | Avoid jargon | expert:draft_002 |
+"""
+        notes = _parse_context_notes(content)
+        assert len(notes) == 2
+        assert notes[0]["note"] == "Prefers casual tone"
+        assert notes[1]["source"] == "expert:draft_002"
+
+    def test_context_note_has_date(self, temp_dir):
+        project_dir = temp_dir / "my-project"
+        project_dir.mkdir()
+
+        save_context_note(project_dir, "Test note", "expert:draft_001")
+
+        notes = load_context_notes(project_dir)
+        assert notes[0]["date"] == date.today().isoformat()

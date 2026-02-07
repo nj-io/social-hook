@@ -747,3 +747,4 @@ class ProjectContext:
     recent_posts: list["Post"]
     project_summary: Optional[str]
     memories: list[dict] = field(default_factory=list)
+    milestone_summaries: list[dict] = field(default_factory=list)

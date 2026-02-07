@@ -6,6 +6,7 @@ from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.evaluator import Evaluator
 from social_hook.llm.expert import Expert
 from social_hook.llm.gatekeeper import Gatekeeper
+from social_hook.llm.prompts import assemble_evaluator_context
 from social_hook.llm.schemas import (
     CreateDraftInput,
     ExpertResponseInput,
@@ -21,6 +22,7 @@ __all__ = [
     "Drafter",
     "Gatekeeper",
     "Expert",
+    "assemble_evaluator_context",
     "LogDecisionInput",
     "CreateDraftInput",
     "RouteActionInput",
