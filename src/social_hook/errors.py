@@ -51,6 +51,49 @@ class PromptNotFoundError(Exception):
     pass
 
 
+def classify_x_error(response: Any) -> ErrorType:
+    """Classify X API v2 error response.
+
+    X API v2 returns errors in the format:
+        {"type": "https://api.x.com/2/problems/...", "title": "...", "detail": "..."}
+
+    The 'type' URI determines the error category.
+
+    Args:
+        response: HTTP response object with status_code and json() method
+
+    Returns:
+        ErrorType indicating how to handle the error
+    """
+    status = response.status_code
+
+    if status == 429:
+        return ErrorType.RATE_LIMITED
+    elif status in (401, 403):
+        return ErrorType.AUTH_EXPIRED
+    elif status >= 500:
+        return ErrorType.TRANSIENT
+
+    # Parse X API v2 error body for 400-level errors
+    try:
+        body = response.json() if hasattr(response, "json") else {}
+    except Exception:
+        body = {}
+
+    type_uri = body.get("type", "").lower()
+    detail = body.get("detail", "").lower()
+
+    # Check for duplicate before invalid (duplicate may have invalid-request type URI)
+    if "duplicate" in type_uri or "duplicate" in detail:
+        return ErrorType.DUPLICATE
+    elif any(kw in type_uri for kw in ("invalid-request", "invalid")):
+        return ErrorType.CONTENT_INVALID
+    elif any(kw in detail for kw in ("too long", "character limit")):
+        return ErrorType.CONTENT_INVALID
+
+    return ErrorType.UNKNOWN
+
+
 def classify_error(response: Any) -> ErrorType:
     """Classify API error response for appropriate handling.
 
