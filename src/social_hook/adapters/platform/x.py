@@ -10,6 +10,7 @@ from social_hook.adapters.dry_run import dry_run_post_result, dry_run_thread_res
 from social_hook.adapters.models import PostResult, ThreadResult
 from social_hook.adapters.platform.base import PlatformAdapter
 from social_hook.adapters.rate_limit import RateLimitState, handle_rate_limit
+from social_hook.config.yaml import TIER_CHAR_LIMITS, VALID_TIERS
 from social_hook.errors import ConfigError, ErrorType, classify_x_error
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ X_TWEETS_URL = f"{X_API_BASE}/tweets"
 X_USERS_ME_URL = f"{X_API_BASE}/users/me"
 X_MEDIA_UPLOAD_URL = f"{X_API_BASE}/media/upload"
 
-# Character limit for X posts
+# Character limit for X posts (free tier / thread tweets)
 X_CHAR_LIMIT = 280
 
 
@@ -33,6 +34,8 @@ class XAdapter(PlatformAdapter):
         api_secret: str,
         access_token: str,
         access_token_secret: str,
+        *,
+        tier: str = "free",
     ):
         """Initialize X adapter with OAuth 1.0a credentials.
 
@@ -41,13 +44,21 @@ class XAdapter(PlatformAdapter):
             api_secret: X API secret (consumer secret)
             access_token: User access token
             access_token_secret: User access token secret
+            tier: Account tier (free, basic, premium, premium_plus)
 
         Raises:
-            ConfigError: If any credentials are missing
+            ConfigError: If any credentials are missing or tier is invalid
         """
         if not all([api_key, api_secret, access_token, access_token_secret]):
             raise ConfigError("Missing required X API credentials")
 
+        if tier not in VALID_TIERS:
+            raise ConfigError(
+                f"Invalid tier '{tier}', must be one of {VALID_TIERS}"
+            )
+
+        self.tier = tier
+        self.char_limit = TIER_CHAR_LIMITS[tier]
         self.auth = OAuth1(
             api_key,
             client_secret=api_secret,
@@ -94,7 +105,7 @@ class XAdapter(PlatformAdapter):
         """Post a single tweet.
 
         Args:
-            content: Tweet text (max 280 characters)
+            content: Tweet text (limit depends on account tier)
             media_paths: Optional list of media file paths to attach
             dry_run: If True, return simulated success
 
@@ -104,11 +115,11 @@ class XAdapter(PlatformAdapter):
         if dry_run:
             return dry_run_post_result()
 
-        # Validate content length
-        if len(content) > X_CHAR_LIMIT:
+        # Validate content length against tier limit
+        if len(content) > self.char_limit:
             return PostResult(
                 success=False,
-                error=f"Content exceeds {X_CHAR_LIMIT} character limit ({len(content)} chars)",
+                error=f"Content exceeds {self.char_limit} character limit ({len(content)} chars)",
             )
 
         # Build request body

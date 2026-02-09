@@ -52,16 +52,46 @@ class Drafter:
             recent_posts, commit, arc_context=arc_context,
         )
 
-        user_content = (
-            f"Create a {platform} post for this commit.\n"
-            f"Commit: {commit.hash[:8]} - {commit.message}\n"
-        )
-        if tier != "premium_plus":
-            user_content += (
-                f"Account tier: {tier}. "
+        # Build narrative-aware user message
+        episode_info = ""
+        if hasattr(decision, "episode_type") and decision.episode_type:
+            episode_info += f"Episode type: {decision.episode_type}. "
+        if hasattr(decision, "post_category") and decision.post_category:
+            episode_info += f"Post category: {decision.post_category}. "
+
+        if platform == "x" and tier == "free":
+            from social_hook.config.yaml import TIER_CHAR_LIMITS
+
+            char_limit = TIER_CHAR_LIMITS[tier]
+            user_content = (
+                f"Create a {platform} post for this commit.\n"
+                f"Commit: {commit.hash[:8]} - {commit.message}\n"
+                f"{episode_info}\n"
+                f"Platform: X (free tier). Single post limit: {char_limit} chars. "
+                f"Use the Format Selection Framework: punchy (<100), detailed (240-280), "
+                f"or set format_hint='thread' if this needs multiple beats (4+). "
+                f"Avoid links in main post."
             )
-            if platform == "x" and tier == "free":
-                user_content += "Avoid links in main post (severe algorithm penalty)."
+        elif platform == "x":
+            from social_hook.config.yaml import TIER_CHAR_LIMITS
+
+            char_limit = TIER_CHAR_LIMITS[tier]
+            user_content = (
+                f"Create a {platform} post for this commit.\n"
+                f"Commit: {commit.hash[:8]} - {commit.message}\n"
+                f"{episode_info}\n"
+                f"Platform: X ({tier} tier). Single post limit: {char_limit} chars. "
+                f"Use the Format Selection Framework. For multi-beat content, you can write "
+                f"a single flowing post OR set format_hint='thread' for visual beat separation. "
+                f"Set beat_count to indicate how many narrative beats your content has. "
+                f"Write at whatever length serves the narrative."
+            )
+        else:
+            user_content = (
+                f"Create a {platform} post for this commit.\n"
+                f"Commit: {commit.hash[:8]} - {commit.message}\n"
+                f"{episode_info}"
+            )
 
         response = self.client.complete(
             messages=[{"role": "user", "content": user_content}],
@@ -106,7 +136,8 @@ class Drafter:
             f"Create a {platform} thread (minimum 4 tweets, numbered 1/, 2/, etc.) "
             f"for this commit.\n"
             f"Commit: {commit.hash[:8]} - {commit.message}\n"
-            f"Each tweet must be under 280 characters."
+            f"Each tweet must be ≤280 characters. "
+            f"One beat per tweet. Structure for visual separation."
         )
 
         response = self.client.complete(

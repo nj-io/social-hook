@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS projects (
     summary               TEXT,
     summary_updated_at    TEXT,
     audience_introduced   INTEGER NOT NULL DEFAULT 0,
+    paused                INTEGER NOT NULL DEFAULT 0,
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -199,7 +200,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     if current < SCHEMA_VERSION:
         conn.execute(
             "INSERT INTO schema_version (version, description) VALUES (?, ?)",
-            (SCHEMA_VERSION, "add_milestone_summaries"),
+            (SCHEMA_VERSION, "add_project_paused"),
         )
         conn.commit()
 

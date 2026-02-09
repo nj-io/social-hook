@@ -116,7 +116,7 @@ models:
 platforms:
   x:
     enabled: true
-    account_tier: free  # free, premium, or premium_plus
+    account_tier: free  # free, basic, premium, or premium_plus
   linkedin:
     enabled: false
 

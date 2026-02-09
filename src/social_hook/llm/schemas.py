@@ -155,6 +155,8 @@ class CreateDraftInput(BaseModel):
     reasoning: str
     media_type: Optional[MediaTool] = None
     media_spec: Optional[dict[str, Any]] = None
+    format_hint: Optional[str] = None
+    beat_count: Optional[int] = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -184,6 +186,15 @@ class CreateDraftInput(BaseModel):
                     "reasoning": {
                         "type": "string",
                         "description": "Why this angle/content was chosen",
+                    },
+                    "format_hint": {
+                        "type": "string",
+                        "enum": ["single", "thread"],
+                        "description": "Recommended format. Use 'thread' when content has 4+ distinct beats/steps that benefit from visual separation.",
+                    },
+                    "beat_count": {
+                        "type": "integer",
+                        "description": "Number of distinct narrative beats/steps in this content.",
                     },
                 },
                 "required": ["content", "platform", "reasoning"],

@@ -414,7 +414,7 @@ class TestDrafter:
 
         call_kwargs = mock_client.complete.call_args[1]
         user_msg = call_kwargs["messages"][0]["content"]
-        assert "algorithm penalty" in user_msg
+        assert "Avoid links in main post" in user_msg
 
     def test_create_draft_no_tool_raises(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir

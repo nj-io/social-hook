@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from social_hook.db import (
+    delete_project,
+    get_all_recent_decisions,
+    get_all_recent_posts,
     get_connection,
+    get_due_drafts,
+    get_project_by_origin,
+    get_project_by_path,
     get_schema_version,
     init_database,
     create_schema,
@@ -120,9 +126,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 2."""
+        """Check schema version returns 3."""
         version = get_schema_version(temp_db)
-        assert version == 2
+        assert version == 3
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent."""
@@ -135,7 +141,7 @@ class TestDatabaseInitialization:
         version2 = get_schema_version(conn2)
         conn2.close()
 
-        assert version1 == version2 == 2
+        assert version1 == version2 == 3
 
 
 # =============================================================================
@@ -810,3 +816,359 @@ class TestMilestoneSummaries:
         }
         with pytest.raises(sqlite3.IntegrityError):
             insert_milestone_summary(temp_db, summary)
+
+
+# =============================================================================
+# WS4 Phase 0: New DB Operations
+# =============================================================================
+
+
+class TestProjectByPath:
+    """Tests for get_project_by_path."""
+
+    def test_find_by_path(self, temp_db):
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/my-repo")
+        insert_project(temp_db, project)
+
+        found = get_project_by_path(temp_db, "/tmp/my-repo")
+        assert found is not None
+        assert found.id == project.id
+
+    def test_not_found_by_path(self, temp_db):
+        assert get_project_by_path(temp_db, "/nonexistent") is None
+
+
+class TestProjectByOrigin:
+    """Tests for get_project_by_origin."""
+
+    def test_find_by_origin(self, temp_db):
+        project = Project(
+            id=generate_id("project"),
+            name="test",
+            repo_path="/tmp/test",
+            repo_origin="git@github.com:user/repo.git",
+        )
+        insert_project(temp_db, project)
+
+        found = get_project_by_origin(temp_db, "git@github.com:user/repo.git")
+        assert len(found) == 1
+        assert found[0].id == project.id
+
+    def test_multiple_worktrees_same_origin(self, temp_db):
+        for i in range(2):
+            p = Project(
+                id=generate_id("project"),
+                name=f"wt-{i}",
+                repo_path=f"/tmp/wt-{i}",
+                repo_origin="git@github.com:user/repo.git",
+            )
+            insert_project(temp_db, p)
+
+        found = get_project_by_origin(temp_db, "git@github.com:user/repo.git")
+        assert len(found) == 2
+
+    def test_not_found_by_origin(self, temp_db):
+        assert get_project_by_origin(temp_db, "nonexistent") == []
+
+
+class TestDeleteProject:
+    """Tests for delete_project (cascading delete)."""
+
+    def test_delete_project_with_all_data(self, temp_db):
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        # Create related data
+        insert_lifecycle(temp_db, Lifecycle(project_id=project.id))
+        insert_narrative_debt(temp_db, NarrativeDebt(project_id=project.id))
+
+        arc = Arc(id=generate_id("arc"), project_id=project.id, theme="test")
+        insert_arc(temp_db, arc)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="post_worthy",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="test",
+        )
+        insert_draft(temp_db, draft)
+
+        tweet = DraftTweet(
+            id=generate_id("tweet"), draft_id=draft.id, position=1, content="t1"
+        )
+        insert_draft_tweet(temp_db, tweet)
+
+        change = DraftChange(
+            id=generate_id("change"),
+            draft_id=draft.id,
+            field="content",
+            old_value="old",
+            new_value="new",
+            changed_by="human",
+        )
+        insert_draft_change(temp_db, change)
+
+        post = Post(
+            id=generate_id("post"),
+            draft_id=draft.id,
+            project_id=project.id,
+            platform="x",
+            content="posted",
+        )
+        insert_post(temp_db, post)
+
+        # Delete project
+        result = delete_project(temp_db, project.id)
+        assert result is True
+
+        # Verify everything is gone
+        assert get_project(temp_db, project.id) is None
+        assert get_lifecycle(temp_db, project.id) is None
+        assert get_narrative_debt(temp_db, project.id) is None
+        assert get_active_arcs(temp_db, project.id) == []
+        assert get_recent_decisions(temp_db, project.id) == []
+        assert get_pending_drafts(temp_db, project.id) == []
+
+    def test_delete_nonexistent_project(self, temp_db):
+        assert delete_project(temp_db, "nonexistent") is False
+
+
+class TestGetDueDrafts:
+    """Tests for get_due_drafts."""
+
+    def test_returns_scheduled_due_drafts(self, temp_db):
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="post_worthy",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        # Create a scheduled draft with past time
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="due draft",
+            status="scheduled",
+        )
+        insert_draft(temp_db, draft)
+        # Set scheduled_time to the past
+        temp_db.execute(
+            "UPDATE drafts SET scheduled_time = datetime('now', '-1 hour') WHERE id = ?",
+            (draft.id,),
+        )
+        temp_db.commit()
+
+        due = get_due_drafts(temp_db)
+        assert len(due) == 1
+        assert due[0].id == draft.id
+
+    def test_ignores_future_scheduled_drafts(self, temp_db):
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="post_worthy",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="future draft",
+            status="scheduled",
+        )
+        insert_draft(temp_db, draft)
+        temp_db.execute(
+            "UPDATE drafts SET scheduled_time = datetime('now', '+1 hour') WHERE id = ?",
+            (draft.id,),
+        )
+        temp_db.commit()
+
+        due = get_due_drafts(temp_db)
+        assert len(due) == 0
+
+    def test_ignores_non_scheduled_drafts(self, temp_db):
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="post_worthy",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="approved draft",
+            status="approved",
+        )
+        insert_draft(temp_db, draft)
+
+        due = get_due_drafts(temp_db)
+        assert len(due) == 0
+
+
+class TestGetAllRecentDecisions:
+    """Tests for get_all_recent_decisions."""
+
+    def test_cross_project_decisions(self, temp_db):
+        # Create two projects
+        for i in range(2):
+            p = Project(id=generate_id("project"), name=f"p{i}", repo_path=f"/tmp/{i}")
+            insert_project(temp_db, p)
+            d = Decision(
+                id=generate_id("decision"),
+                project_id=p.id,
+                commit_hash=f"hash{i}",
+                decision="post_worthy",
+                reasoning=f"test {i}",
+            )
+            insert_decision(temp_db, d)
+
+        decisions = get_all_recent_decisions(temp_db, limit=30)
+        assert len(decisions) == 2
+
+    def test_limit_respected(self, temp_db):
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        for i in range(5):
+            d = Decision(
+                id=generate_id("decision"),
+                project_id=project.id,
+                commit_hash=f"hash{i}",
+                decision="post_worthy",
+                reasoning=f"test {i}",
+            )
+            insert_decision(temp_db, d)
+
+        decisions = get_all_recent_decisions(temp_db, limit=3)
+        assert len(decisions) == 3
+
+
+class TestGetAllRecentPosts:
+    """Tests for get_all_recent_posts."""
+
+    def test_cross_project_posts(self, temp_db):
+        # Create two projects with posts
+        for i in range(2):
+            p = Project(id=generate_id("project"), name=f"p{i}", repo_path=f"/tmp/{i}")
+            insert_project(temp_db, p)
+            d = Decision(
+                id=generate_id("decision"),
+                project_id=p.id,
+                commit_hash=f"hash{i}",
+                decision="post_worthy",
+                reasoning=f"test {i}",
+            )
+            insert_decision(temp_db, d)
+            dr = Draft(
+                id=generate_id("draft"),
+                project_id=p.id,
+                decision_id=d.id,
+                platform="x",
+                content=f"content {i}",
+            )
+            insert_draft(temp_db, dr)
+            post = Post(
+                id=generate_id("post"),
+                draft_id=dr.id,
+                project_id=p.id,
+                platform="x",
+                content=f"posted {i}",
+            )
+            insert_post(temp_db, post)
+
+        # Get all posts since yesterday
+        posts = get_all_recent_posts(temp_db, "2020-01-01")
+        assert len(posts) == 2
+
+    def test_filters_by_datetime(self, temp_db):
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+        d = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="hash",
+            decision="post_worthy",
+            reasoning="test",
+        )
+        insert_decision(temp_db, d)
+        dr = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=d.id,
+            platform="x",
+            content="c",
+        )
+        insert_draft(temp_db, dr)
+        post = Post(
+            id=generate_id("post"),
+            draft_id=dr.id,
+            project_id=project.id,
+            platform="x",
+            content="posted",
+        )
+        insert_post(temp_db, post)
+
+        # Query with a far-future datetime should return nothing
+        posts = get_all_recent_posts(temp_db, "2099-01-01")
+        assert len(posts) == 0
+
+
+class TestProjectPausedField:
+    """Tests for the paused field on Project model."""
+
+    def test_default_not_paused(self, temp_db):
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+        loaded = get_project(temp_db, project.id)
+        assert loaded.paused is False
+
+    def test_insert_paused(self, temp_db):
+        project = Project(
+            id=generate_id("project"), name="test", repo_path="/tmp", paused=True
+        )
+        insert_project(temp_db, project)
+        loaded = get_project(temp_db, project.id)
+        assert loaded.paused is True
+
+    def test_paused_to_dict(self):
+        project = Project(id="p1", name="test", repo_path="/tmp", paused=True)
+        d = project.to_dict()
+        assert d["paused"] is True
+
+    def test_paused_from_dict(self):
+        d = {"id": "p1", "name": "test", "repo_path": "/tmp", "paused": 1}
+        project = Project.from_dict(d)
+        assert project.paused is True

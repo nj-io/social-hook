@@ -107,6 +107,7 @@ class Project:
     summary: Optional[str] = None
     summary_updated_at: Optional[datetime] = None
     audience_introduced: bool = False
+    paused: bool = False
     created_at: Optional[datetime] = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -118,6 +119,7 @@ class Project:
             "summary": self.summary,
             "summary_updated_at": _to_iso(self.summary_updated_at),
             "audience_introduced": self.audience_introduced,
+            "paused": self.paused,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -131,11 +133,12 @@ class Project:
             summary=d.get("summary"),
             summary_updated_at=_from_iso(d.get("summary_updated_at")),
             audience_introduced=bool(d.get("audience_introduced", False)),
+            paused=bool(d.get("paused", False)),
             created_at=_from_iso(d.get("created_at")),
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (id, name, repo_path, repo_origin, summary, summary_updated_at, audience_introduced)."""
+        """Return tuple for INSERT (id, name, repo_path, repo_origin, summary, summary_updated_at, audience_introduced, paused)."""
         return (
             self.id,
             self.name,
@@ -144,6 +147,7 @@ class Project:
             self.summary,
             _to_iso(self.summary_updated_at),
             1 if self.audience_introduced else 0,
+            1 if self.paused else 0,
         )
 
 
@@ -748,3 +752,4 @@ class ProjectContext:
     project_summary: Optional[str]
     memories: list[dict] = field(default_factory=list)
     milestone_summaries: list[dict] = field(default_factory=list)
+    context_notes: list[dict] = field(default_factory=list)

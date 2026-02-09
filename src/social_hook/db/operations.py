@@ -43,8 +43,8 @@ def insert_project(conn: sqlite3.Connection, project: Project) -> str:
     """
     conn.execute(
         """
-        INSERT INTO projects (id, name, repo_path, repo_origin, summary, summary_updated_at, audience_introduced)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, name, repo_path, repo_origin, summary, summary_updated_at, audience_introduced, paused)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         project.to_row(),
     )
@@ -68,6 +68,68 @@ def get_all_projects(conn: sqlite3.Connection) -> list[Project]:
     return [Project.from_dict(dict(row)) for row in rows]
 
 
+def get_project_by_path(
+    conn: sqlite3.Connection, repo_path: str
+) -> Optional[Project]:
+    """Get a project by its repository path."""
+    row = conn.execute(
+        "SELECT * FROM projects WHERE repo_path = ?", (repo_path,)
+    ).fetchone()
+    if row:
+        return Project.from_dict(dict(row))
+    return None
+
+
+def get_project_by_origin(
+    conn: sqlite3.Connection, repo_origin: str
+) -> list[Project]:
+    """Get projects by their git remote origin."""
+    rows = conn.execute(
+        "SELECT * FROM projects WHERE repo_origin = ?", (repo_origin,)
+    ).fetchall()
+    return [Project.from_dict(dict(row)) for row in rows]
+
+
+def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
+    """Delete a project and all associated data.
+
+    Uses explicit ordered deletes (not ON DELETE CASCADE) for safety.
+    Deletes: narrative_debt, lifecycles, arcs, draft_changes (via drafts),
+    draft_tweets (via drafts), posts (via drafts), drafts, decisions, then project.
+
+    Returns True if the project was deleted.
+    """
+    # Check project exists
+    row = conn.execute(
+        "SELECT id FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    if not row:
+        return False
+
+    # Get all draft IDs for this project (needed for child table cleanup)
+    draft_rows = conn.execute(
+        "SELECT id FROM drafts WHERE project_id = ?", (project_id,)
+    ).fetchall()
+    draft_ids = [r[0] for r in draft_rows]
+
+    # Delete in dependency order
+    for draft_id in draft_ids:
+        conn.execute("DELETE FROM draft_changes WHERE draft_id = ?", (draft_id,))
+        conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_id,))
+
+    conn.execute("DELETE FROM posts WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM drafts WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM decisions WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM narrative_debt WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM arcs WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM lifecycles WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM usage_log WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM milestone_summaries WHERE project_id = ?", (project_id,))
+    conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    conn.commit()
+    return True
+
+
 # =============================================================================
 # Decisions
 # =============================================================================
@@ -89,6 +151,16 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
     return decision.id
 
 
+def get_decision(conn: sqlite3.Connection, decision_id: str) -> Optional[Decision]:
+    """Get a decision by ID."""
+    row = conn.execute(
+        "SELECT * FROM decisions WHERE id = ?", (decision_id,)
+    ).fetchone()
+    if row:
+        return Decision.from_dict(dict(row))
+    return None
+
+
 def get_recent_decisions(
     conn: sqlite3.Connection, project_id: str, limit: int = 30
 ) -> list[Decision]:
@@ -101,6 +173,24 @@ def get_recent_decisions(
         LIMIT ?
         """,
         (project_id, limit),
+    ).fetchall()
+    return [Decision.from_dict(dict(row)) for row in rows]
+
+
+def get_all_recent_decisions(
+    conn: sqlite3.Connection, limit: int = 30
+) -> list[Decision]:
+    """Get recent decisions across all projects.
+
+    Cross-project query for the `log` command without project filter.
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM decisions
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
     ).fetchall()
     return [Decision.from_dict(dict(row)) for row in rows]
 
@@ -225,6 +315,23 @@ def get_all_pending_drafts(conn: sqlite3.Connection) -> list[Draft]:
     return [Draft.from_dict(dict(row)) for row in rows]
 
 
+def get_due_drafts(conn: sqlite3.Connection) -> list[Draft]:
+    """Get drafts that are scheduled and due for posting.
+
+    Returns drafts where status='scheduled' and scheduled_time <= now,
+    ordered by scheduled_time ascending (FIFO).
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM drafts
+        WHERE status = 'scheduled'
+          AND scheduled_time <= datetime('now')
+        ORDER BY scheduled_time ASC
+        """
+    ).fetchall()
+    return [Draft.from_dict(dict(row)) for row in rows]
+
+
 # =============================================================================
 # Draft Tweets
 # =============================================================================
@@ -257,6 +364,51 @@ def get_draft_tweets(conn: sqlite3.Connection, draft_id: str) -> list[DraftTweet
         (draft_id,),
     ).fetchall()
     return [DraftTweet.from_dict(dict(row)) for row in rows]
+
+
+def update_draft_tweet(
+    conn: sqlite3.Connection,
+    tweet_id: str,
+    external_id: Optional[str] = None,
+    posted_at: Optional[str] = None,
+    error: Optional[str] = None,
+) -> bool:
+    """Update a draft tweet after posting.
+
+    Args:
+        conn: Database connection
+        tweet_id: Draft tweet ID
+        external_id: External tweet ID from platform
+        posted_at: ISO datetime when posted
+        error: Error message if posting failed
+
+    Returns:
+        True if a row was updated.
+    """
+    updates = []
+    params = []
+
+    if external_id is not None:
+        updates.append("external_id = ?")
+        params.append(external_id)
+    if posted_at is not None:
+        updates.append("posted_at = ?")
+        params.append(posted_at)
+    if error is not None:
+        updates.append("error = ?")
+        params.append(error)
+
+    if not updates:
+        return False
+
+    params.append(tweet_id)
+
+    cursor = conn.execute(
+        f"UPDATE draft_tweets SET {', '.join(updates)} WHERE id = ?",
+        params,
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 # =============================================================================
@@ -355,6 +507,27 @@ def get_recent_posts_for_context(
         LIMIT ?
         """,
         (project_id, limit),
+    ).fetchall()
+    return [Post.from_dict(dict(row)) for row in rows]
+
+
+def get_all_recent_posts(
+    conn: sqlite3.Connection, since_datetime: str
+) -> list[Post]:
+    """Get recent posts across all projects since a given datetime.
+
+    Cross-project query for scheduling coordination.
+
+    Args:
+        since_datetime: ISO datetime string (UTC). Posts at or after this time are returned.
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM posts
+        WHERE posted_at >= ?
+        ORDER BY posted_at DESC
+        """,
+        (since_datetime,),
     ).fetchall()
     return [Post.from_dict(dict(row)) for row in rows]
 

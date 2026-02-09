@@ -3,7 +3,12 @@
 from pathlib import Path
 from typing import Any, Optional
 
-from social_hook.config.project import ContextConfig, ProjectConfig, _parse_memories
+from social_hook.config.project import (
+    ContextConfig,
+    ProjectConfig,
+    _parse_context_notes,
+    _parse_memories,
+)
 from social_hook.errors import PromptNotFoundError
 from social_hook.models import CommitInfo, ProjectContext
 
@@ -98,6 +103,15 @@ def assemble_evaluator_prompt(
             sections.append(
                 f"- {m.get('date', 'N/A')}: {m.get('context', '')} → "
                 f"{m.get('feedback', '')}"
+            )
+
+    # Context Notes
+    if project_context.context_notes:
+        sections.append("\n---\n## Context Notes")
+        for n in project_context.context_notes[-10:]:  # Last 10 notes
+            sections.append(
+                f"- [{n.get('date', 'N/A')}] ({n.get('source', 'unknown')}): "
+                f"{n.get('note', '')}"
             )
 
     # Recent history
@@ -219,6 +233,15 @@ def assemble_drafter_prompt(
             sections.append(
                 f"- {m.get('date', 'N/A')}: {m.get('context', '')} → "
                 f"{m.get('feedback', '')}"
+            )
+
+    # Context Notes
+    if project_context.context_notes:
+        sections.append("\n---\n## Context Notes")
+        for n in project_context.context_notes[-10:]:
+            sections.append(
+                f"- [{n.get('date', 'N/A')}] ({n.get('source', 'unknown')}): "
+                f"{n.get('note', '')}"
             )
 
     # Evaluation result
@@ -414,6 +437,11 @@ def assemble_evaluator_context(
     if project_config.memories:
         memories = _parse_memories(project_config.memories)
 
+    # Parse context notes from project config
+    context_notes = []
+    if project_config.context_notes:
+        context_notes = _parse_context_notes(project_config.context_notes)
+
     return ProjectContext(
         project=project,
         social_context=project_config.social_context,
@@ -427,6 +455,7 @@ def assemble_evaluator_context(
         project_summary=project_summary,
         memories=memories,
         milestone_summaries=milestone_summaries,
+        context_notes=context_notes,
     )
 
 

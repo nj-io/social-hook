@@ -662,3 +662,96 @@ class TestAssembleEvaluatorContext:
         """Verify import works from social_hook.llm."""
         from social_hook.llm import assemble_evaluator_context
         assert callable(assemble_evaluator_context)
+
+    def test_context_notes_included(self, temp_db):
+        from social_hook.db import operations as ops
+        self._setup(temp_db)
+
+        db = DryRunContext(temp_db, dry_run=False)
+        project_config = ProjectConfig(
+            context_notes="# Context Notes\n\n| Date | Note | Source |\n|------|------|--------|\n| 2026-02-01 | Project is pivoting to OAuth | expert:draft_123 |\n",
+        )
+
+        ctx = assemble_evaluator_context(db, "proj_ctx1", project_config)
+        assert len(ctx.context_notes) == 1
+        assert ctx.context_notes[0]["note"] == "Project is pivoting to OAuth"
+        assert ctx.context_notes[0]["source"] == "expert:draft_123"
+
+    def test_no_context_notes_returns_empty(self, temp_db):
+        from social_hook.db import operations as ops
+        project = Project(id="proj_no_cn", name="test", repo_path="/tmp/test")
+        ops.insert_project(temp_db, project)
+
+        db = DryRunContext(temp_db, dry_run=False)
+        project_config = ProjectConfig()
+
+        ctx = assemble_evaluator_context(db, "proj_no_cn", project_config)
+        assert ctx.context_notes == []
+
+
+# =============================================================================
+# Context Notes in Prompt Assembly
+# =============================================================================
+
+
+class TestContextNotesInPrompts:
+    """Tests for context notes injection into assembled prompts."""
+
+    def test_evaluator_prompt_includes_context_notes(self, sample_project_context, sample_commit):
+        sample_project_context.context_notes = [
+            {"date": "2026-02-01", "note": "Project pivoting to OAuth", "source": "expert"},
+        ]
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "## Context Notes" in result
+        assert "Project pivoting to OAuth" in result
+        assert "expert" in result
+
+    def test_evaluator_prompt_no_context_notes(self, sample_project_context, sample_commit):
+        sample_project_context.context_notes = []
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "## Context Notes" not in result
+
+    def test_drafter_prompt_includes_context_notes(self, sample_project_context, sample_commit):
+        sample_project_context.context_notes = [
+            {"date": "2026-02-01", "note": "Avoid mentioning competitor X", "source": "human"},
+        ]
+        decision = Decision(
+            id="dec_1", project_id="proj_test1", commit_hash="abc123",
+            decision="post_worthy", reasoning="Added auth",
+        )
+        result = assemble_drafter_prompt(
+            "# Drafter", decision, sample_project_context,
+            sample_project_context.recent_posts, sample_commit,
+        )
+        assert "## Context Notes" in result
+        assert "Avoid mentioning competitor X" in result
+
+    def test_drafter_prompt_no_context_notes(self, sample_project_context, sample_commit):
+        sample_project_context.context_notes = []
+        decision = Decision(
+            id="dec_1", project_id="proj_test1", commit_hash="abc123",
+            decision="post_worthy", reasoning="Added auth",
+        )
+        result = assemble_drafter_prompt(
+            "# Drafter", decision, sample_project_context,
+            sample_project_context.recent_posts, sample_commit,
+        )
+        assert "## Context Notes" not in result
+
+    def test_context_notes_limited_to_10(self, sample_project_context, sample_commit):
+        sample_project_context.context_notes = [
+            {"date": f"2026-01-{i:02d}", "note": f"Note {i}", "source": "test"}
+            for i in range(20)
+        ]
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        # Should only include the last 10
+        assert "Note 10" in result
+        assert "Note 19" in result
+        # Earlier ones should not be present
+        assert "Note 0]" not in result

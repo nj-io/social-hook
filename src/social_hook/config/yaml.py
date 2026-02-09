@@ -11,6 +11,15 @@ from social_hook.errors import ConfigError
 # Valid model names (Anthropic aliases)
 VALID_MODELS = ("claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5")
 
+# Valid X account tiers and their character limits
+VALID_TIERS = ("free", "basic", "premium", "premium_plus")
+TIER_CHAR_LIMITS = {
+    "free": 280,
+    "basic": 25_000,
+    "premium": 25_000,
+    "premium_plus": 25_000,
+}
+
 # Default configuration values
 DEFAULT_CONFIG = {
     "models": {
@@ -143,10 +152,16 @@ def _parse_config(data: dict[str, Any]) -> Config:
     x_data = platforms_data.get("x", {})
     linkedin_data = platforms_data.get("linkedin", {})
 
+    x_tier = x_data.get("account_tier", "free")
+    if x_tier not in VALID_TIERS:
+        raise ConfigError(
+            f"Invalid account_tier '{x_tier}', must be one of {VALID_TIERS}"
+        )
+
     platforms = PlatformsConfig(
         x=PlatformConfig(
             enabled=x_data.get("enabled", True),
-            account_tier=x_data.get("account_tier", "free"),
+            account_tier=x_tier,
         ),
         linkedin=PlatformConfig(
             enabled=linkedin_data.get("enabled", False),

@@ -12,16 +12,40 @@ Use the `create_draft` tool to create the post. You must provide:
 Optionally:
 - **media_type**: Suggested media tool (mermaid, nano_banana_pro, playwright, ray_so, none)
 - **media_spec**: Specification for media generation
+- **format_hint**: "single" or "thread" — your recommended format based on narrative structure
+- **beat_count**: Number of distinct narrative beats/steps in the content
 
 ## Platform Rules
 
 ### X (Twitter)
-- **Hard limit**: 280 characters
-- **Dead zone**: 100-230 characters — either go punchy (<100) or detailed (240-280)
-- **Threads**: Minimum 4 tweets. Use numbered format (1/, 2/, etc.)
-- **Hashtags**: Maximum 2, only if genuinely discoverable
-- **Links**: For free tier, avoid links in main post (severe algorithm penalty). Place in reply.
-- **Premium tier**: Links acceptable but reply placement still preferred
+
+**Core principle**: Format is driven by narrative structure, not character count. A postmortem with 4 beats is a thread because it HAS 4 beats, not because it's long.
+
+The user message tells you the tier and single-post character limit. Use the Format Selection Framework to choose format, then work within the constraints.
+
+**Format Selection Framework** (applies to all tiers):
+- Punchy insight (<100 chars) → single short post, set `format_hint: "single"`
+- One cohesive point (~250 chars) → single detailed post, set `format_hint: "single"`
+- 4+ distinct beats/steps/points → thread candidate, set `format_hint: "thread"` and `beat_count` to the number of beats
+
+**Free tier** (280 char limit):
+- Single post hard limit: 280 characters
+- Dead zone: 100-230 characters — either go punchy (<100) or detailed (240-280)
+- When the narrative has 4+ beats/steps → thread (min 4 tweets, each ≤280 chars, numbered 1/, 2/, etc.)
+- Links: avoid in main post (severe algorithm penalty). Place in reply.
+- Hashtags: maximum 2, only if genuinely discoverable
+
+**Paid tiers** (Basic/Premium/Premium+ — 25,000 char limit):
+- Single post up to 25,000 characters
+- You now have a CHOICE for multi-beat content: a thread for visual separation of beats, OR a single flowing post. Choose the format that best serves the story.
+- Short punchy posts are still great when the content calls for it — tier doesn't force length.
+- Links: acceptable but reply placement still preferred
+- Hashtags: maximum 2, only if genuinely discoverable
+
+**Threads** (all tiers):
+- Minimum 4 tweets, numbered 1/, 2/, etc.
+- Each tweet must be ≤280 characters (always, regardless of tier)
+- Use threads when beats benefit from visual separation
 
 ### LinkedIn
 - **Limit**: 3000 characters
