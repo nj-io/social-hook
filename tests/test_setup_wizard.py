@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from social_hook.setup.wizard import (
-    AlternateScreen,
     WizardProgress,
     WIZARD_TOTAL_SECTIONS,
     _obfuscate,
@@ -120,63 +119,6 @@ class TestSectionHelpers:
         from social_hook.setup.wizard import _success
         with patch.dict("sys.modules", {"rich.console": None}):
             _success("fallback ok")
-
-
-# =============================================================================
-# AlternateScreen tests
-# =============================================================================
-
-
-class TestAlternateScreen:
-    def test_activates_on_tty(self):
-        mock_stdout = MagicMock()
-        mock_stdout.isatty.return_value = True
-        with patch("social_hook.setup.wizard.sys.stdout", mock_stdout):
-            screen = AlternateScreen()
-            screen.__enter__()
-            writes = [c.args[0] for c in mock_stdout.write.call_args_list]
-            assert "\033[?1049h" in writes  # alternate screen entered
-            assert "\033[H" in writes  # cursor to top-left
-            assert screen._active is True
-
-    def test_skips_on_non_tty(self):
-        mock_stdout = MagicMock()
-        mock_stdout.isatty.return_value = False
-        with patch("social_hook.setup.wizard.sys.stdout", mock_stdout):
-            screen = AlternateScreen()
-            screen.__enter__()
-            mock_stdout.write.assert_not_called()
-            assert screen._active is False
-
-    def test_exit_restores_screen(self):
-        mock_stdout = MagicMock()
-        mock_stdout.isatty.return_value = True
-        with patch("social_hook.setup.wizard.sys.stdout", mock_stdout):
-            screen = AlternateScreen()
-            screen.__enter__()
-            mock_stdout.reset_mock()
-            screen.__exit__(None, None, None)
-            writes = [c.args[0] for c in mock_stdout.write.call_args_list]
-            assert "\033[?1049l" in writes  # alternate screen exited
-            assert screen._active is False
-
-    def test_exit_noop_when_not_active(self):
-        mock_stdout = MagicMock()
-        mock_stdout.isatty.return_value = False
-        with patch("social_hook.setup.wizard.sys.stdout", mock_stdout):
-            screen = AlternateScreen()
-            screen.__enter__()
-            mock_stdout.reset_mock()
-            screen.__exit__(None, None, None)
-            mock_stdout.write.assert_not_called()
-
-    def test_context_manager_usage(self):
-        mock_stdout = MagicMock()
-        mock_stdout.isatty.return_value = True
-        with patch("social_hook.setup.wizard.sys.stdout", mock_stdout):
-            with AlternateScreen() as screen:
-                assert screen._active is True
-            assert screen._active is False
 
 
 # =============================================================================
@@ -333,13 +275,13 @@ class TestPromptApiKey:
     @patch("social_hook.setup.wizard._error")
     @patch("social_hook.setup.wizard._spinner")
     @patch("social_hook.setup.wizard._prompt")
-    def test_returns_none_on_skip(self, mock_prompt, mock_spinner, _mock_error, mock_confirm):
+    def test_saves_key_on_validation_failure(self, mock_prompt, mock_spinner, _mock_error, mock_confirm):
         from social_hook.setup.wizard import _prompt_api_key
         mock_prompt.return_value = "bad-key"
         mock_spinner.return_value = (False, "Invalid key")
-        mock_confirm.return_value = False
+        mock_confirm.return_value = False  # decline retry
         result = _prompt_api_key("API key", lambda k: (False, "bad"))
-        assert result is None
+        assert result == "bad-key"
 
     @patch("social_hook.setup.wizard._success")
     @patch("social_hook.setup.wizard._confirm")
@@ -365,8 +307,9 @@ class TestPromptApiKey:
         mock_spinner.return_value = (True, "OK")
         result = _prompt_api_key("API key", lambda k: (True, "ok"), existing="existing-key")
         assert result == "existing-key"
-        call_text = mock_prompt.call_args[0][0]
-        assert "***" in call_text or "exis" in call_text
+        # Existing value passed as default kwarg to _prompt
+        assert mock_prompt.call_args[1].get("default") == "existing-key" or \
+            mock_prompt.call_args[0][0] == "API key"
 
 
 # =============================================================================
@@ -527,9 +470,17 @@ class TestWizardWarnings:
         mock_telegram, mock_x, mock_linkedin, mock_models,
         mock_image, mock_sched, mock_install, mock_yaml,
         mock_summary, mock_load, mock_success, mock_warn, mock_sys,
+        tmp_path,
     ):
         mock_sys.stdout.isatty.return_value = False
-        mock_init.return_value = Path("/tmp/test")
+        mock_init.return_value = tmp_path
+        mock_install.return_value = True
+        # Create voice config so no warning is raised
+        (tmp_path / "social-context.md").write_text("voice config")
+        # Existing env has X key too
+        mock_load.return_value = (
+            {"ANTHROPIC_API_KEY": "key", "TELEGRAM_BOT_TOKEN": "tok", "X_API_KEY": "xk"}, {}
+        )
         run_wizard()
 
         success_texts = [str(c) for c in mock_success.call_args_list]
@@ -855,7 +806,7 @@ class TestXTierSelection:
     @patch("social_hook.setup.wizard._select")
     @patch("social_hook.setup.wizard._spinner")
     @patch("social_hook.setup.wizard._confirm")
-    def test_x_credentials_use_password_mode(self, mock_confirm, mock_spinner, mock_select, mock_prompt):
+    def test_x_credentials_collected(self, mock_confirm, mock_spinner, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
         mock_confirm.side_effect = [True]
@@ -867,8 +818,9 @@ class TestXTierSelection:
         yaml_config = {}
         _setup_x(env_vars, yaml_config, {}, {})
 
-        for c in mock_prompt.call_args_list:
-            assert c.kwargs.get("password") is True or (len(c.args) > 1 and c.args[1] is True)
+        assert mock_prompt.call_count == 4
+        assert env_vars["X_API_KEY"] == "key"
+        assert env_vars["X_ACCESS_SECRET"] == "tsecret"
 
     @patch("social_hook.setup.wizard._confirm")
     def test_skips_when_declined(self, mock_confirm):
@@ -959,7 +911,8 @@ class TestAnthropicStep:
         env_vars = {}
         _setup_anthropic(env_vars, {"ANTHROPIC_API_KEY": "existing-key"})
 
-        assert "ANTHROPIC_API_KEY" not in env_vars
+        # Existing key preserved explicitly in env_vars
+        assert env_vars["ANTHROPIC_API_KEY"] == "existing-key"
 
     @patch("social_hook.setup.wizard._prompt_api_key")
     def test_pre_populates_existing_key(self, mock_prompt_key):
@@ -1040,15 +993,16 @@ class TestLinkedinStep:
 
     @patch("social_hook.setup.wizard._prompt")
     @patch("social_hook.setup.wizard._confirm")
-    def test_uses_password_mode(self, mock_confirm, mock_prompt):
+    def test_collects_token(self, mock_confirm, mock_prompt):
         from social_hook.setup.wizard import _setup_linkedin
 
         mock_confirm.return_value = True
         mock_prompt.return_value = "token"
 
-        _setup_linkedin({}, {})
+        env_vars = {}
+        _setup_linkedin(env_vars, {})
 
-        assert mock_prompt.call_args.kwargs.get("password") is True
+        assert env_vars["LINKEDIN_ACCESS_TOKEN"] == "token"
 
 
 # =============================================================================

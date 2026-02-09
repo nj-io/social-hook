@@ -29,37 +29,6 @@ WIZARD_TOTAL_SECTIONS = 9
 
 
 # =============================================================================
-# Alternate screen buffer
-# =============================================================================
-
-
-class AlternateScreen:
-    """Context manager for alternate screen buffer.
-
-    Enters the alternate screen on __enter__ and restores the normal
-    screen on __exit__.  All wizard output happens in the alternate
-    buffer so the user's original terminal content is untouched.
-    """
-
-    def __init__(self):
-        self._active = False
-
-    def __enter__(self):
-        if sys.stdout.isatty():
-            sys.stdout.write("\033[?1049h")  # enter alternate screen
-            sys.stdout.write("\033[H")  # cursor to top-left
-            sys.stdout.flush()
-            self._active = True
-        return self
-
-    def __exit__(self, *args):
-        if self._active:
-            sys.stdout.write("\033[?1049l")  # exit alternate screen
-            sys.stdout.flush()
-            self._active = False
-
-
-# =============================================================================
 # Progress tracker
 # =============================================================================
 
@@ -93,30 +62,10 @@ class WizardProgress:
         return min(base + within, 1.0)
 
     def _render(self) -> None:
-        """Update progress bar at fixed top-of-screen position."""
-        if not sys.stdout.isatty():
-            return
-        pct = int(self.fraction * 100)
-        filled = int(self.fraction * 30)
-        bar = "━" * filled + "╺" + "─" * max(0, 29 - filled)
-        label = f"  {self.section_label} ({self.substep}/{self.substeps_total})"
-        # Save cursor, move to line 1, clear line, print, restore cursor
-        line = f"\033[2m{label}  \033[36m{bar}\033[0m\033[2m  {pct}%\033[0m"
-        sys.stdout.write(f"\033[s\033[1;1H\033[2K{line}\033[u")
-        sys.stdout.flush()
+        """No-op — progress is tracked but not drawn with escape codes."""
 
     def render_top(self) -> None:
-        """Clear screen, draw progress bar on line 1, position cursor at line 3."""
-        if not sys.stdout.isatty() or self.section == 0:
-            return
-        pct = int(self.fraction * 100)
-        filled = int(self.fraction * 30)
-        bar = "━" * filled + "╺" + "─" * max(0, 29 - filled)
-        label = f"  {self.section_label} ({self.substep}/{self.substeps_total})"
-        line = f"\033[2m{label}  \033[36m{bar}\033[0m\033[2m  {pct}%\033[0m"
-        # Clear screen, draw bar on line 1, position cursor at line 3 for content
-        sys.stdout.write(f"\033[2J\033[1;1H{line}\033[3;1H")
-        sys.stdout.flush()
+        """No-op — progress is tracked but not drawn with escape codes."""
 
 
 # =============================================================================
@@ -156,13 +105,7 @@ def _validate_positive_int(val: str) -> bool | str:
 
 def _section(title: str, description: str = "", step: int = 0, progress: Optional[WizardProgress] = None) -> None:
     """Display a section header with Rich Panel or plain fallback."""
-    if progress and progress.section > 0:
-        # render_top clears screen, draws bar on line 1, positions cursor at line 3
-        progress.render_top()
-    elif sys.stdout.isatty():
-        # No progress tracker — just clear the screen
-        sys.stdout.write("\033[2J\033[H")
-        sys.stdout.flush()
+    typer.echo()  # blank line before each section
 
     try:
         from rich.console import Console
@@ -226,45 +169,19 @@ def _error(msg: str) -> None:
 
 
 def _rich_prompt(text: str, password: bool = False, validate: Optional[Callable] = None) -> str:
-    """Prompt user for input with Rich/InquirerPy."""
-    from InquirerPy import inquirer
-
-    def _validator(val):
-        if validate:
-            result = validate(val)
-            if result is not True:
-                return result
-        return True
-
-    if password:
-        result = inquirer.secret(
-            message=text,
-            validate=_validator if validate else None,
-        ).execute()
-    else:
-        result = inquirer.text(
-            message=text,
-            validate=_validator if validate else None,
-        ).execute()
-    return result
+    """Prompt user for input with Rich formatting."""
+    # Use plain terminal I/O to avoid screen-clearing side effects from prompt_toolkit
+    raise NotImplementedError("Use fallback")
 
 
 def _rich_confirm(text: str, default: bool = True) -> bool:
-    """Ask yes/no confirmation with InquirerPy."""
-    from InquirerPy import inquirer
-
-    return inquirer.confirm(message=text, default=default).execute()
+    """Ask yes/no confirmation."""
+    raise NotImplementedError("Use fallback")
 
 
 def _rich_select(text: str, choices: list[str], default: Optional[str] = None) -> str:
-    """Select from a list with InquirerPy."""
-    from InquirerPy import inquirer
-
-    return inquirer.select(
-        message=text,
-        choices=choices,
-        default=default,
-    ).execute()
+    """Select from a list."""
+    raise NotImplementedError("Use fallback")
 
 
 def _spinner(text: str, fn: Callable) -> Any:
@@ -279,29 +196,33 @@ def _spinner(text: str, fn: Callable) -> Any:
         return fn()
 
 
-def _prompt(text: str, default: str = "", password: bool = False) -> str:
-    """Prompt user for input — Rich/InquirerPy wrapper with fallback."""
-    try:
-        return _rich_prompt(text, password=password, validate=_validate_not_empty if not default else None)
-    except Exception:
-        # Fallback to plain input with validation
-        while True:
-            if password:
-                import getpass
-                val = getpass.getpass(f"{text}: ")
-            elif default:
-                val = input(f"{text} [{default}]: ").strip()
-                if not val:
-                    return default
-            else:
-                val = input(f"{text}: ").strip()
+def _prompt(text: str, default: str = "", hide_default: bool = False) -> str:
+    """Prompt user for input with plain terminal I/O.
 
-            if not default:
-                check = _validate_not_empty(val)
-                if check is not True:
-                    print(check)
-                    continue
-            return val
+    Args:
+        text: Prompt label.
+        default: Default value returned when user presses Enter without input.
+        hide_default: If True, show '(Enter to keep current)' instead of the
+            default value in brackets.  Useful for secrets/API keys.
+    """
+    while True:
+        if default and hide_default:
+            val = input(f"{text} (Enter to keep current): ").strip()
+            if not val:
+                return default
+        elif default:
+            val = input(f"{text} [{default}]: ").strip()
+            if not val:
+                return default
+        else:
+            val = input(f"{text}: ").strip()
+
+        if not default:
+            check = _validate_not_empty(val)
+            if check is not True:
+                print(check)
+                continue
+        return val
 
 
 def _confirm(text: str, default: bool = True) -> bool:
@@ -317,25 +238,99 @@ def _confirm(text: str, default: bool = True) -> bool:
 
 
 def _select(text: str, choices: list[str], default: Optional[str] = None) -> str:
-    """Select from a list — Rich/InquirerPy wrapper with fallback."""
-    try:
-        return _rich_select(text, choices, default=default)
-    except Exception:
-        # Fallback to numbered choice
-        print(f"\n{text}")
-        for i, c in enumerate(choices, 1):
-            marker = " (default)" if c == default else ""
-            print(f"  {i}. {c}{marker}")
-        while True:
-            raw = input(f"Choice [1-{len(choices)}]: ").strip()
-            if not raw and default:
-                return default
-            try:
-                idx = int(raw) - 1
-                if 0 <= idx < len(choices):
-                    return choices[idx]
-            except ValueError:
-                pass
+    """Select from a list with arrow keys (TTY) or numbered fallback."""
+    if sys.stdout.isatty() and sys.stdin.isatty():
+        return _select_arrows(text, choices, default=default)
+
+    # Non-TTY fallback: numbered choice
+    print(f"\n{text}")
+    for i, c in enumerate(choices, 1):
+        marker = " (default)" if c == default else ""
+        print(f"  {i}. {c}{marker}")
+    while True:
+        raw = input(f"Choice [1-{len(choices)}]: ").strip()
+        if not raw and default:
+            return default
+        try:
+            idx = int(raw) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx]
+        except ValueError:
+            pass
+
+
+def _select_arrows(text: str, choices: list[str], default: Optional[str] = None) -> str:
+    """Arrow-key selector for TTY terminals."""
+    import tty
+    import termios
+
+    # Find initial selection
+    selected = 0
+    if default:
+        for i, c in enumerate(choices):
+            if c == default:
+                selected = i
+                break
+
+    total = len(choices)
+
+    def _draw(sel: int) -> None:
+        """Draw the choice list. Clears each line and repositions cursor to top."""
+        for i, c in enumerate(choices):
+            sys.stdout.write("\033[2K\r")  # clear line, carriage return
+            if i == sel:
+                sys.stdout.write(f"  \033[36m❯ {c}\033[0m")
+            else:
+                sys.stdout.write(f"    {c}")
+            if i < total - 1:
+                sys.stdout.write("\n")
+        # Move cursor back to first choice line
+        if total > 1:
+            sys.stdout.write(f"\033[{total - 1}A\r")
+        sys.stdout.flush()
+
+    def _read_key() -> str:
+        """Read a single keypress, handling arrow key escape sequences."""
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":
+                ch2 = sys.stdin.read(1)
+                if ch2 == "[":
+                    ch3 = sys.stdin.read(1)
+                    if ch3 == "A":
+                        return "up"
+                    elif ch3 == "B":
+                        return "down"
+                return "escape"
+            elif ch in ("\r", "\n"):
+                return "enter"
+            elif ch == "\x03":
+                raise KeyboardInterrupt
+            return ch
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    print(f"\n{text}  (↑/↓ to move, Enter to select)")
+    _draw(selected)
+
+    while True:
+        key = _read_key()
+        if key == "up" and selected > 0:
+            selected -= 1
+            _draw(selected)
+        elif key == "down" and selected < total - 1:
+            selected += 1
+            _draw(selected)
+        elif key == "enter":
+            # Move cursor past the list before returning
+            if total > 1:
+                sys.stdout.write(f"\033[{total - 1}B")
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            return choices[selected]
 
 
 def _prompt_api_key(
@@ -345,13 +340,14 @@ def _prompt_api_key(
 ) -> str | None:
     """Prompt for an API key, validate it, and re-prompt on failure.
 
-    Returns the valid key, or None if user chooses to skip.
+    Returns the valid key, or None if user chooses to skip entirely.
     """
     while True:
         if existing:
-            key = _prompt(f"{text} [{_obfuscate(existing)}]", default=existing, password=True)
+            typer.echo(f"  Current: {_obfuscate(existing)}")
+            key = _prompt(text, default=existing, hide_default=True)
         else:
-            key = _prompt(text, password=True)
+            key = _prompt(text)
 
         success, msg = _spinner("Validating...", lambda: validate_fn(key))
         if success:
@@ -359,8 +355,10 @@ def _prompt_api_key(
             return key
 
         _error(msg)
-        if not _confirm("Try again?"):
-            return None
+        if _confirm("Try again?"):
+            continue
+        _warn("Key saved without validation")
+        return key
 
 
 # =============================================================================
@@ -433,117 +431,126 @@ def run_wizard(
     if validate:
         return _validate_existing()
 
-    with AlternateScreen():
-        # Welcome panel
-        try:
-            from rich.console import Console
-            from rich.panel import Panel
+    # Welcome panel
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
 
-            console = Console()
-            console.print()
-            console.print(Panel(
-                "[bold]Social Hook Setup[/bold]\n\n"
-                "This wizard will walk you through:\n"
-                "  1. API credentials (Anthropic, Telegram)\n"
-                "  2. Voice & style configuration\n"
-                "  3. Platform setup (X, LinkedIn)\n"
-                "  4. Model selection\n"
-                "  5. Scheduling preferences\n\n"
-                "Press Ctrl+C at any time to cancel.\n"
-                "[dim]Existing values shown as defaults.[/dim]",
-                title="Welcome",
-                border_style="cyan",
-            ))
-            console.print()
-        except Exception:
-            typer.echo("\n=== Social Hook Setup ===\n")
-            typer.echo("This wizard will walk you through:")
-            typer.echo("  1. API credentials (Anthropic, Telegram)")
-            typer.echo("  2. Voice & style configuration")
-            typer.echo("  3. Platform setup (X, LinkedIn)")
-            typer.echo("  4. Model selection")
-            typer.echo("  5. Scheduling preferences")
-            typer.echo("\nPress Ctrl+C at any time to cancel.")
-            typer.echo("Existing values shown as defaults.\n")
+        console = Console()
+        console.print()
+        console.print(Panel(
+            "[bold]Social Hook Setup[/bold]\n\n"
+            "This wizard will walk you through:\n"
+            "  1. API credentials (Anthropic, Telegram)\n"
+            "  2. Voice & style configuration\n"
+            "  3. Platform setup (X, LinkedIn)\n"
+            "  4. Model selection\n"
+            "  5. Scheduling preferences\n\n"
+            "Press Ctrl+C at any time to cancel.\n"
+            "[dim]Existing values shown as defaults.[/dim]",
+            title="Welcome",
+            border_style="cyan",
+        ))
+        console.print()
+    except Exception:
+        typer.echo("\n=== Social Hook Setup ===\n")
+        typer.echo("This wizard will walk you through:")
+        typer.echo("  1. API credentials (Anthropic, Telegram)")
+        typer.echo("  2. Voice & style configuration")
+        typer.echo("  3. Platform setup (X, LinkedIn)")
+        typer.echo("  4. Model selection")
+        typer.echo("  5. Scheduling preferences")
+        typer.echo("\nPress Ctrl+C at any time to cancel.")
+        typer.echo("Existing values shown as defaults.\n")
 
-        # Pause so user can read welcome before first section clears the screen
-        if sys.stdout.isatty():
-            input("  Press Enter to begin setup...")
+    try:
+        # Initialize filesystem
+        base = init_filesystem()
 
-        try:
-            # Initialize filesystem
-            base = init_filesystem()
+        # Load existing config for pre-population
+        existing_env, existing_yaml = _load_existing()
 
-            # Load existing config for pre-population
-            existing_env, existing_yaml = _load_existing()
+        # Progress tracker
+        progress = WizardProgress()
 
-            # Progress tracker
-            progress = WizardProgress()
+        env_vars: dict[str, str] = {}
+        yaml_config: dict[str, Any] = {}
 
-            env_vars: dict[str, str] = {}
-            yaml_config: dict[str, Any] = {}
-
-            if only is None or only == "anthropic":
-                _setup_anthropic(env_vars, existing_env, progress)
-
-            if only is None or only == "voice":
-                _setup_voice_style(base, progress)
-
-            if only is None or only == "telegram":
-                _setup_telegram(env_vars, existing_env, progress)
-
-            if only is None or only == "x":
-                _setup_x(env_vars, yaml_config, existing_env, existing_yaml, progress)
-
-            if only is None or only == "linkedin":
-                _setup_linkedin(env_vars, existing_env, progress)
-
-            if only is None or only == "models":
-                _setup_models(yaml_config, existing_yaml, progress)
-
-            if only is None or only == "image":
-                _setup_image_gen(env_vars, yaml_config, existing_env, progress)
-
-            # Save .env file
+        def _save_progress() -> None:
+            """Save whatever we have so far."""
             if env_vars:
                 _save_env(base, env_vars)
-
-            if only is None:
-                _setup_scheduling(base, yaml_config, existing_yaml, progress)
+            if yaml_config:
                 _save_config_yaml(base, yaml_config)
-                _show_summary(env_vars, yaml_config)
-                _setup_installations(progress)
 
-            # --- Completion message with warnings ---
-            warnings: list[str] = []
-            if only is None:
-                if "ANTHROPIC_API_KEY" not in env_vars and not existing_env.get("ANTHROPIC_API_KEY"):
-                    warnings.append("Anthropic API key not configured — AI features won't work")
-                if "TELEGRAM_BOT_TOKEN" not in env_vars and not existing_env.get("TELEGRAM_BOT_TOKEN"):
-                    warnings.append("Telegram bot not configured — no draft notifications")
+        if only is None or only == "anthropic":
+            _setup_anthropic(env_vars, existing_env, progress)
+            _save_progress()
 
-            if warnings:
-                typer.echo("")
-                _warn("Setup complete with warnings:")
-                for w in warnings:
-                    _warn(f"  {w}")
-                typer.echo("")
-                _warn("Run `social-hook setup` to reconfigure.")
-            else:
-                _success("Setup complete!")
+        if only is None or only == "voice":
+            _setup_voice_style(base, progress)
 
-            # Pause so user can see the result before alternate screen exits
-            if sys.stdout.isatty():
-                typer.echo("")
-                input("Press Enter to exit setup...")
+        if only is None or only == "telegram":
+            _setup_telegram(env_vars, existing_env, progress)
+            _save_progress()
 
-            return True
+        if only is None or only == "x":
+            _setup_x(env_vars, yaml_config, existing_env, existing_yaml, progress)
+            _save_progress()
 
-        except KeyboardInterrupt:
-            typer.echo("\n\nSetup cancelled. No changes were saved.")
-            if sys.stdout.isatty():
-                input("Press Enter to exit...")
-            return False
+        if only is None or only == "linkedin":
+            _setup_linkedin(env_vars, existing_env, progress)
+            _save_progress()
+
+        if only is None or only == "models":
+            _setup_models(yaml_config, existing_yaml, progress)
+            _save_progress()
+
+        if only is None or only == "image":
+            _setup_image_gen(env_vars, yaml_config, existing_env, progress)
+            _save_progress()
+
+        installed = False
+        if only is None:
+            _setup_scheduling(base, yaml_config, existing_yaml, progress)
+            _save_progress()
+            _show_summary(env_vars, yaml_config)
+            installed = _setup_installations(progress)
+
+        # --- Completion message with warnings ---
+        warnings: list[str] = []
+        if only is None:
+            has_anthropic = "ANTHROPIC_API_KEY" in env_vars or existing_env.get("ANTHROPIC_API_KEY")
+            has_telegram = "TELEGRAM_BOT_TOKEN" in env_vars or existing_env.get("TELEGRAM_BOT_TOKEN")
+            has_voice = (base / "social-context.md").exists()
+            has_x = "X_API_KEY" in env_vars or existing_env.get("X_API_KEY")
+
+            if not has_anthropic:
+                warnings.append("Anthropic API key not configured — AI features won't work")
+            if not has_telegram:
+                warnings.append("Telegram bot not configured — no draft notifications")
+            if not has_voice:
+                warnings.append("Voice & style not configured — run `social-hook setup --only voice`")
+            if not has_x:
+                warnings.append("X (Twitter) not configured — no auto-posting")
+            if not installed:
+                warnings.append("Installations skipped — run `social-hook setup` to install hook, cron, and bot")
+
+        if warnings:
+            typer.echo("")
+            _warn("Setup complete with warnings:")
+            for w in warnings:
+                _warn(f"  • {w}")
+            typer.echo("")
+            _warn("Run `social-hook setup` to reconfigure.")
+        else:
+            _success("Setup complete!")
+
+        return True
+
+    except KeyboardInterrupt:
+        typer.echo("\n\nSetup cancelled. Progress from completed sections has been saved.")
+        return False
 
 
 def _validate_existing() -> bool:
@@ -599,6 +606,7 @@ def _setup_anthropic(env_vars: dict, existing_env: dict, progress: Optional[Wiza
     if key:
         env_vars["ANTHROPIC_API_KEY"] = key
     elif existing:
+        env_vars["ANTHROPIC_API_KEY"] = existing
         _warn("Keeping existing key")
     else:
         _warn("No API key configured — AI features will not work")
@@ -841,6 +849,7 @@ def _setup_telegram(env_vars: dict, existing_env: dict, progress: Optional[Wizar
 
     if not token:
         if existing_token:
+            env_vars["TELEGRAM_BOT_TOKEN"] = existing_token
             _warn("Keeping existing token")
         else:
             _warn("No bot token configured — Telegram notifications will not work")
@@ -912,8 +921,9 @@ def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yam
 
     def _prompt_x_field(label: str, existing: str) -> str:
         if existing:
-            return _prompt(f"{label} [{_obfuscate(existing)}]", default=existing, password=True)
-        return _prompt(label, password=True)
+            typer.echo(f"  Current {label}: {_obfuscate(existing)}")
+            return _prompt(label, default=existing, hide_default=True)
+        return _prompt(label)
 
     api_key = _prompt_x_field("API Key", existing_api_key)
     if progress:
@@ -985,9 +995,10 @@ def _setup_linkedin(env_vars: dict, existing_env: dict, progress: Optional[Wizar
 
     existing_token = existing_env.get("LINKEDIN_ACCESS_TOKEN", "")
     if existing_token:
-        token = _prompt(f"LinkedIn access token [{_obfuscate(existing_token)}]", default=existing_token, password=True)
+        typer.echo(f"  Current: {_obfuscate(existing_token)}")
+        token = _prompt("LinkedIn access token", default=existing_token, hide_default=True)
     else:
-        token = _prompt("LinkedIn access token", password=True)
+        token = _prompt("LinkedIn access token")
 
     env_vars["LINKEDIN_ACCESS_TOKEN"] = token
     _success("LinkedIn credentials saved")
@@ -1231,8 +1242,8 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
                 typer.echo(f"  {k}: {v}")
 
 
-def _setup_installations(progress: Optional[WizardProgress] = None) -> None:
-    """Install hook, cron, and start bot."""
+def _setup_installations(progress: Optional[WizardProgress] = None) -> bool:
+    """Install hook, cron, and start bot. Returns True if installed, False if skipped."""
     if progress:
         progress.set_section(9, "Installation", substeps=3)
     _section("Installation", "Set up hook, scheduler, and bot", progress=progress)
@@ -1259,7 +1270,7 @@ def _setup_installations(progress: Optional[WizardProgress] = None) -> None:
 
     if not _confirm("Install all components?"):
         _warn("Skipping installation. You can install manually later.")
-        return
+        return False
 
     # Hook
     from social_hook.setup.install import install_hook, check_hook_installed
@@ -1312,6 +1323,8 @@ def _setup_installations(progress: Optional[WizardProgress] = None) -> None:
             _error(f"Bot start failed: {e}")
     if progress:
         progress.advance()
+
+    return True
 
 
 def _save_env(base: Path, env_vars: dict) -> None:
