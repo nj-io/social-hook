@@ -1,6 +1,7 @@
 """Interactive setup wizard for social-hook."""
 
 import logging
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -24,15 +25,208 @@ COMMON_TIMEZONES = [
     "UTC",
 ]
 
+WIZARD_TOTAL_SECTIONS = 9
+
+
+# =============================================================================
+# Alternate screen buffer
+# =============================================================================
+
+
+class AlternateScreen:
+    """Context manager for alternate screen buffer.
+
+    Enters the alternate screen on __enter__ and restores the normal
+    screen on __exit__.  All wizard output happens in the alternate
+    buffer so the user's original terminal content is untouched.
+    """
+
+    def __init__(self):
+        self._active = False
+
+    def __enter__(self):
+        if sys.stdout.isatty():
+            sys.stdout.write("\033[?1049h")  # enter alternate screen
+            sys.stdout.write("\033[H")  # cursor to top-left
+            sys.stdout.flush()
+            self._active = True
+        return self
+
+    def __exit__(self, *args):
+        if self._active:
+            sys.stdout.write("\033[?1049l")  # exit alternate screen
+            sys.stdout.flush()
+            self._active = False
+
+
+# =============================================================================
+# Progress tracker
+# =============================================================================
+
+
+class WizardProgress:
+    """Tracks wizard progress with section and sub-step granularity."""
+
+    def __init__(self, total_sections: int = WIZARD_TOTAL_SECTIONS):
+        self.total = total_sections
+        self.section = 0
+        self.section_label = ""
+        self.substep = 0
+        self.substeps_total = 1
+
+    def set_section(self, n: int, label: str, substeps: int = 1) -> None:
+        self.section = n
+        self.section_label = label
+        self.substep = 0
+        self.substeps_total = substeps
+
+    def advance(self) -> None:
+        self.substep = min(self.substep + 1, self.substeps_total)
+        self._render()
+
+    @property
+    def fraction(self) -> float:
+        if self.total == 0 or self.section == 0:
+            return 0.0
+        base = (self.section - 1) / self.total
+        within = (self.substep / self.substeps_total) / self.total
+        return min(base + within, 1.0)
+
+    def _render(self) -> None:
+        """Update progress bar at fixed top-of-screen position."""
+        if not sys.stdout.isatty():
+            return
+        pct = int(self.fraction * 100)
+        filled = int(self.fraction * 30)
+        bar = "━" * filled + "╺" + "─" * max(0, 29 - filled)
+        label = f"  {self.section_label} ({self.substep}/{self.substeps_total})"
+        # Save cursor, move to line 1, clear line, print, restore cursor
+        line = f"\033[2m{label}  \033[36m{bar}\033[0m\033[2m  {pct}%\033[0m"
+        sys.stdout.write(f"\033[s\033[1;1H\033[2K{line}\033[u")
+        sys.stdout.flush()
+
+    def render_top(self) -> None:
+        """Clear screen, draw progress bar on line 1, position cursor at line 3."""
+        if not sys.stdout.isatty() or self.section == 0:
+            return
+        pct = int(self.fraction * 100)
+        filled = int(self.fraction * 30)
+        bar = "━" * filled + "╺" + "─" * max(0, 29 - filled)
+        label = f"  {self.section_label} ({self.substep}/{self.substeps_total})"
+        line = f"\033[2m{label}  \033[36m{bar}\033[0m\033[2m  {pct}%\033[0m"
+        # Clear screen, draw bar on line 1, position cursor at line 3 for content
+        sys.stdout.write(f"\033[2J\033[1;1H{line}\033[3;1H")
+        sys.stdout.flush()
+
+
+# =============================================================================
+# Helper functions
+# =============================================================================
+
+
+def _obfuscate(secret: str, show_chars: int = 4) -> str:
+    """Obfuscate middle of a secret, showing first and last N chars."""
+    if not secret:
+        return ""
+    if len(secret) <= show_chars * 2:
+        return "***"
+    return f"{secret[:show_chars]}***{secret[-show_chars:]}"
+
+
+def _validate_not_empty(val: str) -> bool | str:
+    """Validate that input is not empty or trivially short."""
+    stripped = val.strip()
+    if not stripped:
+        return "Input cannot be empty"
+    if len(stripped) <= 1 and stripped.lower() in ("y", "n"):
+        return "Please enter a valid value, not just 'y' or 'n'"
+    return True
+
+
+def _validate_positive_int(val: str) -> bool | str:
+    """Validate that input is a positive integer."""
+    try:
+        n = int(val)
+        if n <= 0:
+            return "Must be a positive number"
+        return True
+    except ValueError:
+        return "Must be a number"
+
+
+def _section(title: str, description: str = "", step: int = 0, progress: Optional[WizardProgress] = None) -> None:
+    """Display a section header with Rich Panel or plain fallback."""
+    if progress and progress.section > 0:
+        # render_top clears screen, draws bar on line 1, positions cursor at line 3
+        progress.render_top()
+    elif sys.stdout.isatty():
+        # No progress tracker — just clear the screen
+        sys.stdout.write("\033[2J\033[H")
+        sys.stdout.flush()
+
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+
+        console = Console()
+        content = f"[bold]{title}[/bold]"
+        if description:
+            content += f"\n[dim]{description}[/dim]"
+        if not progress and step > 0:
+            filled = int((step / WIZARD_TOTAL_SECTIONS) * 20)
+            bar = "━" * filled + "╺" + "─" * max(0, 19 - filled)
+            content += f"\n\n[dim]Step {step}/{WIZARD_TOTAL_SECTIONS}[/dim]  [cyan]{bar}[/cyan]"
+        console.print()
+        console.print(Panel(content, border_style="cyan"))
+    except Exception:
+        typer.echo(f"\n{'=' * 50}")
+        typer.echo(f"  {title}")
+        if description:
+            typer.echo(f"  {description}")
+        if not progress and step > 0:
+            filled = int((step / WIZARD_TOTAL_SECTIONS) * 20)
+            bar = "#" * filled + "-" * (20 - filled)
+            typer.echo(f"  Step {step}/{WIZARD_TOTAL_SECTIONS}  [{bar}]")
+        typer.echo(f"{'=' * 50}")
+
+
+def _success(msg: str) -> None:
+    """Display a success message."""
+    try:
+        from rich.console import Console
+
+        Console().print(f"  [green]✓[/green] {msg}")
+    except Exception:
+        typer.echo(f"  ✓ {msg}")
+
+
+def _warn(msg: str) -> None:
+    """Display a warning message."""
+    try:
+        from rich.console import Console
+
+        Console().print(f"  [yellow]![/yellow] {msg}")
+    except Exception:
+        typer.echo(f"  ! {msg}")
+
+
+def _error(msg: str) -> None:
+    """Display an error message."""
+    try:
+        from rich.console import Console
+
+        Console().print(f"  [red]✗[/red] {msg}")
+    except Exception:
+        typer.echo(f"  ✗ {msg}")
+
+
+# =============================================================================
+# Input primitives
+# =============================================================================
+
 
 def _rich_prompt(text: str, password: bool = False, validate: Optional[Callable] = None) -> str:
-    """Prompt user for input with Rich/InquirerPy.
-
-    Args:
-        text: Prompt text
-        password: If True, mask input
-        validate: Optional validation function returning True/error string
-    """
+    """Prompt user for input with Rich/InquirerPy."""
     from InquirerPy import inquirer
 
     def _validator(val):
@@ -74,30 +268,15 @@ def _rich_select(text: str, choices: list[str], default: Optional[str] = None) -
 
 
 def _spinner(text: str, fn: Callable) -> Any:
-    """Run a function with a Rich spinner.
+    """Run a function with a Rich spinner."""
+    try:
+        from rich.console import Console
 
-    Args:
-        text: Status text to display
-        fn: Function to execute
-
-    Returns:
-        Function result
-    """
-    from rich.console import Console
-
-    console = Console()
-    with console.status(text):
+        console = Console()
+        with console.status(text):
+            return fn()
+    except Exception:
         return fn()
-
-
-def _validate_not_empty(val: str) -> bool | str:
-    """Validate that input is not empty or trivially short."""
-    stripped = val.strip()
-    if not stripped:
-        return "Input cannot be empty"
-    if len(stripped) <= 1 and stripped.lower() in ("y", "n"):
-        return "Please enter a valid value, not just 'y' or 'n'"
-    return True
 
 
 def _prompt(text: str, default: str = "", password: bool = False) -> str:
@@ -105,14 +284,24 @@ def _prompt(text: str, default: str = "", password: bool = False) -> str:
     try:
         return _rich_prompt(text, password=password, validate=_validate_not_empty if not default else None)
     except Exception:
-        # Fallback to plain input
-        if password:
-            import getpass
-            return getpass.getpass(f"{text}: ")
-        if default:
-            result = input(f"{text} [{default}]: ").strip()
-            return result or default
-        return input(f"{text}: ").strip()
+        # Fallback to plain input with validation
+        while True:
+            if password:
+                import getpass
+                val = getpass.getpass(f"{text}: ")
+            elif default:
+                val = input(f"{text} [{default}]: ").strip()
+                if not val:
+                    return default
+            else:
+                val = input(f"{text}: ").strip()
+
+            if not default:
+                check = _validate_not_empty(val)
+                if check is not True:
+                    print(check)
+                    continue
+            return val
 
 
 def _confirm(text: str, default: bool = True) -> bool:
@@ -149,6 +338,83 @@ def _select(text: str, choices: list[str], default: Optional[str] = None) -> str
                 pass
 
 
+def _prompt_api_key(
+    text: str,
+    validate_fn: Callable[[str], tuple[bool, str]],
+    existing: str = "",
+) -> str | None:
+    """Prompt for an API key, validate it, and re-prompt on failure.
+
+    Returns the valid key, or None if user chooses to skip.
+    """
+    while True:
+        if existing:
+            key = _prompt(f"{text} [{_obfuscate(existing)}]", default=existing, password=True)
+        else:
+            key = _prompt(text, password=True)
+
+        success, msg = _spinner("Validating...", lambda: validate_fn(key))
+        if success:
+            _success(msg)
+            return key
+
+        _error(msg)
+        if not _confirm("Try again?"):
+            return None
+
+
+# =============================================================================
+# Config loading
+# =============================================================================
+
+
+def _load_existing() -> tuple[dict[str, str], dict[str, Any]]:
+    """Load existing configuration for pre-population.
+
+    Returns:
+        (existing_env, existing_yaml) — empty dicts if no config exists.
+    """
+    existing_env: dict[str, str] = {}
+    existing_yaml: dict[str, Any] = {}
+
+    try:
+        from social_hook.config import load_full_config
+
+        config = load_full_config()
+        existing_env = dict(config.env) if config.env else {}
+        existing_yaml = {
+            "models": {
+                "evaluator": config.models.evaluator,
+                "drafter": config.models.drafter,
+                "gatekeeper": config.models.gatekeeper,
+            },
+            "platforms": {
+                "x": {
+                    "enabled": config.platforms.x.enabled,
+                    "account_tier": config.platforms.x.account_tier,
+                },
+            },
+            "scheduling": {
+                "timezone": config.scheduling.timezone,
+                "max_posts_per_day": config.scheduling.max_posts_per_day,
+                "min_gap_minutes": config.scheduling.min_gap_minutes,
+            },
+            "image_generation": {
+                "enabled": config.image_generation.enabled,
+                "service": config.image_generation.service,
+            },
+        }
+    except Exception:
+        pass  # No existing config — fresh setup
+
+    return existing_env, existing_yaml
+
+
+# =============================================================================
+# Main wizard
+# =============================================================================
+
+
 def run_wizard(
     validate: bool = False,
     only: Optional[str] = None,
@@ -167,68 +433,117 @@ def run_wizard(
     if validate:
         return _validate_existing()
 
-    # Welcome panel
-    try:
-        from rich.console import Console
-        from rich.panel import Panel
+    with AlternateScreen():
+        # Welcome panel
+        try:
+            from rich.console import Console
+            from rich.panel import Panel
 
-        console = Console()
-        console.print(Panel(
-            "[bold]Social Hook Setup[/bold]\n\n"
-            "This wizard will configure social-hook for your system.\n"
-            "Press Ctrl+C at any time to cancel.",
-            title="Welcome",
-            border_style="cyan",
-        ))
-    except Exception:
-        typer.echo("\n=== Social Hook Setup ===\n")
-        typer.echo("This wizard will configure social-hook for your system.")
-        typer.echo("Press Ctrl+C at any time to cancel.\n")
+            console = Console()
+            console.print()
+            console.print(Panel(
+                "[bold]Social Hook Setup[/bold]\n\n"
+                "This wizard will walk you through:\n"
+                "  1. API credentials (Anthropic, Telegram)\n"
+                "  2. Voice & style configuration\n"
+                "  3. Platform setup (X, LinkedIn)\n"
+                "  4. Model selection\n"
+                "  5. Scheduling preferences\n\n"
+                "Press Ctrl+C at any time to cancel.\n"
+                "[dim]Existing values shown as defaults.[/dim]",
+                title="Welcome",
+                border_style="cyan",
+            ))
+            console.print()
+        except Exception:
+            typer.echo("\n=== Social Hook Setup ===\n")
+            typer.echo("This wizard will walk you through:")
+            typer.echo("  1. API credentials (Anthropic, Telegram)")
+            typer.echo("  2. Voice & style configuration")
+            typer.echo("  3. Platform setup (X, LinkedIn)")
+            typer.echo("  4. Model selection")
+            typer.echo("  5. Scheduling preferences")
+            typer.echo("\nPress Ctrl+C at any time to cancel.")
+            typer.echo("Existing values shown as defaults.\n")
 
-    try:
-        # Initialize filesystem
-        base = init_filesystem()
+        # Pause so user can read welcome before first section clears the screen
+        if sys.stdout.isatty():
+            input("  Press Enter to begin setup...")
 
-        env_vars: dict[str, str] = {}
-        yaml_config: dict[str, Any] = {}
+        try:
+            # Initialize filesystem
+            base = init_filesystem()
 
-        if only is None or only == "anthropic":
-            _setup_anthropic(env_vars)
+            # Load existing config for pre-population
+            existing_env, existing_yaml = _load_existing()
 
-        if only is None or only == "voice":
-            _setup_voice_style(base)
+            # Progress tracker
+            progress = WizardProgress()
 
-        if only is None or only == "telegram":
-            _setup_telegram(env_vars)
+            env_vars: dict[str, str] = {}
+            yaml_config: dict[str, Any] = {}
 
-        if only is None or only == "x":
-            _setup_x(env_vars, yaml_config)
+            if only is None or only == "anthropic":
+                _setup_anthropic(env_vars, existing_env, progress)
 
-        if only is None or only == "linkedin":
-            _setup_linkedin(env_vars)
+            if only is None or only == "voice":
+                _setup_voice_style(base, progress)
 
-        if only is None or only == "models":
-            _setup_models(yaml_config)
+            if only is None or only == "telegram":
+                _setup_telegram(env_vars, existing_env, progress)
 
-        if only is None or only == "image":
-            _setup_image_gen(env_vars, yaml_config)
+            if only is None or only == "x":
+                _setup_x(env_vars, yaml_config, existing_env, existing_yaml, progress)
 
-        # Save .env file
-        if env_vars:
-            _save_env(base, env_vars)
+            if only is None or only == "linkedin":
+                _setup_linkedin(env_vars, existing_env, progress)
 
-        if only is None:
-            _setup_scheduling(base, yaml_config)
-            _save_config_yaml(base, yaml_config)
-            _show_summary(env_vars, yaml_config)
-            _setup_installations()
+            if only is None or only == "models":
+                _setup_models(yaml_config, existing_yaml, progress)
 
-        typer.echo("\nSetup complete!")
-        return True
+            if only is None or only == "image":
+                _setup_image_gen(env_vars, yaml_config, existing_env, progress)
 
-    except KeyboardInterrupt:
-        typer.echo("\n\nSetup cancelled. No changes were saved.")
-        return False
+            # Save .env file
+            if env_vars:
+                _save_env(base, env_vars)
+
+            if only is None:
+                _setup_scheduling(base, yaml_config, existing_yaml, progress)
+                _save_config_yaml(base, yaml_config)
+                _show_summary(env_vars, yaml_config)
+                _setup_installations(progress)
+
+            # --- Completion message with warnings ---
+            warnings: list[str] = []
+            if only is None:
+                if "ANTHROPIC_API_KEY" not in env_vars and not existing_env.get("ANTHROPIC_API_KEY"):
+                    warnings.append("Anthropic API key not configured — AI features won't work")
+                if "TELEGRAM_BOT_TOKEN" not in env_vars and not existing_env.get("TELEGRAM_BOT_TOKEN"):
+                    warnings.append("Telegram bot not configured — no draft notifications")
+
+            if warnings:
+                typer.echo("")
+                _warn("Setup complete with warnings:")
+                for w in warnings:
+                    _warn(f"  {w}")
+                typer.echo("")
+                _warn("Run `social-hook setup` to reconfigure.")
+            else:
+                _success("Setup complete!")
+
+            # Pause so user can see the result before alternate screen exits
+            if sys.stdout.isatty():
+                typer.echo("")
+                input("Press Enter to exit setup...")
+
+            return True
+
+        except KeyboardInterrupt:
+            typer.echo("\n\nSetup cancelled. No changes were saved.")
+            if sys.stdout.isatty():
+                input("Press Enter to exit...")
+            return False
 
 
 def _validate_existing() -> bool:
@@ -266,148 +581,469 @@ def _validate_existing() -> bool:
     return True
 
 
-def _setup_anthropic(env_vars: dict) -> None:
+# =============================================================================
+# Setup steps
+# =============================================================================
+
+
+def _setup_anthropic(env_vars: dict, existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
     """Configure Anthropic API key."""
-    typer.echo("--- Anthropic API Key ---")
-    key = _prompt("Enter your Anthropic API key", password=True)
+    if progress:
+        progress.set_section(1, "Anthropic", substeps=1)
+    _section("Anthropic API Key", "Powers all AI evaluation and content generation", progress=progress)
+
+    from social_hook.setup.validation import validate_anthropic_key
+
+    existing = existing_env.get("ANTHROPIC_API_KEY", "")
+    key = _prompt_api_key("Anthropic API key", validate_anthropic_key, existing=existing)
     if key:
         env_vars["ANTHROPIC_API_KEY"] = key
+    elif existing:
+        _warn("Keeping existing key")
+    else:
+        _warn("No API key configured — AI features will not work")
 
-        # Validate with spinner
-        from social_hook.setup.validation import validate_anthropic_key
-
-        success, msg = _spinner("Validating API key...", lambda: validate_anthropic_key(key))
-        if success:
-            typer.echo(f"  {msg}\n")
-        else:
-            typer.echo(f"  Warning: {msg}\n")
+    if progress:
+        progress.advance()
 
 
-def _setup_voice_style(base: Path) -> None:
+def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) -> None:
     """Configure voice and style (social-context.md)."""
-    typer.echo("--- Voice & Style ---")
-    if not _confirm("Configure voice and style now?"):
-        return
+    if progress:
+        progress.set_section(2, "Voice & Style", substeps=8)
+    _section("Voice & Style", "Define how your content sounds and who it's for", progress=progress)
 
-    tone = _prompt("Describe your tone (e.g., 'Technical but approachable')")
-    audience = _prompt("Target audience (e.g., 'Developers, tech leads')")
-    topics = _prompt("Main topics (e.g., 'Python, automation, devtools')")
-    pet_peeves = _prompt("Pet peeves to avoid (e.g., 'Hype language, emoji overuse')")
+    context_path = base / "social-context.md"
+
+    # Show existing config if present
+    if context_path.exists():
+        try:
+            from rich.console import Console
+            from rich.panel import Panel
+
+            console = Console()
+            content = context_path.read_text()
+            # Show a preview (first 500 chars)
+            preview = content[:500] + ("..." if len(content) > 500 else "")
+            console.print(Panel(preview, title="Current voice config", border_style="dim"))
+        except Exception:
+            typer.echo("  Current voice config exists.")
+
+        if not _confirm("Update voice settings?", default=False):
+            _success("Keeping existing voice config")
+            return
+    else:
+        # Show intro explaining what this is
+        try:
+            from rich.console import Console
+            from rich.panel import Panel
+
+            Console().print(Panel(
+                "Voice & style settings control how your social media content sounds.\n"
+                "This creates a social-context.md file that guides the AI drafter.\n\n"
+                "[dim]Example: 'Conversational, technically confident but not arrogant.\n"
+                "Shares the journey honestly, including challenges.'[/dim]",
+                border_style="dim",
+            ))
+        except Exception:
+            typer.echo("  Voice & style settings control how your content sounds.")
+            typer.echo("  This creates a social-context.md file that guides the AI drafter.")
+
+        if not _confirm("Configure voice and style now?"):
+            return
+
+    # --- Voice ---
+    typer.echo("")
+    voice = _prompt(
+        "Describe your voice/tone",
+        default="Conversational, technically confident but not arrogant. Shares the journey honestly.",
+    )
+    if progress:
+        progress.advance()
+
+    sample1 = _prompt(
+        "Writing sample (paste an example of your writing style, or press Enter to skip)",
+        default="",
+    )
+    if progress:
+        progress.advance()
+
+    # --- Identity ---
+    identity_choices = [
+        "I (first person)",
+        "We (team)",
+        "Project voice",
+    ]
+    identity = _select("Who speaks in the content?", identity_choices, default="I (first person)")
+    if progress:
+        progress.advance()
+
+    # --- Pet Peeves ---
+    typer.echo("")
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+
+        Console().print(Panel(
+            "[dim]Examples: 'Excited to announce...', 'Game-changing', 'Leverage',\n"
+            "'Utilize', 'Revolutionary', 'It\\'s important to note that...',\n"
+            "'Here\\'s the thing', 'Let\\'s be honest', 'This is huge',\n"
+            "'Hot take:', 'Unpopular opinion:', em dash pivots (X — Y)[/dim]",
+            title="Pet peeves reference",
+            border_style="dim",
+        ))
+    except Exception:
+        typer.echo("  Examples: 'Excited to announce...', 'Game-changing', 'Leverage',")
+        typer.echo("  'Here's the thing', 'Hot take:', 'Unpopular opinion:', em dash pivots")
+
+    pet_peeves = _prompt(
+        "Words/phrases to never use (comma-separated)",
+        default="Excited to announce, Game-changing, Revolutionary, Leverage, Utilize, Here's the thing, Let's be honest, This is huge, Hot take, Unpopular opinion, em dash pivots",
+    )
+    if progress:
+        progress.advance()
+
+    grammar = _prompt(
+        "Grammar preferences",
+        default="Oxford comma: yes, emoji: sparingly, exclamation marks: rare",
+    )
+    if progress:
+        progress.advance()
+
+    # --- Audience ---
+    typer.echo("")
+    audience = _prompt(
+        "Primary audience",
+        default="Developers, indie hackers, builders",
+    )
+    tech_level = _select("Audience technical level:", [
+        "Beginner",
+        "Intermediate",
+        "Intermediate to advanced",
+        "Advanced",
+    ], default="Intermediate to advanced")
+    audience_cares = _prompt(
+        "What does your audience care about?",
+        default="Practical tools, honest experiences, code they can learn from",
+    )
+    if progress:
+        progress.advance()
+
+    # --- Topics ---
+    typer.echo("")
+    topics_emphasize = _prompt(
+        "Topics to emphasize (comma-separated)",
+        default="Building in public, automation, developer tools",
+    )
+    topics_avoid = _prompt(
+        "Topics to avoid (comma-separated)",
+        default="AI doom debates, competitor criticism, politics",
+    )
+    if progress:
+        progress.advance()
+
+    # --- Generate social-context.md ---
+    samples_section = ""
+    if sample1:
+        samples_section = f"""
+### Writing Samples
+
+**Sample 1:**
+> "{sample1}"
+"""
 
     context_content = f"""# Social Context
 
-## Voice
-{tone}
+> Voice, style, and audience guidance for content generation.
+
+---
+
+## Author's Voice
+
+### Voice Description
+{voice}
+{samples_section}
+---
+
+## Author's Pet Peeves
+
+### Words/Phrases to Avoid
+{chr(10).join(f'- "{p.strip()}"' for p in pet_peeves.split(',') if p.strip())}
+
+### Grammar/Style Preferences
+{chr(10).join(f'- {p.strip()}' for p in grammar.split(',') if p.strip())}
+
+### Authenticity Rules
+- Never claim something works if it doesn't yet
+- Acknowledge limitations and trade-offs
+- Show the messy parts, not just polished outcomes
+
+---
+
+## Writing/Narrative Strategy
+
+### Identity
+{identity.split(' (')[0]}
+
+---
 
 ## Audience
-{audience}
 
-## Topics
-{topics}
+### Primary Audience
+- **Who:** {audience}
+- **Technical level:** {tech_level}
+- **What they care about:** {audience_cares}
 
-## Pet Peeves
-{pet_peeves}
+---
+
+## Themes & Topics
+
+### Emphasize
+{chr(10).join(f'- {t.strip()}' for t in topics_emphasize.split(',') if t.strip())}
+
+### Avoid
+{chr(10).join(f'- {t.strip()}' for t in topics_avoid.split(',') if t.strip())}
+
+---
+
+## Engagement Patterns
+
+### Call-to-Action Usage
+- **Often:** Questions to audience ("How do you handle X?")
+- **Sometimes:** Follow for updates
+- **Rarely:** Star the repo, check out the project
+- **Never:** Aggressive sales, "link in bio" spam
+
+### Hashtag Strategy
+- **X:** Minimal. Only if genuinely discoverable (#buildinpublic). Never stuff.
+- **LinkedIn:** Standard 3-5 relevant tags.
 """
-    context_path = base / "social-context.md"
+
     context_path.write_text(context_content)
-    typer.echo(f"  Voice config saved to {context_path}\n")
+    _success(f"Voice config saved to {context_path}")
+
+    if progress:
+        progress.advance()
 
 
-def _setup_telegram(env_vars: dict) -> None:
+def _setup_telegram(env_vars: dict, existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
     """Configure Telegram bot."""
-    typer.echo("--- Telegram Bot ---")
+    if progress:
+        progress.set_section(3, "Telegram", substeps=2)
+    _section("Telegram Bot", "Review and approve posts via Telegram", progress=progress)
     if not _confirm("Set up Telegram bot?"):
         return
 
-    token = _prompt("Bot token (from @BotFather)")
-    if token:
-        env_vars["TELEGRAM_BOT_TOKEN"] = token
+    from social_hook.setup.validation import validate_telegram_bot
 
-        # Validate with spinner
-        from social_hook.setup.validation import validate_telegram_bot
+    existing_token = existing_env.get("TELEGRAM_BOT_TOKEN", "")
+    token = _prompt_api_key("Bot token (from @BotFather)", validate_telegram_bot, existing=existing_token)
 
-        success, msg = _spinner("Validating bot token...", lambda: validate_telegram_bot(token))
-        if success:
-            typer.echo(f"  {msg}")
+    if not token:
+        if existing_token:
+            _warn("Keeping existing token")
         else:
-            typer.echo(f"  Warning: {msg}")
+            _warn("No bot token configured — Telegram notifications will not work")
+        return
 
-        typer.echo("\nSend any message to your bot to capture your chat ID...")
-        from social_hook.setup.validation import capture_telegram_chat_id
+    env_vars["TELEGRAM_BOT_TOKEN"] = token
+    if progress:
+        progress.advance()
 
-        chat_id = capture_telegram_chat_id(token, timeout_seconds=30)
-        if chat_id:
-            env_vars["TELEGRAM_ALLOWED_CHAT_IDS"] = chat_id
-            typer.echo(f"Chat ID captured: {chat_id}\n")
-        else:
-            chat_id = _prompt("Chat ID (manual entry)")
-            if chat_id:
+    # Chat ID capture
+    existing_chat_id = existing_env.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
+    typer.echo("\nSend any message to your bot to capture your chat ID...")
+
+    from social_hook.setup.validation import capture_telegram_chat_id
+
+    chat_id = capture_telegram_chat_id(token, timeout_seconds=30)
+    if chat_id:
+        env_vars["TELEGRAM_ALLOWED_CHAT_IDS"] = chat_id
+        _success(f"Chat ID captured: {chat_id}")
+    else:
+        _warn("No message received. Enter chat ID manually.")
+        default_chat = existing_chat_id or ""
+        while True:
+            if default_chat:
+                chat_id = _prompt(f"Chat ID [{default_chat}]", default=default_chat)
+            else:
+                chat_id = _prompt("Chat ID")
+            # Validate it's numeric
+            if chat_id.lstrip("-").isdigit():
                 env_vars["TELEGRAM_ALLOWED_CHAT_IDS"] = chat_id
+                _success(f"Chat ID set: {chat_id}")
+                break
+            _error("Chat ID must be a number")
+
+    if progress:
+        progress.advance()
 
 
-def _setup_x(env_vars: dict, yaml_config: dict) -> None:
+def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yaml: dict,
+             progress: Optional[WizardProgress] = None) -> None:
     """Configure X (Twitter) API."""
-    typer.echo("--- X (Twitter) ---")
+    if progress:
+        progress.set_section(4, "X (Twitter)", substeps=5)
+    _section("X (Twitter)", "Post to X automatically", progress=progress)
     if not _confirm("Set up X posting?", default=False):
         return
 
-    env_vars["X_API_KEY"] = _prompt("API Key")
-    env_vars["X_API_SECRET"] = _prompt("API Secret", password=True)
-    env_vars["X_ACCESS_TOKEN"] = _prompt("Access Token")
-    env_vars["X_ACCESS_SECRET"] = _prompt("Access Token Secret", password=True)
+    # Show console.x.com link
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+
+        Console().print(Panel(
+            "Get your API keys from the X Developer Console:\n"
+            "[link=https://console.x.com]https://console.x.com[/link]\n\n"
+            "[dim]You need 4 credentials (under OAuth 1.0a):\n"
+            "API Key, API Secret, Access Token, Access Token Secret[/dim]",
+            border_style="dim",
+        ))
+    except Exception:
+        typer.echo("  Get your API keys from: https://console.x.com")
+        typer.echo("  You need: API Key, API Secret, Access Token, Access Token Secret")
+
+    # Collect all 4 credentials with pre-population
+    existing_api_key = existing_env.get("X_API_KEY", "")
+    existing_api_secret = existing_env.get("X_API_SECRET", "")
+    existing_access_token = existing_env.get("X_ACCESS_TOKEN", "")
+    existing_access_secret = existing_env.get("X_ACCESS_SECRET", "")
+
+    def _prompt_x_field(label: str, existing: str) -> str:
+        if existing:
+            return _prompt(f"{label} [{_obfuscate(existing)}]", default=existing, password=True)
+        return _prompt(label, password=True)
+
+    api_key = _prompt_x_field("API Key", existing_api_key)
+    if progress:
+        progress.advance()
+    api_secret = _prompt_x_field("API Secret", existing_api_secret)
+    if progress:
+        progress.advance()
+    access_token = _prompt_x_field("Access Token", existing_access_token)
+    if progress:
+        progress.advance()
+    access_secret = _prompt_x_field("Access Token Secret", existing_access_secret)
+    if progress:
+        progress.advance()
+
+    # Validate all 4 together
+    from social_hook.setup.validation import validate_x_api
+
+    while True:
+        success, msg = _spinner(
+            "Validating X credentials...",
+            lambda: validate_x_api(api_key, api_secret, access_token, access_secret),
+        )
+        if success:
+            _success(msg)
+            break
+        _error(msg)
+        if not _confirm("Try again with new credentials?"):
+            _warn("X credentials saved without validation")
+            break
+        api_key = _prompt_x_field("API Key", api_key)
+        api_secret = _prompt_x_field("API Secret", api_secret)
+        access_token = _prompt_x_field("Access Token", access_token)
+        access_secret = _prompt_x_field("Access Token Secret", access_secret)
+
+    env_vars["X_API_KEY"] = api_key
+    env_vars["X_API_SECRET"] = api_secret
+    env_vars["X_ACCESS_TOKEN"] = access_token
+    env_vars["X_ACCESS_SECRET"] = access_secret
 
     # Tier selection
+    existing_tier = existing_yaml.get("platforms", {}).get("x", {}).get("account_tier", "free")
     tier_choices = [
         "free (280 chars)",
         "basic (25,000 chars)",
         "premium (25,000 chars)",
         "premium_plus (25,000 chars)",
     ]
-    tier_display = _select("X account tier:", tier_choices, default=tier_choices[0])
-    tier_value = tier_display.split(" ")[0]  # Extract tier name
+    # Set default to match existing tier
+    default_tier = next((c for c in tier_choices if c.startswith(existing_tier)), tier_choices[0])
+    tier_display = _select("X account tier:", tier_choices, default=default_tier)
+    tier_value = tier_display.split(" ")[0]
 
     yaml_config.setdefault("platforms", {}).setdefault("x", {})
     yaml_config["platforms"]["x"]["enabled"] = True
     yaml_config["platforms"]["x"]["account_tier"] = tier_value
 
-    typer.echo("X credentials saved.\n")
+    _success("X configured")
+    if progress:
+        progress.advance()
 
 
-def _setup_linkedin(env_vars: dict) -> None:
+def _setup_linkedin(env_vars: dict, existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
     """Configure LinkedIn API."""
-    typer.echo("--- LinkedIn ---")
+    if progress:
+        progress.set_section(5, "LinkedIn", substeps=1)
+    _section("LinkedIn", "Post to LinkedIn", progress=progress)
     if not _confirm("Set up LinkedIn posting?", default=False):
         return
 
-    access_token = _prompt("LinkedIn access token")
-    if access_token:
-        env_vars["LINKEDIN_ACCESS_TOKEN"] = access_token
-    typer.echo("LinkedIn credentials saved.\n")
+    existing_token = existing_env.get("LINKEDIN_ACCESS_TOKEN", "")
+    if existing_token:
+        token = _prompt(f"LinkedIn access token [{_obfuscate(existing_token)}]", default=existing_token, password=True)
+    else:
+        token = _prompt("LinkedIn access token", password=True)
+
+    env_vars["LINKEDIN_ACCESS_TOKEN"] = token
+    _success("LinkedIn credentials saved")
+    if progress:
+        progress.advance()
 
 
-def _setup_models(yaml_config: dict) -> None:
+def _setup_models(yaml_config: dict, existing_yaml: dict, progress: Optional[WizardProgress] = None) -> None:
     """Configure LLM models."""
-    typer.echo("--- Model Selection ---")
+    if progress:
+        progress.set_section(6, "Models", substeps=3)
+    _section("Model Selection", "Choose AI models for each role", progress=progress)
     if not _confirm("Customize models? (defaults: Opus for eval/draft, Haiku for gatekeeper)"):
         return
 
-    model_choices = ["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"]
+    existing_models = existing_yaml.get("models", {})
 
-    evaluator = _select("Evaluator model:", model_choices, default="claude-opus-4-5")
-    drafter = _select("Drafter model:", model_choices, default="claude-opus-4-5")
-    gatekeeper = _select("Gatekeeper model:", model_choices, default="claude-haiku-4-5")
+    # Evaluator
+    eval_choices = ["claude-opus-4-5 (recommended)", "claude-sonnet-4-5", "claude-haiku-4-5"]
+    existing_eval = existing_models.get("evaluator", "claude-opus-4-5")
+    default_eval = next((c for c in eval_choices if c.startswith(existing_eval)), eval_choices[0])
+    evaluator = _select("Evaluator model (decides post-worthiness):", eval_choices, default=default_eval)
+    if progress:
+        progress.advance()
 
+    # Drafter
+    draft_choices = ["claude-opus-4-5 (recommended)", "claude-sonnet-4-5", "claude-haiku-4-5"]
+    existing_draft = existing_models.get("drafter", "claude-opus-4-5")
+    default_draft = next((c for c in draft_choices if c.startswith(existing_draft)), draft_choices[0])
+    drafter = _select("Drafter model (creates content):", draft_choices, default=default_draft)
+    if progress:
+        progress.advance()
+
+    # Gatekeeper
+    gate_choices = ["claude-haiku-4-5 (recommended)", "claude-sonnet-4-5", "claude-opus-4-5"]
+    existing_gate = existing_models.get("gatekeeper", "claude-haiku-4-5")
+    default_gate = next((c for c in gate_choices if c.startswith(existing_gate)), gate_choices[0])
+    gatekeeper = _select("Gatekeeper model (Telegram interactions):", gate_choices, default=default_gate)
+    if progress:
+        progress.advance()
+
+    # Strip "(recommended)" suffix
     yaml_config["models"] = {
-        "evaluator": evaluator,
-        "drafter": drafter,
-        "gatekeeper": gatekeeper,
+        "evaluator": evaluator.split(" (")[0],
+        "drafter": drafter.split(" (")[0],
+        "gatekeeper": gatekeeper.split(" (")[0],
     }
-    typer.echo("Models configured.\n")
+    _success("Models configured")
 
 
-def _setup_image_gen(env_vars: dict, yaml_config: dict) -> None:
+def _setup_image_gen(env_vars: dict, yaml_config: dict, existing_env: dict,
+                     progress: Optional[WizardProgress] = None) -> None:
     """Configure image generation."""
-    typer.echo("--- Image Generation ---")
+    if progress:
+        progress.set_section(7, "Image Gen", substeps=2)
+    _section("Image Generation", "AI-generated visuals for posts", progress=progress)
     if not _confirm("Enable AI image generation?"):
         yaml_config.setdefault("image_generation", {})["enabled"] = False
         return
@@ -417,27 +1053,37 @@ def _setup_image_gen(env_vars: dict, yaml_config: dict) -> None:
 
     yaml_config.setdefault("image_generation", {})["enabled"] = True
     yaml_config["image_generation"]["service"] = service
+    if progress:
+        progress.advance()
 
     if service == "nano_banana_pro":
-        api_key = _prompt("Gemini API key (for Nano Banana Pro)", password=True)
-        if api_key:
-            env_vars["GEMINI_API_KEY"] = api_key
+        from social_hook.setup.validation import validate_image_gen
 
-            from social_hook.setup.validation import validate_image_gen
+        existing_key = existing_env.get("GEMINI_API_KEY", "")
+        key = _prompt_api_key(
+            "Gemini API key (for Nano Banana Pro)",
+            lambda k: validate_image_gen(service, k),
+            existing=existing_key,
+        )
+        if key:
+            env_vars["GEMINI_API_KEY"] = key
+        elif existing_key:
+            _warn("Keeping existing key")
+        else:
+            _warn("No Gemini key configured — image generation will not work")
 
-            success, msg = _spinner(
-                "Validating image gen...",
-                lambda: validate_image_gen(service, api_key),
-            )
-            if success:
-                typer.echo(f"  {msg}\n")
-            else:
-                typer.echo(f"  Warning: {msg}\n")
+    if progress:
+        progress.advance()
 
 
-def _setup_scheduling(base: Path, yaml_config: dict) -> None:
+def _setup_scheduling(base: Path, yaml_config: dict, existing_yaml: dict,
+                      progress: Optional[WizardProgress] = None) -> None:
     """Configure scheduling settings."""
-    typer.echo("--- Scheduling ---")
+    if progress:
+        progress.set_section(8, "Scheduling", substeps=3)
+    _section("Scheduling", "When and how often to post", progress=progress)
+
+    existing_sched = existing_yaml.get("scheduling", {})
 
     # Detect system timezone
     try:
@@ -450,18 +1096,61 @@ def _setup_scheduling(base: Path, yaml_config: dict) -> None:
     tz_choices = list(COMMON_TIMEZONES)
     if local_tz not in tz_choices:
         tz_choices.insert(0, local_tz)
-    default_tz = local_tz if local_tz in tz_choices else "UTC"
+
+    existing_tz = existing_sched.get("timezone", local_tz)
+    if existing_tz not in tz_choices:
+        tz_choices.insert(0, existing_tz)
+    default_tz = existing_tz if existing_tz in tz_choices else "UTC"
 
     tz = _select("Timezone:", tz_choices, default=default_tz)
-    max_posts = _prompt("Max posts per day", default="3")
-    min_gap = _prompt("Min gap between posts (minutes)", default="30")
+    if progress:
+        progress.advance()
+
+    # Max posts per day — selector with recommended + custom
+    existing_max = str(existing_sched.get("max_posts_per_day", 3))
+    max_choices = ["2", "3 (recommended)", "5", "Custom"]
+    default_max = next((c for c in max_choices if c.startswith(existing_max)), "3 (recommended)")
+    max_posts = _select("Max posts per day:", max_choices, default=default_max)
+    if max_posts == "Custom":
+        while True:
+            max_posts = _prompt("Enter max posts per day", default=existing_max)
+            check = _validate_positive_int(max_posts)
+            if check is True:
+                break
+            _error(check)
+    max_posts_val = int(max_posts.split(" ")[0])
+    if progress:
+        progress.advance()
+
+    # Min gap — selector with recommended + custom
+    existing_gap = str(existing_sched.get("min_gap_minutes", 30))
+    gap_choices = ["15", "30 (recommended)", "60", "Custom"]
+    default_gap = next((c for c in gap_choices if c.startswith(existing_gap)), "30 (recommended)")
+    min_gap = _select("Min gap between posts (minutes):", gap_choices, default=default_gap)
+    if min_gap == "Custom":
+        while True:
+            min_gap = _prompt("Enter min gap in minutes", default=existing_gap)
+            check = _validate_positive_int(min_gap)
+            if check is True:
+                break
+            _error(check)
+    min_gap_val = int(min_gap.split(" ")[0])
+    if progress:
+        progress.advance()
 
     yaml_config.setdefault("scheduling", {})
     yaml_config["scheduling"]["timezone"] = tz
-    yaml_config["scheduling"]["max_posts_per_day"] = int(max_posts)
-    yaml_config["scheduling"]["min_gap_minutes"] = int(min_gap)
+    yaml_config["scheduling"]["max_posts_per_day"] = max_posts_val
+    yaml_config["scheduling"]["min_gap_minutes"] = min_gap_val
     yaml_config["scheduling"]["optimal_days"] = ["Tue", "Wed", "Thu"]
     yaml_config["scheduling"]["optimal_hours"] = [9, 12, 17]
+
+    _success("Scheduling configured")
+
+
+# =============================================================================
+# Save, summary, install
+# =============================================================================
 
 
 def _save_config_yaml(base: Path, yaml_config: dict) -> None:
@@ -489,7 +1178,7 @@ def _save_config_yaml(base: Path, yaml_config: dict) -> None:
             existing[key] = val
 
     config_path.write_text(yaml.dump(existing, default_flow_style=False))
-    typer.echo(f"Config saved to {config_path}\n")
+    _success(f"Config saved to {config_path}")
 
 
 def _show_summary(env_vars: dict, yaml_config: dict) -> None:
@@ -504,16 +1193,21 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
         table.add_column("Value", style="green")
 
         if "ANTHROPIC_API_KEY" in env_vars:
-            table.add_row("Anthropic API Key", "***configured***")
+            table.add_row("Anthropic API Key", _obfuscate(env_vars["ANTHROPIC_API_KEY"]))
         if "TELEGRAM_BOT_TOKEN" in env_vars:
-            table.add_row("Telegram Bot", "***configured***")
+            table.add_row("Telegram Bot", _obfuscate(env_vars["TELEGRAM_BOT_TOKEN"]))
         if "X_API_KEY" in env_vars:
-            table.add_row("X (Twitter)", "***configured***")
+            table.add_row("X (Twitter)", _obfuscate(env_vars["X_API_KEY"]))
+        if "LINKEDIN_ACCESS_TOKEN" in env_vars:
+            table.add_row("LinkedIn", _obfuscate(env_vars["LINKEDIN_ACCESS_TOKEN"]))
+        if "GEMINI_API_KEY" in env_vars:
+            table.add_row("Image Gen (Gemini)", _obfuscate(env_vars["GEMINI_API_KEY"]))
 
         models = yaml_config.get("models", {})
         if models:
             table.add_row("Evaluator Model", models.get("evaluator", "default"))
             table.add_row("Drafter Model", models.get("drafter", "default"))
+            table.add_row("Gatekeeper Model", models.get("gatekeeper", "default"))
 
         platforms = yaml_config.get("platforms", {})
         x_config = platforms.get("x", {})
@@ -523,32 +1217,101 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
         scheduling = yaml_config.get("scheduling", {})
         if scheduling.get("timezone"):
             table.add_row("Timezone", scheduling["timezone"])
+        if scheduling.get("max_posts_per_day"):
+            table.add_row("Max Posts/Day", str(scheduling["max_posts_per_day"]))
 
+        console.print()
         console.print(table)
     except Exception:
         typer.echo("\n--- Configuration Summary ---")
         for k, v in env_vars.items():
-            typer.echo(f"  {k}: ***set***")
+            if any(secret in k for secret in ("KEY", "TOKEN", "SECRET")):
+                typer.echo(f"  {k}: {_obfuscate(v)}")
+            else:
+                typer.echo(f"  {k}: {v}")
 
 
-def _setup_installations() -> None:
-    """Install hook and cron."""
-    typer.echo("--- Installation ---")
+def _setup_installations(progress: Optional[WizardProgress] = None) -> None:
+    """Install hook, cron, and start bot."""
+    if progress:
+        progress.set_section(9, "Installation", substeps=3)
+    _section("Installation", "Set up hook, scheduler, and bot", progress=progress)
 
-    if _confirm("Install Claude Code hook?"):
-        from social_hook.setup.install import install_hook
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
 
+        Console().print(Panel(
+            "The following components will be installed:\n\n"
+            "  • Claude Code hook → ~/.claude/hooks.json\n"
+            "    Triggers social-hook on git commit\n\n"
+            "  • Scheduler cron job → runs every minute\n"
+            "    Posts approved drafts at scheduled times\n\n"
+            "  • Telegram bot → background daemon\n"
+            "    Receives and processes draft reviews",
+            border_style="dim",
+        ))
+    except Exception:
+        typer.echo("  The following will be installed:")
+        typer.echo("  • Claude Code hook (triggers on git commit)")
+        typer.echo("  • Scheduler cron job (posts at scheduled times)")
+        typer.echo("  • Telegram bot daemon (processes reviews)")
+
+    if not _confirm("Install all components?"):
+        _warn("Skipping installation. You can install manually later.")
+        return
+
+    # Hook
+    from social_hook.setup.install import install_hook, check_hook_installed
+
+    if check_hook_installed():
+        _success("Claude Code hook already installed")
+    else:
         success, msg = install_hook()
-        typer.echo(f"  {msg}")
+        if success:
+            _success(msg)
+        else:
+            _error(msg)
+    if progress:
+        progress.advance()
 
-    if _confirm("Install scheduler cron job?"):
-        from social_hook.setup.install import install_cron
+    # Cron
+    from social_hook.setup.install import install_cron, check_cron_installed
 
+    if check_cron_installed():
+        _success("Scheduler cron already installed")
+    else:
         success, msg = install_cron()
-        typer.echo(f"  {msg}")
+        if success:
+            _success(msg)
+        else:
+            _error(msg)
+    if progress:
+        progress.advance()
 
-    if _confirm("Start Telegram bot?", default=False):
-        typer.echo("  Run: social-hook bot start --daemon")
+    # Bot daemon
+    from social_hook.bot.process import is_running
+
+    if is_running():
+        _success("Telegram bot already running")
+    else:
+        try:
+            result = subprocess.run(
+                ["social-hook", "bot", "start", "--daemon"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                _success("Telegram bot started")
+            else:
+                _error(f"Bot start failed: {result.stderr.strip() or result.stdout.strip()}")
+        except FileNotFoundError:
+            _warn("social-hook command not found — start bot manually: social-hook bot start --daemon")
+        except Exception as e:
+            _error(f"Bot start failed: {e}")
+    if progress:
+        progress.advance()
 
 
 def _save_env(base: Path, env_vars: dict) -> None:
@@ -570,4 +1333,4 @@ def _save_env(base: Path, env_vars: dict) -> None:
     # Write
     lines = [f"{k}={v}" for k, v in sorted(existing.items())]
     env_file.write_text("\n".join(lines) + "\n")
-    typer.echo(f"Environment saved to {env_file}")
+    _success(f"Environment saved to {env_file}")
