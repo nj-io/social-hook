@@ -673,6 +673,7 @@ class UsageLog:
     cache_creation_tokens: int = 0
     cost_cents: float = 0.0
     project_id: Optional[str] = None
+    commit_hash: Optional[str] = None
     created_at: Optional[datetime] = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -686,6 +687,7 @@ class UsageLog:
             "cache_read_tokens": self.cache_read_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
             "cost_cents": self.cost_cents,
+            "commit_hash": self.commit_hash,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -701,6 +703,7 @@ class UsageLog:
             cache_read_tokens=d.get("cache_read_tokens", 0),
             cache_creation_tokens=d.get("cache_creation_tokens", 0),
             cost_cents=d.get("cost_cents", 0.0),
+            commit_hash=d.get("commit_hash"),
             created_at=_from_iso(d.get("created_at")),
         )
 
@@ -716,6 +719,7 @@ class UsageLog:
             self.cache_read_tokens,
             self.cache_creation_tokens,
             self.cost_cents,
+            self.commit_hash,
         )
 
 

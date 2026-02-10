@@ -93,13 +93,43 @@ def pending(
 def usage(
     ctx: typer.Context,
     days: int = typer.Option(30, "--days", "-d", help="Number of days"),
+    recent: Optional[int] = typer.Option(None, "--recent", "-r", help="Show last N individual operations"),
 ):
     """View token usage and costs."""
-    from social_hook.db import get_usage_summary, init_database
+    from social_hook.db import get_recent_usage, get_usage_summary, init_database
     from social_hook.filesystem import get_db_path
 
     conn = init_database(get_db_path())
     try:
+        if recent is not None:
+            entries = get_recent_usage(conn, limit=recent)
+            if not entries:
+                typer.echo("No usage data found.")
+                return
+
+            json_mode = ctx.obj.get("json", False) if ctx.obj else False
+            if json_mode:
+                import json
+
+                typer.echo(json.dumps(entries, indent=2, default=str))
+            else:
+                typer.echo(f"Recent operations (last {recent}):\n")
+                for e in entries:
+                    project = e.get("project_name") or "—"
+                    op = e.get("operation_type", "?")
+                    model = e.get("model", "?")
+                    inp = e.get("input_tokens", 0) or 0
+                    out = e.get("output_tokens", 0) or 0
+                    cost = (e.get("cost_cents", 0) or 0) / 100.0
+                    commit = e.get("commit_hash") or ""
+                    commit_str = commit[:8] if commit else "—"
+                    time_str = e.get("created_at", "?")
+                    typer.echo(
+                        f"  {time_str}  {project:20s}  {op:14s}  {commit_str:8s}  "
+                        f"in:{inp:>8,}  out:{out:>8,}  ${cost:.3f}  ({model})"
+                    )
+            return
+
         rows = get_usage_summary(conn, days=days)
 
         if not rows:

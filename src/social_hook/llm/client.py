@@ -87,6 +87,7 @@ class ClaudeClient:
         operation_type: Optional[str] = None,
         db: Optional[Any] = None,
         project_id: Optional[str] = None,
+        commit_hash: Optional[str] = None,
     ) -> Any:
         """Make a Claude API call with tool use.
 
@@ -98,6 +99,7 @@ class ClaudeClient:
             operation_type: Label for usage tracking (e.g., "evaluate", "draft")
             db: Database context (DryRunContext or connection) for usage logging
             project_id: Project ID for usage tracking
+            commit_hash: Git commit hash for usage tracking
 
         Returns:
             Claude API response object
@@ -148,6 +150,7 @@ class ClaudeClient:
                 cache_read_tokens=cache_read_tokens,
                 cache_creation_tokens=cache_creation_tokens,
                 cost_cents=cost_cents,
+                commit_hash=commit_hash,
             )
             # Use DryRunContext if available, otherwise direct ops
             if hasattr(db, "insert_usage"):

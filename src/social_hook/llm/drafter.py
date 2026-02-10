@@ -100,6 +100,7 @@ class Drafter:
             operation_type="draft",
             db=db,
             project_id=project_context.project.id,
+            commit_hash=commit.hash,
         )
 
         tool_input = extract_tool_call(response, "create_draft")
@@ -147,6 +148,7 @@ class Drafter:
             operation_type="draft_thread",
             db=db,
             project_id=project_context.project.id,
+            commit_hash=commit.hash,
         )
 
         tool_input = extract_tool_call(response, "create_draft")

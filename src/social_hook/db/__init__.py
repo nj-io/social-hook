@@ -29,6 +29,7 @@ from social_hook.db.operations import (
     get_recent_posts_for_context,
     get_schema_version,
     get_summary_freshness,
+    get_recent_usage,
     get_usage_summary,
     increment_narrative_debt,
     insert_arc,
@@ -105,6 +106,7 @@ __all__ = [
     "reset_narrative_debt",
     "insert_usage",
     "get_usage_summary",
+    "get_recent_usage",
     # Project Summary
     "update_project_summary",
     "get_project_summary",

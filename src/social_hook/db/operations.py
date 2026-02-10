@@ -828,8 +828,8 @@ def insert_usage(conn: sqlite3.Connection, usage: UsageLog) -> str:
     """
     conn.execute(
         """
-        INSERT INTO usage_log (id, project_id, operation_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_cents)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO usage_log (id, project_id, operation_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_cents, commit_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         usage.to_row(),
     )
@@ -856,6 +856,35 @@ def get_usage_summary(
         GROUP BY model
         """,
         (days,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_recent_usage(
+    conn: sqlite3.Connection, limit: int = 10
+) -> list[dict]:
+    """Get recent individual usage log entries.
+
+    Returns list of dicts with operation details, project name, and commit hash.
+    """
+    rows = conn.execute(
+        """
+        SELECT
+            u.id,
+            u.operation_type,
+            u.model,
+            u.input_tokens,
+            u.output_tokens,
+            u.cost_cents,
+            u.commit_hash,
+            u.created_at,
+            p.name as project_name
+        FROM usage_log u
+        LEFT JOIN projects p ON u.project_id = p.id
+        ORDER BY u.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
     ).fetchall()
     return [dict(row) for row in rows]
 

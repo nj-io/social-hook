@@ -380,14 +380,40 @@ def cmd_projects(token: str, chat_id: str, args: str, config: Any) -> None:
 
 
 def cmd_usage(token: str, chat_id: str, args: str, config: Any) -> None:
-    """Show token usage summary."""
-    try:
-        days = int(args.strip()) if args.strip() else 30
-    except ValueError:
-        days = 30
+    """Show token usage summary. Use '/usage recent [N]' for individual operations."""
+    arg = args.strip()
 
     conn = _get_conn()
     try:
+        # Handle '/usage recent [N]'
+        if arg.startswith("recent"):
+            from social_hook.db import get_recent_usage
+
+            parts = arg.split()
+            limit = int(parts[1]) if len(parts) > 1 else 10
+            entries = get_recent_usage(conn, limit=limit)
+            if not entries:
+                _send(token, chat_id, "No usage data found.")
+                return
+
+            lines = [f"*Recent operations (last {limit})*", ""]
+            for e in entries:
+                project = e.get("project_name") or "—"
+                op = e.get("operation_type", "?")
+                inp = e.get("input_tokens", 0) or 0
+                out = e.get("output_tokens", 0) or 0
+                cost = (e.get("cost_cents", 0) or 0) / 100.0
+                commit = e.get("commit_hash") or ""
+                commit_str = commit[:8] if commit else "—"
+                lines.append(f"`{commit_str}` {op} ({project}) — {inp:,}+{out:,} tok, ${cost:.3f}")
+            _send(token, chat_id, "\n".join(lines))
+            return
+
+        try:
+            days = int(arg) if arg else 30
+        except ValueError:
+            days = 30
+
         from social_hook.db import get_usage_summary
 
         rows = get_usage_summary(conn, days=days)

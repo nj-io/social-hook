@@ -65,6 +65,7 @@ class Evaluator:
             operation_type="evaluate",
             db=db,
             project_id=context.project.id,
+            commit_hash=commit.hash,
         )
 
         tool_input = extract_tool_call(response, "log_decision")
