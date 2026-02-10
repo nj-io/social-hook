@@ -265,11 +265,11 @@ def run_trigger(
         commit_hash=commit_hash,
         decision=evaluation.decision,
         reasoning=evaluation.reasoning,
-        angle=evaluation.angle,
+        angle=getattr(evaluation, "angle", None),
         episode_type=evaluation.episode_type,
         post_category=evaluation.post_category,
         arc_id=getattr(evaluation, "arc_id", None),
-        media_tool=evaluation.media_tool,
+        media_tool=getattr(evaluation, "media_tool", None),
         platforms=getattr(evaluation, "platforms", {}),
     )
     db.insert_decision(decision)
