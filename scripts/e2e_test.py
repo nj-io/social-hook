@@ -488,7 +488,7 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
         project = get_project(harness.conn, harness.project_id)
         assert project is not None, "Project not found in DB"
         assert project.name == "social-media-auto-hook"
-        assert project.repo_path == str(harness.repo_path)
+        assert Path(project.repo_path).resolve() == Path(harness.repo_path).resolve()
         assert project.paused is False, f"paused={project.paused}"
         assert project.audience_introduced is False, f"audience_introduced={project.audience_introduced}"
 
@@ -533,10 +533,11 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 
     # A6: Duplicate origin blocked
     def a6():
-        # Clone to a second temp subdir
+        # Clone from the same source (project root) so origin matches the first clone
+        project_root = Path(__file__).resolve().parent.parent
         second_clone = harness.base / "repos" / "second-clone"
         subprocess.run(
-            ["git", "clone", "--quiet", str(harness.repo_path), str(second_clone)],
+            ["git", "clone", "--quiet", str(project_root), str(second_clone)],
             check=True, capture_output=True,
         )
         result = cli.invoke(app, ["project", "register", str(second_clone)])
@@ -643,7 +644,11 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
         project_config = load_project_config(str(config_dir))
 
         class FakeDB:
-            """Wrap conn to auto-provide it to ops functions."""
+            """Wrap conn to auto-provide it to ops functions.
+
+            Only injects conn as the first arg — callers provide
+            all other args (including project_id) themselves.
+            """
             def __init__(self, conn, project_id):
                 self._conn = conn
                 self._pid = project_id
@@ -653,9 +658,7 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
                 import inspect
                 sig = inspect.signature(fn)
                 params = list(sig.parameters.keys())
-                if len(params) >= 2 and params[0] == "conn":
-                    if params[1] == "project_id":
-                        return lambda *a, **kw: fn(self._conn, self._pid, *a, **kw)
+                if params and params[0] == "conn":
                     return lambda *a, **kw: fn(self._conn, *a, **kw)
                 return fn
 

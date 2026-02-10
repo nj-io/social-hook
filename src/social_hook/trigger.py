@@ -248,7 +248,6 @@ def run_trigger(
         client = ClaudeClient(
             api_key=api_key,
             model=config.models.evaluator,
-            dry_run=dry_run,
         )
         evaluator = Evaluator(client)
         evaluation = evaluator.evaluate(commit, context, db)
@@ -287,7 +286,6 @@ def run_trigger(
             drafter_client = ClaudeClient(
                 api_key=api_key,
                 model=config.models.drafter,
-                dry_run=dry_run,
             )
             drafter = Drafter(drafter_client)
 
