@@ -249,6 +249,7 @@ class E2EHarness:
             debt_counter=0,
         )
         insert_narrative_debt(self.conn, debt)
+        self.conn.commit()
 
         self.project_id = project.id
         return project
@@ -283,6 +284,7 @@ class E2EHarness:
             last_error=kwargs.pop("last_error", None),
         )
         insert_draft(self.conn, draft)
+        self.conn.commit()
         return draft
 
     def load_config(self):
@@ -368,7 +370,8 @@ class E2ERunner:
         self.total_cost = 0.0
         self.start_time = 0.0
 
-    def run_scenario(self, scenario_id: str, name: str, fn, *args, **kwargs):
+    def run_scenario(self, scenario_id: str, name: str, fn, *args,
+                     llm_call: bool = False, **kwargs):
         """Run a single scenario, catching exceptions."""
         print(f"\n  [{scenario_id}] {name}")
         try:
@@ -389,6 +392,10 @@ class E2ERunner:
             print(f"       FAIL  {detail}")
             if self.verbose:
                 traceback.print_exc()
+        if llm_call:
+            import time
+            print("       (waiting 65s for rate limit cooldown)")
+            time.sleep(65)
 
     def add_review_item(self, scenario_id: str, **kwargs):
         """Add an item for human review."""
@@ -589,7 +596,7 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 
         return detail
 
-    runner.run_scenario("A7", "Project introduction (audience_introduced=False)", a7)
+    runner.run_scenario("A7", "Project introduction (audience_introduced=False)", a7, llm_call=True)
 
     # A8: Verify audience_introduced flag operations
     def a8():
@@ -726,7 +733,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
 
         return detail
 
-    runner.run_scenario("B1", "Significant commit → evaluate → draft", b1)
+    runner.run_scenario("B1", "Significant commit → evaluate → draft", b1, llm_call=True)
 
     # B2: Docs-only commit → not post worthy
     def b2():
@@ -751,7 +758,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         )
         return f"Decision: {d.decision}"
 
-    runner.run_scenario("B2", "Docs-only commit → likely not_post_worthy", b2)
+    runner.run_scenario("B2", "Docs-only commit → likely not_post_worthy", b2, llm_call=True)
 
     # B3: Unregistered repo → silent exit
     def b3():
@@ -782,8 +789,6 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
 
     # B4: Paused project → skip
     def b4():
-        from social_hook.db.operations import update_project
-
         # Pause the project
         harness.conn.execute(
             "UPDATE projects SET paused = 1 WHERE id = ?",
@@ -839,7 +844,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         assert after == before, f"Dry-run persisted rows: {after} vs {before}"
         return "No rows persisted"
 
-    runner.run_scenario("B7", "Dry-run mode", b7)
+    runner.run_scenario("B7", "Dry-run mode", b7, llm_call=True)
 
     # B6: Free tier + long content → thread (structural check)
     def b6():
@@ -859,7 +864,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         # Thread not guaranteed — LLM may create a short post
         return "No thread (LLM chose single post)"
 
-    runner.run_scenario("B6", "Free tier + long content → thread check", b6)
+    runner.run_scenario("B6", "Free tier + long content → thread check", b6, llm_call=True)
 
     # B8: Consolidation context visible
     def b8():
@@ -876,7 +881,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         assert d.decision in valid, f"Invalid decision: {d.decision}"
         return f"Decision: {d.decision} (consolidate is valid outcome)"
 
-    runner.run_scenario("B8", "Consolidation context visible", b8)
+    runner.run_scenario("B8", "Consolidation context visible", b8, llm_call=True)
 
     # B9: Deferred decision check
     def b9():
@@ -894,7 +899,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         assert d.decision in valid
         return f"Decision: {d.decision} (deferred is valid)"
 
-    runner.run_scenario("B9", "Deferred/not_post_worthy for minor commit", b9)
+    runner.run_scenario("B9", "Deferred/not_post_worthy for minor commit", b9, llm_call=True)
 
 
 # ---------------------------------------------------------------------------
