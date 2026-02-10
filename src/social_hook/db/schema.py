@@ -193,15 +193,16 @@ def create_schema(conn: sqlite3.Connection) -> None:
     """
     conn.executescript(SCHEMA_DDL)
 
-    # Record schema version if not already recorded
+    # Record schema version only for brand-new databases.
+    # Existing databases (current > 0) get updated by apply_migrations().
     current = conn.execute(
         "SELECT COALESCE(MAX(version), 0) FROM schema_version"
     ).fetchone()[0]
 
-    if current < SCHEMA_VERSION:
+    if current == 0:
         conn.execute(
             "INSERT INTO schema_version (version, description) VALUES (?, ?)",
-            (SCHEMA_VERSION, "add_usage_commit_hash"),
+            (SCHEMA_VERSION, "initial_schema"),
         )
         conn.commit()
 

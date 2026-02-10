@@ -33,13 +33,13 @@ from typing import Any, Optional
 
 # Test commits from this repo's git history
 COMMITS = {
-    "significant": "b178dbc",   # Implement WS1 Foundation
-    "major_feature": "230dab7", # Implement WS3 adapters
-    "large_feature": "4d574c4", # WS4 gap fix
-    "bugfix": "59960f6",        # Fix setup wizard UX
-    "docs_only": "6d182e5",     # docs: add WS3 integration notes
-    "docs_only_2": "d6ac089",   # Add git worktrees section to CLAUDE.md
-    "initial": "7a67e7f",       # Initial commit: Research documentation
+    "significant": "6788898",   # Implement WS1 Foundation
+    "major_feature": "8166c66", # Implement WS3 adapters
+    "large_feature": "38d2c9f", # WS4 gap fix
+    "bugfix": "9f210e4",        # Fix setup wizard UX
+    "docs_only": "a7832e6",     # docs: add WS3 integration notes
+    "docs_only_2": "b995b4b",   # Add git worktrees section to CLAUDE.md
+    "initial": "65fff50",       # Initial commit: Research documentation
 }
 
 SECTION_MAP = {

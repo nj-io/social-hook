@@ -243,8 +243,6 @@ def run_trigger(
         from social_hook.llm.evaluator import Evaluator
 
         api_key = config.env.get("ANTHROPIC_API_KEY", "")
-        if dry_run:
-            api_key = "dry-run-key"
 
         client = ClaudeClient(
             api_key=api_key,

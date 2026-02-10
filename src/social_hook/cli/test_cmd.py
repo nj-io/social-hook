@@ -22,7 +22,7 @@ def test_commits(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Save results to JSON file"),
     show_prompt: bool = typer.Option(False, "--show-prompt", help="Print the full LLM prompt to stderr"),
 ):
-    """Test commit evaluation in dry-run mode."""
+    """Test commit evaluation with real LLM calls, no DB writes."""
     from social_hook.trigger import run_trigger
 
     commits = []
@@ -58,6 +58,7 @@ def test_commits(
 
     config_path = ctx.obj.get("config") if ctx.obj else None
     verbose = ctx.obj.get("verbose", False) if ctx.obj else False
+    repo = str(Path(repo).resolve())
 
     results = []
     for c in commits:
