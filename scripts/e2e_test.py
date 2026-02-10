@@ -631,9 +631,9 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
             "| 2026-02-09 | Technical post | Too many emojis | draft_test |\n"
         )
         (config_dir / "context-notes.md").write_text(
-            "| Date | Source | Note |\n"
-            "|------|--------|------|\n"
-            "| 2026-02-09 | expert | Focus on technical depth |\n"
+            "| Date | Note | Source |\n"
+            "|------|------|--------|\n"
+            "| 2026-02-09 | Focus on technical depth | expert |\n"
         )
 
         from social_hook.config.project import load_project_config
@@ -641,7 +641,7 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
         from social_hook.config.project import ContextConfig
 
         # Load project config from repo
-        project_config = load_project_config(str(config_dir))
+        project_config = load_project_config(str(harness.repo_path))
 
         class FakeDB:
             """Wrap conn to auto-provide it to ops functions.
