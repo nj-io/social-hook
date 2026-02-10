@@ -154,6 +154,7 @@ def run_trigger(
     dry_run: bool = False,
     config_path: Optional[str] = None,
     verbose: bool = False,
+    show_prompt: bool = False,
 ) -> int:
     """Run the commit-to-draft trigger pipeline.
 
@@ -250,7 +251,7 @@ def run_trigger(
             model=config.models.evaluator,
         )
         evaluator = Evaluator(client)
-        evaluation = evaluator.evaluate(commit, context, db)
+        evaluation = evaluator.evaluate(commit, context, db, show_prompt=show_prompt)
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
         if verbose:

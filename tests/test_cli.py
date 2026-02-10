@@ -215,13 +215,13 @@ class TestTestCmdRange:
     """Tests for test command --from/--to (D3)."""
 
     def test_from_to_help_text(self):
-        result = runner.invoke(app, ["test", "test", "--help"])
+        result = runner.invoke(app, ["test", "--help"])
         assert "--from" in result.output
         assert "--to" in result.output
         assert "--compare" in result.output
 
     def test_no_args_shows_error(self):
-        result = runner.invoke(app, ["test", "test", "--repo", "/tmp/fake"])
+        result = runner.invoke(app, ["test", "--repo", "/tmp/fake"])
         # Should fail requesting --commit, --last, or --from/--to
         assert result.exit_code != 0 or "Specify" in result.output
 

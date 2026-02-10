@@ -7,10 +7,10 @@ from typing import Optional
 
 import typer
 
-app = typer.Typer()
+app = typer.Typer(invoke_without_command=True)
 
 
-@app.command("test")
+@app.callback()
 def test_commits(
     ctx: typer.Context,
     repo: str = typer.Option(..., "--repo", help="Repository path"),
@@ -20,6 +20,7 @@ def test_commits(
     to_hash: Optional[str] = typer.Option(None, "--to", help="End of commit range"),
     compare: Optional[Path] = typer.Option(None, "--compare", help="Compare results to golden JSON file"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Save results to JSON file"),
+    show_prompt: bool = typer.Option(False, "--show-prompt", help="Print the full LLM prompt to stderr"),
 ):
     """Test commit evaluation in dry-run mode."""
     from social_hook.trigger import run_trigger
@@ -67,6 +68,7 @@ def test_commits(
             dry_run=True,
             config_path=str(config_path) if config_path else None,
             verbose=verbose,
+            show_prompt=show_prompt,
         )
         results.append({"commit": c, "exit_code": exit_code})
         typer.echo(f"  Exit code: {exit_code}")

@@ -26,6 +26,7 @@ class Evaluator:
         context: ProjectContext,
         db: Any,
         config: Optional[ContextConfig] = None,
+        show_prompt: bool = False,
     ) -> LogDecisionInput:
         """Evaluate a commit for post-worthiness.
 
@@ -34,6 +35,7 @@ class Evaluator:
             context: Assembled project state
             db: Database context (DryRunContext) for usage logging
             config: Context config for prompt assembly limits
+            show_prompt: If True, print the full system prompt and user message
 
         Returns:
             Validated LogDecisionInput from the LLM
@@ -57,6 +59,18 @@ class Evaluator:
                 f"commits since last update, "
                 f"{freshness.get('days_since_summary', 'N/A')} days since update."
             )
+
+        if show_prompt:
+            import sys
+            print("=" * 72, file=sys.stderr)
+            print("EVALUATOR SYSTEM PROMPT", file=sys.stderr)
+            print("=" * 72, file=sys.stderr)
+            print(system, file=sys.stderr)
+            print("=" * 72, file=sys.stderr)
+            print("USER MESSAGE", file=sys.stderr)
+            print("=" * 72, file=sys.stderr)
+            print(user_message, file=sys.stderr)
+            print("=" * 72, file=sys.stderr)
 
         response = self.client.complete(
             messages=[{"role": "user", "content": user_message}],
