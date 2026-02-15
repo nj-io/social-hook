@@ -2,6 +2,7 @@
 
 import json
 import os
+import pwd
 import re
 import subprocess
 import tempfile
@@ -105,8 +106,12 @@ class ClaudeCliClient(LLMClient):
             "--system-prompt", effective_system,
         ]
 
-        # 5. Run subprocess with CLAUDECODE env var removed
+        # 5. Run subprocess with clean env for CLI auth
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        # Restore real HOME — the E2E harness or other callers may have
+        # patched HOME to a temp dir for isolation, but the Claude CLI
+        # needs the real home to find its authentication credentials.
+        env["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
 
         if self.verbose:
             import sys
@@ -144,7 +149,8 @@ class ClaudeCliClient(LLMClient):
                 print(f"       [claude-cli] Stderr: {stderr_preview}", file=sys.stderr, flush=True)
 
         if result.returncode != 0:
-            raise MalformedResponseError(f"Claude CLI error: {result.stderr}")
+            detail = result.stderr or result.stdout[:500] if result.stdout else ""
+            raise MalformedResponseError(f"Claude CLI error (exit {result.returncode}): {detail}")
 
         # 6. Parse response envelope
         try:
