@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from social_hook.errors import ConfigError, MalformedResponseError
-from social_hook.llm.claude_cli import ClaudeCliClient
+from social_hook.llm.claude_cli import ClaudeCliClient, _extract_json
 from social_hook.llm.base import NormalizedResponse, NormalizedToolCall, NormalizedUsage
 
 
@@ -24,7 +24,7 @@ SAMPLE_TOOL = {
 SAMPLE_MESSAGES = [{"role": "user", "content": "Evaluate this commit"}]
 
 VALID_ENVELOPE = {
-    "structured_output": {"decision": "post_worthy"},
+    "result": '{"decision": "post_worthy"}',
     "usage": {
         "input_tokens": 100,
         "output_tokens": 50,
@@ -44,6 +44,40 @@ def _make_mock_popen(returncode=0, stdout=None, stderr=""):
     mock_proc.kill = MagicMock()
     mock_proc.wait = MagicMock()
     return mock_proc
+
+
+class TestExtractJson:
+    def test_raw_json(self):
+        result = _extract_json('{"decision": "post_worthy"}')
+        assert result == {"decision": "post_worthy"}
+
+    def test_json_in_code_fence(self):
+        text = '```json\n{"decision": "post_worthy"}\n```'
+        result = _extract_json(text)
+        assert result == {"decision": "post_worthy"}
+
+    def test_json_in_plain_code_fence(self):
+        text = '```\n{"decision": "post_worthy"}\n```'
+        result = _extract_json(text)
+        assert result == {"decision": "post_worthy"}
+
+    def test_json_embedded_in_text(self):
+        text = 'Here is the evaluation:\n{"decision": "post_worthy"}\nDone.'
+        result = _extract_json(text)
+        assert result == {"decision": "post_worthy"}
+
+    def test_json_with_whitespace(self):
+        result = _extract_json('  \n{"decision": "post_worthy"}\n  ')
+        assert result == {"decision": "post_worthy"}
+
+    def test_no_json_raises(self):
+        with pytest.raises(MalformedResponseError, match="Could not extract JSON"):
+            _extract_json("no json here at all")
+
+    def test_nested_json(self):
+        text = '{"decision": "post_worthy", "meta": {"count": 1}}'
+        result = _extract_json(text)
+        assert result == {"decision": "post_worthy", "meta": {"count": 1}}
 
 
 class TestClaudeCliClientInit:
@@ -75,12 +109,15 @@ class TestCommandConstruction:
         assert "sonnet" in cmd
         assert "--output-format" in cmd
         assert "json" in cmd
-        assert "--json-schema" in cmd
         assert "--tools" in cmd
         assert "--no-session-persistence" in cmd
+        # Must NOT use --json-schema (causes multi-turn validation loops)
+        assert "--json-schema" not in cmd
+        # Must always include --system-prompt with JSON instructions
+        assert "--system-prompt" in cmd
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_system_prompt_included(self, mock_popen):
+    def test_system_prompt_includes_json_instructions(self, mock_popen):
         mock_popen.return_value = _make_mock_popen()
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL], system="Be concise")
@@ -88,28 +125,39 @@ class TestCommandConstruction:
         cmd = mock_popen.call_args[0][0]
         assert "--system-prompt" in cmd
         idx = cmd.index("--system-prompt")
-        assert cmd[idx + 1] == "Be concise"
+        system_prompt = cmd[idx + 1]
+        # Original system prompt is preserved
+        assert "Be concise" in system_prompt
+        # JSON instructions are appended
+        assert "Required Output Format" in system_prompt
+        assert '"decision"' in system_prompt  # Schema embedded
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_system_prompt_omitted_when_none(self, mock_popen):
+    def test_system_prompt_has_json_instructions_when_no_system(self, mock_popen):
         mock_popen.return_value = _make_mock_popen()
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
         cmd = mock_popen.call_args[0][0]
-        assert "--system-prompt" not in cmd
+        # --system-prompt is always present (for JSON instructions)
+        assert "--system-prompt" in cmd
+        idx = cmd.index("--system-prompt")
+        system_prompt = cmd[idx + 1]
+        assert "Required Output Format" in system_prompt
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_schema_is_json_serialized(self, mock_popen):
+    def test_schema_embedded_in_system_prompt(self, mock_popen):
         mock_popen.return_value = _make_mock_popen()
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
         cmd = mock_popen.call_args[0][0]
-        idx = cmd.index("--json-schema")
-        schema_str = cmd[idx + 1]
-        parsed = json.loads(schema_str)
-        assert parsed == SAMPLE_TOOL["input_schema"]
+        idx = cmd.index("--system-prompt")
+        system_prompt = cmd[idx + 1]
+        # The full schema should be embedded in the system prompt
+        assert '"type": "object"' in system_prompt
+        assert '"decision"' in system_prompt
+        assert '"required"' in system_prompt
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_claudecode_env_var_removed(self, mock_popen):
@@ -141,7 +189,7 @@ class TestCommandConstruction:
 
 class TestResponseParsing:
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_structured_output_to_tool_call(self, mock_popen):
+    def test_result_text_to_tool_call(self, mock_popen):
         mock_popen.return_value = _make_mock_popen()
         client = ClaudeCliClient()
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
@@ -168,7 +216,7 @@ class TestResponseParsing:
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_missing_usage_defaults_to_zero(self, mock_popen):
         mock_popen.return_value = _make_mock_popen(
-            stdout=json.dumps({"structured_output": {"decision": "skip"}}),
+            stdout=json.dumps({"result": '{"decision": "skip"}'}),
         )
         client = ClaudeCliClient()
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
@@ -183,6 +231,19 @@ class TestResponseParsing:
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
         assert resp.raw == VALID_ENVELOPE
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_json_in_code_fence_parsed(self, mock_popen):
+        """Model outputs JSON in markdown code fence — still works."""
+        envelope = {
+            "result": '```json\n{"decision": "post_worthy"}\n```',
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        mock_popen.return_value = _make_mock_popen(stdout=json.dumps(envelope))
+        client = ClaudeCliClient()
+        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert resp.content[0].input == {"decision": "post_worthy"}
 
 
 class TestErrorHandling:
@@ -240,12 +301,21 @@ class TestErrorHandling:
             client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_missing_structured_output_raises_malformed(self, mock_popen):
+    def test_missing_result_raises_malformed(self, mock_popen):
         mock_popen.return_value = _make_mock_popen(
-            stdout=json.dumps({"result": "something else"}),
+            stdout=json.dumps({"usage": {}}),
         )
         client = ClaudeCliClient()
-        with pytest.raises(MalformedResponseError, match="No structured output"):
+        with pytest.raises(MalformedResponseError, match="No result"):
+            client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_unparseable_result_raises_malformed(self, mock_popen):
+        mock_popen.return_value = _make_mock_popen(
+            stdout=json.dumps({"result": "not json at all"}),
+        )
+        client = ClaudeCliClient()
+        with pytest.raises(MalformedResponseError, match="Could not extract JSON"):
             client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
 

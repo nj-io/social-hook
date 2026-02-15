@@ -2,12 +2,48 @@
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from typing import Any, Optional
 
 from social_hook.errors import ConfigError, MalformedResponseError
 from social_hook.llm.base import LLMClient, NormalizedResponse, NormalizedToolCall, NormalizedUsage
+
+
+def _extract_json(text: str) -> dict:
+    """Extract a JSON object from model text output.
+
+    Handles: raw JSON, markdown code-fenced JSON, or JSON embedded in text.
+    """
+    text = text.strip()
+
+    # 1. Try direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Try extracting from markdown code block
+    match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Find outermost { ... } boundaries
+    first_brace = text.find('{')
+    last_brace = text.rfind('}')
+    if first_brace != -1 and last_brace > first_brace:
+        try:
+            return json.loads(text[first_brace:last_brace + 1])
+        except json.JSONDecodeError:
+            pass
+
+    raise MalformedResponseError(
+        f"Could not extract JSON from CLI output: {text[:200]}"
+    )
 
 
 class ClaudeCliClient(LLMClient):
@@ -38,26 +74,38 @@ class ClaudeCliClient(LLMClient):
                 "Use anthropic/ provider for multi-tool calls."
             )
 
-        # 1. Extract JSON schema from tools[0]["input_schema"]
-        schema = json.dumps(tools[0]["input_schema"])
+        # 1. Extract schema and tool name
+        schema = tools[0]["input_schema"]
         tool_name = tools[0]["name"]
 
         # 2. Extract user message text
         user_msg = messages[-1]["content"]
 
-        # 3. Build command
+        # 3. Build system prompt with embedded JSON output instructions.
+        #    We do NOT use --json-schema because it forces the CLI into a
+        #    multi-turn structured-output validation loop (3+ API round-trips
+        #    minimum, 15-20+ for complex schemas). Instead we embed the schema
+        #    in the prompt and parse JSON from the single-turn text output.
+        json_instruction = (
+            "\n\n---\n## Required Output Format\n"
+            "You MUST respond with ONLY a valid JSON object matching this schema:\n"
+            f"```json\n{json.dumps(schema, indent=2)}\n```\n"
+            "Output ONLY the raw JSON object. No markdown code fences, "
+            "no explanation, no text before or after the JSON."
+        )
+        effective_system = (system or "") + json_instruction
+
+        # 4. Build command — no --json-schema (avoids multi-turn loop)
         cmd = [
             "claude", "-p", user_msg,
             "--model", self.model,
             "--output-format", "json",
-            "--json-schema", schema,
             "--tools", "",
             "--no-session-persistence",
+            "--system-prompt", effective_system,
         ]
-        if system:
-            cmd += ["--system-prompt", system]
 
-        # 4. Run subprocess with CLAUDECODE env var removed
+        # 5. Run subprocess with CLAUDECODE env var removed
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
         if self.verbose:
@@ -98,15 +146,18 @@ class ClaudeCliClient(LLMClient):
         if result.returncode != 0:
             raise MalformedResponseError(f"Claude CLI error: {result.stderr}")
 
-        # 5. Parse response envelope
+        # 6. Parse response envelope
         try:
             envelope = json.loads(result.stdout)
         except json.JSONDecodeError:
             raise MalformedResponseError(f"Claude CLI returned invalid JSON: {result.stdout[:200]}")
 
-        structured_output = envelope.get("structured_output")
-        if structured_output is None:
-            raise MalformedResponseError("No structured output in CLI response")
+        # Extract JSON from the model's text output (in "result" field)
+        result_text = envelope.get("result")
+        if result_text is None:
+            raise MalformedResponseError("No result in CLI response")
+
+        structured_output = _extract_json(result_text)
 
         usage_data = envelope.get("usage", {})
 
@@ -122,7 +173,7 @@ class ClaudeCliClient(LLMClient):
             output_preview = json.dumps(structured_output)[:300]
             print(f"       [claude-cli] Output: {output_preview}", file=sys.stderr, flush=True)
 
-        # 6. Build normalized response
+        # 7. Build normalized response
         tool_call = NormalizedToolCall(name=tool_name, input=structured_output)
         usage = NormalizedUsage(
             input_tokens=usage_data.get("input_tokens", 0),
@@ -131,7 +182,7 @@ class ClaudeCliClient(LLMClient):
             cache_creation_input_tokens=usage_data.get("cache_creation_input_tokens", 0),
         )
 
-        # 7. Log usage if db context provided
+        # 8. Log usage if db context provided
         if db and operation_type:
             import sqlite3
             from social_hook.db import operations as ops
