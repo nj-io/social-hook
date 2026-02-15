@@ -2411,4 +2411,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n  Interrupted (Ctrl+C). Cleaning up...")
+        sys.exit(130)

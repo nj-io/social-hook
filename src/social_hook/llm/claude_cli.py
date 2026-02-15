@@ -69,13 +69,25 @@ class ClaudeCliClient(LLMClient):
             print(f"       [claude-cli] Calling claude -p (timeout 300s)...", file=sys.stderr, flush=True)
 
         try:
-            # Run from temp dir so CLI doesn't read the project codebase
-            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=300,
-                                    cwd=tempfile.gettempdir())
+            # Run in a new session so CLI doesn't share the terminal
+            # (prevents notification sounds) and from temp dir so it
+            # doesn't scan the project codebase.
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, env=env, cwd=tempfile.gettempdir(),
+                start_new_session=True,
+            )
+            try:
+                stdout, stderr = proc.communicate(timeout=300)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
+                proc.kill()
+                proc.wait()
+                if isinstance(exc, KeyboardInterrupt):
+                    raise
+                raise MalformedResponseError("Claude CLI timed out (300s)")
+            result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
         except FileNotFoundError:
             raise ConfigError("Claude CLI not found. Install Claude Code or use a different provider.")
-        except subprocess.TimeoutExpired:
-            raise MalformedResponseError("Claude CLI timed out (300s)")
 
         if self.verbose:
             print(f"       [claude-cli] Exit code: {result.returncode}", file=sys.stderr, flush=True)
