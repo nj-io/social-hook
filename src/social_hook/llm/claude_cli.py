@@ -14,9 +14,10 @@ class ClaudeCliClient(LLMClient):
 
     provider = "claude-cli"
 
-    def __init__(self, model: str = "sonnet"):
+    def __init__(self, model: str = "sonnet", verbose: bool = False):
         self.model = model
         self.full_id = f"{self.provider}/{self.model}"
+        self.verbose = verbose
 
     def complete(
         self,
@@ -57,12 +58,27 @@ class ClaudeCliClient(LLMClient):
 
         # 4. Run subprocess with CLAUDECODE env var removed
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
+        if self.verbose:
+            import sys
+            print(f"\n       [claude-cli] Model: {self.model}", file=sys.stderr, flush=True)
+            print(f"       [claude-cli] Tool: {tool_name}", file=sys.stderr, flush=True)
+            prompt_preview = user_msg[:200].replace('\n', ' ')
+            print(f"       [claude-cli] Prompt: {prompt_preview}...", file=sys.stderr, flush=True)
+            print(f"       [claude-cli] Calling claude -p (timeout 300s)...", file=sys.stderr, flush=True)
+
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=120)
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=300)
         except FileNotFoundError:
             raise ConfigError("Claude CLI not found. Install Claude Code or use a different provider.")
         except subprocess.TimeoutExpired:
-            raise MalformedResponseError("Claude CLI timed out (120s)")
+            raise MalformedResponseError("Claude CLI timed out (300s)")
+
+        if self.verbose:
+            print(f"       [claude-cli] Exit code: {result.returncode}", file=sys.stderr, flush=True)
+            if result.stderr:
+                stderr_preview = result.stderr[:300].replace('\n', ' ')
+                print(f"       [claude-cli] Stderr: {stderr_preview}", file=sys.stderr, flush=True)
 
         if result.returncode != 0:
             raise MalformedResponseError(f"Claude CLI error: {result.stderr}")
@@ -78,6 +94,18 @@ class ClaudeCliClient(LLMClient):
             raise MalformedResponseError("No structured output in CLI response")
 
         usage_data = envelope.get("usage", {})
+
+        if self.verbose:
+            turns = envelope.get("num_turns", "?")
+            cost = envelope.get("total_cost_usd", 0)
+            in_tok = usage_data.get("input_tokens", 0)
+            out_tok = usage_data.get("output_tokens", 0)
+            cache_read = usage_data.get("cache_read_input_tokens", 0)
+            cache_create = usage_data.get("cache_creation_input_tokens", 0)
+            print(f"       [claude-cli] Done: {turns} turns, ${cost:.4f}", file=sys.stderr, flush=True)
+            print(f"       [claude-cli] Tokens: in={in_tok} out={out_tok} cache_read={cache_read} cache_create={cache_create}", file=sys.stderr, flush=True)
+            output_preview = json.dumps(structured_output)[:300]
+            print(f"       [claude-cli] Output: {output_preview}", file=sys.stderr, flush=True)
 
         # 6. Build normalized response
         tool_call = NormalizedToolCall(name=tool_name, input=structured_output)

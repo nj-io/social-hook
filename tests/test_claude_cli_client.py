@@ -119,7 +119,7 @@ class TestCommandConstruction:
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        assert mock_run.call_args[1]["timeout"] == 120
+        assert mock_run.call_args[1]["timeout"] == 300
 
 
 class TestResponseParsing:

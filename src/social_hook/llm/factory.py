@@ -28,12 +28,13 @@ def parse_provider_model(model_str: str) -> tuple[str, str]:
     )
 
 
-def create_client(model_str: str, config) -> LLMClient:
+def create_client(model_str: str, config, verbose: bool = False) -> LLMClient:
     """Create the appropriate LLM client from a provider/model string.
 
     Args:
         model_str: Provider/model-id string (e.g., 'anthropic/claude-opus-4-5')
         config: Config object with .env dict containing API keys
+        verbose: If True, enable verbose logging on the client
 
     Returns:
         Configured LLMClient instance
@@ -54,7 +55,7 @@ def create_client(model_str: str, config) -> LLMClient:
     elif provider == "claude-cli":
         from social_hook.llm.claude_cli import ClaudeCliClient
 
-        return ClaudeCliClient(model=model_id)
+        return ClaudeCliClient(model=model_id, verbose=verbose)
 
     elif provider == "openai":
         from social_hook.llm.openai_compat import OpenAICompatClient

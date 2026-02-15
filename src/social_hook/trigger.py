@@ -242,7 +242,7 @@ def run_trigger(
     from social_hook.llm.evaluator import Evaluator
 
     try:
-        evaluator_client = create_client(config.models.evaluator, config)
+        evaluator_client = create_client(config.models.evaluator, config, verbose=verbose)
     except ConfigError as e:
         logger.error(f"Config error: {e}")
         if verbose:
@@ -283,7 +283,7 @@ def run_trigger(
     # 9. If post-worthy, create draft
     if evaluation.decision == "post_worthy":
         try:
-            drafter_client = create_client(config.models.drafter, config)
+            drafter_client = create_client(config.models.drafter, config, verbose=verbose)
         except ConfigError as e:
             logger.error(f"Config error: {e}")
             if verbose:
