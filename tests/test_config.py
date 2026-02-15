@@ -28,15 +28,13 @@ class TestEnvLoading:
         assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key"
         assert env["TELEGRAM_BOT_TOKEN"] == "123456:ABC"
 
-    def test_missing_required_key(self, temp_dir):
-        """Missing required key raises ConfigError."""
+    def test_load_env_without_any_keys_succeeds(self, temp_dir):
+        """load_env() succeeds with no API keys (no required keys)."""
         env_path = temp_dir / ".env"
         env_path.write_text("TELEGRAM_BOT_TOKEN=123456:ABC\n")
 
-        with pytest.raises(ConfigError) as exc_info:
-            load_env(env_path)
-
-        assert "Missing required: ANTHROPIC_API_KEY" in str(exc_info.value)
+        env = load_env(env_path)
+        assert env["TELEGRAM_BOT_TOKEN"] == "123456:ABC"
 
     def test_load_env_with_quotes(self, temp_dir):
         """Load .env with quoted values handles quotes correctly."""
@@ -77,15 +75,16 @@ class TestYamlLoading:
         """Load valid config.yaml returns Config object."""
         config = load_config(temp_config_file)
 
-        assert config.models.evaluator == "claude-opus-4-5"
-        assert config.models.drafter == "claude-sonnet-4-5"
-        assert config.models.gatekeeper == "claude-haiku-4-5"
+        assert config.models.evaluator == "anthropic/claude-opus-4-5"
+        assert config.models.drafter == "anthropic/claude-sonnet-4-5"
+        assert config.models.gatekeeper == "anthropic/claude-haiku-4-5"
         assert config.platforms.x.enabled is True
         assert config.platforms.x.account_tier == "free"
         assert config.scheduling.timezone == "America/Los_Angeles"
 
     def test_invalid_model_value(self, temp_dir):
         """Invalid model value raises ConfigError."""
+        # Bare name without provider prefix is invalid
         config_path = temp_dir / "config.yaml"
         config_path.write_text(
             """\
@@ -99,13 +98,45 @@ models:
 
         assert "Invalid model 'gpt4'" in str(exc_info.value)
 
+    def test_bare_model_name_invalid(self, temp_dir):
+        """Bare model name (no provider prefix) raises ConfigError."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+models:
+  evaluator: claude-opus-4-5
+"""
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(config_path)
+
+        assert "Invalid model 'claude-opus-4-5'" in str(exc_info.value)
+
+    def test_valid_provider_prefixed_models(self, temp_dir):
+        """Provider-prefixed model names are valid."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+models:
+  evaluator: anthropic/claude-opus-4-5
+  drafter: claude-cli/sonnet
+  gatekeeper: anthropic/claude-haiku-4-5
+"""
+        )
+
+        config = load_config(config_path)
+        assert config.models.evaluator == "anthropic/claude-opus-4-5"
+        assert config.models.drafter == "claude-cli/sonnet"
+        assert config.models.gatekeeper == "anthropic/claude-haiku-4-5"
+
     def test_missing_config_returns_default(self):
         """Missing config.yaml returns default Config."""
         config = load_config(None)
 
-        assert config.models.evaluator == "claude-opus-4-5"
-        assert config.models.drafter == "claude-opus-4-5"
-        assert config.models.gatekeeper == "claude-haiku-4-5"
+        assert config.models.evaluator == "anthropic/claude-opus-4-5"
+        assert config.models.drafter == "anthropic/claude-opus-4-5"
+        assert config.models.gatekeeper == "anthropic/claude-haiku-4-5"
 
     def test_load_full_config(self, temp_dir):
         """Load full config merges env and yaml."""
@@ -118,14 +149,14 @@ models:
         yaml_path.write_text(
             """\
 models:
-  evaluator: claude-sonnet-4-5
+  evaluator: anthropic/claude-sonnet-4-5
 """
         )
 
         config = load_full_config(env_path, yaml_path)
 
         assert config.env["ANTHROPIC_API_KEY"] == "sk-ant-test"
-        assert config.models.evaluator == "claude-sonnet-4-5"
+        assert config.models.evaluator == "anthropic/claude-sonnet-4-5"
 
 
 # =============================================================================

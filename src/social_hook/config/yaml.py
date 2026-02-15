@@ -8,9 +8,6 @@ import yaml
 
 from social_hook.errors import ConfigError
 
-# Valid model names (Anthropic aliases)
-VALID_MODELS = ("claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5")
-
 # Valid X account tiers and their character limits
 VALID_TIERS = ("free", "basic", "premium", "premium_plus")
 TIER_CHAR_LIMITS = {
@@ -23,9 +20,9 @@ TIER_CHAR_LIMITS = {
 # Default configuration values
 DEFAULT_CONFIG = {
     "models": {
-        "evaluator": "claude-opus-4-5",
-        "drafter": "claude-opus-4-5",
-        "gatekeeper": "claude-haiku-4-5",
+        "evaluator": "anthropic/claude-opus-4-5",
+        "drafter": "anthropic/claude-opus-4-5",
+        "gatekeeper": "anthropic/claude-haiku-4-5",
     },
     "platforms": {
         "x": {"enabled": True, "account_tier": "free"},
@@ -49,9 +46,9 @@ DEFAULT_CONFIG = {
 class ModelsConfig:
     """Model configuration."""
 
-    evaluator: str = "claude-opus-4-5"
-    drafter: str = "claude-opus-4-5"
-    gatekeeper: str = "claude-haiku-4-5"
+    evaluator: str = "anthropic/claude-opus-4-5"
+    drafter: str = "anthropic/claude-opus-4-5"
+    gatekeeper: str = "anthropic/claude-haiku-4-5"
 
 
 @dataclass
@@ -136,16 +133,22 @@ def _parse_config(data: dict[str, Any]) -> Config:
     # Models
     models_data = data.get("models", {})
     models = ModelsConfig(
-        evaluator=models_data.get("evaluator", "claude-opus-4-5"),
-        drafter=models_data.get("drafter", "claude-opus-4-5"),
-        gatekeeper=models_data.get("gatekeeper", "claude-haiku-4-5"),
+        evaluator=models_data.get("evaluator", "anthropic/claude-opus-4-5"),
+        drafter=models_data.get("drafter", "anthropic/claude-opus-4-5"),
+        gatekeeper=models_data.get("gatekeeper", "anthropic/claude-haiku-4-5"),
     )
 
-    # Validate model names
+    # Validate model names (must use provider/model-id format)
+    from social_hook.llm.factory import parse_provider_model
     for role in ("evaluator", "drafter", "gatekeeper"):
         value = getattr(models, role)
-        if value not in VALID_MODELS:
-            raise ConfigError(f"Invalid model '{value}' for {role}, must be one of {VALID_MODELS}")
+        try:
+            parse_provider_model(value)
+        except ConfigError:
+            raise ConfigError(
+                f"Invalid model '{value}' for {role}: must use provider/model-id format "
+                f"(e.g., 'anthropic/claude-opus-4-5', 'claude-cli/sonnet')"
+            )
 
     # Platforms
     platforms_data = data.get("platforms", {})

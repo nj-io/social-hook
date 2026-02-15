@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from social_hook.errors import MalformedResponseError
-from social_hook.llm.client import ClaudeClient
+from social_hook.llm.base import LLMClient
 from social_hook.llm.drafter import Drafter
 from social_hook.llm.evaluator import Evaluator
 from social_hook.llm.expert import Expert
@@ -68,7 +68,7 @@ def _mock_response_no_tool():
 @pytest.fixture
 def mock_client():
     """Create a mocked ClaudeClient."""
-    client = MagicMock(spec=ClaudeClient)
+    client = MagicMock(spec=LLMClient)
     client.model = "claude-opus-4-5"
     return client
 

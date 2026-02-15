@@ -81,7 +81,7 @@ ENV_EXAMPLE_CONTENT = """\
 # Social Hook Configuration
 # Copy this file to .env and fill in your values
 
-# Claude API (required)
+# Claude API (required for anthropic/ provider)
 ANTHROPIC_API_KEY=sk-ant-...
 
 # Telegram (required for notifications)
@@ -101,6 +101,15 @@ LINKEDIN_ACCESS_TOKEN=...
 
 # Image Generation (optional)
 GEMINI_API_KEY=...
+
+# OpenAI (required for openai/ provider)
+OPENAI_API_KEY=sk-...
+
+# OpenRouter (required for openrouter/ provider)
+OPENROUTER_API_KEY=sk-or-v1-...
+
+# Ollama (optional, defaults to localhost:11434)
+OLLAMA_BASE_URL=http://localhost:11434/v1
 """
 
 
@@ -109,9 +118,9 @@ CONFIG_EXAMPLE_CONTENT = """\
 # Copy this file to config.yaml and customize
 
 models:
-  evaluator: claude-opus-4-5     # Decides post-worthiness (claude-opus-4-5 or claude-sonnet-4-5)
-  drafter: claude-opus-4-5       # Creates content (claude-opus-4-5 or claude-sonnet-4-5)
-  gatekeeper: claude-haiku-4-5   # Handles simple Telegram interactions
+  evaluator: anthropic/claude-opus-4-5     # or claude-cli/sonnet ($0 with subscription)
+  drafter: anthropic/claude-opus-4-5       # or claude-cli/sonnet ($0 with subscription)
+  gatekeeper: anthropic/claude-haiku-4-5   # or claude-cli/haiku ($0 with subscription)
 
 platforms:
   x:

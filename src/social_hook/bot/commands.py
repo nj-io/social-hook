@@ -100,17 +100,20 @@ def handle_message(message: dict, token: str, config: Optional[Any] = None) -> N
         return
 
     try:
-        from social_hook.llm.client import ClaudeClient
+        from social_hook.llm.factory import create_client
         from social_hook.llm.gatekeeper import Gatekeeper
+        from social_hook.errors import ConfigError
 
-        if not config or not config.env.get("ANTHROPIC_API_KEY"):
-            _send(token, chat_id, "API key not configured. Use /help for commands.")
+        if not config:
+            _send(token, chat_id, "Not configured. Run social-hook setup first.")
             return
 
-        client = ClaudeClient(
-            api_key=config.env["ANTHROPIC_API_KEY"],
-            model=config.models.gatekeeper,
-        )
+        try:
+            client = create_client(config.models.gatekeeper, config)
+        except ConfigError:
+            _send(token, chat_id, "Model provider not configured. Use /help for commands.")
+            return
+
         gatekeeper = Gatekeeper(client)
         route = gatekeeper.route(user_message=text)
 
@@ -166,13 +169,16 @@ def _handle_expert_escalation(
 ) -> None:
     """Handle an Expert escalation."""
     try:
-        from social_hook.llm.client import ClaudeClient
+        from social_hook.llm.factory import create_client
         from social_hook.llm.expert import Expert
+        from social_hook.errors import ConfigError
 
-        client = ClaudeClient(
-            api_key=config.env["ANTHROPIC_API_KEY"],
-            model=config.models.drafter,
-        )
+        try:
+            client = create_client(config.models.drafter, config)
+        except ConfigError:
+            _send(token, chat_id, "Model provider not configured. Use /help for commands.")
+            return
+
         expert = Expert(client)
 
         result = expert.handle(

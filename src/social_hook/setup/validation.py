@@ -1,6 +1,7 @@
 """API credential validation for setup wizard."""
 
 import logging
+import subprocess
 from typing import Optional
 
 import requests
@@ -165,6 +166,35 @@ def validate_image_gen(service: str, api_key: str) -> tuple[bool, str]:
             return False, f"Connection error: {e}"
 
     return False, f"Unknown service: {service}"
+
+
+def validate_claude_cli() -> tuple[bool, str]:
+    """Validate Claude CLI is installed and functional."""
+    import os
+    try:
+        result = subprocess.run(
+            ["claude", "-p", "Reply with ok",
+             "--output-format", "json",
+             "--json-schema", '{"type":"object","properties":{"status":{"type":"string"}},"required":["status"]}',
+             "--tools", "",
+             "--no-session-persistence",
+             "--model", "haiku"],
+            capture_output=True, text=True, timeout=30,
+            env={k: v for k, v in os.environ.items() if k != "CLAUDECODE"},
+        )
+        if result.returncode != 0:
+            return False, f"Claude CLI error: {result.stderr.strip()}"
+        import json
+        envelope = json.loads(result.stdout)
+        if "structured_output" not in envelope:
+            return False, "Claude CLI returned unexpected response format"
+        return True, "Claude CLI working"
+    except FileNotFoundError:
+        return False, "Claude CLI not found in PATH. Install Claude Code first."
+    except subprocess.TimeoutExpired:
+        return False, "Claude CLI timed out (30s)"
+    except Exception as e:
+        return False, f"Claude CLI validation error: {e}"
 
 
 def get_linkedin_auth_url(client_id: str, redirect_uri: str) -> str:

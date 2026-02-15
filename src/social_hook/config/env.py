@@ -9,7 +9,7 @@ from dotenv import dotenv_values
 from social_hook.errors import ConfigError
 
 # Required keys that must be present
-REQUIRED_KEYS = ["ANTHROPIC_API_KEY"]
+REQUIRED_KEYS = []
 
 # All known environment variable keys
 KNOWN_KEYS = [
@@ -29,6 +29,10 @@ KNOWN_KEYS = [
     "LINKEDIN_ACCESS_TOKEN",
     # Image generation (optional)
     "GEMINI_API_KEY",
+    # Additional LLM providers (optional)
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OLLAMA_BASE_URL",
 ]
 
 

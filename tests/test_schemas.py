@@ -370,3 +370,21 @@ class TestExtractToolCall:
         ])
         result = extract_tool_call(response, "log_decision")
         assert result["decision"] == "post_worthy"
+
+    def test_extract_tool_call_from_normalized_response(self):
+        """Verify NormalizedResponse works with extract_tool_call (provider interop)."""
+        from social_hook.llm.base import NormalizedResponse, NormalizedToolCall, NormalizedUsage
+
+        tool_call = NormalizedToolCall(
+            type="tool_use",
+            name="log_decision",
+            input={"decision": "post_worthy", "reasoning": "test", "episode_type": "standalone", "post_category": "feature_launch"},
+        )
+        response = NormalizedResponse(
+            content=[tool_call],
+            usage=NormalizedUsage(input_tokens=100, output_tokens=50),
+        )
+
+        result = extract_tool_call(response, "log_decision")
+        assert result["decision"] == "post_worthy"
+        assert result["reasoning"] == "test"

@@ -2,7 +2,7 @@
 
 from typing import Any, Optional
 
-from social_hook.llm.client import ClaudeClient
+from social_hook.llm.base import LLMClient
 from social_hook.llm.prompts import assemble_expert_prompt, load_prompt
 from social_hook.llm.schemas import ExpertResponseInput, extract_tool_call
 
@@ -17,7 +17,7 @@ class Expert:
         client: ClaudeClient configured with the drafter model
     """
 
-    def __init__(self, client: ClaudeClient) -> None:
+    def __init__(self, client: LLMClient) -> None:
         self.client = client
 
     def handle(

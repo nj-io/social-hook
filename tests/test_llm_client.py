@@ -180,7 +180,7 @@ class TestClaudeClient:
         # Verify usage was logged
         summary = ops.get_usage_summary(temp_db)
         assert len(summary) == 1
-        assert summary[0]["model"] == "claude-opus-4-5"
+        assert summary[0]["model"] == "anthropic/claude-opus-4-5"
 
     @patch("social_hook.llm.client.anthropic.Anthropic")
     def test_usage_logging_skipped_dry_run(self, mock_anthropic_cls, temp_db):

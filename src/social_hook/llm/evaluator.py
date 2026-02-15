@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from social_hook.config.project import ContextConfig
 from social_hook.db import operations as ops
-from social_hook.llm.client import ClaudeClient
+from social_hook.llm.base import LLMClient
 from social_hook.llm.prompts import assemble_evaluator_prompt, load_prompt
 from social_hook.llm.schemas import LogDecisionInput, extract_tool_call
 from social_hook.models import CommitInfo, ProjectContext
@@ -17,7 +17,7 @@ class Evaluator:
         client: ClaudeClient configured with the evaluator model
     """
 
-    def __init__(self, client: ClaudeClient) -> None:
+    def __init__(self, client: LLMClient) -> None:
         self.client = client
 
     def evaluate(

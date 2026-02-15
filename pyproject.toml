@@ -41,6 +41,7 @@ dependencies = [
 media = [
     "playwright>=1.40.0",
 ]
+multi-provider = ["openai>=1.0.0"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

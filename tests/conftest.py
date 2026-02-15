@@ -54,9 +54,9 @@ def temp_config_file(temp_dir):
     config_path.write_text(
         """\
 models:
-  evaluator: claude-opus-4-5
-  drafter: claude-sonnet-4-5
-  gatekeeper: claude-haiku-4-5
+  evaluator: anthropic/claude-opus-4-5
+  drafter: anthropic/claude-sonnet-4-5
+  gatekeeper: anthropic/claude-haiku-4-5
 
 platforms:
   x:

@@ -7,6 +7,7 @@ import anthropic
 
 from social_hook.errors import AuthError, MalformedResponseError
 from social_hook.filesystem import generate_id
+from social_hook.llm.base import LLMClient, NormalizedResponse, NormalizedToolCall, NormalizedUsage
 from social_hook.models import UsageLog
 
 
@@ -66,7 +67,7 @@ def _calculate_cost_cents(
     return round(cost, 4)
 
 
-class ClaudeClient:
+class ClaudeClient(LLMClient):
     """Wrapper around Anthropic SDK with usage tracking.
 
     Args:
@@ -74,8 +75,11 @@ class ClaudeClient:
         model: Claude model to use (required, no default)
     """
 
+    provider = "anthropic"
+
     def __init__(self, api_key: str, model: str) -> None:
         self.model = model
+        self.full_id = f"{self.provider}/{self.model}"
         self._client = anthropic.Anthropic(api_key=api_key)
 
     def complete(
@@ -88,7 +92,7 @@ class ClaudeClient:
         db: Optional[Any] = None,
         project_id: Optional[str] = None,
         commit_hash: Optional[str] = None,
-    ) -> Any:
+    ) -> NormalizedResponse:
         """Make a Claude API call with tool use.
 
         Args:
@@ -144,7 +148,7 @@ class ClaudeClient:
                 id=generate_id("usage"),
                 project_id=project_id,
                 operation_type=operation_type,
-                model=self.model,
+                model=self.full_id,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cache_read_tokens=cache_read_tokens,
@@ -158,4 +162,25 @@ class ClaudeClient:
             elif isinstance(db, sqlite3.Connection):
                 ops.insert_usage(db, usage_log)
 
-        return response
+        # Wrap in NormalizedResponse
+        normalized_content = []
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use":
+                normalized_content.append(
+                    NormalizedToolCall(type="tool_use", name=block.name, input=block.input)
+                )
+            else:
+                normalized_content.append(block)
+
+        normalized_usage = NormalizedUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read_tokens,
+            cache_creation_input_tokens=cache_creation_tokens,
+        )
+
+        return NormalizedResponse(
+            content=normalized_content,
+            usage=normalized_usage,
+            raw=response,
+        )

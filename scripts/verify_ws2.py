@@ -3,7 +3,7 @@
 
 Verifies the full WS2 pipeline end-to-end:
   --dry-run  Mock API calls, test all components (default)
-  --live     Real API calls (~$0.50-$2.00, requires ANTHROPIC_API_KEY)
+  --live     Real API calls (~$0.50-$2.00, uses configured provider)
 
 Usage:
   python scripts/verify_ws2.py --dry-run
@@ -310,21 +310,25 @@ def verify(live: bool = False) -> bool:
     from social_hook.llm.client import ClaudeClient
 
     if live:
+        from social_hook.llm.factory import create_client
+        from social_hook.errors import ConfigError as _ConfigError
+
         config = load_full_config()  # Reads ~/.social-hook/.env + config.yaml
-        api_key = config.env.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            fail("ANTHROPIC_API_KEY not found in ~/.social-hook/.env")
+        try:
+            client_eval = create_client(config.models.evaluator, config)
+            client_draft = create_client(config.models.drafter, config)
+            client_gk = create_client(config.models.gatekeeper, config)
+        except _ConfigError as e:
+            fail(f"Provider configuration error: {e}")
             return False
-        # Mismatch #1, #3, #4 fixed: use config.env, pass both args
-        client_eval = ClaudeClient(api_key=api_key, model=config.models.evaluator)
-        client_draft = ClaudeClient(api_key=api_key, model=config.models.drafter)
-        client_gk = ClaudeClient(api_key=api_key, model=config.models.gatekeeper)
-        ok(f"ClaudeClients created (eval={config.models.evaluator}, draft={config.models.drafter}, gk={config.models.gatekeeper})")
+        ok(f"Clients created (eval={config.models.evaluator}, draft={config.models.drafter}, gk={config.models.gatekeeper})")
     else:
-        client_eval = MagicMock(spec=ClaudeClient)
-        client_draft = MagicMock(spec=ClaudeClient)
-        client_gk = MagicMock(spec=ClaudeClient)
-        ok("Mock ClaudeClients created (dry-run)")
+        from social_hook.llm.base import LLMClient as _LLMClient
+
+        client_eval = MagicMock(spec=_LLMClient)
+        client_draft = MagicMock(spec=_LLMClient)
+        client_gk = MagicMock(spec=_LLMClient)
+        ok("Mock LLMClients created (dry-run)")
 
     # =========================================================================
     # Step 5: ProjectContext assembly
@@ -722,7 +726,7 @@ def verify(live: bool = False) -> bool:
         id=generate_id("usage"),
         project_id="proj_verify1",
         operation_type="evaluate",
-        model="claude-opus-4-5",
+        model="anthropic/claude-opus-4-5",
         input_tokens=100,
         output_tokens=50,
         cache_read_tokens=10,
@@ -788,7 +792,7 @@ def main():
     )
     group.add_argument(
         "--live", action="store_true",
-        help="Real API calls (~$0.50-$2.00, requires ANTHROPIC_API_KEY)",
+        help="Real API calls (~$0.50-$2.00, uses configured provider)",
     )
     args = parser.parse_args()
 

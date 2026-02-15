@@ -238,17 +238,20 @@ def run_trigger(
         print(f"Evaluating commit {commit.hash[:8]}: {commit.message}")
 
     # 7. Evaluate
+    from social_hook.llm.factory import create_client
+    from social_hook.llm.evaluator import Evaluator
+
     try:
-        from social_hook.llm.client import ClaudeClient
-        from social_hook.llm.evaluator import Evaluator
+        evaluator_client = create_client(config.models.evaluator, config)
+    except ConfigError as e:
+        logger.error(f"Config error: {e}")
+        if verbose:
+            print(f"Config error: {e}", file=sys.stderr)
+        conn.close()
+        return 1
 
-        api_key = config.env.get("ANTHROPIC_API_KEY", "")
-
-        client = ClaudeClient(
-            api_key=api_key,
-            model=config.models.evaluator,
-        )
-        evaluator = Evaluator(client)
+    try:
+        evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(commit, context, db, show_prompt=show_prompt)
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
@@ -280,12 +283,17 @@ def run_trigger(
     # 9. If post-worthy, create draft
     if evaluation.decision == "post_worthy":
         try:
+            drafter_client = create_client(config.models.drafter, config)
+        except ConfigError as e:
+            logger.error(f"Config error: {e}")
+            if verbose:
+                print(f"Config error: {e}", file=sys.stderr)
+            conn.close()
+            return 1
+
+        try:
             from social_hook.llm.drafter import Drafter
 
-            drafter_client = ClaudeClient(
-                api_key=api_key,
-                model=config.models.drafter,
-            )
             drafter = Drafter(drafter_client)
 
             # Determine platform and tier

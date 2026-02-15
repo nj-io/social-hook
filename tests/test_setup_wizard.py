@@ -120,6 +120,15 @@ class TestSectionHelpers:
         with patch.dict("sys.modules", {"rich.console": None}):
             _success("fallback ok")
 
+    def test_info_does_not_raise(self):
+        from social_hook.setup.wizard import _info
+        _info("Some informational message")
+
+    def test_info_fallback_without_rich(self):
+        from social_hook.setup.wizard import _info
+        with patch.dict("sys.modules", {"rich.console": None, "rich.panel": None}):
+            _info("fallback info")
+
 
 # =============================================================================
 # WizardProgress tests
@@ -170,7 +179,7 @@ class TestWizardProgress:
 
     def test_fraction_after_first_section(self):
         p = WizardProgress(total_sections=9)
-        p.set_section(1, "Anthropic", substeps=1)
+        p.set_section(1, "Models", substeps=1)
         p.advance()
         assert abs(p.fraction - 1 / 9) < 0.001
 
@@ -338,10 +347,10 @@ class TestRunWizard:
     @patch("social_hook.setup.wizard._setup_x")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
-    @patch("social_hook.setup.wizard._setup_anthropic")
+    @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
-    def test_full_wizard(self, mock_init, mock_save, mock_anthropic, mock_voice,
+    def test_full_wizard(self, mock_init, mock_save, mock_api_keys, mock_voice,
                          mock_telegram, mock_x, mock_linkedin, mock_models,
                          mock_image, mock_sched, mock_install, mock_yaml,
                          mock_summary, mock_load, mock_sys):
@@ -363,15 +372,15 @@ class TestRunWizard:
         assert result is False
 
     @patch("social_hook.setup.wizard._load_existing", return_value=({}, {}))
-    @patch("social_hook.setup.wizard._setup_anthropic")
+    @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
-    def test_only_anthropic(self, mock_init, mock_save, mock_anthropic, mock_load, mock_sys):
+    def test_only_apikeys(self, mock_init, mock_save, mock_api_keys, mock_load, mock_sys):
         mock_sys.stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
-        result = run_wizard(only="anthropic")
+        result = run_wizard(only="apikeys")
         assert result is True
-        mock_anthropic.assert_called_once()
+        mock_api_keys.assert_called_once()
 
     @patch("social_hook.setup.wizard._load_existing", return_value=({}, {}))
     @patch("social_hook.setup.wizard._setup_voice_style")
@@ -427,11 +436,11 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._setup_x")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
-    @patch("social_hook.setup.wizard._setup_anthropic")
+    @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
     def test_warns_when_missing_keys(
-        self, mock_init, mock_save, mock_anthropic, mock_voice,
+        self, mock_init, mock_save, mock_api_keys, mock_voice,
         mock_telegram, mock_x, mock_linkedin, mock_models,
         mock_image, mock_sched, mock_install, mock_yaml,
         mock_summary, mock_load, mock_success, mock_warn, mock_sys,
@@ -441,7 +450,7 @@ class TestWizardWarnings:
         run_wizard()
 
         warn_text = " ".join(str(c) for c in mock_warn.call_args_list)
-        assert "Anthropic" in warn_text
+        assert "ANTHROPIC_API_KEY" in warn_text
         assert "Telegram" in warn_text
         # _success("Setup complete!") should NOT be called
         for c in mock_success.call_args_list:
@@ -462,11 +471,11 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._setup_x")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
-    @patch("social_hook.setup.wizard._setup_anthropic")
+    @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
     def test_no_warnings_when_existing_keys(
-        self, mock_init, mock_save, mock_anthropic, mock_voice,
+        self, mock_init, mock_save, mock_api_keys, mock_voice,
         mock_telegram, mock_x, mock_linkedin, mock_models,
         mock_image, mock_sched, mock_install, mock_yaml,
         mock_summary, mock_load, mock_success, mock_warn, mock_sys,
@@ -489,19 +498,19 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._warn")
     @patch("social_hook.setup.wizard._success")
     @patch("social_hook.setup.wizard._load_existing", return_value=({}, {}))
-    @patch("social_hook.setup.wizard._setup_anthropic")
+    @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
     def test_no_warnings_in_only_mode(
-        self, mock_init, mock_save, mock_anthropic, mock_load,
+        self, mock_init, mock_save, mock_api_keys, mock_load,
         mock_success, mock_warn, mock_sys,
     ):
         mock_sys.stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
-        run_wizard(only="anthropic")
+        run_wizard(only="apikeys")
 
         warn_text = " ".join(str(c) for c in mock_warn.call_args_list)
-        assert "Anthropic API key not configured" not in warn_text
+        assert "ANTHROPIC_API_KEY" not in warn_text
 
 
 # =============================================================================
@@ -522,7 +531,7 @@ class TestWelcomePanel:
     @patch("social_hook.setup.wizard._setup_x")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
-    @patch("social_hook.setup.wizard._setup_anthropic")
+    @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
     def test_welcome_panel_renders(self, mock_init, mock_save, *mocks):
@@ -541,7 +550,7 @@ class TestWelcomePanel:
     @patch("social_hook.setup.wizard._setup_x")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
-    @patch("social_hook.setup.wizard._setup_anthropic")
+    @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
     def test_welcome_fallback_on_import_error(self, mock_init, mock_save, *mocks):
@@ -608,7 +617,7 @@ class TestVoiceStyleStep:
         progress = WizardProgress()
         _setup_voice_style(temp_dir, progress=progress)
 
-        assert progress.section == 2
+        assert progress.section == 3
         assert progress.substep == 8
 
     @patch("social_hook.setup.wizard._confirm")
@@ -638,94 +647,76 @@ class TestVoiceStyleStep:
 class TestModelSelection:
     @patch("social_hook.setup.wizard._select")
     @patch("social_hook.setup.wizard._confirm")
-    def test_default_models(self, mock_confirm, mock_select):
+    def test_quick_setup_with_cli(self, mock_confirm, mock_select):
         from social_hook.setup.wizard import _setup_models
 
-        mock_confirm.return_value = True
-        mock_select.side_effect = [
-            "claude-opus-4-5 (recommended)",
-            "claude-opus-4-5 (recommended)",
-            "claude-haiku-4-5 (recommended)",
-        ]
+        mock_select.return_value = "Quick setup — use recommended defaults (Recommended)"
 
         yaml_config = {}
-        _setup_models(yaml_config, {})
+        with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
+            mock_discover.return_value = [
+                {"id": "claude-cli", "status": "detected", "detail": "Uses subscription ($0)"},
+                {"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"},
+            ]
+            _setup_models(yaml_config, {}, {}, {})
 
-        assert yaml_config["models"]["evaluator"] == "claude-opus-4-5"
-        assert yaml_config["models"]["drafter"] == "claude-opus-4-5"
-        assert yaml_config["models"]["gatekeeper"] == "claude-haiku-4-5"
+        assert yaml_config["models"]["evaluator"] == "claude-cli/sonnet"
+        assert yaml_config["models"]["drafter"] == "claude-cli/sonnet"
+        assert yaml_config["models"]["gatekeeper"] == "claude-cli/haiku"
 
     @patch("social_hook.setup.wizard._select")
     @patch("social_hook.setup.wizard._confirm")
-    def test_strips_recommended_suffix(self, mock_confirm, mock_select):
+    def test_quick_setup_without_cli(self, mock_confirm, mock_select):
         from social_hook.setup.wizard import _setup_models
 
-        mock_confirm.return_value = True
-        mock_select.side_effect = [
-            "claude-opus-4-5 (recommended)",
-            "claude-sonnet-4-5",
-            "claude-haiku-4-5 (recommended)",
-        ]
+        mock_select.return_value = "Quick setup — use recommended defaults (Recommended)"
 
         yaml_config = {}
-        _setup_models(yaml_config, {})
+        with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
+            mock_discover.return_value = [
+                {"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"},
+            ]
+            _setup_models(yaml_config, {}, {}, {})
 
-        assert yaml_config["models"]["evaluator"] == "claude-opus-4-5"
-        assert yaml_config["models"]["drafter"] == "claude-sonnet-4-5"
-        assert yaml_config["models"]["gatekeeper"] == "claude-haiku-4-5"
-
-    @patch("social_hook.setup.wizard._confirm")
-    def test_skips_when_declined(self, mock_confirm):
-        from social_hook.setup.wizard import _setup_models
-
-        mock_confirm.return_value = False
-        yaml_config = {}
-        _setup_models(yaml_config, {})
-
-        assert "models" not in yaml_config
-
-    @patch("social_hook.setup.wizard._select")
-    @patch("social_hook.setup.wizard._confirm")
-    def test_pre_populates_from_existing(self, mock_confirm, mock_select):
-        from social_hook.setup.wizard import _setup_models
-
-        mock_confirm.return_value = True
-        mock_select.side_effect = [
-            "claude-sonnet-4-5",
-            "claude-sonnet-4-5",
-            "claude-haiku-4-5 (recommended)",
-        ]
-
-        yaml_config = {}
-        existing_yaml = {
-            "models": {
-                "evaluator": "claude-sonnet-4-5",
-                "drafter": "claude-sonnet-4-5",
-                "gatekeeper": "claude-haiku-4-5",
-            }
-        }
-        _setup_models(yaml_config, existing_yaml)
-
-        assert yaml_config["models"]["evaluator"] == "claude-sonnet-4-5"
+        assert yaml_config["models"]["evaluator"] == "anthropic/claude-opus-4-5"
+        assert yaml_config["models"]["drafter"] == "anthropic/claude-opus-4-5"
+        assert yaml_config["models"]["gatekeeper"] == "anthropic/claude-haiku-4-5"
 
     @patch("social_hook.setup.wizard._select")
     @patch("social_hook.setup.wizard._confirm")
     def test_with_progress(self, mock_confirm, mock_select):
         from social_hook.setup.wizard import _setup_models
 
-        mock_confirm.return_value = True
-        mock_select.side_effect = [
-            "claude-opus-4-5 (recommended)",
-            "claude-opus-4-5 (recommended)",
-            "claude-haiku-4-5 (recommended)",
-        ]
+        mock_select.return_value = "Quick setup — use recommended defaults (Recommended)"
 
         progress = WizardProgress()
         yaml_config = {}
-        _setup_models(yaml_config, {}, progress=progress)
+        with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
+            mock_discover.return_value = [
+                {"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"},
+            ]
+            _setup_models(yaml_config, {}, {}, {}, progress=progress)
 
-        assert progress.section == 6
-        assert progress.substep == 3
+        assert progress.section == 1
+        # Quick setup doesn't call progress.advance() per role, so substep stays 0
+        assert progress.substep == 0
+
+    @patch("social_hook.setup.wizard._select")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_models_always_set(self, mock_confirm, mock_select):
+        """New _setup_models always sets models (no skip option)."""
+        from social_hook.setup.wizard import _setup_models
+
+        mock_select.return_value = "Quick setup — use recommended defaults (Recommended)"
+
+        yaml_config = {}
+        with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
+            mock_discover.return_value = [
+                {"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"},
+            ]
+            _setup_models(yaml_config, {}, {}, {})
+
+        assert "models" in yaml_config
 
 
 class TestXTierSelection:
@@ -890,52 +881,78 @@ class TestImageGenStep:
         assert yaml_config["image_generation"]["enabled"] is False
 
 
-class TestAnthropicStep:
+class TestApiKeysStep:
     @patch("social_hook.setup.wizard._prompt_api_key")
-    def test_sets_key(self, mock_prompt_key):
-        from social_hook.setup.wizard import _setup_anthropic
+    def test_sets_anthropic_key_when_needed(self, mock_prompt_key):
+        from social_hook.setup.wizard import _setup_api_keys
 
         mock_prompt_key.return_value = "sk-ant-test123"
 
         env_vars = {}
-        _setup_anthropic(env_vars, {})
+        yaml_config = {"models": {"evaluator": "anthropic/claude-opus-4-5",
+                                   "drafter": "anthropic/claude-opus-4-5",
+                                   "gatekeeper": "anthropic/claude-haiku-4-5"}}
+        _setup_api_keys(env_vars, {}, yaml_config, {})
 
         assert env_vars["ANTHROPIC_API_KEY"] == "sk-ant-test123"
 
     @patch("social_hook.setup.wizard._prompt_api_key")
     def test_keeps_existing_on_skip(self, mock_prompt_key):
-        from social_hook.setup.wizard import _setup_anthropic
+        from social_hook.setup.wizard import _setup_api_keys
 
         mock_prompt_key.return_value = None
 
         env_vars = {}
-        _setup_anthropic(env_vars, {"ANTHROPIC_API_KEY": "existing-key"})
+        yaml_config = {"models": {"evaluator": "anthropic/claude-opus-4-5",
+                                   "drafter": "anthropic/claude-opus-4-5",
+                                   "gatekeeper": "anthropic/claude-haiku-4-5"}}
+        _setup_api_keys(env_vars, {"ANTHROPIC_API_KEY": "existing-key"}, yaml_config, {})
 
         # Existing key preserved explicitly in env_vars
         assert env_vars["ANTHROPIC_API_KEY"] == "existing-key"
 
     @patch("social_hook.setup.wizard._prompt_api_key")
     def test_pre_populates_existing_key(self, mock_prompt_key):
-        from social_hook.setup.wizard import _setup_anthropic
+        from social_hook.setup.wizard import _setup_api_keys
 
         mock_prompt_key.return_value = "existing-key"
 
         env_vars = {}
-        _setup_anthropic(env_vars, {"ANTHROPIC_API_KEY": "existing-key"})
+        yaml_config = {"models": {"evaluator": "anthropic/claude-opus-4-5",
+                                   "drafter": "anthropic/claude-opus-4-5",
+                                   "gatekeeper": "anthropic/claude-haiku-4-5"}}
+        _setup_api_keys(env_vars, {"ANTHROPIC_API_KEY": "existing-key"}, yaml_config, {})
 
         assert mock_prompt_key.call_args.kwargs.get("existing") == "existing-key"
 
     @patch("social_hook.setup.wizard._prompt_api_key")
     def test_with_progress(self, mock_prompt_key):
-        from social_hook.setup.wizard import _setup_anthropic
+        from social_hook.setup.wizard import _setup_api_keys
 
         mock_prompt_key.return_value = "sk-key"
         progress = WizardProgress()
         env_vars = {}
-        _setup_anthropic(env_vars, {}, progress=progress)
+        yaml_config = {"models": {"evaluator": "anthropic/claude-opus-4-5",
+                                   "drafter": "anthropic/claude-opus-4-5",
+                                   "gatekeeper": "anthropic/claude-haiku-4-5"}}
+        _setup_api_keys(env_vars, {}, yaml_config, {}, progress=progress)
 
-        assert progress.section == 1
+        assert progress.section == 2
         assert progress.substep == 1
+
+    def test_no_keys_needed_for_cli(self):
+        from social_hook.setup.wizard import _setup_api_keys
+
+        env_vars = {}
+        yaml_config = {"models": {"evaluator": "claude-cli/sonnet",
+                                   "drafter": "claude-cli/sonnet",
+                                   "gatekeeper": "claude-cli/haiku"}}
+        _setup_api_keys(env_vars, {}, yaml_config, {})
+
+        # No API keys should be set
+        assert "ANTHROPIC_API_KEY" not in env_vars
+        assert "OPENAI_API_KEY" not in env_vars
+        assert "OPENROUTER_API_KEY" not in env_vars
 
 
 class TestTelegramStep:
@@ -1135,7 +1152,7 @@ class TestSummaryTable:
 
         env_vars = {"ANTHROPIC_API_KEY": "sk-ant-test123456", "TELEGRAM_BOT_TOKEN": "123:ABC"}
         yaml_config = {
-            "models": {"evaluator": "opus", "drafter": "opus"},
+            "models": {"evaluator": "anthropic/claude-opus-4-5", "drafter": "anthropic/claude-opus-4-5"},
             "platforms": {"x": {"account_tier": "free"}},
             "scheduling": {"timezone": "UTC", "max_posts_per_day": 3},
         }
@@ -1164,7 +1181,7 @@ class TestSaveConfigYaml:
 
         yaml_config = {
             "platforms": {"x": {"enabled": True, "account_tier": "free"}},
-            "models": {"evaluator": "opus"},
+            "models": {"evaluator": "anthropic/claude-opus-4-5"},
         }
         _save_config_yaml(temp_dir, yaml_config)
 
@@ -1205,7 +1222,10 @@ class TestValidateExisting:
 
         mock_base.return_value = temp_dir
         mock_config.return_value = MagicMock(
-            env={"ANTHROPIC_API_KEY": "test", "TELEGRAM_BOT_TOKEN": "test"}
+            env={"ANTHROPIC_API_KEY": "test", "TELEGRAM_BOT_TOKEN": "test"},
+            models=MagicMock(evaluator="anthropic/claude-opus-4-5",
+                           drafter="anthropic/claude-opus-4-5",
+                           gatekeeper="anthropic/claude-haiku-4-5"),
         )
 
         result = _validate_existing()
@@ -1224,10 +1244,33 @@ class TestValidateExisting:
         env_file.write_text("TELEGRAM_BOT_TOKEN=test\n")
 
         mock_base.return_value = temp_dir
-        mock_config.return_value = MagicMock(env={"TELEGRAM_BOT_TOKEN": "test"})
+        mock_config.return_value = MagicMock(
+            env={"TELEGRAM_BOT_TOKEN": "test"},
+            models=MagicMock(evaluator="anthropic/claude-opus-4-5",
+                           drafter="anthropic/claude-opus-4-5",
+                           gatekeeper="anthropic/claude-haiku-4-5"),
+        )
 
         result = _validate_existing()
         assert result is False
+
+    @patch("social_hook.filesystem.get_base_path")
+    @patch("social_hook.config.load_full_config")
+    def test_valid_config_with_cli_provider(self, mock_config, mock_base, temp_dir):
+        """Config uses claude-cli models, no ANTHROPIC_API_KEY needed."""
+        env_file = temp_dir / ".env"
+        env_file.write_text("TELEGRAM_BOT_TOKEN=test\n")
+
+        mock_base.return_value = temp_dir
+        mock_config.return_value = MagicMock(
+            env={"TELEGRAM_BOT_TOKEN": "test"},
+            models=MagicMock(evaluator="claude-cli/sonnet",
+                           drafter="claude-cli/sonnet",
+                           gatekeeper="claude-cli/haiku"),
+        )
+
+        result = _validate_existing()
+        assert result is True
 
 
 class TestSaveEnv:
@@ -1351,7 +1394,7 @@ class TestLoadExisting:
 
         mock_config.return_value = MagicMock(
             env={"ANTHROPIC_API_KEY": "sk-test", "TELEGRAM_BOT_TOKEN": "tok"},
-            models=MagicMock(evaluator="claude-opus-4-5", drafter="claude-opus-4-5", gatekeeper="claude-haiku-4-5"),
+            models=MagicMock(evaluator="anthropic/claude-opus-4-5", drafter="anthropic/claude-opus-4-5", gatekeeper="anthropic/claude-haiku-4-5"),
             platforms=MagicMock(x=MagicMock(enabled=True, account_tier="free")),
             scheduling=MagicMock(timezone="UTC", max_posts_per_day=3, min_gap_minutes=30),
             image_generation=MagicMock(enabled=True, service="nano_banana_pro"),
@@ -1360,7 +1403,86 @@ class TestLoadExisting:
         env, yaml = _load_existing()
 
         assert env["ANTHROPIC_API_KEY"] == "sk-test"
-        assert yaml["models"]["evaluator"] == "claude-opus-4-5"
+        assert yaml["models"]["evaluator"] == "anthropic/claude-opus-4-5"
         assert yaml["platforms"]["x"]["account_tier"] == "free"
         assert yaml["scheduling"]["timezone"] == "UTC"
         assert yaml["image_generation"]["service"] == "nano_banana_pro"
+
+
+# =============================================================================
+# Provider discovery and key detection tests
+# =============================================================================
+
+
+class TestDiscoverProviders:
+    def test_detects_anthropic_key(self):
+        from social_hook.setup.wizard import _discover_providers
+
+        providers = _discover_providers({"ANTHROPIC_API_KEY": "sk-test"})
+        anthropic = next(p for p in providers if p["id"] == "anthropic")
+        assert anthropic["status"] == "configured"
+
+    def test_unconfigured_without_key(self):
+        from social_hook.setup.wizard import _discover_providers
+
+        providers = _discover_providers({})
+        anthropic = next(p for p in providers if p["id"] == "anthropic")
+        assert anthropic["status"] == "unconfigured"
+
+    def test_detects_openrouter_key(self):
+        from social_hook.setup.wizard import _discover_providers
+
+        providers = _discover_providers({"OPENROUTER_API_KEY": "or-test"})
+        openrouter = next(p for p in providers if p["id"] == "openrouter")
+        assert openrouter["status"] == "configured"
+
+    def test_detects_openai_key(self):
+        from social_hook.setup.wizard import _discover_providers
+
+        providers = _discover_providers({"OPENAI_API_KEY": "sk-openai-test"})
+        openai = next(p for p in providers if p["id"] == "openai")
+        assert openai["status"] == "configured"
+
+
+class TestKeysNeededForConfig:
+    def test_anthropic_models_need_anthropic_key(self):
+        from social_hook.setup.wizard import _keys_needed_for_config
+
+        config = {"models": {
+            "evaluator": "anthropic/claude-opus-4-5",
+            "drafter": "anthropic/claude-opus-4-5",
+            "gatekeeper": "anthropic/claude-haiku-4-5",
+        }}
+        needed = _keys_needed_for_config(config)
+        assert "ANTHROPIC_API_KEY" in needed
+        assert "OPENAI_API_KEY" not in needed
+
+    def test_cli_models_need_no_keys(self):
+        from social_hook.setup.wizard import _keys_needed_for_config
+
+        config = {"models": {
+            "evaluator": "claude-cli/sonnet",
+            "drafter": "claude-cli/sonnet",
+            "gatekeeper": "claude-cli/haiku",
+        }}
+        needed = _keys_needed_for_config(config)
+        assert len(needed) == 0
+
+    def test_mixed_providers_need_multiple_keys(self):
+        from social_hook.setup.wizard import _keys_needed_for_config
+
+        config = {"models": {
+            "evaluator": "anthropic/claude-opus-4-5",
+            "drafter": "openai/gpt-4o",
+            "gatekeeper": "openrouter/anthropic/claude-sonnet-4.5",
+        }}
+        needed = _keys_needed_for_config(config)
+        assert "ANTHROPIC_API_KEY" in needed
+        assert "OPENAI_API_KEY" in needed
+        assert "OPENROUTER_API_KEY" in needed
+
+    def test_empty_config_defaults_to_anthropic(self):
+        from social_hook.setup.wizard import _keys_needed_for_config
+
+        needed = _keys_needed_for_config({})
+        assert "ANTHROPIC_API_KEY" in needed

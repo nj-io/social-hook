@@ -163,6 +163,65 @@ def _error(msg: str) -> None:
         typer.echo(f"  ✗ {msg}")
 
 
+def _info(message: str) -> None:
+    """Display an informational message."""
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        Console().print(Panel(message, border_style="dim", padding=(0, 1)))
+    except Exception:
+        typer.echo(f"  i {message}")
+
+
+def _discover_providers(env: dict) -> list[dict]:
+    """Detect which providers are available from environment/PATH/localhost."""
+    import shutil
+    available = []
+    if shutil.which("claude"):
+        available.append({"id": "claude-cli", "status": "detected", "detail": "Uses subscription ($0)"})
+    if env.get("ANTHROPIC_API_KEY"):
+        available.append({"id": "anthropic", "status": "configured", "detail": "API key found"})
+    else:
+        available.append({"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"})
+    if env.get("OPENROUTER_API_KEY"):
+        available.append({"id": "openrouter", "status": "configured", "detail": "API key found"})
+    else:
+        available.append({"id": "openrouter", "status": "unconfigured", "detail": "Requires OPENROUTER_API_KEY"})
+    if env.get("OPENAI_API_KEY"):
+        available.append({"id": "openai", "status": "configured", "detail": "API key found"})
+    else:
+        available.append({"id": "openai", "status": "unconfigured", "detail": "Requires OPENAI_API_KEY"})
+    try:
+        from urllib.request import urlopen
+        urlopen("http://localhost:11434/api/tags", timeout=2)
+        available.append({"id": "ollama", "status": "detected", "detail": "Running locally"})
+    except Exception:
+        available.append({"id": "ollama", "status": "unavailable", "detail": "Not running"})
+    return available
+
+
+def _keys_needed_for_config(config_data: dict) -> set[str]:
+    """Determine which API keys are needed based on model config."""
+    from social_hook.llm.factory import parse_provider_model
+    PROVIDER_KEY_MAP = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    needed = set()
+    models = config_data.get("models", {})
+    for role in ("evaluator", "drafter", "gatekeeper"):
+        model_str = models.get(role, "anthropic/claude-opus-4-5")
+        try:
+            provider, _ = parse_provider_model(model_str)
+            key = PROVIDER_KEY_MAP.get(provider)
+            if key:
+                needed.add(key)
+        except Exception:
+            pass
+    return needed
+
+
 # =============================================================================
 # Input primitives
 # =============================================================================
@@ -440,12 +499,17 @@ def run_wizard(
         console.print()
         console.print(Panel(
             "[bold]Social Hook Setup[/bold]\n\n"
-            "This wizard will walk you through:\n"
-            "  1. API credentials (Anthropic, Telegram)\n"
-            "  2. Voice & style configuration\n"
-            "  3. Platform setup (X, LinkedIn)\n"
-            "  4. Model selection\n"
-            "  5. Scheduling preferences\n\n"
+            "Social Hook automatically turns your git commits into social media posts.\n"
+            "It watches your repos, uses AI to decide what's worth posting about,\n"
+            "drafts content in your voice, and sends it for your approval via Telegram.\n\n"
+            "This wizard will configure:\n"
+            "  1. AI model selection (provider & model for each role)\n"
+            "  2. API credentials (only what's needed for your chosen providers)\n"
+            "  3. Voice & style (how your posts sound)\n"
+            "  4. Telegram bot (for draft notifications & approvals)\n"
+            "  5. Platforms (X/Twitter, LinkedIn)\n"
+            "  6. Image generation\n"
+            "  7. Scheduling preferences\n\n"
             "Press Ctrl+C at any time to cancel.\n"
             "[dim]Existing values shown as defaults.[/dim]",
             title="Welcome",
@@ -454,12 +518,15 @@ def run_wizard(
         console.print()
     except Exception:
         typer.echo("\n=== Social Hook Setup ===\n")
-        typer.echo("This wizard will walk you through:")
-        typer.echo("  1. API credentials (Anthropic, Telegram)")
-        typer.echo("  2. Voice & style configuration")
-        typer.echo("  3. Platform setup (X, LinkedIn)")
-        typer.echo("  4. Model selection")
-        typer.echo("  5. Scheduling preferences")
+        typer.echo("Social Hook automatically turns your git commits into social media posts.")
+        typer.echo("This wizard will configure:")
+        typer.echo("  1. AI model selection (provider & model for each role)")
+        typer.echo("  2. API credentials (only what's needed for your chosen providers)")
+        typer.echo("  3. Voice & style (how your posts sound)")
+        typer.echo("  4. Telegram bot (for draft notifications & approvals)")
+        typer.echo("  5. Platforms (X/Twitter, LinkedIn)")
+        typer.echo("  6. Image generation")
+        typer.echo("  7. Scheduling preferences")
         typer.echo("\nPress Ctrl+C at any time to cancel.")
         typer.echo("Existing values shown as defaults.\n")
 
@@ -483,50 +550,64 @@ def run_wizard(
             if yaml_config:
                 _save_config_yaml(base, yaml_config)
 
-        if only is None or only == "anthropic":
-            _setup_anthropic(env_vars, existing_env, progress)
+        # Section 1: Model selection
+        if only is None or only == "models":
+            _setup_models(yaml_config, existing_yaml, env_vars, existing_env, progress)
             _save_progress()
 
+        # Section 2: API keys
+        if only is None or only == "apikeys":
+            _setup_api_keys(env_vars, existing_env, yaml_config, existing_yaml, progress)
+            _save_progress()
+
+        # Section 3: Voice & style
         if only is None or only == "voice":
             _setup_voice_style(base, progress)
 
+        # Section 4: Telegram
         if only is None or only == "telegram":
             _setup_telegram(env_vars, existing_env, progress)
             _save_progress()
 
+        # Section 5: X (Twitter)
         if only is None or only == "x":
             _setup_x(env_vars, yaml_config, existing_env, existing_yaml, progress)
             _save_progress()
 
+        # Section 6: LinkedIn
         if only is None or only == "linkedin":
             _setup_linkedin(env_vars, existing_env, progress)
             _save_progress()
 
-        if only is None or only == "models":
-            _setup_models(yaml_config, existing_yaml, progress)
-            _save_progress()
-
+        # Section 7: Image generation
         if only is None or only == "image":
             _setup_image_gen(env_vars, yaml_config, existing_env, progress)
             _save_progress()
 
         installed = False
         if only is None:
+            # Section 8: Scheduling
             _setup_scheduling(base, yaml_config, existing_yaml, progress)
             _save_progress()
             _show_summary(env_vars, yaml_config)
+            # Section 9: Installations
             installed = _setup_installations(progress)
 
         # --- Completion message with warnings ---
         warnings: list[str] = []
         if only is None:
-            has_anthropic = "ANTHROPIC_API_KEY" in env_vars or existing_env.get("ANTHROPIC_API_KEY")
+            # Check if needed API keys are present
+            models_config = yaml_config if yaml_config.get("models") else {}
+            needed = _keys_needed_for_config(models_config)
+            all_env = {**existing_env, **env_vars}
+            missing_keys = [k for k in needed if k not in all_env]
+
             has_telegram = "TELEGRAM_BOT_TOKEN" in env_vars or existing_env.get("TELEGRAM_BOT_TOKEN")
             has_voice = (base / "social-context.md").exists()
             has_x = "X_API_KEY" in env_vars or existing_env.get("X_API_KEY")
 
-            if not has_anthropic:
-                warnings.append("Anthropic API key not configured — AI features won't work")
+            for k in missing_keys:
+                warnings.append(f"{k} not configured — required for chosen provider")
             if not has_telegram:
                 warnings.append("Telegram bot not configured — no draft notifications")
             if not has_voice:
@@ -572,8 +653,23 @@ def _validate_existing() -> bool:
     if not env_file.exists():
         errors.append(".env file not found")
 
-    if not config.env.get("ANTHROPIC_API_KEY"):
-        errors.append("ANTHROPIC_API_KEY not set")
+    # Provider-aware key validation
+    from social_hook.llm.factory import parse_provider_model
+    from social_hook.errors import ConfigError
+    PROVIDER_KEY_MAP = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    for role in ('evaluator', 'drafter', 'gatekeeper'):
+        model_str = getattr(config.models, role)
+        try:
+            provider, _ = parse_provider_model(model_str)
+            needed_key = PROVIDER_KEY_MAP.get(provider)
+            if needed_key and not config.env.get(needed_key):
+                errors.append(f"{needed_key} not set (required for {role}'s {provider}/ provider)")
+        except ConfigError as e:
+            errors.append(str(e))
 
     if not config.env.get("TELEGRAM_BOT_TOKEN"):
         errors.append("TELEGRAM_BOT_TOKEN not set")
@@ -593,23 +689,59 @@ def _validate_existing() -> bool:
 # =============================================================================
 
 
-def _setup_anthropic(env_vars: dict, existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
-    """Configure Anthropic API key."""
+def _setup_api_keys(env_vars: dict, existing_env: dict, yaml_config: dict,
+                    existing_yaml: dict, progress: Optional[WizardProgress] = None) -> None:
+    """Configure API keys based on chosen providers."""
     if progress:
-        progress.set_section(1, "Anthropic", substeps=1)
-    _section("Anthropic API Key", "Powers all AI evaluation and content generation", progress=progress)
+        progress.set_section(2, "API Keys", substeps=1)
+    _section("API Credentials", "Configure keys for your chosen providers", progress=progress)
+
+    _info("API keys authenticate with your chosen AI providers.\n"
+          "Only keys needed for your selected models are required.")
+
+    # Determine which keys are needed
+    models_source = yaml_config if yaml_config.get("models") else existing_yaml
+    needed_keys = _keys_needed_for_config(models_source)
+
+    if not needed_keys:
+        _info("No API keys needed for your configured providers.\n"
+              "Claude CLI and Ollama don't require API keys.")
+        if progress:
+            progress.advance()
+        return
 
     from social_hook.setup.validation import validate_anthropic_key
 
-    existing = existing_env.get("ANTHROPIC_API_KEY", "")
-    key = _prompt_api_key("Anthropic API key", validate_anthropic_key, existing=existing)
-    if key:
-        env_vars["ANTHROPIC_API_KEY"] = key
-    elif existing:
-        env_vars["ANTHROPIC_API_KEY"] = existing
-        _warn("Keeping existing key")
-    else:
-        _warn("No API key configured — AI features will not work")
+    if "ANTHROPIC_API_KEY" in needed_keys:
+        existing = existing_env.get("ANTHROPIC_API_KEY", "")
+        key = _prompt_api_key("Anthropic API key", validate_anthropic_key, existing=existing)
+        if key:
+            env_vars["ANTHROPIC_API_KEY"] = key
+        elif existing:
+            env_vars["ANTHROPIC_API_KEY"] = existing
+            _warn("Keeping existing key")
+        else:
+            _warn("No Anthropic API key configured — anthropic/ models will not work")
+
+    if "OPENROUTER_API_KEY" in needed_keys:
+        existing = existing_env.get("OPENROUTER_API_KEY", "")
+        if existing:
+            typer.echo(f"  Current: {_obfuscate(existing)}")
+        key = _prompt("OpenRouter API key", default=existing or "", hide_default=bool(existing))
+        if key:
+            env_vars["OPENROUTER_API_KEY"] = key
+        elif existing:
+            env_vars["OPENROUTER_API_KEY"] = existing
+
+    if "OPENAI_API_KEY" in needed_keys:
+        existing = existing_env.get("OPENAI_API_KEY", "")
+        if existing:
+            typer.echo(f"  Current: {_obfuscate(existing)}")
+        key = _prompt("OpenAI API key", default=existing or "", hide_default=bool(existing))
+        if key:
+            env_vars["OPENAI_API_KEY"] = key
+        elif existing:
+            env_vars["OPENAI_API_KEY"] = existing
 
     if progress:
         progress.advance()
@@ -618,7 +750,7 @@ def _setup_anthropic(env_vars: dict, existing_env: dict, progress: Optional[Wiza
 def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) -> None:
     """Configure voice and style (social-context.md)."""
     if progress:
-        progress.set_section(2, "Voice & Style", substeps=8)
+        progress.set_section(3, "Voice & Style", substeps=8)
     _section("Voice & Style", "Define how your content sounds and who it's for", progress=progress)
 
     context_path = base / "social-context.md"
@@ -837,7 +969,7 @@ def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) ->
 def _setup_telegram(env_vars: dict, existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
     """Configure Telegram bot."""
     if progress:
-        progress.set_section(3, "Telegram", substeps=2)
+        progress.set_section(4, "Telegram", substeps=2)
     _section("Telegram Bot", "Review and approve posts via Telegram", progress=progress)
     if not _confirm("Set up Telegram bot?"):
         return
@@ -892,7 +1024,7 @@ def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yam
              progress: Optional[WizardProgress] = None) -> None:
     """Configure X (Twitter) API."""
     if progress:
-        progress.set_section(4, "X (Twitter)", substeps=5)
+        progress.set_section(5, "X (Twitter)", substeps=5)
     _section("X (Twitter)", "Post to X automatically", progress=progress)
     if not _confirm("Set up X posting?", default=False):
         return
@@ -988,7 +1120,7 @@ def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yam
 def _setup_linkedin(env_vars: dict, existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
     """Configure LinkedIn API."""
     if progress:
-        progress.set_section(5, "LinkedIn", substeps=1)
+        progress.set_section(6, "LinkedIn", substeps=1)
     _section("LinkedIn", "Post to LinkedIn", progress=progress)
     if not _confirm("Set up LinkedIn posting?", default=False):
         return
@@ -1006,47 +1138,141 @@ def _setup_linkedin(env_vars: dict, existing_env: dict, progress: Optional[Wizar
         progress.advance()
 
 
-def _setup_models(yaml_config: dict, existing_yaml: dict, progress: Optional[WizardProgress] = None) -> None:
-    """Configure LLM models."""
+def _setup_models(yaml_config: dict, existing_yaml: dict, env_vars: dict,
+                  existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
+    """Configure LLM models with QuickStart/Advanced paths."""
     if progress:
-        progress.set_section(6, "Models", substeps=3)
+        progress.set_section(1, "Models", substeps=3)
     _section("Model Selection", "Choose AI models for each role", progress=progress)
-    if not _confirm("Customize models? (defaults: Opus for eval/draft, Haiku for gatekeeper)"):
-        return
 
-    existing_models = existing_yaml.get("models", {})
+    _info("Models control which AI handles each role in the pipeline.\n"
+          "The Evaluator decides if commits are post-worthy.\n"
+          "The Drafter creates the actual post content.\n"
+          "The Gatekeeper handles Telegram interactions.")
 
-    # Evaluator
-    eval_choices = ["claude-opus-4-5 (recommended)", "claude-sonnet-4-5", "claude-haiku-4-5"]
-    existing_eval = existing_models.get("evaluator", "claude-opus-4-5")
-    default_eval = next((c for c in eval_choices if c.startswith(existing_eval)), eval_choices[0])
-    evaluator = _select("Evaluator model (decides post-worthiness):", eval_choices, default=default_eval)
-    if progress:
-        progress.advance()
+    # Detect available providers
+    combined_env = {**existing_env, **env_vars}
+    providers = _discover_providers(combined_env)
 
-    # Drafter
-    draft_choices = ["claude-opus-4-5 (recommended)", "claude-sonnet-4-5", "claude-haiku-4-5"]
-    existing_draft = existing_models.get("drafter", "claude-opus-4-5")
-    default_draft = next((c for c in draft_choices if c.startswith(existing_draft)), draft_choices[0])
-    drafter = _select("Drafter model (creates content):", draft_choices, default=default_draft)
-    if progress:
-        progress.advance()
+    setup_mode = _select(
+        "How would you like to configure models?",
+        [
+            "Quick setup — use recommended defaults (Recommended)",
+            "Advanced — choose providers and models per role",
+        ],
+        default="Quick setup — use recommended defaults (Recommended)",
+    )
 
-    # Gatekeeper
-    gate_choices = ["claude-haiku-4-5 (recommended)", "claude-sonnet-4-5", "claude-opus-4-5"]
-    existing_gate = existing_models.get("gatekeeper", "claude-haiku-4-5")
-    default_gate = next((c for c in gate_choices if c.startswith(existing_gate)), gate_choices[0])
-    gatekeeper = _select("Gatekeeper model (Telegram interactions):", gate_choices, default=default_gate)
-    if progress:
-        progress.advance()
+    if setup_mode.startswith("Quick"):
+        # Quick setup: auto-detect best provider
+        has_cli = any(p["id"] == "claude-cli" and p["status"] == "detected" for p in providers)
+        if has_cli:
+            yaml_config["models"] = {
+                "evaluator": "claude-cli/sonnet",
+                "drafter": "claude-cli/sonnet",
+                "gatekeeper": "claude-cli/haiku",
+            }
+            _success("Using Claude CLI (subscription, $0 extra cost)")
+        else:
+            yaml_config["models"] = {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "anthropic/claude-opus-4-5",
+                "gatekeeper": "anthropic/claude-haiku-4-5",
+            }
+            _success("Using Anthropic API defaults")
+    else:
+        # Advanced: per-role provider and model selection
+        from social_hook.llm.catalog import get_models_for_provider, format_model_choice, get_all_providers as catalog_providers
 
-    # Strip "(recommended)" suffix
-    yaml_config["models"] = {
-        "evaluator": evaluator.split(" (")[0],
-        "drafter": drafter.split(" (")[0],
-        "gatekeeper": gatekeeper.split(" (")[0],
-    }
-    _success("Models configured")
+        existing_models = existing_yaml.get("models", {})
+
+        # Show available providers
+        provider_choices = []
+        for p in providers:
+            status_tag = f"[{p['status']}]"
+            provider_choices.append(f"{p['id']} — {p['detail']} {status_tag}")
+
+        # Provider selection helper
+        def _select_provider_for_role(role: str) -> str:
+            choice = _select(
+                f"Provider for {role.title()}:",
+                provider_choices,
+                default=provider_choices[0],
+            )
+            return choice.split(" — ")[0].strip()
+
+        # Model selection helper
+        def _select_model_for_provider(provider_id: str, role: str) -> str:
+            models = get_models_for_provider(provider_id)
+            if not models:
+                model_name = _prompt(f"Model ID for {role} ({provider_id}):")
+                return f"{provider_id}/{model_name}"
+
+            model_choices = [format_model_choice(m) for m in models]
+            choice = _select(
+                f"Model for {role.title()} [{provider_id}]:",
+                model_choices,
+                default=model_choices[0],
+            )
+            # Extract model id from format "Name - Description [cost]"
+            # Use the model's id directly by matching the choice back
+            for m in models:
+                if format_model_choice(m) == choice:
+                    return f"{provider_id}/{m.id}"
+            # Fallback: use first model
+            return f"{provider_id}/{models[0].id}"
+
+        # Evaluator
+        eval_provider = _select_provider_for_role("evaluator")
+        eval_model = _select_model_for_provider(eval_provider, "evaluator")
+        if progress:
+            progress.advance()
+
+        # Drafter - offer "same as evaluator" shortcut
+        drafter_mode = _select(
+            "Provider for Drafter:",
+            [f"Same as Evaluator ({eval_provider})", "Choose different provider..."],
+            default=f"Same as Evaluator ({eval_provider})",
+        )
+        if drafter_mode.startswith("Same"):
+            draft_model = eval_model
+        else:
+            draft_provider = _select_provider_for_role("drafter")
+            draft_model = _select_model_for_provider(draft_provider, "drafter")
+        if progress:
+            progress.advance()
+
+        # Gatekeeper - offer "same as evaluator" shortcut
+        gate_mode = _select(
+            "Provider for Gatekeeper:",
+            [f"Same as Evaluator ({eval_provider})", "Choose different provider..."],
+            default=f"Same as Evaluator ({eval_provider})",
+        )
+        if gate_mode.startswith("Same"):
+            gate_provider = eval_provider
+            # Default to haiku/fast for gatekeeper
+            models = get_models_for_provider(gate_provider)
+            fast_models = [m for m in models if m.tier == "fast"]
+            if fast_models:
+                gate_model = f"{gate_provider}/{fast_models[0].id}"
+            else:
+                gate_model = eval_model
+        else:
+            gate_provider = _select_provider_for_role("gatekeeper")
+            gate_model = _select_model_for_provider(gate_provider, "gatekeeper")
+        if progress:
+            progress.advance()
+
+        yaml_config["models"] = {
+            "evaluator": eval_model,
+            "drafter": draft_model,
+            "gatekeeper": gate_model,
+        }
+
+    _success(f"Models configured:\n"
+             f"    Evaluator:  {yaml_config['models']['evaluator']}\n"
+             f"    Drafter:    {yaml_config['models']['drafter']}\n"
+             f"    Gatekeeper: {yaml_config['models']['gatekeeper']}")
 
 
 def _setup_image_gen(env_vars: dict, yaml_config: dict, existing_env: dict,

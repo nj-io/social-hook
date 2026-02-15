@@ -84,19 +84,11 @@ def draft(
         context = assemble_evaluator_context(db, project.id, project_config)
 
         # Create draft via LLM
-        from social_hook.llm.client import ClaudeClient
+        from social_hook.llm.factory import create_client
         from social_hook.llm.drafter import Drafter
         from social_hook.llm.evaluator import EvaluationResult
 
-        api_key = config.env.get("ANTHROPIC_API_KEY", "")
-        if dry_run:
-            api_key = "dry-run-key"
-
-        client = ClaudeClient(
-            api_key=api_key,
-            model=config.models.drafter,
-            dry_run=dry_run,
-        )
+        client = create_client(config.models.drafter, config)
         drafter = Drafter(client)
 
         # Build a minimal evaluation result
