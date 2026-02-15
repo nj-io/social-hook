@@ -55,6 +55,22 @@ SECTION_MAP = {
     "multiprovider": "L",
 }
 
+# Provider presets: maps --provider flag to model configs
+PROVIDER_PRESETS = {
+    "claude-cli": {
+        "evaluator": "claude-cli/sonnet",
+        "drafter": "claude-cli/sonnet",
+        "gatekeeper": "claude-cli/haiku",
+        "cost": "$0 (uses Claude Code subscription)",
+    },
+    "anthropic": {
+        "evaluator": "anthropic/claude-sonnet-4-5",
+        "drafter": "anthropic/claude-sonnet-4-5",
+        "gatekeeper": "anthropic/claude-haiku-4-5",
+        "cost": "~$3-9 (Anthropic API credits)",
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # E2E Harness
@@ -63,12 +79,13 @@ SECTION_MAP = {
 class E2EHarness:
     """Isolated temp environment for E2E tests."""
 
-    def __init__(self, real_base: Optional[Path] = None):
+    def __init__(self, real_base: Optional[Path] = None, provider: str = "claude-cli"):
         if real_base is None:
             # Resolve before we patch HOME
             real_home = os.environ.get("HOME", str(Path.home()))
             real_base = Path(real_home) / ".social-hook"
         self.real_base = real_base
+        self.provider = provider
         self.fake_home: Optional[Path] = None
         self.base: Optional[Path] = None  # = fake_home / ".social-hook"
         self.repo_path: Optional[Path] = None
@@ -100,10 +117,14 @@ class E2EHarness:
                 f"No prompts/ found at {prompts_src}. Run 'social-hook setup' first."
             )
 
-        # Copy config.yaml if it exists
-        config_src = self.real_base / "config.yaml"
-        if config_src.exists():
-            shutil.copy(config_src, self.base / "config.yaml")
+        # Write deterministic config.yaml for E2E tests
+        # (Don't copy user's config — it may have outdated bare model names)
+        self._write_global_config()
+
+        # Symlink real ~/.claude/ so Claude CLI subprocess can authenticate
+        real_claude_dir = Path(os.environ.get("HOME", str(Path.home()))) / ".claude"
+        if real_claude_dir.exists():
+            (self.fake_home / ".claude").symlink_to(real_claude_dir)
 
         # Patch HOME before any imports that use Path.home()
         self._patch_home()
@@ -151,6 +172,31 @@ class E2EHarness:
             capture_output=True,
         )
 
+    def _write_global_config(self):
+        """Write deterministic global config.yaml for E2E tests."""
+        import yaml
+        preset = PROVIDER_PRESETS[self.provider]
+        config = {
+            "models": {
+                "evaluator": preset["evaluator"],
+                "drafter": preset["drafter"],
+                "gatekeeper": preset["gatekeeper"],
+            },
+            "platforms": {
+                "x": {"enabled": True, "account_tier": "free"},
+                "linkedin": {"enabled": False},
+            },
+            "scheduling": {
+                "timezone": "UTC",
+                "max_posts_per_day": 5,
+                "min_gap_minutes": 30,
+                "optimal_days": ["Tue", "Wed", "Thu"],
+                "optimal_hours": [9, 12, 17],
+            },
+            "image_generation": {"enabled": False},
+        }
+        (self.base / "config.yaml").write_text(yaml.dump(config))
+
     def _write_project_config(self):
         """Create .social-hook/ in the cloned repo with test config."""
         config_dir = self.repo_path / ".social-hook"
@@ -172,9 +218,9 @@ class E2EHarness:
             '  tier: "free"\n'
             "\n"
             "models:\n"
-            '  evaluator: anthropic/claude-sonnet-4-5\n'
-            '  drafter: anthropic/claude-sonnet-4-5\n'
-            '  gatekeeper: anthropic/claude-haiku-4-5\n'
+            f'  evaluator: {PROVIDER_PRESETS[self.provider]["evaluator"]}\n'
+            f'  drafter: {PROVIDER_PRESETS[self.provider]["drafter"]}\n'
+            f'  gatekeeper: {PROVIDER_PRESETS[self.provider]["gatekeeper"]}\n'
             "\n"
             "platforms:\n"
             "  x:\n"
@@ -2113,6 +2159,12 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
 
     # L5: Missing key for chosen provider
     def l5():
+        # Explicitly set anthropic models so removing the key is meaningful
+        harness.update_config({"models": {
+            "evaluator": "anthropic/claude-haiku-4-5",
+            "drafter": "anthropic/claude-haiku-4-5",
+            "gatekeeper": "anthropic/claude-haiku-4-5",
+        }})
         env_path = harness.base / ".env"
         env_content = env_path.read_text()
         modified = "\n".join(
@@ -2126,6 +2178,7 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
             return f"Missing key -> exit {exit_code}"
         finally:
             env_path.write_text(env_content)
+            config_path.write_text(original_config)
 
     runner.run_scenario("L5", "Missing key -> error", l5)
 
@@ -2189,7 +2242,7 @@ def main():
     parser.add_argument(
         "--only", type=str, default=None,
         help="Run only a specific section (onboarding, pipeline, narrative, draft, "
-             "scheduler, bot, setup, cli, crosscutting) or scenario (A1, B1, etc.)"
+             "scheduler, bot, setup, cli, crosscutting, multiprovider) or scenario (A1, B1, etc.)"
     )
     parser.add_argument(
         "--skip-telegram", action="store_true",
@@ -2199,7 +2252,40 @@ def main():
         "--verbose", action="store_true",
         help="Show full LLM outputs inline"
     )
+    parser.add_argument(
+        "--provider", type=str, default=None,
+        choices=list(PROVIDER_PRESETS.keys()),
+        help="LLM provider for pipeline tests (claude-cli: $0 subscription, anthropic: ~$3-9 API). "
+             "If not specified, you will be prompted to choose."
+    )
     args = parser.parse_args()
+
+    # Determine provider
+    provider = args.provider
+    if provider is None:
+        print("\n" + "=" * 60)
+        print("  Provider Selection")
+        print("  " + "-" * 56)
+        print("  Full E2E coverage requires testing all major providers.")
+        print("  Choose which provider to use for this run:")
+        print()
+        for i, (pid, preset) in enumerate(PROVIDER_PRESETS.items(), 1):
+            print(f"    {i}. {pid}")
+            print(f"       Models: {preset['evaluator']}, {preset['gatekeeper']}")
+            print(f"       Cost:   {preset['cost']}")
+            print()
+        print("  For full coverage, run once with each provider.")
+        print("=" * 60)
+        while True:
+            choice = input("\n  Select provider [1-2]: ").strip()
+            if choice == "1":
+                provider = "claude-cli"
+                break
+            elif choice == "2":
+                provider = "anthropic"
+                break
+            else:
+                print("  Invalid choice. Enter 1 or 2.")
 
     # Determine which sections to run
     sections_to_run = set("ABCDEFGHIJKL")
@@ -2217,9 +2303,11 @@ def main():
     if args.skip_telegram:
         sections_to_run -= {"F", "G", "H"}
 
+    preset = PROVIDER_PRESETS[provider]
     print("=" * 60)
     print("  E2E Test Suite (LIVE)")
     print("  Repo: social-media-auto-hook")
+    print(f"  Provider: {provider} ({preset['cost']})")
     print(f"  Sections: {', '.join(sorted(sections_to_run))}")
     print("=" * 60)
 
@@ -2230,7 +2318,7 @@ def main():
     real_home = os.environ.get("HOME", str(Path.home()))
     real_base = Path(real_home) / ".social-hook"
 
-    harness = E2EHarness(real_base=real_base)
+    harness = E2EHarness(real_base=real_base, provider=provider)
     telegram_capture = TelegramCapture()
 
     try:

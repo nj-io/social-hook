@@ -86,6 +86,7 @@ def draft(
         # Create draft via LLM
         from social_hook.llm.factory import create_client
         from social_hook.llm.drafter import Drafter
+        # TODO: EvaluationResult does not exist — draft command is broken (pre-existing bug)
         from social_hook.llm.evaluator import EvaluationResult
 
         client = create_client(config.models.drafter, config)
