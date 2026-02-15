@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import tempfile
 from typing import Any, Optional
 
 from social_hook.errors import ConfigError, MalformedResponseError
@@ -68,7 +69,9 @@ class ClaudeCliClient(LLMClient):
             print(f"       [claude-cli] Calling claude -p (timeout 300s)...", file=sys.stderr, flush=True)
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=300)
+            # Run from temp dir so CLI doesn't read the project codebase
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=300,
+                                    cwd=tempfile.gettempdir())
         except FileNotFoundError:
             raise ConfigError("Claude CLI not found. Install Claude Code or use a different provider.")
         except subprocess.TimeoutExpired:

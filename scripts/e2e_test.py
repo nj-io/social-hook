@@ -619,7 +619,7 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
         from social_hook.db import get_recent_decisions
 
         exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -757,7 +757,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
     # B1: Significant commit → evaluate → draft → schedule
     def b1():
         exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -799,7 +799,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
     # B2: Docs-only commit → not post worthy
     def b2():
         exit_code = run_trigger(COMMITS["docs_only"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -899,7 +899,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         before = len(get_all_recent_decisions(harness.conn))
         exit_code = run_trigger(
             COMMITS["large_feature"], str(harness.repo_path), dry_run=True,
-            verbose=runner.verbose, show_prompt=runner.verbose,
+            verbose=runner.verbose,
         )
         assert exit_code == 0, f"run_trigger dry-run returned {exit_code}"
 
@@ -914,7 +914,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         from social_hook.db.operations import get_draft_tweets
 
         exit_code = run_trigger(COMMITS["large_feature"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         drafts = get_pending_drafts(harness.conn, harness.project_id)
@@ -936,7 +936,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         harness.seed_draft(harness.project_id, status="draft")
 
         exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -951,7 +951,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
     # B9: Deferred decision check
     def b9():
         exit_code = run_trigger(COMMITS["docs_only_2"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -1108,7 +1108,7 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
         # Run trigger — evaluator should see high debt
         from social_hook.trigger import run_trigger
         exit_code = run_trigger(COMMITS["bugfix"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0
 
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -1144,7 +1144,7 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
 
         from social_hook.trigger import run_trigger
         exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0
 
         # Reset to research
@@ -1940,7 +1940,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, telegram_capture
         from social_hook.bot.commands import cmd_approve
 
         exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0, f"Trigger failed: {exit_code}"
 
         drafts = ops.get_pending_drafts(harness.conn, harness.project_id)
@@ -1982,7 +1982,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, telegram_capture
         from social_hook.bot.commands import cmd_reject
 
         exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0
 
         drafts = ops.get_pending_drafts(harness.conn, harness.project_id)
@@ -2007,7 +2007,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, telegram_capture
 
         exit_code = run_trigger(
             COMMITS["large_feature"], str(harness.repo_path), dry_run=True,
-            verbose=runner.verbose, show_prompt=runner.verbose,
+            verbose=runner.verbose,
         )
         assert exit_code == 0
 
@@ -2025,7 +2025,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, telegram_capture
 
         from social_hook.trigger import run_trigger
         exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0
 
         arcs_after = ops.get_active_arcs(harness.conn, harness.project_id)
@@ -2045,7 +2045,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, telegram_capture
 
         from social_hook.trigger import run_trigger
         exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose, show_prompt=runner.verbose)
+                                verbose=runner.verbose)
         assert exit_code == 0
 
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=3)
@@ -2110,7 +2110,7 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
         }})
         try:
             exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                    verbose=runner.verbose, show_prompt=runner.verbose)
+                                    verbose=runner.verbose)
             assert exit_code == 0, f"Expected exit 0, got {exit_code}"
             return "CLI evaluator succeeded"
         finally:
@@ -2130,7 +2130,7 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
         }})
         try:
             exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                    verbose=runner.verbose, show_prompt=runner.verbose)
+                                    verbose=runner.verbose)
             assert exit_code == 0, f"Expected exit 0, got {exit_code}"
             return "Full CLI pipeline succeeded"
         finally:
@@ -2150,7 +2150,7 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
         }})
         try:
             exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                    verbose=runner.verbose, show_prompt=runner.verbose)
+                                    verbose=runner.verbose)
             assert exit_code == 0, f"Expected exit 0, got {exit_code}"
             return "Mixed providers succeeded"
         finally:
