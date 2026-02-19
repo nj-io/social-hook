@@ -202,11 +202,15 @@ def assemble_drafter_prompt(
     recent_posts: list[Any],
     commit: CommitInfo,
     arc_context: Optional[dict[str, Any]] = None,
+    config: Optional["ContextConfig"] = None,
 ) -> str:
     """Assemble full drafter system prompt with context.
 
     Per TECH_ARCH L1582-1607: Includes evaluation result, arc context (when
     post_category == 'arc'), recent posts, and commit details.
+
+    When audience_introduced=false, also includes project documentation
+    (README, CLAUDE.md) so the drafter can write a proper introduction.
 
     Args:
         prompt: Base drafter prompt template
@@ -215,16 +219,34 @@ def assemble_drafter_prompt(
         recent_posts: Recent posts for voice consistency
         commit: Current commit information
         arc_context: Arc metadata + posts (when post_category == 'arc')
+        config: Context config for doc inclusion limits
 
     Returns:
         Complete system prompt string
     """
+    if config is None:
+        config = ContextConfig()
+
     sections = [prompt]
 
     # Project context
     sections.append("\n---\n## Project Context")
     if project_context.social_context:
         sections.append(project_context.social_context)
+
+    # Current state — audience introduction status
+    sections.append("\n---\n## Current State")
+    sections.append(
+        f"- Audience introduced: {project_context.audience_introduced}"
+    )
+    if not project_context.audience_introduced:
+        sections.append(
+            "- **THIS IS THE FIRST POST FOR THIS PROJECT.** "
+            "The audience does not know what this project is yet. "
+            "You must write an introductory post that explains what the "
+            "project does, what problem it solves, and why it matters — "
+            "not just what this commit changed."
+        )
 
     # Memories
     if project_context.memories:
@@ -244,11 +266,51 @@ def assemble_drafter_prompt(
                 f"{n.get('note', '')}"
             )
 
+    # Project documentation — included when the evaluator requests it
+    # (include_project_docs=true) or when audience hasn't been introduced yet.
+    include_docs = not project_context.audience_introduced
+    if hasattr(decision, "include_project_docs") and decision.include_project_docs:
+        include_docs = True
+    elif isinstance(decision, dict) and decision.get("include_project_docs"):
+        include_docs = True
+
+    if include_docs and project_context.project.repo_path:
+        repo = Path(project_context.project.repo_path)
+        if config.include_readme:
+            readme_path = repo / "README.md"
+            if readme_path.exists():
+                readme_text = readme_path.read_text(encoding="utf-8")
+                if count_tokens(readme_text) > config.max_doc_tokens:
+                    readme_text = (
+                        readme_text[: config.max_doc_tokens * 4]
+                        + "\n[...truncated]"
+                    )
+                sections.append("\n---\n## README")
+                sections.append(readme_text)
+        if config.include_claude_md:
+            claude_path = repo / "CLAUDE.md"
+            if claude_path.exists():
+                claude_text = claude_path.read_text(encoding="utf-8")
+                if count_tokens(claude_text) > config.max_doc_tokens:
+                    claude_text = (
+                        claude_text[: config.max_doc_tokens * 4]
+                        + "\n[...truncated]"
+                    )
+                sections.append("\n---\n## CLAUDE.md")
+                sections.append(claude_text)
+
+    # Project summary
+    if project_context.project_summary:
+        sections.append("\n---\n## Project Summary")
+        sections.append(project_context.project_summary)
+
     # Evaluation result
     sections.append("\n---\n## Evaluation Result")
     if hasattr(decision, "decision"):
         sections.append(f"- Decision: {decision.decision}")
         sections.append(f"- Reasoning: {decision.reasoning}")
+        if hasattr(decision, "angle") and decision.angle:
+            sections.append(f"- Angle: {decision.angle}")
         if hasattr(decision, "episode_type") and decision.episode_type:
             sections.append(f"- Episode type: {decision.episode_type}")
         if hasattr(decision, "post_category") and decision.post_category:

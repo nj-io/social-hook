@@ -95,10 +95,12 @@ class LogDecisionInput(BaseModel):
 
     decision: DecisionTypeSchema
     reasoning: str
+    angle: Optional[str] = None
     episode_type: Optional[EpisodeTypeSchema] = None
     post_category: Optional[PostCategorySchema] = None
     arc_id: Optional[str] = None
     media_tool: Optional[MediaTool] = None
+    include_project_docs: Optional[bool] = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -116,6 +118,14 @@ class LogDecisionInput(BaseModel):
                     "reasoning": {
                         "type": "string",
                         "description": "Explanation for the decision",
+                    },
+                    "angle": {
+                        "type": "string",
+                        "description": "The hook/angle for the post (e.g. 'Introducing what this project does and why it matters')",
+                    },
+                    "include_project_docs": {
+                        "type": "boolean",
+                        "description": "Set true when the Drafter needs project-level documentation (README, CLAUDE.md) to write this post — e.g. introductions, synthesis, launches, or any post that needs to explain what the project is.",
                     },
                     "episode_type": {
                         "type": "string",

@@ -2,6 +2,7 @@
 
 from typing import Any, Optional
 
+from social_hook.config.project import ContextConfig
 from social_hook.db import operations as ops
 from social_hook.llm.base import LLMClient
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
@@ -28,6 +29,7 @@ class Drafter:
         platform: str = "x",
         tier: str = "free",
         arc_context: Optional[dict[str, Any]] = None,
+        config: Optional[ContextConfig] = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit.
 
@@ -50,6 +52,7 @@ class Drafter:
         system = assemble_drafter_prompt(
             prompt, decision, project_context,
             recent_posts, commit, arc_context=arc_context,
+            config=config,
         )
 
         # Build narrative-aware user message
@@ -59,13 +62,32 @@ class Drafter:
         if hasattr(decision, "post_category") and decision.post_category:
             episode_info += f"Post category: {decision.post_category}. "
 
+        # Include evaluator's angle if available
+        angle_info = ""
+        if hasattr(decision, "angle") and decision.angle:
+            angle_info = f"Angle: {decision.angle}\n"
+
+        # Introduction context for first-ever posts
+        intro_info = ""
+        if not project_context.audience_introduced:
+            intro_info = (
+                "IMPORTANT: This is the FIRST POST for this project. "
+                "The audience has never heard of it. Write an introductory "
+                "post that tells the story of what this project is, what "
+                "problem it solves, and why it matters. Don't just summarize "
+                "the commit — introduce the project. Use the README and "
+                "project documentation in the system prompt for context.\n"
+            )
+
         if platform == "x" and tier == "free":
             from social_hook.config.yaml import TIER_CHAR_LIMITS
 
             char_limit = TIER_CHAR_LIMITS[tier]
             user_content = (
+                f"{intro_info}"
                 f"Create a {platform} post for this commit.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
+                f"{angle_info}"
                 f"{episode_info}\n"
                 f"Platform: X (free tier). Single post limit: {char_limit} chars. "
                 f"Use the Format Selection Framework: punchy (<100), detailed (240-280), "
@@ -77,8 +99,10 @@ class Drafter:
 
             char_limit = TIER_CHAR_LIMITS[tier]
             user_content = (
+                f"{intro_info}"
                 f"Create a {platform} post for this commit.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
+                f"{angle_info}"
                 f"{episode_info}\n"
                 f"Platform: X ({tier} tier). Single post limit: {char_limit} chars. "
                 f"Use the Format Selection Framework. For multi-beat content, you can write "
@@ -88,8 +112,10 @@ class Drafter:
             )
         else:
             user_content = (
+                f"{intro_info}"
                 f"Create a {platform} post for this commit.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
+                f"{angle_info}"
                 f"{episode_info}"
             )
 

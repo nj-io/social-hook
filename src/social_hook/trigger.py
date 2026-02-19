@@ -308,6 +308,7 @@ def run_trigger(
             draft_result = drafter.create_draft(
                 evaluation, context, commit, db,
                 platform=platform, tier=tier,
+                config=project_config.context,
             )
 
             # Format decision: narrative-driven, tier-enforced
