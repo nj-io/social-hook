@@ -245,7 +245,14 @@ def create_bot(
         Configured BotDaemon instance
     """
     from social_hook.bot.buttons import handle_callback
+    from social_hook.bot.buttons import set_adapter as set_buttons_adapter
     from social_hook.bot.commands import handle_command, handle_message
+    from social_hook.bot.commands import set_adapter as set_commands_adapter
+    from social_hook.messaging.telegram import TelegramAdapter
+
+    adapter = TelegramAdapter(token=token)
+    set_buttons_adapter(adapter)
+    set_commands_adapter(adapter)
 
     def on_command(message: dict) -> None:
         handle_command(message, token, config)

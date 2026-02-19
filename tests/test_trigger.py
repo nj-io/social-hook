@@ -171,3 +171,104 @@ class TestRunTrigger:
 
         exit_code = run_trigger("abc123", "/tmp")
         assert exit_code == 0
+
+
+class TestTriggerUsesAdapter:
+    """Tests that trigger notification uses TelegramAdapter."""
+
+    @patch("social_hook.messaging.telegram.TelegramAdapter.send_message")
+    @patch("social_hook.bot.commands.set_chat_draft_context")
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_sends_via_adapter(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        mock_set_context, mock_adapter_send,
+    ):
+        """run_trigger uses TelegramAdapter.send_message instead of direct HTTP."""
+        from datetime import datetime
+        from social_hook.messaging.base import SendResult
+
+        # Config with Telegram env vars
+        cfg = MagicMock()
+        cfg.platforms.x.enabled = True
+        cfg.platforms.x.account_tier = "free"
+        cfg.platforms.linkedin.enabled = False
+        cfg.scheduling.timezone = "UTC"
+        cfg.scheduling.max_posts_per_day = 3
+        cfg.scheduling.min_gap_minutes = 30
+        cfg.scheduling.optimal_days = None
+        cfg.scheduling.optimal_hours = None
+        cfg.env.get = lambda key, default="": {
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "TELEGRAM_ALLOWED_CHAT_IDS": "111,222",
+        }.get(key, default)
+        mock_config.return_value = cfg
+
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(
+            id="p1", name="test-proj", repo_path="/tmp",
+        )
+
+        # Commit
+        commit = MagicMock()
+        commit.hash = "abc12345"
+        commit.message = "Add feature"
+        mock_parse.return_value = commit
+
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+
+        # Evaluator says post-worthy
+        evaluator_instance = MagicMock()
+        evaluation = MagicMock()
+        evaluation.decision = "post_worthy"
+        evaluation.reasoning = "Good commit"
+        evaluation.angle = "new feature"
+        evaluation.episode_type = "launch"
+        evaluation.post_category = "arc"
+        evaluation.arc_id = None
+        evaluation.media_tool = None
+        evaluation.platforms = {}
+        evaluator_instance.evaluate.return_value = evaluation
+        mock_evaluator_cls.return_value = evaluator_instance
+
+        # Drafter
+        drafter_instance = MagicMock()
+        draft_result = MagicMock()
+        draft_result.content = "Check out this feature!"
+        draft_result.reasoning = "Short and punchy"
+        draft_result.format_hint = "single"
+        draft_result.beat_count = 1
+        drafter_instance.create_draft.return_value = draft_result
+        mock_drafter_cls.return_value = drafter_instance
+
+        # Schedule
+        schedule = MagicMock()
+        schedule.datetime = datetime(2026, 2, 20, 12, 0, 0)
+        schedule.time_reason = "optimal"
+        mock_schedule.return_value = schedule
+
+        # Adapter send returns success
+        mock_adapter_send.return_value = SendResult(success=True, message_id="m1")
+
+        exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+        assert exit_code == 0
+
+        # TelegramAdapter.send_message should have been called for each chat ID
+        assert mock_adapter_send.call_count == 2
+        # Verify it was called with chat IDs "111" and "222"
+        call_chat_ids = [c.args[0] for c in mock_adapter_send.call_args_list]
+        assert "111" in call_chat_ids
+        assert "222" in call_chat_ids

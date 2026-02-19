@@ -1,10 +1,13 @@
 """Tests for bot command handlers (T26)."""
 
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from social_hook.bot.commands import (
+    _CONTEXT_TTL_SECONDS,
+    _chat_draft_context,
     _parse_command,
     cmd_approve,
     cmd_cancel,
@@ -19,12 +22,22 @@ from social_hook.bot.commands import (
     cmd_scheduled,
     cmd_status,
     cmd_usage,
+    get_chat_draft_context,
     handle_command,
     handle_message,
+    set_chat_draft_context,
 )
 from social_hook.db import get_connection, init_database, insert_draft, insert_project
 from social_hook.filesystem import generate_id
 from social_hook.models import Draft, Project
+
+
+@pytest.fixture(autouse=True)
+def _clear_chat_context():
+    """Clear chat draft context state between tests."""
+    _chat_draft_context.clear()
+    yield
+    _chat_draft_context.clear()
 
 
 class TestParseCommand:
@@ -773,3 +786,519 @@ class TestHandleMessage:
         message = {"chat": {"id": 123}, "text": ""}
         handle_message(message, "token")
         mock_send.assert_not_called()
+
+
+class TestChatDraftContext:
+    """Tests for chat draft context tracking."""
+
+    def test_set_and_get(self):
+        """Verify set/get round-trip for _chat_draft_context."""
+        set_chat_draft_context("chat1", "draft_abc", "proj_123")
+        result = get_chat_draft_context("chat1")
+        assert result == ("draft_abc", "proj_123")
+
+    def test_ttl_expiry(self):
+        """Verify context expires after TTL."""
+        _chat_draft_context["chat1"] = (
+            "draft_abc", "proj_123", time.time() - _CONTEXT_TTL_SECONDS - 60
+        )
+        result = get_chat_draft_context("chat1")
+        assert result is None
+        assert "chat1" not in _chat_draft_context
+
+    def test_missing(self):
+        """Verify returns None for unknown chat_id."""
+        assert get_chat_draft_context("unknown") is None
+
+
+class TestPendingEditSaves:
+    """Tests for pending edit save flow (handle_message → _save_edit)."""
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_pending_edit_saves_content(self, mock_conn, mock_send, temp_dir):
+        """Mock pending edit, send message, verify update_draft called."""
+        from social_hook.bot.buttons import _pending_edits
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"), project_id=project.id,
+            commit_hash="abc", decision="post_worthy", reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"), project_id=project.id,
+            decision_id=decision.id, platform="x",
+            content="Old content", status="draft",
+        )
+        insert_draft(conn, draft)
+
+        # Set pending edit
+        _pending_edits["123"] = (draft.id, time.time())
+
+        message = {"chat": {"id": 123}, "text": "Brand new content here"}
+        handle_message(message, "token", config=None)
+
+        # Verify content was updated
+        text = mock_send.call_args[0][2]
+        assert "updated" in text
+        assert "Brand new content" in text
+
+        # Verify DB was updated
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.content == "Brand new content here"
+        conn2.close()
+
+        # Verify pending edit was cleared
+        assert "123" not in _pending_edits
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_pending_edit_creates_audit_trail(self, mock_conn, mock_send, temp_dir):
+        """Verify insert_draft_change called with changed_by='human'."""
+        from social_hook.bot.buttons import _pending_edits
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"), project_id=project.id,
+            commit_hash="abc", decision="post_worthy", reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"), project_id=project.id,
+            decision_id=decision.id, platform="x",
+            content="Old content", status="draft",
+        )
+        insert_draft(conn, draft)
+
+        _pending_edits["123"] = (draft.id, time.time())
+
+        message = {"chat": {"id": 123}, "text": "New content"}
+        handle_message(message, "token", config=None)
+
+        # Verify audit trail
+        conn2 = get_connection(db_path)
+        rows = conn2.execute(
+            "SELECT field, changed_by FROM draft_changes WHERE draft_id = ?",
+            (draft.id,),
+        ).fetchall()
+        conn2.close()
+        assert len(rows) == 1
+        assert rows[0][0] == "content"
+        assert rows[0][1] == "human"
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_pending_edit_draft_not_found(self, mock_conn, mock_send, temp_dir):
+        """Verify error message when draft is gone."""
+        from social_hook.bot.buttons import _pending_edits
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        _pending_edits["123"] = ("nonexistent_draft", time.time())
+
+        message = {"chat": {"id": 123}, "text": "New content"}
+        handle_message(message, "token", config=None)
+
+        text = mock_send.call_args[0][2]
+        assert "not found" in text
+
+
+class TestSubstituteHandler:
+    """Tests for Gatekeeper substitute operation handling."""
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_substitute_saves_content(self, mock_conn, mock_send, temp_dir):
+        """Substitute operation saves content to DB."""
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"), project_id=project.id,
+            commit_hash="abc", decision="post_worthy", reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"), project_id=project.id,
+            decision_id=decision.id, platform="x",
+            content="Old content", status="draft",
+        )
+        insert_draft(conn, draft)
+
+        # Simulate gatekeeper route for substitute
+        route = MagicMock()
+        route.operation.value = "substitute"
+        route.params = {"content": "Replaced content", "draft_id": draft.id}
+
+        from social_hook.bot.commands import _handle_gatekeeper_direct
+
+        _handle_gatekeeper_direct("token", "123", route, None)
+
+        text = mock_send.call_args[0][2]
+        assert "updated" in text
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.content == "Replaced content"
+        conn2.close()
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_substitute_uses_chat_context(self, mock_conn, mock_send, temp_dir):
+        """Verify draft_id resolved from get_chat_draft_context when not in params."""
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"), project_id=project.id,
+            commit_hash="abc", decision="post_worthy", reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"), project_id=project.id,
+            decision_id=decision.id, platform="x",
+            content="Old content", status="draft",
+        )
+        insert_draft(conn, draft)
+
+        # Set chat context (no draft_id in params)
+        set_chat_draft_context("123", draft.id, project.id)
+
+        route = MagicMock()
+        route.operation.value = "substitute"
+        route.params = {"content": "New via context"}  # No draft_id
+
+        from social_hook.bot.commands import _handle_gatekeeper_direct
+
+        _handle_gatekeeper_direct("token", "123", route, None)
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.content == "New via context"
+        conn2.close()
+
+    @patch("social_hook.bot.commands._send")
+    def test_substitute_no_context_shows_error(self, mock_send):
+        """Verify error message when no chat context and no draft_id in params."""
+        route = MagicMock()
+        route.operation.value = "substitute"
+        route.params = {"content": "New content"}  # No draft_id
+
+        from social_hook.bot.commands import _handle_gatekeeper_direct
+
+        _handle_gatekeeper_direct("token", "123", route, None)
+
+        text = mock_send.call_args[0][2]
+        assert "No active draft" in text
+
+
+class TestReviewEvaluatorContext:
+    """Tests for enhanced /review with evaluator context."""
+
+    @patch("social_hook.bot.commands.send_notification_with_buttons")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_review_shows_evaluator_context(self, mock_conn, mock_send_buttons, temp_dir):
+        """Verify angle, episode_type, post_category in formatted review output."""
+        from social_hook.bot.commands import cmd_review
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="reviewproj", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"), project_id=project.id,
+            commit_hash="abc12345", decision="post_worthy",
+            reasoning="Strong commit with clear narrative",
+            episode_type="launch",
+            post_category="arc",
+            angle="Show how the new API simplifies integration",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"), project_id=project.id,
+            decision_id=decision.id, platform="x",
+            content="Check out our new API", status="draft",
+        )
+        insert_draft(conn, draft)
+
+        cmd_review("token", "123", draft.id, None)
+        mock_send_buttons.assert_called_once()
+        text = mock_send_buttons.call_args[0][2]
+        assert "Episode: launch" in text
+        assert "Category: arc" in text
+        assert "Angle:" in text
+        assert "simplifies integration" in text
+        assert "Strong commit" in text
+
+
+class TestExpertRefineSaves:
+    """Tests for Expert refinement saving to DB."""
+
+    @patch("social_hook.bot.commands.send_notification_with_buttons")
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_expert_refine_saves_to_db(self, mock_conn, mock_send, mock_send_buttons, temp_dir):
+        """Verify update_draft called after refine_draft action."""
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"), project_id=project.id,
+            commit_hash="abc", decision="post_worthy", reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"), project_id=project.id,
+            decision_id=decision.id, platform="x",
+            content="Original content", status="draft",
+        )
+        insert_draft(conn, draft)
+
+        # Mock the expert result
+        expert_result = MagicMock()
+        expert_result.action.value = "refine_draft"
+        expert_result.refined_content = "Punchy improved content"
+        expert_result.context_note = None
+        expert_result.answer = None
+        expert_result.reasoning = "Made it punchier"
+
+        route = MagicMock()
+        route.escalation_reason = "user request"
+        route.escalation_context = "make it punchier"
+
+        config = MagicMock()
+        config.models.drafter = "anthropic/claude-sonnet-4-5"
+
+        with patch("social_hook.llm.factory.create_client") as mock_create:
+            with patch("social_hook.llm.expert.Expert") as MockExpert:
+                MockExpert.return_value.handle.return_value = expert_result
+
+                from social_hook.bot.commands import _handle_expert_escalation
+
+                # Create a mock draft object for context
+                draft_obj = get_draft(conn, draft.id)
+
+                _handle_expert_escalation(
+                    "token", "123", "make it punchier", route, config,
+                    draft=draft_obj, project_id=project.id,
+                )
+
+        # Verify buttons were sent
+        mock_send_buttons.assert_called_once()
+        text = mock_send_buttons.call_args[0][2]
+        assert "updated by Expert" in text
+        assert "Punchy improved content" in text
+
+        # Verify DB was updated
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.content == "Punchy improved content"
+
+        # Verify audit trail
+        rows = conn2.execute(
+            "SELECT changed_by FROM draft_changes WHERE draft_id = ?",
+            (draft.id,),
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == "expert"
+        conn2.close()
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_expert_refine_no_draft_context(self, mock_conn, mock_send, temp_dir):
+        """Verify preview-only when no draft in context."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        expert_result = MagicMock()
+        expert_result.action.value = "refine_draft"
+        expert_result.refined_content = "Improved without context"
+        expert_result.context_note = None
+        expert_result.answer = None
+        expert_result.reasoning = "Refined"
+
+        route = MagicMock()
+        route.escalation_reason = "user request"
+        route.escalation_context = None
+
+        config = MagicMock()
+        config.models.drafter = "anthropic/claude-sonnet-4-5"
+
+        with patch("social_hook.llm.factory.create_client"):
+            with patch("social_hook.llm.expert.Expert") as MockExpert:
+                MockExpert.return_value.handle.return_value = expert_result
+
+                from social_hook.bot.commands import _handle_expert_escalation
+
+                _handle_expert_escalation(
+                    "token", "123", "make it better", route, config,
+                    draft=None,  # No draft context
+                )
+
+        text = mock_send.call_args[0][2]
+        assert "no active draft" in text.lower()
+        assert "Improved without context" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_expert_receives_draft_context(self, mock_conn, mock_send, temp_dir):
+        """Verify expert.handle() called with draft object (not None)."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        expert_result = MagicMock()
+        expert_result.action.value = "answer_question"
+        expert_result.refined_content = None
+        expert_result.context_note = None
+        expert_result.answer = "Here is my answer"
+        expert_result.reasoning = None
+
+        route = MagicMock()
+        route.escalation_reason = "user request"
+        route.escalation_context = None
+
+        config = MagicMock()
+        config.models.drafter = "anthropic/claude-sonnet-4-5"
+
+        mock_draft = MagicMock()
+        mock_draft.content = "Draft content"
+        mock_draft.id = "draft_123"
+
+        with patch("social_hook.llm.factory.create_client"):
+            with patch("social_hook.llm.expert.Expert") as MockExpert:
+                MockExpert.return_value.handle.return_value = expert_result
+
+                from social_hook.bot.commands import _handle_expert_escalation
+
+                _handle_expert_escalation(
+                    "token", "123", "what do you think?", route, config,
+                    draft=mock_draft, project_id="proj_123",
+                )
+
+                # Verify expert was called with draft
+                call_kwargs = MockExpert.return_value.handle.call_args
+                assert call_kwargs[1]["draft"] == mock_draft
+                assert call_kwargs[1]["project_id"] == "proj_123"
+
+
+class TestHandleMessageContext:
+    """Tests for handle_message context threading."""
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_handle_message_passes_draft_to_gatekeeper(self, mock_conn, mock_send, temp_dir):
+        """Verify gatekeeper.route() called with draft_context and project_id."""
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"), project_id=project.id,
+            commit_hash="abc", decision="post_worthy", reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"), project_id=project.id,
+            decision_id=decision.id, platform="x",
+            content="Draft for context test", status="draft",
+        )
+        insert_draft(conn, draft)
+
+        # Set chat context
+        set_chat_draft_context("123", draft.id, project.id)
+
+        config = MagicMock()
+        config.models.gatekeeper = "anthropic/claude-haiku-4-5"
+
+        mock_route_result = MagicMock()
+        mock_route_result.action.value = "handle_directly"
+        mock_route_result.operation = None
+
+        with patch("social_hook.llm.factory.create_client"):
+            with patch("social_hook.llm.gatekeeper.Gatekeeper") as MockGK:
+                MockGK.return_value.route.return_value = mock_route_result
+
+                message = {"chat": {"id": 123}, "text": "what about this draft?"}
+                handle_message(message, "token", config=config)
+
+                # Verify gatekeeper was called with context
+                call_kwargs = MockGK.return_value.route.call_args
+                assert call_kwargs[1].get("draft_context") is not None
+                assert call_kwargs[1].get("project_id") == project.id
+
+
+class TestAdapterBridge:
+    """Tests for the messaging adapter bridge in commands._send()."""
+
+    def test_send_uses_adapter_when_set(self):
+        """When adapter is set, _send() uses adapter.send_message."""
+        from social_hook.bot.commands import _send, set_adapter
+
+        mock_adapter = MagicMock()
+        mock_adapter.send_message.return_value = MagicMock(success=True)
+        set_adapter(mock_adapter)
+
+        result = _send("token", "123", "Hello via adapter")
+        assert result is True
+        mock_adapter.send_message.assert_called_once()
+        # Verify the OutboundMessage text
+        msg = mock_adapter.send_message.call_args[0][1]
+        assert msg.text == "Hello via adapter"
+
+    @patch("social_hook.bot.commands.send_notification")
+    def test_send_falls_back_without_adapter(self, mock_send_notif):
+        """When no adapter is set, _send() falls back to send_notification."""
+        from social_hook.bot.commands import _send
+
+        mock_send_notif.return_value = True
+
+        result = _send("token", "123", "Hello via HTTP")
+        assert result is True
+        mock_send_notif.assert_called_once_with("token", "123", "Hello via HTTP")

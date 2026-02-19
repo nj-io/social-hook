@@ -74,6 +74,16 @@ scheduling:
     yield config_path
 
 
+@pytest.fixture(autouse=True)
+def _reset_adapter():
+    """Reset module-level messaging adapters after each test."""
+    yield
+    from social_hook.bot import buttons, commands
+
+    commands._active_adapter = None
+    buttons._active_adapter = None
+
+
 @pytest.fixture
 def temp_project_dir(temp_dir):
     """Create a temporary project directory with config files in .social-hook/."""

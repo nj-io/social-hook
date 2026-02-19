@@ -1,6 +1,7 @@
 """Telegram /command handlers."""
 
 import logging
+import time
 from typing import Any, Optional
 
 import requests
@@ -15,9 +16,44 @@ from social_hook.bot.notifications import (
 
 logger = logging.getLogger(__name__)
 
+# Chat draft context: chat_id → (draft_id, project_id, timestamp)
+_chat_draft_context: dict[str, tuple[str, str, float]] = {}
+_CONTEXT_TTL_SECONDS = 3600  # 1 hour
+
+
+# Messaging adapter bridge: when set, _send() uses adapter instead of direct HTTP
+_active_adapter: Optional[Any] = None
+
+
+def set_adapter(adapter) -> None:
+    """Set the active messaging adapter. Called by create_bot()."""
+    global _active_adapter
+    _active_adapter = adapter
+
+
+def set_chat_draft_context(chat_id: str, draft_id: str, project_id: str) -> None:
+    """Record that this chat is interacting with a specific draft."""
+    _chat_draft_context[chat_id] = (draft_id, project_id, time.time())
+
+
+def get_chat_draft_context(chat_id: str) -> Optional[tuple[str, str]]:
+    """Get the (draft_id, project_id) for this chat, or None if expired/missing."""
+    entry = _chat_draft_context.get(chat_id)
+    if entry is None:
+        return None
+    draft_id, project_id, ts = entry
+    if time.time() - ts > _CONTEXT_TTL_SECONDS:
+        del _chat_draft_context[chat_id]
+        return None
+    return (draft_id, project_id)
+
 
 def _send(token: str, chat_id: str, text: str) -> bool:
-    """Shortcut to send a plain message."""
+    """Send a plain message. Uses adapter if available, falls back to direct HTTP."""
+    if _active_adapter:
+        from social_hook.bot.notifications import send_via_adapter
+
+        return send_via_adapter(_active_adapter, chat_id, text)
     return send_notification(token, chat_id, text)
 
 
@@ -88,6 +124,9 @@ def handle_command(message: dict, token: str, config: Optional[Any] = None) -> N
 def handle_message(message: dict, token: str, config: Optional[Any] = None) -> None:
     """Handle a free-text message by routing through Gatekeeper.
 
+    Checks for pending edits first (Fix 1), then threads draft/project
+    context through to Gatekeeper and Expert (Fix 2).
+
     Args:
         message: Telegram message dict
         token: Bot API token
@@ -97,6 +136,15 @@ def handle_message(message: dict, token: str, config: Optional[Any] = None) -> N
     text = message.get("text", "")
 
     if not text:
+        return
+
+    # Check for pending edit FIRST (Fix 1)
+    from social_hook.bot.buttons import get_pending_edit, clear_pending_edit
+
+    pending_draft_id = get_pending_edit(chat_id)
+    if pending_draft_id:
+        _save_edit(token, chat_id, pending_draft_id, text)
+        clear_pending_edit(chat_id)
         return
 
     try:
@@ -114,16 +162,100 @@ def handle_message(message: dict, token: str, config: Optional[Any] = None) -> N
             _send(token, chat_id, "Model provider not configured. Use /help for commands.")
             return
 
-        gatekeeper = Gatekeeper(client)
-        route = gatekeeper.route(user_message=text)
+        # Look up draft/project context for this chat (Fix 2)
+        draft_obj = None
+        project_id = None
+        db = None
+        ctx = get_chat_draft_context(chat_id)
 
-        if route.action.value == "handle_directly":
-            _handle_gatekeeper_direct(token, chat_id, route, config)
-        elif route.action.value == "escalate_to_expert":
-            _handle_expert_escalation(token, chat_id, text, route, config)
+        _context_conn = None
+        try:
+            if ctx:
+                draft_id_ctx, project_id = ctx
+                _context_conn = _get_conn()
+                try:
+                    from social_hook.db import get_draft
+                    from social_hook.llm.dry_run import DryRunContext
+
+                    draft_obj = get_draft(_context_conn, draft_id_ctx)
+                    db = DryRunContext(_context_conn, dry_run=False)
+                except Exception:
+                    pass  # Graceful fallback — context is optional
+
+            gatekeeper = Gatekeeper(client)
+            route = gatekeeper.route(
+                user_message=text,
+                draft_context=draft_obj,
+                project_id=project_id,
+                db=db,
+            )
+
+            if route.action.value == "handle_directly":
+                _handle_gatekeeper_direct(token, chat_id, route, config)
+            elif route.action.value == "escalate_to_expert":
+                _handle_expert_escalation(
+                    token, chat_id, text, route, config,
+                    draft=draft_obj,
+                    project_id=project_id,
+                    db=db,
+                )
+        finally:
+            if _context_conn:
+                _context_conn.close()
     except Exception as e:
         logger.exception("Error routing message through Gatekeeper")
         _send(token, chat_id, f"Error processing message: {e}")
+
+
+def _save_edit(
+    token: str,
+    chat_id: str,
+    draft_id: str,
+    new_content: str,
+    changed_by: str = "human",
+) -> None:
+    """Save edited content to draft and create audit trail.
+
+    Args:
+        token: Bot API token
+        chat_id: Chat to reply in
+        draft_id: Draft to update
+        new_content: New draft content
+        changed_by: Who made the change (human, gatekeeper, expert)
+    """
+    from social_hook.db import get_draft, insert_draft_change, update_draft
+    from social_hook.filesystem import generate_id
+    from social_hook.models import DraftChange
+
+    conn = _get_conn()
+    try:
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        old_content = draft.content
+        update_draft(conn, draft_id, content=new_content)
+
+        change = DraftChange(
+            id=generate_id("change"),
+            draft_id=draft_id,
+            field="content",
+            old_value=old_content[:200],
+            new_value=new_content[:200],
+            changed_by=changed_by,
+        )
+        insert_draft_change(conn, change)
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        _send(
+            token,
+            chat_id,
+            f"Draft `{draft_id[:12]}` updated.\n\n```\n{new_content[:300]}\n```",
+        )
+    finally:
+        conn.close()
 
 
 def _handle_gatekeeper_direct(
@@ -157,6 +289,21 @@ def _handle_gatekeeper_direct(
     elif op_value == "cancel":
         draft_id = params.get("draft_id", "")
         cmd_cancel(token, chat_id, draft_id, config)
+    elif op_value == "substitute":
+        new_content = params.get("content", "")
+        if not new_content:
+            logger.warning("Substitute routed but content empty")
+            _send(token, chat_id, "Please specify the new content.")
+            return
+        draft_id = params.get("draft_id", "")
+        if not draft_id:
+            ctx = get_chat_draft_context(chat_id)
+            if ctx:
+                draft_id = ctx[0]
+        if not draft_id:
+            _send(token, chat_id, "No active draft to substitute. Use /review first.")
+            return
+        _save_edit(token, chat_id, draft_id, new_content, changed_by="gatekeeper")
     elif op_value == "query":
         answer = params.get("answer", "I'll look into that.")
         _send(token, chat_id, answer)
@@ -165,9 +312,27 @@ def _handle_gatekeeper_direct(
 
 
 def _handle_expert_escalation(
-    token: str, chat_id: str, user_message: str, route: Any, config: Any
+    token: str,
+    chat_id: str,
+    user_message: str,
+    route: Any,
+    config: Any,
+    draft: Any = None,
+    project_id: Optional[str] = None,
+    db: Any = None,
 ) -> None:
-    """Handle an Expert escalation."""
+    """Handle an Expert escalation.
+
+    Args:
+        token: Bot API token
+        chat_id: Chat to reply in
+        user_message: Original user message
+        route: Gatekeeper route result
+        config: Full Config object
+        draft: Current draft object (from chat context)
+        project_id: Current project ID (from chat context)
+        db: Database context for usage logging
+    """
     try:
         from social_hook.llm.factory import create_client
         from social_hook.llm.expert import Expert
@@ -182,10 +347,12 @@ def _handle_expert_escalation(
         expert = Expert(client)
 
         result = expert.handle(
-            draft=None,
+            draft=draft,
             user_message=user_message,
             escalation_reason=route.escalation_reason or "user request",
             escalation_context=route.escalation_context,
+            project_id=project_id,
+            db=db,
         )
 
         action = result.action.value if hasattr(result.action, "value") else str(result.action)
@@ -210,11 +377,43 @@ def _handle_expert_escalation(
             finally:
                 conn.close()
         elif action == "refine_draft" and result.refined_content:
-            _send(
-                token,
-                chat_id,
-                f"*Refined draft:*\n\n```\n{result.refined_content[:500]}\n```",
-            )
+            # Fix 4: Save refined content to DB if we have draft context
+            if not draft:
+                _send(
+                    token,
+                    chat_id,
+                    f"*Refined draft (no active draft to update):*\n\n"
+                    f"```\n{result.refined_content[:500]}\n```",
+                )
+                return
+
+            from social_hook.db import insert_draft_change, update_draft
+            from social_hook.filesystem import generate_id
+            from social_hook.models import DraftChange
+
+            conn = _get_conn()
+            try:
+                old_content = draft.content
+                update_draft(conn, draft.id, content=result.refined_content)
+
+                change = DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft.id,
+                    field="content",
+                    old_value=old_content[:200],
+                    new_value=result.refined_content[:200],
+                    changed_by="expert",
+                )
+                insert_draft_change(conn, change)
+
+                msg = (
+                    f"Draft `{draft.id[:12]}` updated by Expert.\n\n"
+                    f"```\n{result.refined_content[:500]}\n```"
+                )
+                buttons = get_review_buttons(draft.id)
+                send_notification_with_buttons(token, chat_id, msg, buttons)
+            finally:
+                conn.close()
         elif action == "answer_question" and result.answer:
             _send(token, chat_id, result.answer)
         else:
@@ -455,12 +654,14 @@ def cmd_review(token: str, chat_id: str, args: str, config: Any) -> None:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
 
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
         project = get_project(conn, draft.project_id)
         project_name = project.name if project else "unknown"
 
         decision = get_decision(conn, draft.decision_id)
         commit_hash = decision.commit_hash[:8] if decision else "unknown"
-        commit_message = decision.reasoning[:50] if decision else ""
+        commit_message = f"[{decision.commit_hash[:8]}]" if decision else ""
 
         tweets = get_draft_tweets(conn, draft.id)
         is_thread = bool(tweets)
@@ -481,6 +682,10 @@ def cmd_review(token: str, chat_id: str, args: str, config: Any) -> None:
             char_count=len(draft.content),
             is_thread=is_thread,
             tweet_count=tweet_count,
+            episode_type=decision.episode_type if decision else None,
+            post_category=decision.post_category if decision else None,
+            angle=decision.angle if decision else None,
+            evaluator_reasoning=decision.reasoning if decision else None,
         )
         buttons = get_review_buttons(draft.id)
         send_notification_with_buttons(token, chat_id, msg, buttons)
@@ -515,6 +720,8 @@ def cmd_approve(token: str, chat_id: str, args: str, config: Any) -> None:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
 
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
         if draft.status not in ("draft", "approved"):
             _send(
                 token, chat_id, f"Cannot approve draft with status: {draft.status}"
@@ -545,6 +752,8 @@ def cmd_reject(token: str, chat_id: str, args: str, config: Any) -> None:
         if not draft:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         update_kwargs = {"status": "rejected"}
         if reason:
@@ -577,6 +786,8 @@ def cmd_schedule(token: str, chat_id: str, args: str, config: Any) -> None:
         if not draft:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         if time_str:
             update_draft(conn, draft_id, status="scheduled", scheduled_time=time_str)
@@ -626,6 +837,8 @@ def cmd_cancel(token: str, chat_id: str, args: str, config: Any) -> None:
         if not draft:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         update_draft(conn, draft_id, status="cancelled")
         _send(token, chat_id, f"Draft `{draft_id[:12]}` cancelled.")

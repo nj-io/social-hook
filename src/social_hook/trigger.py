@@ -381,15 +381,16 @@ def run_trigger(
         if telegram_token and chat_ids_str and not dry_run:
             from social_hook.bot.notifications import (
                 format_draft_review,
-                get_review_buttons,
-                send_notification_with_buttons,
+                get_review_buttons_normalized,
             )
+            from social_hook.messaging.base import OutboundMessage
+            from social_hook.messaging.telegram import TelegramAdapter
 
             is_thread = bool(thread_tweets)
             tweet_count = len(thread_tweets) if is_thread else None
             suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
 
-            msg = format_draft_review(
+            msg_text = format_draft_review(
                 project_name=project.name,
                 commit_hash=commit_hash[:8],
                 commit_message=commit.message,
@@ -400,15 +401,22 @@ def run_trigger(
                 is_thread=is_thread,
                 tweet_count=tweet_count,
             )
-            buttons = get_review_buttons(draft.id)
+            buttons = get_review_buttons_normalized(draft.id)
+
+            adapter = TelegramAdapter(token=telegram_token)
+            msg = OutboundMessage(text=msg_text, buttons=buttons)
 
             chat_ids = [c.strip() for c in chat_ids_str.split(",") if c.strip()]
             for chat_id in chat_ids:
-                result = send_notification_with_buttons(
-                    telegram_token, chat_id, msg, buttons,
-                )
-                if result is None:
+                result = adapter.send_message(chat_id, msg)
+                if not result.success:
                     logger.warning(f"Failed to send Telegram notification to {chat_id}")
+
+            # Set draft context for each chat so immediate replies have context
+            from social_hook.bot.commands import set_chat_draft_context
+
+            for chat_id in chat_ids:
+                set_chat_draft_context(chat_id, draft.id, project.id)
 
     conn.close()
     return 0

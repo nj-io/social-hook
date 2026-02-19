@@ -317,3 +317,50 @@ class TestFormatEngagementPrompt:
         msg = format_engagement_prompt()
         assert "150x" in msg
         assert "first hour" in msg
+
+
+class TestFormatDraftReviewEvaluatorContext:
+    """Tests for format_draft_review with evaluator context params."""
+
+    def test_with_episode_type(self):
+        msg = format_draft_review(
+            project_name="test", commit_hash="abc", commit_message="msg",
+            platform="x", content="hello", episode_type="feature_launch",
+        )
+        assert "Episode: feature_launch" in msg
+
+    def test_with_angle(self):
+        msg = format_draft_review(
+            project_name="test", commit_hash="abc", commit_message="msg",
+            platform="x", content="hello", angle="Show the developer workflow",
+        )
+        assert "Angle:" in msg
+        assert "Show the developer workflow" in msg
+
+    def test_with_all_context(self):
+        msg = format_draft_review(
+            project_name="test", commit_hash="abc", commit_message="msg",
+            platform="x", content="hello",
+            episode_type="bug_fix",
+            post_category="technical",
+            angle="Reliability matters",
+            evaluator_reasoning="Strong commit that shows commitment to quality",
+        )
+        assert "Episode: bug_fix" in msg
+        assert "Category: technical" in msg
+        assert "Angle:" in msg
+        assert "Reliability matters" in msg
+        assert "Reasoning:" in msg
+        assert "commitment to quality" in msg
+
+    def test_without_context_backward_compat(self):
+        """Verify backward compat — no new params still works."""
+        msg = format_draft_review(
+            project_name="test", commit_hash="abc", commit_message="msg",
+            platform="x", content="hello",
+        )
+        assert "Episode:" not in msg
+        assert "Category:" not in msg
+        assert "Angle:" not in msg
+        assert "Reasoning:" not in msg
+        assert "*New draft ready for review*" in msg

@@ -1,11 +1,46 @@
 """Inline button callback handlers for Telegram bot."""
 
 import logging
+import time
 from typing import Any, Optional
 
 from social_hook.bot.notifications import send_notification, send_notification_with_buttons
 
 logger = logging.getLogger(__name__)
+
+# Pending edit state: chat_id → (draft_id, timestamp)
+_pending_edits: dict[str, tuple[str, float]] = {}
+_EDIT_TTL_SECONDS = 300  # 5 minutes
+
+
+def get_pending_edit(chat_id: str) -> Optional[str]:
+    """Check for a pending edit without consuming it.
+
+    Returns draft_id if a non-expired pending edit exists, else None.
+    """
+    entry = _pending_edits.get(chat_id)
+    if entry is None:
+        return None
+    draft_id, ts = entry
+    if time.time() - ts > _EDIT_TTL_SECONDS:
+        del _pending_edits[chat_id]
+        return None
+    return draft_id
+
+
+def clear_pending_edit(chat_id: str) -> None:
+    """Remove pending edit after successful save."""
+    _pending_edits.pop(chat_id, None)
+
+
+# Messaging adapter bridge: when set, _send() and _answer_callback() use adapter
+_active_adapter: Optional[Any] = None
+
+
+def set_adapter(adapter) -> None:
+    """Set the active messaging adapter. Called by create_bot()."""
+    global _active_adapter
+    _active_adapter = adapter
 
 
 def _get_conn():
@@ -17,12 +52,19 @@ def _get_conn():
 
 
 def _send(token: str, chat_id: str, text: str) -> bool:
-    """Shortcut to send a message."""
+    """Send a message. Uses adapter if available, falls back to direct HTTP."""
+    if _active_adapter:
+        from social_hook.bot.notifications import send_via_adapter
+
+        return send_via_adapter(_active_adapter, chat_id, text)
     return send_notification(token, chat_id, text)
 
 
 def _answer_callback(token: str, callback_query_id: str, text: str = "") -> bool:
-    """Answer a callback query to dismiss the loading indicator."""
+    """Answer a callback query. Uses adapter if available, falls back to HTTP."""
+    if _active_adapter:
+        return _active_adapter.answer_callback(callback_query_id, text)
+
     import requests
 
     try:
@@ -98,12 +140,15 @@ def btn_approve(
 
     conn = _get_conn()
     try:
+        from social_hook.bot.commands import set_chat_draft_context
         from social_hook.db import get_draft, update_draft
 
         draft = get_draft(conn, draft_id)
         if not draft:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         if draft.status not in ("draft", "approved"):
             _send(token, chat_id, f"Cannot approve draft with status: {draft.status}")
@@ -127,6 +172,7 @@ def btn_schedule_optimal(
 
     conn = _get_conn()
     try:
+        from social_hook.bot.commands import set_chat_draft_context
         from social_hook.db import get_draft, update_draft
         from social_hook.scheduling import calculate_optimal_time
 
@@ -134,6 +180,8 @@ def btn_schedule_optimal(
         if not draft:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         result = calculate_optimal_time(
             conn,
@@ -164,18 +212,33 @@ def btn_edit_text(
 ) -> None:
     """Handle edit text button press.
 
-    Sends the current content and asks user to reply with new text.
+    Sends the current content, registers a pending edit, and asks user
+    to reply with new text.
     """
     _answer_callback(token, callback_id, "Edit mode")
 
     conn = _get_conn()
     try:
+        from social_hook.bot.commands import set_chat_draft_context
         from social_hook.db import get_draft
 
         draft = get_draft(conn, draft_id)
         if not draft:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        # Warn if overwriting a different pending edit
+        existing = get_pending_edit(chat_id)
+        if existing and existing != draft_id:
+            _send(
+                token,
+                chat_id,
+                f"Switching edit to `{draft_id[:12]}` (edit for `{existing[:12]}` cancelled).",
+            )
+
+        _pending_edits[chat_id] = (draft_id, time.time())
 
         _send(
             token,
@@ -200,12 +263,15 @@ def btn_reject(
 
     conn = _get_conn()
     try:
+        from social_hook.bot.commands import set_chat_draft_context
         from social_hook.db import get_draft, update_draft
 
         draft = get_draft(conn, draft_id)
         if not draft:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         update_draft(conn, draft_id, status="rejected")
         _send(token, chat_id, f"Draft `{draft_id[:12]}` rejected.")
@@ -225,6 +291,7 @@ def btn_quick_approve(
 
     conn = _get_conn()
     try:
+        from social_hook.bot.commands import set_chat_draft_context
         from social_hook.db import get_draft, update_draft
         from social_hook.scheduling import calculate_optimal_time
 
@@ -232,6 +299,8 @@ def btn_quick_approve(
         if not draft:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         if draft.status not in ("draft", "approved"):
             _send(token, chat_id, f"Cannot approve draft with status: {draft.status}")
@@ -388,12 +457,15 @@ def btn_cancel(
 
     conn = _get_conn()
     try:
+        from social_hook.bot.commands import set_chat_draft_context
         from social_hook.db import get_draft, update_draft
 
         draft = get_draft(conn, draft_id)
         if not draft:
             _send(token, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         update_draft(conn, draft_id, status="cancelled")
         _send(token, chat_id, f"Draft `{draft_id[:12]}` cancelled.")

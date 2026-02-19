@@ -2,6 +2,30 @@
 
 Deviations and discoveries from the original multi-provider integration plan.
 
+## 2026-02-19
+
+### Bot layer: 5 broken flow fixes
+
+Fixed 5 broken bot flows that were identified during integration testing:
+
+1. **Edit button saves content.** Added pending edit state (`_pending_edits` dict with 5-min TTL) to `buttons.py`. When user taps "Edit" → "Change text" and replies, `handle_message()` checks for pending edits first, saves content via `_save_edit()`, creates `DraftChange` audit trail.
+
+2. **Substitute handler + context threading.** Added `_chat_draft_context` dict (1-hour TTL) to `commands.py`. `handle_message()` now threads `draft_context` and `project_id` through to `gatekeeper.route()` and `_handle_expert_escalation()`. Gatekeeper can route "use this instead: ..." to a substitute operation that saves via `_save_edit()`.
+
+3. **Enhanced /review.** `cmd_review()` now includes `episode_type`, `post_category`, `angle`, and `evaluator_reasoning` from the associated Decision in the review message.
+
+4. **Expert refinement saves to DB.** When Expert returns `refine_draft` with a draft in context, refined content is saved to DB via `update_draft()` with `DraftChange` audit trail (`changed_by="expert"`).
+
+5. **trigger.py sets chat context.** After sending a Telegram notification, `run_trigger()` calls `set_chat_draft_context()` for each chat ID so immediate replies have draft context.
+
+### Messaging platform abstraction
+
+Added `src/social_hook/messaging/` with abstract `MessagingAdapter` interface, normalized types (`Button`, `ButtonRow`, `OutboundMessage`, `SendResult`, etc.), `TelegramAdapter` implementation wrapping direct HTTP, `SlackAdapter` stub, and `create_adapter()` factory. Mirrors the LLM layer pattern.
+
+### Bot adapter bridge integration
+
+Wired the messaging adapter into the bot layer using a bridge pattern. `commands.py` and `buttons.py` now check `_active_adapter` before falling back to direct HTTP. `daemon.py`'s `create_bot()` creates a `TelegramAdapter` and sets it on both modules. `trigger.py` replaced direct HTTP notification sending with `TelegramAdapter` + `OutboundMessage`.
+
 ## 2026-02-15
 
 ### CLI client: replaced --json-schema with prompt-based JSON output

@@ -93,6 +93,10 @@ def format_draft_review(
     media_info: Optional[str] = None,
     is_thread: bool = False,
     tweet_count: Optional[int] = None,
+    episode_type: Optional[str] = None,
+    post_category: Optional[str] = None,
+    angle: Optional[str] = None,
+    evaluator_reasoning: Optional[str] = None,
 ) -> str:
     """Format a draft review notification message.
 
@@ -108,6 +112,10 @@ def format_draft_review(
         media_info: Media attachment description
         is_thread: Whether this is a thread
         tweet_count: Number of tweets in thread
+        episode_type: Evaluator episode type
+        post_category: Evaluator post category
+        angle: Evaluator suggested angle
+        evaluator_reasoning: Evaluator reasoning text
 
     Returns:
         Formatted Markdown message
@@ -119,6 +127,14 @@ def format_draft_review(
         f"Commit: `{commit_hash}` - {commit_message}",
         f"Platform: {platform}",
     ]
+    if episode_type:
+        lines.append(f"Episode: {episode_type}")
+    if post_category:
+        lines.append(f"Category: {post_category}")
+    if angle:
+        lines.append(f"Angle: _{angle}_")
+    if evaluator_reasoning:
+        lines.append(f"Reasoning: {evaluator_reasoning}")
     if is_thread and tweet_count:
         lines.append(f"Thread: {tweet_count} tweets")
     if char_count is not None:
@@ -241,4 +257,91 @@ def get_review_buttons(draft_id: str) -> list[list[dict]]:
             {"text": "Edit", "callback_data": f"edit:{draft_id}"},
             {"text": "Reject", "callback_data": f"reject:{draft_id}"},
         ],
+    ]
+
+
+def send_via_adapter(adapter: "MessagingAdapter", chat_id: str, text: str) -> bool:
+    """Send a plain message via adapter.
+
+    Args:
+        adapter: MessagingAdapter instance
+        chat_id: Target chat ID
+        text: Message text
+
+    Returns:
+        True if sent successfully
+    """
+    from social_hook.messaging.base import OutboundMessage
+
+    result = adapter.send_message(chat_id, OutboundMessage(text=text))
+    return result.success
+
+
+def send_buttons_via_adapter(
+    adapter: "MessagingAdapter",
+    chat_id: str,
+    text: str,
+    buttons: list[list[dict]],
+) -> Optional[str]:
+    """Send message with buttons via adapter.
+
+    Accepts legacy Telegram button format for backward compat,
+    converts to ButtonRow internally.
+
+    Args:
+        adapter: MessagingAdapter instance
+        chat_id: Target chat ID
+        text: Message text
+        buttons: Legacy Telegram inline keyboard format
+
+    Returns:
+        Message ID if successful, None otherwise
+    """
+    from social_hook.messaging.base import Button, ButtonRow, OutboundMessage
+
+    rows = []
+    for row in buttons:
+        rows.append(
+            ButtonRow(
+                buttons=[
+                    Button(
+                        label=b["text"],
+                        action=b["callback_data"].split(":")[0],
+                        payload=b["callback_data"].split(":", 1)[1]
+                        if ":" in b["callback_data"]
+                        else "",
+                    )
+                    for b in row
+                ]
+            )
+        )
+    msg = OutboundMessage(text=text, buttons=rows)
+    result = adapter.send_message(chat_id, msg)
+    return result.message_id if result.success else None
+
+
+def get_review_buttons_normalized(draft_id: str) -> list:
+    """Get review buttons as normalized ButtonRow list.
+
+    Args:
+        draft_id: Draft ID for callback data
+
+    Returns:
+        List of ButtonRow instances
+    """
+    from social_hook.messaging.base import Button, ButtonRow
+
+    return [
+        ButtonRow(
+            buttons=[
+                Button(label="Approve", action="approve", payload=draft_id),
+                Button(label="Schedule", action="schedule", payload=draft_id),
+            ]
+        ),
+        ButtonRow(
+            buttons=[
+                Button(label="Edit", action="edit", payload=draft_id),
+                Button(label="Reject", action="reject", payload=draft_id),
+            ]
+        ),
     ]

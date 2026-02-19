@@ -1452,7 +1452,7 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
 # ---------------------------------------------------------------------------
 
 def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture: TelegramCapture):
-    """F1-F12: Bot command scenarios."""
+    """F1-F13: Bot command scenarios."""
     if not harness.project_id:
         harness.seed_project()
 
@@ -1611,13 +1611,56 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
 
     runner.run_scenario("F12", "Scheduled list", f12)
 
+    # F13: Review shows evaluator context (episode_type, angle, post_category)
+    def f13():
+        from social_hook.db import insert_decision, insert_draft
+        from social_hook.filesystem import generate_id
+        from social_hook.models import Decision, Draft
+
+        # Seed a decision with angle and episode_type populated
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=harness.project_id,
+            commit_hash=COMMITS["significant"],
+            decision="post_worthy",
+            reasoning="Great feature launch with demo potential",
+            episode_type="demo_proof",
+            post_category="arc",
+            angle="Show how the trigger pipeline works end-to-end",
+        )
+        insert_decision(harness.conn, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=harness.project_id,
+            decision_id=decision.id,
+            platform="x",
+            content="Just shipped: end-to-end trigger pipeline!",
+            status="draft",
+        )
+        insert_draft(harness.conn, draft)
+        harness.conn.commit()
+
+        telegram_capture.clear()
+        handle_command(make_message(f"/review {draft.id}"), token, config)
+
+        assert telegram_capture.messages, "No message sent"
+        msg_text = telegram_capture.last_message()["text"]
+        assert "Episode:" in msg_text or "episode" in msg_text.lower(), \
+            f"Expected episode_type in review output"
+        assert "Angle:" in msg_text or "angle" in msg_text.lower(), \
+            f"Expected angle in review output"
+        return "Review shows episode_type and angle"
+
+    runner.run_scenario("F13", "Review shows evaluator context", f13)
+
 
 # ---------------------------------------------------------------------------
 # Section G: Bot Buttons
 # ---------------------------------------------------------------------------
 
 def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture: TelegramCapture):
-    """G1-G8: Bot button scenarios."""
+    """G1-G11: Bot button scenarios."""
     from social_hook.db import operations as ops
     from social_hook.bot.buttons import handle_callback
 
@@ -1726,13 +1769,149 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
 
     runner.run_scenario("G8", "Review button", g8)
 
+    # G9: Edit text → reply saves content
+    def g9():
+        from social_hook.bot.buttons import _pending_edits, clear_pending_edit
+        from social_hook.bot.commands import handle_message
+
+        draft = harness.seed_draft(harness.project_id, status="draft",
+                                    content="Original content for G9 test")
+        telegram_capture.clear()
+
+        # Step 1: Tap edit_text button to register pending edit
+        handle_callback(make_callback(f"edit_text:{draft.id}"), token, config)
+        assert telegram_capture.messages, "No edit prompt sent"
+
+        # Step 2: Reply with new content (handle_message checks pending edit)
+        new_content = "Updated content via edit flow"
+        msg = {
+            "message_id": 2,
+            "from": {"id": int(chat_id) if chat_id.isdigit() else 0},
+            "chat": {"id": int(chat_id) if chat_id.isdigit() else 0},
+            "text": new_content,
+        }
+        telegram_capture.clear()
+        handle_message(msg, token, config)
+
+        # Verify: draft content updated in DB
+        updated = ops.get_draft(harness.conn, draft.id)
+        assert updated.content == new_content, \
+            f"Expected '{new_content}', got '{updated.content}'"
+
+        # Verify: DraftChange row exists
+        changes = ops.get_draft_changes(harness.conn, draft.id)
+        assert len(changes) >= 1, f"Expected DraftChange row, got {len(changes)}"
+        assert changes[-1].changed_by == "human", \
+            f"Expected changed_by='human', got '{changes[-1].changed_by}'"
+        return "Edit saved, DraftChange recorded"
+
+    runner.run_scenario("G9", "Edit text -> reply saves content", g9)
+
+    # G10: Edit text → expired TTL
+    def g10():
+        import time as _time
+        from unittest.mock import patch as _patch
+        from social_hook.bot.buttons import _pending_edits, _EDIT_TTL_SECONDS
+        from social_hook.bot.commands import handle_message
+
+        draft = harness.seed_draft(harness.project_id, status="draft",
+                                    content="Original content for G10 test")
+        original_content = "Original content for G10 test"
+        telegram_capture.clear()
+
+        # Register pending edit
+        handle_callback(make_callback(f"edit_text:{draft.id}"), token, config)
+        assert telegram_capture.messages, "No edit prompt sent"
+
+        # Expire the TTL by patching time.time to return a future value
+        real_time = _time.time
+        expired_time = real_time() + _EDIT_TTL_SECONDS + 60
+
+        with _patch("social_hook.bot.buttons.time") as mock_time:
+            mock_time.time.return_value = expired_time
+
+            msg = {
+                "message_id": 3,
+                "from": {"id": int(chat_id) if chat_id.isdigit() else 0},
+                "chat": {"id": int(chat_id) if chat_id.isdigit() else 0},
+                "text": "This should not be saved",
+            }
+            telegram_capture.clear()
+            handle_message(msg, token, config)
+
+        # Verify: draft content unchanged
+        updated = ops.get_draft(harness.conn, draft.id)
+        assert updated.content == original_content, \
+            f"Content should be unchanged, got '{updated.content}'"
+        return "Expired edit TTL correctly prevented save"
+
+    runner.run_scenario("G10", "Edit text -> expired TTL", g10)
+
+    # G10a: Edit overwrite warning
+    def g10a():
+        from social_hook.bot.buttons import _pending_edits, get_pending_edit
+
+        draft_a = harness.seed_draft(harness.project_id, status="draft",
+                                      content="Draft A content")
+        draft_b = harness.seed_draft(harness.project_id, status="draft",
+                                      content="Draft B content")
+        telegram_capture.clear()
+
+        # Register edit for draft A
+        handle_callback(make_callback(f"edit_text:{draft_a.id}"), token, config)
+        assert get_pending_edit(chat_id) == draft_a.id
+
+        # Now register edit for draft B (should warn about switching)
+        telegram_capture.clear()
+        handle_callback(make_callback(f"edit_text:{draft_b.id}"), token, config)
+
+        # Verify warning was sent
+        assert telegram_capture.last_message_contains("switching") or \
+               telegram_capture.last_message_contains("cancelled"), \
+            "Expected overwrite warning"
+
+        # Verify pending edit is now B
+        assert get_pending_edit(chat_id) == draft_b.id, \
+            f"Expected pending edit for draft B"
+        return "Overwrite warning shown, edit switched to B"
+
+    runner.run_scenario("G10a", "Edit overwrite warning", g10a)
+
+    # G11: Adapter bridge sends via adapter when set
+    def g11():
+        from unittest.mock import MagicMock as _MagicMock
+        from social_hook.bot.buttons import set_adapter as set_buttons_adapter
+        from social_hook.messaging.base import SendResult
+
+        draft = harness.seed_draft(harness.project_id, status="draft")
+
+        mock_adapter = _MagicMock()
+        mock_adapter.send_message.return_value = SendResult(
+            success=True, message_id="mock_msg_1"
+        )
+        mock_adapter.answer_callback.return_value = True
+
+        set_buttons_adapter(mock_adapter)
+        try:
+            telegram_capture.clear()
+            handle_callback(make_callback(f"approve:{draft.id}"), token, config)
+
+            # Verify adapter was used (not direct HTTP)
+            assert mock_adapter.send_message.called or mock_adapter.answer_callback.called, \
+                "Expected adapter methods to be called"
+            return "Adapter bridge used for button handler"
+        finally:
+            set_buttons_adapter(None)
+
+    runner.run_scenario("G11", "Adapter bridge sends via adapter", g11)
+
 
 # ---------------------------------------------------------------------------
 # Section H: Bot Free-Text (Gatekeeper)
 # ---------------------------------------------------------------------------
 
 def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, telegram_capture: TelegramCapture):
-    """H1-H2: Bot free-text scenarios."""
+    """H1-H5: Bot free-text scenarios."""
     if not harness.project_id:
         harness.seed_project()
 
@@ -1784,6 +1963,121 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, telegram_capture: 
         return "Expert escalation handled"
 
     runner.run_scenario("H2", "Expert escalation", h2)
+
+    # H3: Substitute via gatekeeper
+    def h3():
+        from social_hook.db import operations as ops
+        from social_hook.bot.commands import set_chat_draft_context
+
+        draft = harness.seed_draft(harness.project_id, status="draft",
+                                    content="Old draft content for substitution")
+        set_chat_draft_context(chat_id, draft.id, harness.project_id)
+
+        telegram_capture.clear()
+        handle_message(
+            make_message("use this instead: Brand new post content about automation"),
+            token, config,
+        )
+        assert telegram_capture.messages, "No response sent"
+
+        # Check if draft content was updated (gatekeeper should route to substitute)
+        updated = ops.get_draft(harness.conn, draft.id)
+        content_changed = updated.content != "Old draft content for substitution"
+
+        # Check for DraftChange row if content changed
+        if content_changed:
+            changes = ops.get_draft_changes(harness.conn, draft.id)
+            assert len(changes) >= 1, "Expected DraftChange row after substitute"
+
+        runner.add_review_item(
+            "H3",
+            title='Substitute via gatekeeper: "use this instead: ..."',
+            response=telegram_capture.last_message()["text"] if telegram_capture.messages else "",
+            review_question="Did the Gatekeeper correctly route to substitute? Is the content saved accurately?",
+            content_changed=content_changed,
+        )
+        return f"Substitute handled, content_changed={content_changed}"
+
+    runner.run_scenario("H3", "Substitute via gatekeeper", h3, llm_call=True)
+
+    # H4: Expert refine saves to DB
+    def h4():
+        from social_hook.db import operations as ops
+        from social_hook.bot.commands import set_chat_draft_context
+
+        draft = harness.seed_draft(harness.project_id, status="draft",
+                                    content="Original draft for expert refinement test")
+        set_chat_draft_context(chat_id, draft.id, harness.project_id)
+
+        telegram_capture.clear()
+        handle_message(make_message("make it punchier and more engaging"), token, config)
+        assert telegram_capture.messages, "No response sent"
+
+        # Check if expert refined and saved
+        updated = ops.get_draft(harness.conn, draft.id)
+        content_changed = updated.content != "Original draft for expert refinement test"
+
+        if content_changed:
+            changes = ops.get_draft_changes(harness.conn, draft.id)
+            expert_changes = [c for c in changes if c.changed_by == "expert"]
+            assert len(expert_changes) >= 1, "Expected DraftChange with changed_by='expert'"
+
+        runner.add_review_item(
+            "H4",
+            title='Expert refine: "make it punchier and more engaging"',
+            response=telegram_capture.last_message()["text"] if telegram_capture.messages else "",
+            review_question="Did the Expert improve the draft? Is the refined content better than the original?",
+            content_changed=content_changed,
+            original="Original draft for expert refinement test",
+            refined=updated.content if content_changed else "(unchanged)",
+        )
+        return f"Expert refine handled, content_changed={content_changed}"
+
+    runner.run_scenario("H4", "Expert refine saves to DB", h4, llm_call=True)
+
+    # H5: Gatekeeper receives draft context
+    def h5():
+        from unittest.mock import patch as _patch, MagicMock as _MagicMock
+        from social_hook.bot.commands import set_chat_draft_context
+
+        draft = harness.seed_draft(harness.project_id, status="draft",
+                                    content="Draft content for context threading test")
+        set_chat_draft_context(chat_id, draft.id, harness.project_id)
+
+        # Capture Gatekeeper.route() args while still calling through
+        captured_args = {}
+
+        original_route = None
+
+        def capture_route(self, *args, **kwargs):
+            captured_args["draft_context"] = kwargs.get("draft_context")
+            captured_args["project_id"] = kwargs.get("project_id")
+            return original_route(self, *args, **kwargs)
+
+        from social_hook.llm.gatekeeper import Gatekeeper
+        original_route = Gatekeeper.route
+
+        with _patch.object(Gatekeeper, "route", capture_route):
+            telegram_capture.clear()
+            handle_message(
+                make_message("what do you think of this draft?"),
+                token, config,
+            )
+
+        assert captured_args.get("draft_context") is not None, \
+            "Expected draft_context to be passed to Gatekeeper.route()"
+        assert captured_args.get("project_id") is not None, \
+            "Expected project_id to be passed to Gatekeeper.route()"
+
+        runner.add_review_item(
+            "H5",
+            title='Gatekeeper context threading: "what do you think of this draft?"',
+            response=telegram_capture.last_message()["text"] if telegram_capture.messages else "",
+            review_question="Is the Gatekeeper's response more contextual now? Does it reference the draft content?",
+        )
+        return "Gatekeeper received draft context and project_id"
+
+    runner.run_scenario("H5", "Gatekeeper receives draft context", h5, llm_call=True)
 
 
 # ---------------------------------------------------------------------------

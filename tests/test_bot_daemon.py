@@ -342,3 +342,19 @@ class TestCreateBot:
         assert bot.on_command is not None
         assert bot.on_callback is not None
         assert bot.on_message is not None
+
+    def test_create_bot_sets_adapter(self):
+        """create_bot wires a TelegramAdapter into both commands and buttons modules."""
+        from social_hook.bot import buttons, commands
+        from social_hook.messaging.telegram import TelegramAdapter
+
+        # Reset before test
+        commands._active_adapter = None
+        buttons._active_adapter = None
+
+        create_bot(token="adapter_test_token", allowed_chat_ids={"42"})
+
+        assert isinstance(commands._active_adapter, TelegramAdapter)
+        assert isinstance(buttons._active_adapter, TelegramAdapter)
+        # Both should reference the same adapter instance
+        assert commands._active_adapter is buttons._active_adapter
