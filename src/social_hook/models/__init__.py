@@ -260,6 +260,8 @@ class Draft:
     content: str
     status: str = "draft"  # DraftStatus value
     media_paths: list[str] = field(default_factory=list)
+    media_type: Optional[str] = None
+    media_spec: Optional[dict] = None
     suggested_time: Optional[datetime] = None
     scheduled_time: Optional[datetime] = None
     reasoning: Optional[str] = None
@@ -285,6 +287,8 @@ class Draft:
             "status": self.status,
             "content": self.content,
             "media_paths": self.media_paths,
+            "media_type": self.media_type,
+            "media_spec": self.media_spec,
             "suggested_time": _to_iso(self.suggested_time),
             "scheduled_time": _to_iso(self.scheduled_time),
             "reasoning": self.reasoning,
@@ -302,6 +306,13 @@ class Draft:
             import json
 
             media_paths = json.loads(media_paths)
+        media_spec_raw = d.get("media_spec")
+        if isinstance(media_spec_raw, str):
+            import json
+
+            media_spec = json.loads(media_spec_raw) if media_spec_raw else None
+        else:
+            media_spec = media_spec_raw
         return cls(
             id=d["id"],
             project_id=d["project_id"],
@@ -310,6 +321,8 @@ class Draft:
             status=d.get("status", "draft"),
             content=d["content"],
             media_paths=media_paths,
+            media_type=d.get("media_type"),
+            media_spec=media_spec,
             suggested_time=_from_iso(d.get("suggested_time")),
             scheduled_time=_from_iso(d.get("scheduled_time")),
             reasoning=d.get("reasoning"),
@@ -332,6 +345,8 @@ class Draft:
             self.status,
             self.content,
             json.dumps(self.media_paths),
+            self.media_type,
+            json.dumps(self.media_spec) if self.media_spec else None,
             _to_iso(self.suggested_time),
             _to_iso(self.scheduled_time),
             self.reasoning,

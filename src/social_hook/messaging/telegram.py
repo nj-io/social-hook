@@ -81,7 +81,45 @@ class TelegramAdapter(MessagingAdapter):
             supports_markdown=True,
             supports_html=True,
             button_text_max_length=64,
+            supports_media=True,
+            max_media_per_message=4,
+            supported_media_types=["png", "jpg", "jpeg", "gif"],
         )
+
+    def send_media(self, chat_id: str, file_path: str, caption: str = "",
+                   parse_mode: str = "markdown") -> SendResult:
+        """Send a media file via Telegram."""
+        from pathlib import Path
+
+        path = Path(file_path)
+        if not path.exists():
+            return SendResult(success=False, error=f"File not found: {file_path}")
+
+        file_size = path.stat().st_size
+        ext = path.suffix.lower().lstrip(".")
+        is_photo = ext in ("jpg", "jpeg", "png", "gif") and file_size <= 10 * 1024 * 1024
+
+        method = "sendPhoto" if is_photo else "sendDocument"
+        file_key = "photo" if is_photo else "document"
+
+        try:
+            with open(file_path, "rb") as f:
+                data = {
+                    "chat_id": chat_id,
+                    "parse_mode": self._map_parse_mode(parse_mode),
+                }
+                if caption:
+                    data["caption"] = caption
+                response = requests.post(
+                    f"{self._base_url}/{method}",
+                    data=data,
+                    files={file_key: f},
+                    timeout=30,  # File uploads are slower than JSON API calls
+                )
+                return self._parse_response(response)
+        except requests.RequestException as e:
+            logger.warning(f"Telegram API call failed: {e}")
+            return SendResult(success=False, error=str(e))
 
     # --- Internal helpers ---
 
@@ -93,23 +131,27 @@ class TelegramAdapter(MessagingAdapter):
                 json=payload,
                 timeout=10,
             )
-            if response.status_code == 200:
-                data = response.json()
-                result = data.get("result", {})
-                message_id = result.get("message_id") if isinstance(result, dict) else None
-                return SendResult(
-                    success=True,
-                    message_id=str(message_id) if message_id else None,
-                    raw=data,
-                )
-            return SendResult(
-                success=False,
-                error=f"HTTP {response.status_code}",
-                raw=response.text,
-            )
+            return self._parse_response(response)
         except requests.RequestException as e:
             logger.warning(f"Telegram API call failed: {e}")
             return SendResult(success=False, error=str(e))
+
+    def _parse_response(self, response: "requests.Response") -> SendResult:
+        """Parse a Telegram API response into SendResult."""
+        if response.status_code == 200:
+            data = response.json()
+            result = data.get("result", {})
+            message_id = result.get("message_id") if isinstance(result, dict) else None
+            return SendResult(
+                success=True,
+                message_id=str(message_id) if message_id else None,
+                raw=data,
+            )
+        return SendResult(
+            success=False,
+            error=f"HTTP {response.status_code}",
+            raw=response.text,
+        )
 
     def _buttons_to_telegram(self, rows: list[ButtonRow]) -> list[list[dict]]:
         """Convert ButtonRow list to Telegram inline_keyboard format."""

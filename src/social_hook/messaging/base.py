@@ -82,6 +82,9 @@ class PlatformCapabilities:
     supports_markdown: bool = True
     supports_html: bool = True
     button_text_max_length: int = 64
+    supports_media: bool = True
+    max_media_per_message: int = 4
+    supported_media_types: list[str] = field(default_factory=lambda: ["png", "jpg", "jpeg", "gif"])
 
 
 class MessagingAdapter(ABC):
@@ -114,3 +117,8 @@ class MessagingAdapter(ABC):
     def get_capabilities(self) -> PlatformCapabilities:
         """Return platform capabilities."""
         ...
+
+    def send_media(self, chat_id: str, file_path: str, caption: str = "",
+                   parse_mode: str = "markdown") -> SendResult:
+        """Send a media file to a chat. Override in subclasses that support media."""
+        return SendResult(success=False, error=f"{self.platform} does not support media uploads")

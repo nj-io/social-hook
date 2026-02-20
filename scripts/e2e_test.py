@@ -325,6 +325,9 @@ class E2EHarness:
             platform=kwargs.pop("platform", "x"),
             content=kwargs.pop("content", "E2E test draft content for social media."),
             status=status,
+            media_paths=kwargs.pop("media_paths", []),
+            media_type=kwargs.pop("media_type", None),
+            media_spec=kwargs.pop("media_spec", None),
             suggested_time=kwargs.pop("suggested_time", None),
             scheduled_time=kwargs.pop("scheduled_time", None),
             retry_count=kwargs.pop("retry_count", 0),
@@ -746,7 +749,7 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 # ---------------------------------------------------------------------------
 
 def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
-    """B1-B9: Pipeline scenarios."""
+    """B1-B10: Pipeline scenarios."""
     from social_hook.trigger import run_trigger
     from social_hook.db import get_recent_decisions, get_pending_drafts
 
@@ -966,6 +969,38 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         return f"Decision: {d.decision} (deferred is valid)"
 
     runner.run_scenario("B9", "Deferred/not_post_worthy for minor commit", b9, llm_call=True)
+
+    # B10: Pipeline generates media when enabled
+    def b10():
+        # Enable image generation in config
+        harness.update_config({"image_generation": {"enabled": True}})
+
+        exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
+                                verbose=runner.verbose)
+        assert exit_code == 0, f"run_trigger returned {exit_code}"
+
+        drafts = get_pending_drafts(harness.conn, harness.project_id)
+        assert len(drafts) > 0, "No drafts created"
+
+        # Find the most recent draft
+        draft = drafts[0]
+        detail = f"Draft: {draft.id}, media_type={draft.media_type}"
+
+        runner.add_review_item(
+            "B10",
+            title="Pipeline with media generation enabled",
+            decision="post_worthy",
+            draft_content=draft.content,
+            review_question="Does the generated media match the content?",
+            media_type=draft.media_type,
+            media_paths=draft.media_paths,
+        )
+
+        # Restore image generation to disabled for other tests
+        harness.update_config({"image_generation": {"enabled": False}})
+        return detail
+
+    runner.run_scenario("B10", "Pipeline generates media when enabled", b10, llm_call=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1660,7 +1695,7 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
 # ---------------------------------------------------------------------------
 
 def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture: TelegramCapture):
-    """G1-G11: Bot button scenarios."""
+    """G1-G14: Bot button scenarios."""
     from social_hook.db import operations as ops
     from social_hook.bot.buttons import handle_callback
 
@@ -1904,6 +1939,110 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
             set_buttons_adapter(None)
 
     runner.run_scenario("G11", "Adapter bridge sends via adapter", g11)
+
+    # G12: Edit media shows current file
+    def g12():
+        from unittest.mock import MagicMock as _MagicMock
+        from social_hook.bot.buttons import set_adapter as set_buttons_adapter
+        from social_hook.messaging.base import SendResult
+
+        draft = harness.seed_draft(
+            harness.project_id, status="draft",
+            media_paths=["/tmp/test.png"], media_type="mermaid",
+        )
+
+        mock_adapter = _MagicMock()
+        mock_adapter.send_message.return_value = SendResult(
+            success=True, message_id="mock_msg_1"
+        )
+        mock_adapter.answer_callback.return_value = True
+        caps = _MagicMock()
+        caps.supports_media = True
+        mock_adapter.get_capabilities.return_value = caps
+        mock_adapter.send_media.return_value = SendResult(success=True)
+
+        set_buttons_adapter(mock_adapter)
+        try:
+            telegram_capture.clear()
+            handle_callback(make_callback(f"edit_media:{draft.id}"), token, config)
+
+            # Verify send_media was called with the file path
+            assert mock_adapter.send_media.called, "Expected send_media to be called"
+            call_args = mock_adapter.send_media.call_args
+            assert "/tmp/test.png" in str(call_args), \
+                f"Expected /tmp/test.png in send_media args: {call_args}"
+
+            # Verify buttons include Regenerate and Remove media
+            assert telegram_capture.messages, "No button message sent"
+            btn_msg = [m for m in telegram_capture.messages if m.get("buttons")]
+            if btn_msg:
+                cb_data = [b["callback_data"] for row in btn_msg[-1]["buttons"] for b in row]
+                assert any("media_regen" in d for d in cb_data), \
+                    f"Expected media_regen button, got {cb_data}"
+                assert any("media_remove" in d for d in cb_data), \
+                    f"Expected media_remove button, got {cb_data}"
+            return "Edit media shows file + action buttons"
+        finally:
+            set_buttons_adapter(None)
+
+    runner.run_scenario("G12", "Edit media shows current file", g12)
+
+    # G13: Media regeneration
+    def g13():
+        from unittest.mock import MagicMock as _MagicMock, patch as _patch
+        from social_hook.adapters.models import MediaResult
+
+        draft = harness.seed_draft(
+            harness.project_id, status="draft",
+            media_paths=["/tmp/old.png"],
+            media_type="mermaid",
+            media_spec={"diagram": "graph TD; A-->B"},
+        )
+        telegram_capture.clear()
+
+        mock_media_adapter = _MagicMock()
+        mock_media_adapter.generate.return_value = MediaResult(
+            success=True, file_path="/tmp/regenerated.png"
+        )
+
+        with _patch(
+            "social_hook.adapters.registry.get_media_adapter",
+            return_value=mock_media_adapter,
+        ):
+            handle_callback(make_callback(f"media_regen:{draft.id}"), token, config)
+
+        assert mock_media_adapter.generate.called, "Expected media adapter generate() called"
+
+        # Verify draft media_paths updated
+        updated = ops.get_draft(harness.conn, draft.id)
+        assert updated.media_paths == ["/tmp/regenerated.png"], \
+            f"Expected ['/tmp/regenerated.png'], got {updated.media_paths}"
+        return "Media regenerated, draft updated"
+
+    runner.run_scenario("G13", "Media regeneration", g13)
+
+    # G14: Media removal
+    def g14():
+        draft = harness.seed_draft(
+            harness.project_id, status="draft",
+            media_paths=["/tmp/to_remove.png"],
+        )
+        telegram_capture.clear()
+        handle_callback(make_callback(f"media_remove:{draft.id}"), token, config)
+
+        updated = ops.get_draft(harness.conn, draft.id)
+        assert updated.media_paths == [], \
+            f"Expected empty media_paths, got {updated.media_paths}"
+
+        # Verify DraftChange audit trail exists
+        changes = ops.get_draft_changes(harness.conn, draft.id)
+        media_changes = [c for c in changes if c.field == "media_paths"]
+        assert len(media_changes) >= 1, \
+            f"Expected DraftChange audit entry for media_paths, got {len(media_changes)}"
+
+        return "Media removed, paths cleared, audit trail verified"
+
+    runner.run_scenario("G14", "Media removal", g14)
 
 
 # ---------------------------------------------------------------------------

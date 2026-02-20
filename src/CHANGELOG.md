@@ -2,6 +2,19 @@
 
 Deviations and discoveries from the original multi-provider integration plan.
 
+## 2026-02-20
+
+### Media generation pipeline
+
+- Wired evaluator→drafter→media adapter→notification flow
+- `MessagingAdapter.send_media()` with Telegram implementation (sendPhoto/sendDocument)
+- DB: `media_type` and `media_spec` columns on drafts table (migration 005)
+- Trigger pipeline generates media when `image_generation.enabled` is true
+- Notifications include media attachments via platform adapter
+- Scheduler passes `media_paths` to platform adapters for posting
+- Bot: "Change media" button shows current media, supports regeneration and removal
+- 4 new E2E scenarios (B10, G12-G14)
+
 ## 2026-02-19
 
 ### Bot layer: 5 broken flow fixes

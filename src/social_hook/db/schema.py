@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS drafts (
     status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'scheduled', 'posted', 'rejected', 'failed', 'superseded', 'cancelled')),
     content         TEXT NOT NULL,
     media_paths     TEXT NOT NULL DEFAULT '[]',
+    media_type      TEXT,
+    media_spec      TEXT DEFAULT '{}',
     suggested_time  TEXT,
     scheduled_time  TEXT,
     reasoning       TEXT,

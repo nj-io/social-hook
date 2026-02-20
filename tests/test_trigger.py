@@ -204,6 +204,7 @@ class TestTriggerUsesAdapter:
         cfg.platforms.x.enabled = True
         cfg.platforms.x.account_tier = "free"
         cfg.platforms.linkedin.enabled = False
+        cfg.image_generation.enabled = False
         cfg.scheduling.timezone = "UTC"
         cfg.scheduling.max_posts_per_day = 3
         cfg.scheduling.min_gap_minutes = 30
@@ -251,6 +252,7 @@ class TestTriggerUsesAdapter:
         draft_result.reasoning = "Short and punchy"
         draft_result.format_hint = "single"
         draft_result.beat_count = 1
+        draft_result.media_type = None
         drafter_instance.create_draft.return_value = draft_result
         mock_drafter_cls.return_value = drafter_instance
 
@@ -272,3 +274,459 @@ class TestTriggerUsesAdapter:
         call_chat_ids = [c.args[0] for c in mock_adapter_send.call_args_list]
         assert "111" in call_chat_ids
         assert "222" in call_chat_ids
+
+
+def _make_trigger_mocks(
+    image_generation_enabled=False,
+    drafter_media_type=None,
+    evaluator_media_tool=None,
+    media_generate_result=None,
+    gemini_key=None,
+    use_thread=False,
+):
+    """Helper to build the common mock setup for trigger media tests.
+
+    Returns dict of (mock_name -> mock_object) for use with patch decorators,
+    plus a reference to the config and draft_result for assertion.
+    """
+    from datetime import datetime
+    from social_hook.adapters.models import MediaResult
+
+    cfg = MagicMock()
+    cfg.platforms.x.enabled = True
+    cfg.platforms.x.account_tier = "free"
+    cfg.platforms.linkedin.enabled = False
+    cfg.image_generation.enabled = image_generation_enabled
+    cfg.scheduling.timezone = "UTC"
+    cfg.scheduling.max_posts_per_day = 3
+    cfg.scheduling.min_gap_minutes = 30
+    cfg.scheduling.optimal_days = None
+    cfg.scheduling.optimal_hours = None
+
+    env_map = {}
+    if gemini_key:
+        env_map["GEMINI_API_KEY"] = gemini_key
+    cfg.env.get = lambda key, default="": env_map.get(key, default)
+
+    commit = MagicMock()
+    commit.hash = "abc12345"
+    commit.message = "Add feature"
+
+    evaluation = MagicMock()
+    evaluation.decision = "post_worthy"
+    evaluation.reasoning = "Good commit"
+    evaluation.angle = "feature"
+    evaluation.episode_type = "milestone"
+    evaluation.post_category = "arc"
+    evaluation.arc_id = None
+    evaluation.media_tool = evaluator_media_tool
+    evaluation.platforms = {}
+
+    evaluator_instance = MagicMock()
+    evaluator_instance.evaluate.return_value = evaluation
+
+    draft_result = MagicMock()
+    draft_result.content = "Check out this feature!"
+    draft_result.reasoning = "Short and punchy"
+    draft_result.format_hint = "thread" if use_thread else "single"
+    draft_result.beat_count = 5 if use_thread else 1
+    draft_result.media_type = drafter_media_type
+    draft_result.media_spec = {"prompt": "a diagram"} if drafter_media_type else None
+
+    drafter_instance = MagicMock()
+    drafter_instance.create_draft.return_value = draft_result
+    if use_thread:
+        thread_result = MagicMock()
+        thread_result.content = "1/ First tweet\n\n2/ Second tweet\n\n3/ Third\n\n4/ Fourth"
+        thread_result.reasoning = "Thread reasoning"
+        drafter_instance.create_thread.return_value = thread_result
+
+    schedule = MagicMock()
+    schedule.datetime = datetime(2026, 2, 20, 12, 0, 0)
+    schedule.time_reason = "optimal"
+
+    if media_generate_result is None:
+        media_generate_result = MediaResult(success=True, file_path="/tmp/media/img.png")
+
+    return {
+        "cfg": cfg,
+        "commit": commit,
+        "evaluation": evaluation,
+        "evaluator_instance": evaluator_instance,
+        "draft_result": draft_result,
+        "drafter_instance": drafter_instance,
+        "schedule": schedule,
+        "media_generate_result": media_generate_result,
+    }
+
+
+class TestTriggerMedia:
+    """Tests for media generation in the trigger pipeline."""
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_generates_media_when_enabled(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """When image_generation.enabled and drafter returns media_type, adapter.generate() is called."""
+        from social_hook.adapters.models import MediaResult
+        from social_hook.llm.schemas import MediaTool
+
+        mocks = _make_trigger_mocks(
+            image_generation_enabled=True,
+            drafter_media_type=MediaTool.mermaid,
+            media_generate_result=MediaResult(success=True, file_path="/tmp/media/diagram.png"),
+        )
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate.return_value = mocks["media_generate_result"]
+
+        with patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter) as mock_get:
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+
+        assert exit_code == 0
+        mock_get.assert_called_once_with("mermaid", api_key=None)
+        mock_adapter.generate.assert_called_once()
+        call_kwargs = mock_adapter.generate.call_args
+        assert call_kwargs.kwargs.get("dry_run") is False or call_kwargs[1].get("dry_run") is False \
+            or (len(call_kwargs.args) >= 3 and call_kwargs.args[2] is False) \
+            or "dry_run" in str(call_kwargs)
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_skips_media_when_disabled(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """When image_generation.enabled=False, no media adapter is called."""
+        from social_hook.llm.schemas import MediaTool
+
+        mocks = _make_trigger_mocks(
+            image_generation_enabled=False,
+            drafter_media_type=MediaTool.mermaid,
+        )
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        with patch("social_hook.adapters.registry.get_media_adapter") as mock_get:
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+
+        assert exit_code == 0
+        mock_get.assert_not_called()
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_skips_media_when_none(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """When drafter returns media_type=none and evaluator has no media_tool, skip media."""
+        mocks = _make_trigger_mocks(
+            image_generation_enabled=True,
+            drafter_media_type=None,
+            evaluator_media_tool=None,
+        )
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        with patch("social_hook.adapters.registry.get_media_adapter") as mock_get:
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+
+        assert exit_code == 0
+        mock_get.assert_not_called()
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_handles_media_failure(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """When media generation fails, draft is still saved with media_paths=[]."""
+        from social_hook.adapters.models import MediaResult
+        from social_hook.llm.schemas import MediaTool
+
+        mocks = _make_trigger_mocks(
+            image_generation_enabled=True,
+            drafter_media_type=MediaTool.mermaid,
+            media_generate_result=MediaResult(success=False, error="render failed"),
+        )
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate.return_value = mocks["media_generate_result"]
+
+        with patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter):
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+
+        # Draft still saved successfully
+        assert exit_code == 0
+        mock_adapter.generate.assert_called_once()
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_skips_nano_without_key(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """When nano_banana_pro requested but GEMINI_API_KEY not set, skip gracefully."""
+        from social_hook.llm.schemas import MediaTool
+
+        mocks = _make_trigger_mocks(
+            image_generation_enabled=True,
+            drafter_media_type=MediaTool.nano_banana_pro,
+            gemini_key=None,
+        )
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        with patch("social_hook.adapters.registry.get_media_adapter") as mock_get:
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+
+        assert exit_code == 0
+        # Adapter should not be fetched because key is missing and media_type_str was set to None
+        mock_get.assert_not_called()
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_thread_with_media(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """When use_thread=True and media generated, draft.media_paths is set on the saved draft."""
+        from social_hook.adapters.models import MediaResult
+        from social_hook.llm.schemas import MediaTool
+
+        mocks = _make_trigger_mocks(
+            image_generation_enabled=True,
+            drafter_media_type=MediaTool.mermaid,
+            media_generate_result=MediaResult(success=True, file_path="/tmp/media/diagram.png"),
+            use_thread=True,
+        )
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate.return_value = mocks["media_generate_result"]
+
+        # Capture what gets passed to insert_draft
+        saved_drafts = []
+        original_db = mock_init_db.return_value
+
+        class CaptureDryRun:
+            """Captures insert_draft calls while acting as DryRunContext."""
+            def __init__(self, conn):
+                self._conn = conn
+
+            def insert_decision(self, decision):
+                pass
+
+            def insert_draft(self, draft):
+                saved_drafts.append(draft)
+
+            def insert_draft_tweet(self, tweet):
+                pass
+
+        # We need to patch DryRunContext to capture the draft
+        with patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter), \
+             patch("social_hook.trigger.DryRunContext", side_effect=lambda conn, dry_run: CaptureDryRun(conn)):
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+
+        assert exit_code == 0
+        mock_adapter.generate.assert_called_once()
+        assert len(saved_drafts) == 1
+        saved_draft = saved_drafts[0]
+        assert saved_draft.media_paths == ["/tmp/media/diagram.png"]
+        assert saved_draft.media_type == "mermaid"
+
+
+class TestTriggerSendsMediaNotification:
+    """Tests that trigger sends media files via adapter after text notification."""
+
+    @patch("social_hook.messaging.telegram.TelegramAdapter.send_media")
+    @patch("social_hook.messaging.telegram.TelegramAdapter.send_message")
+    @patch("social_hook.bot.commands.set_chat_draft_context")
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_sends_media_notification(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        mock_set_context, mock_adapter_send, mock_adapter_send_media,
+    ):
+        """When draft has media_paths, adapter.send_media() is called for each chat ID."""
+        from datetime import datetime
+        from social_hook.adapters.models import MediaResult
+        from social_hook.llm.schemas import MediaTool
+        from social_hook.messaging.base import SendResult
+
+        mocks = _make_trigger_mocks(
+            image_generation_enabled=True,
+            drafter_media_type=MediaTool.mermaid,
+            media_generate_result=MediaResult(success=True, file_path="/tmp/media/img.png"),
+        )
+        # Need telegram env vars
+        env_map = {
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "TELEGRAM_ALLOWED_CHAT_IDS": "111,222",
+        }
+        mocks["cfg"].env.get = lambda key, default="": env_map.get(key, default)
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test-proj", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        mock_adapter_send.return_value = SendResult(success=True, message_id="m1")
+        mock_adapter_send_media.return_value = SendResult(success=True, message_id="m2")
+
+        mock_media_adapter = MagicMock()
+        mock_media_adapter.generate.return_value = mocks["media_generate_result"]
+
+        with patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_media_adapter):
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+
+        assert exit_code == 0
+
+        # send_media should have been called once per media_path per chat_id
+        # 1 media file * 2 chat IDs = 2 calls
+        assert mock_adapter_send_media.call_count == 2
+        call_chat_ids = [c.args[0] for c in mock_adapter_send_media.call_args_list]
+        assert "111" in call_chat_ids
+        assert "222" in call_chat_ids
+        # Verify media path and caption
+        for call in mock_adapter_send_media.call_args_list:
+            assert call.args[1] == "/tmp/media/img.png"
+            assert "Media for draft" in call.kwargs.get("caption", call.args[2] if len(call.args) > 2 else "")

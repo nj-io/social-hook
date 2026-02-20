@@ -126,9 +126,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 4."""
+        """Check schema version returns 5."""
         version = get_schema_version(temp_db)
-        assert version == 4
+        assert version == 5
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent."""
@@ -141,7 +141,7 @@ class TestDatabaseInitialization:
         version2 = get_schema_version(conn2)
         conn2.close()
 
-        assert version1 == version2 == 4
+        assert version1 == version2 == 5
 
 
 # =============================================================================
@@ -1172,3 +1172,113 @@ class TestProjectPausedField:
         d = {"id": "p1", "name": "test", "repo_path": "/tmp", "paused": 1}
         project = Project.from_dict(d)
         assert project.paused is True
+
+
+# =============================================================================
+# Media Fields Tests
+# =============================================================================
+
+
+class TestDraftMediaFields:
+    """Tests for media_type, media_spec, and media_paths update_draft support."""
+
+    def _create_draft(self, temp_db):
+        """Helper to create a project + decision + draft for media tests."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="post_worthy",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="test content",
+        )
+        insert_draft(temp_db, draft)
+        return draft
+
+    def test_update_draft_media_paths(self, temp_db):
+        """update_draft with media_paths persists and round-trips."""
+        draft = self._create_draft(temp_db)
+
+        paths = ["/tmp/img1.png", "/tmp/img2.jpg"]
+        result = update_draft(temp_db, draft.id, media_paths=paths)
+        assert result is True
+
+        loaded = get_draft(temp_db, draft.id)
+        assert loaded.media_paths == paths
+
+    def test_update_draft_media_type_and_spec(self, temp_db):
+        """media_type and media_spec persist via update_draft."""
+        draft = self._create_draft(temp_db)
+
+        spec = {"prompt": "A diagram of the architecture", "style": "technical"}
+        result = update_draft(
+            temp_db,
+            draft.id,
+            media_type="image",
+            media_spec=spec,
+        )
+        assert result is True
+
+        loaded = get_draft(temp_db, draft.id)
+        assert loaded.media_type == "image"
+        assert loaded.media_spec == spec
+
+    def test_draft_serialization_with_media_fields(self, temp_db):
+        """Draft.to_row()/from_dict() round-trip with media fields."""
+        draft = Draft(
+            id="draft-media-test",
+            project_id="proj-1",
+            decision_id="dec-1",
+            platform="x",
+            content="media test",
+            media_paths=["/tmp/pic.png"],
+            media_type="image",
+            media_spec={"prompt": "test prompt", "width": 1024},
+        )
+
+        # Verify to_row returns exactly 15 elements
+        row = draft.to_row()
+        assert len(row) == 15
+
+        # Verify round-trip via to_dict/from_dict
+        d = draft.to_dict()
+        assert d["media_type"] == "image"
+        assert d["media_spec"] == {"prompt": "test prompt", "width": 1024}
+
+        restored = Draft.from_dict(d)
+        assert restored.media_type == "image"
+        assert restored.media_spec == {"prompt": "test prompt", "width": 1024}
+        assert restored.media_paths == ["/tmp/pic.png"]
+
+    def test_draft_from_dict_media_spec_string(self):
+        """from_dict handles media_spec as a JSON string (from DB row)."""
+        d = {
+            "id": "d1",
+            "project_id": "p1",
+            "decision_id": "dec1",
+            "platform": "x",
+            "content": "test",
+            "media_spec": '{"prompt": "hello"}',
+            "media_type": "image",
+        }
+        draft = Draft.from_dict(d)
+        assert draft.media_spec == {"prompt": "hello"}
+        assert draft.media_type == "image"
+
+    def test_draft_defaults_media_fields_none(self, temp_db):
+        """Drafts without media fields default to None."""
+        draft = self._create_draft(temp_db)
+        loaded = get_draft(temp_db, draft.id)
+        assert loaded.media_type is None
+        assert loaded.media_spec is None

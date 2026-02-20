@@ -10,8 +10,11 @@ from social_hook.bot.buttons import (
     _pending_edits,
     btn_approve,
     btn_cancel,
+    btn_edit_media,
     btn_edit_submenu,
     btn_edit_text,
+    btn_media_regen,
+    btn_media_remove,
     btn_quick_approve,
     btn_reject,
     btn_reject_submenu,
@@ -560,3 +563,180 @@ class TestButtonsAdapterBridge:
         result = _answer_callback("token", "cb1", "Done")
         assert result is True
         mock_adapter.answer_callback.assert_called_once_with("cb1", "Done")
+
+
+class TestBtnEditMedia:
+    """Tests for edit media button handler."""
+
+    @patch("social_hook.bot.buttons._active_adapter")
+    @patch("social_hook.bot.buttons.send_notification_with_buttons")
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_edit_media_shows_current_file(
+        self, mock_conn, mock_answer, mock_send, mock_send_buttons, mock_adapter, temp_dir
+    ):
+        """Draft with media_paths sends media via adapter and shows action buttons."""
+        from social_hook.db import get_draft, update_draft
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        _, _, draft = _create_test_draft(conn)
+        # Add media to the draft
+        update_draft(conn, draft.id, media_paths=["/tmp/test.png"], media_type="mermaid")
+
+        # Set up adapter with media support
+        caps = MagicMock()
+        caps.supports_media = True
+        mock_adapter.get_capabilities.return_value = caps
+        mock_adapter.send_media.return_value = MagicMock(success=True)
+
+        btn_edit_media("token", "123", "cb1", draft.id, None)
+
+        mock_answer.assert_called_once()
+        mock_adapter.send_media.assert_called_once_with(
+            "123", "/tmp/test.png", caption=f"Current media for `{draft.id[:12]}`"
+        )
+        mock_send_buttons.assert_called_once()
+        buttons = mock_send_buttons.call_args[0][3]
+        cb_data = [b["callback_data"] for row in buttons for b in row]
+        assert f"media_regen:{draft.id}" in cb_data
+        assert f"media_remove:{draft.id}" in cb_data
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_edit_media_no_media(self, mock_conn, mock_answer, mock_send, temp_dir):
+        """Draft with empty media_paths shows text-only response."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        _, _, draft = _create_test_draft(conn)
+
+        btn_edit_media("token", "123", "cb1", draft.id, None)
+
+        mock_answer.assert_called_once()
+        text = mock_send.call_args[0][2]
+        assert "No media" in text
+
+
+class TestBtnMediaRegen:
+    """Tests for media regeneration button handler."""
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_media_regen_calls_adapter(self, mock_conn, mock_answer, mock_send, temp_dir):
+        """Regeneration calls get_media_adapter and updates draft."""
+        from social_hook.adapters.models import MediaResult
+        from social_hook.db import get_draft, update_draft
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        _, _, draft = _create_test_draft(conn)
+        update_draft(
+            conn,
+            draft.id,
+            media_paths=["/old/path.png"],
+            media_type="mermaid",
+            media_spec={"diagram": "graph TD; A-->B"},
+        )
+
+        mock_media_adapter = MagicMock()
+        mock_media_adapter.generate.return_value = MediaResult(
+            success=True, file_path="/new/regenerated.png"
+        )
+
+        with patch(
+            "social_hook.adapters.registry.get_media_adapter",
+            return_value=mock_media_adapter,
+        ):
+            btn_media_regen("token", "123", "cb1", draft.id, None)
+
+        mock_media_adapter.generate.assert_called_once()
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.media_paths == ["/new/regenerated.png"]
+        conn2.close()
+        assert "regenerated" in mock_send.call_args[0][2].lower()
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_media_regen_no_spec(self, mock_conn, mock_answer, mock_send, temp_dir):
+        """Draft without media_type/media_spec returns error message."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        _, _, draft = _create_test_draft(conn)
+
+        btn_media_regen("token", "123", "cb1", draft.id, None)
+
+        text = mock_send.call_args[0][2]
+        assert "No media spec" in text
+
+
+class TestBtnMediaRemove:
+    """Tests for media removal button handler."""
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_media_remove_clears_paths(self, mock_conn, mock_answer, mock_send, temp_dir):
+        """Removing media sets media_paths to [] and creates audit trail."""
+        from social_hook.db import get_draft, update_draft
+        from social_hook.db.operations import get_draft_changes
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        _, _, draft = _create_test_draft(conn)
+        update_draft(conn, draft.id, media_paths=["/tmp/old.png"])
+
+        btn_media_remove("token", "123", "cb1", draft.id, None)
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.media_paths == []
+        text = mock_send.call_args[0][2]
+        assert "removed" in text.lower()
+
+        # Verify DraftChange audit trail
+        changes = get_draft_changes(conn2, draft.id)
+        media_changes = [c for c in changes if c.field == "media_paths"]
+        assert len(media_changes) >= 1
+        assert media_changes[0].changed_by == "human"
+        conn2.close()
+
+
+class TestMediaRouting:
+    """Tests for media_regen and media_remove dispatch routing."""
+
+    @patch("social_hook.bot.buttons.btn_media_regen")
+    @patch("social_hook.bot.buttons._answer_callback")
+    def test_routes_media_regen(self, mock_answer, mock_btn):
+        callback = {
+            "id": "cb1",
+            "message": {"chat": {"id": 123}},
+            "data": "media_regen:draft_123",
+        }
+        handle_callback(callback, "token")
+        mock_btn.assert_called_once_with("token", "123", "cb1", "draft_123", None)
+
+    @patch("social_hook.bot.buttons.btn_media_remove")
+    @patch("social_hook.bot.buttons._answer_callback")
+    def test_routes_media_remove(self, mock_answer, mock_btn):
+        callback = {
+            "id": "cb1",
+            "message": {"chat": {"id": 123}},
+            "data": "media_remove:draft_456",
+        }
+        handle_callback(callback, "token")
+        mock_btn.assert_called_once_with("token", "123", "cb1", "draft_456", None)

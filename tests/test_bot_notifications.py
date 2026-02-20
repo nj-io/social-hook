@@ -364,3 +364,26 @@ class TestFormatDraftReviewEvaluatorContext:
         assert "Angle:" not in msg
         assert "Reasoning:" not in msg
         assert "*New draft ready for review*" in msg
+
+    def test_format_draft_review_with_media_info(self):
+        """Media info line appears with trigger-style format (type + file count)."""
+        msg = format_draft_review(
+            project_name="my-project", commit_hash="abc1234",
+            commit_message="Add diagram", platform="x",
+            content="Check out the architecture",
+            media_info="mermaid (1 file)",
+            draft_id="draft_xyz",
+        )
+        assert "Media: mermaid (1 file)" in msg
+        # Media line should appear before draft ID line
+        media_pos = msg.index("Media:")
+        draft_pos = msg.index("Draft:")
+        assert media_pos < draft_pos
+
+    def test_format_draft_review_without_media_info(self):
+        """No media line when media_info is None."""
+        msg = format_draft_review(
+            project_name="test", commit_hash="abc", commit_message="msg",
+            platform="x", content="hello",
+        )
+        assert "Media:" not in msg

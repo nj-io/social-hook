@@ -308,6 +308,96 @@ class TestCapabilities:
         assert caps.supports_markdown is True
         assert caps.supports_html is True
         assert caps.button_text_max_length == 64
+        assert caps.supports_media is True
+        assert caps.max_media_per_message == 4
+        assert caps.supported_media_types == ["png", "jpg", "jpeg", "gif"]
+
+
+class TestSendMedia:
+    def test_send_photo_success(self, adapter, tmp_path):
+        """Send a photo file uses sendPhoto with multipart payload."""
+        photo = tmp_path / "test.png"
+        photo.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "ok": True,
+            "result": {"message_id": 99},
+        }
+
+        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+            result = adapter.send_media("123", str(photo), caption="A photo")
+
+        assert result.success is True
+        assert result.message_id == "99"
+
+        call_args = mock_post.call_args
+        assert "sendPhoto" in call_args[0][0]
+        assert call_args[1]["data"]["chat_id"] == "123"
+        assert call_args[1]["data"]["caption"] == "A photo"
+        assert "photo" in call_args[1]["files"]
+        assert call_args[1]["timeout"] == 30
+
+    def test_send_document_for_non_image(self, adapter, tmp_path):
+        """Non-image file (.svg) uses sendDocument."""
+        svg = tmp_path / "icon.svg"
+        svg.write_text("<svg></svg>")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "ok": True,
+            "result": {"message_id": 100},
+        }
+
+        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+            result = adapter.send_media("123", str(svg))
+
+        assert result.success is True
+        call_args = mock_post.call_args
+        assert "sendDocument" in call_args[0][0]
+        assert "document" in call_args[1]["files"]
+
+    def test_send_photo_over_10mb_falls_back_to_document(self, adapter, tmp_path):
+        """Large .png (>10MB) falls back to sendDocument."""
+        large_png = tmp_path / "big.png"
+        large_png.write_bytes(b"\x00" * (11 * 1024 * 1024))  # 11 MB
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "ok": True,
+            "result": {"message_id": 101},
+        }
+
+        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+            result = adapter.send_media("123", str(large_png))
+
+        assert result.success is True
+        call_args = mock_post.call_args
+        assert "sendDocument" in call_args[0][0]
+        assert "document" in call_args[1]["files"]
+
+    def test_send_media_file_not_found(self, adapter):
+        """Missing file returns SendResult(success=False)."""
+        result = adapter.send_media("123", "/nonexistent/photo.png")
+
+        assert result.success is False
+        assert "File not found" in result.error
+
+    def test_send_media_network_error(self, adapter, tmp_path):
+        """Network error returns SendResult(success=False)."""
+        import requests as req
+
+        photo = tmp_path / "test.jpg"
+        photo.write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+
+        with patch("social_hook.messaging.telegram.requests.post", side_effect=req.ConnectionError("network down")):
+            result = adapter.send_media("123", str(photo))
+
+        assert result.success is False
+        assert "network down" in result.error
 
 
 class TestMapParseMode:

@@ -160,16 +160,32 @@ class TestPlatformCapabilities:
         assert caps.supports_markdown is True
         assert caps.supports_html is True
         assert caps.button_text_max_length == 64
+        assert caps.supports_media is True
+        assert caps.max_media_per_message == 4
+        assert caps.supported_media_types == ["png", "jpg", "jpeg", "gif"]
 
     def test_custom_values(self):
         caps = PlatformCapabilities(
             max_message_length=40000,
             supports_html=False,
             button_text_max_length=75,
+            supports_media=False,
+            max_media_per_message=1,
+            supported_media_types=["png"],
         )
         assert caps.max_message_length == 40000
         assert caps.supports_html is False
         assert caps.button_text_max_length == 75
+        assert caps.supports_media is False
+        assert caps.max_media_per_message == 1
+        assert caps.supported_media_types == ["png"]
+
+    def test_supported_media_types_default_factory_independence(self):
+        """Each PlatformCapabilities gets its own supported_media_types list."""
+        caps1 = PlatformCapabilities()
+        caps2 = PlatformCapabilities()
+        caps1.supported_media_types.append("webp")
+        assert "webp" not in caps2.supported_media_types
 
 
 class TestMessagingAdapterABC:
@@ -213,3 +229,27 @@ class TestMessagingAdapterABC:
         result = adapter.send_message("123", OutboundMessage(text="hi"))
         assert result.success is True
         assert adapter.get_capabilities().max_message_length == 4096
+
+    def test_base_send_media_default_returns_failure(self):
+        """Default send_media() returns SendResult(success=False)."""
+
+        class MinimalAdapter(MessagingAdapter):
+            platform = "minimal"
+
+            def send_message(self, chat_id, message):
+                return SendResult(success=True)
+
+            def edit_message(self, chat_id, message_id, message):
+                return SendResult(success=True)
+
+            def answer_callback(self, callback_id, text=""):
+                return True
+
+            def get_capabilities(self):
+                return PlatformCapabilities()
+
+        adapter = MinimalAdapter()
+        result = adapter.send_media("123", "/some/file.png")
+        assert result.success is False
+        assert "minimal" in result.error
+        assert "does not support media uploads" in result.error

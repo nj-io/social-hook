@@ -113,6 +113,8 @@ def handle_callback(callback: dict, token: str, config: Optional[Any] = None) ->
         "edit": btn_edit_submenu,
         "edit_text": btn_edit_text,
         "edit_media": btn_edit_media,
+        "media_regen": btn_media_regen,
+        "media_remove": btn_media_remove,
         "edit_angle": btn_edit_angle,
         "reject": btn_reject_submenu,
         "reject_now": btn_reject,
@@ -395,9 +397,176 @@ def btn_edit_media(
     draft_id: str,
     config: Optional[Any],
 ) -> None:
-    """Prompt user to reply with a new media path."""
-    _answer_callback(token, callback_id)
-    _send(token, chat_id, f"Reply with media path or URL for `{draft_id[:12]}`")
+    """Show current media and action buttons (regenerate/remove)."""
+    _answer_callback(token, callback_id, "Loading media...")
+    conn = _get_conn()
+    try:
+        from social_hook.bot.commands import set_chat_draft_context
+        from social_hook.db import get_draft
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            return
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        if draft.media_paths:
+            # Send current media via adapter
+            if _active_adapter:
+                caps = _active_adapter.get_capabilities()
+                if getattr(caps, "supports_media", False):
+                    for path in draft.media_paths:
+                        _active_adapter.send_media(
+                            chat_id,
+                            path,
+                            caption=f"Current media for `{draft_id[:12]}`",
+                        )
+            # Show action buttons
+            buttons = [
+                [
+                    {
+                        "text": "Regenerate",
+                        "callback_data": f"media_regen:{draft_id}",
+                    },
+                    {
+                        "text": "Remove media",
+                        "callback_data": f"media_remove:{draft_id}",
+                    },
+                ]
+            ]
+            send_notification_with_buttons(
+                token,
+                chat_id,
+                f"Media for `{draft_id[:12]}` ({draft.media_type or 'unknown'}):",
+                buttons,
+            )
+        else:
+            _send(token, chat_id, f"No media attached to `{draft_id[:12]}`.")
+    finally:
+        conn.close()
+
+
+def btn_media_regen(
+    token: str,
+    chat_id: str,
+    callback_id: str,
+    draft_id: str,
+    config: Optional[Any],
+) -> None:
+    """Regenerate media using the stored media_spec."""
+    _answer_callback(token, callback_id, "Regenerating...")
+    conn = _get_conn()
+    try:
+        import json
+
+        from social_hook.adapters.registry import get_media_adapter
+        from social_hook.db import get_draft, update_draft
+        from social_hook.db.operations import insert_draft_change
+        from social_hook.filesystem import generate_id, get_base_path
+        from social_hook.models import DraftChange
+
+        draft = get_draft(conn, draft_id)
+        if not draft or not draft.media_type or not draft.media_spec:
+            _send(token, chat_id, "No media spec available for regeneration.")
+            return
+
+        api_key = None
+        if draft.media_type == "nano_banana_pro":
+            api_key = config.env.get("GEMINI_API_KEY") if config else None
+            if not api_key:
+                _send(
+                    token,
+                    chat_id,
+                    "Cannot regenerate: GEMINI_API_KEY not configured.",
+                )
+                return
+
+        try:
+            media_adapter = get_media_adapter(draft.media_type, api_key=api_key)
+        except ValueError as e:
+            _send(token, chat_id, f"Media adapter error: {e}")
+            return
+        if not media_adapter:
+            _send(
+                token,
+                chat_id,
+                f"Media adapter '{draft.media_type}' not available.",
+            )
+            return
+
+        output_dir = str(get_base_path() / "media-cache" / draft_id)
+        result = media_adapter.generate(spec=draft.media_spec, output_dir=output_dir)
+
+        if result.success and result.file_path:
+            old_paths = draft.media_paths
+            update_draft(conn, draft_id, media_paths=[result.file_path])
+
+            insert_draft_change(
+                conn,
+                DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft_id,
+                    field="media_paths",
+                    old_value=json.dumps(old_paths),
+                    new_value=json.dumps([result.file_path]),
+                    changed_by="human",
+                ),
+            )
+
+            if _active_adapter:
+                caps = _active_adapter.get_capabilities()
+                if getattr(caps, "supports_media", False):
+                    _active_adapter.send_media(
+                        chat_id,
+                        result.file_path,
+                        caption=f"Regenerated media for `{draft_id[:12]}`",
+                    )
+            _send(token, chat_id, "Media regenerated.")
+        else:
+            _send(token, chat_id, f"Regeneration failed: {result.error}")
+    finally:
+        conn.close()
+
+
+def btn_media_remove(
+    token: str,
+    chat_id: str,
+    callback_id: str,
+    draft_id: str,
+    config: Optional[Any],
+) -> None:
+    """Remove media from a draft."""
+    _answer_callback(token, callback_id, "Removing...")
+    conn = _get_conn()
+    try:
+        import json
+
+        from social_hook.db import get_draft, update_draft
+        from social_hook.db.operations import insert_draft_change
+        from social_hook.filesystem import generate_id
+        from social_hook.models import DraftChange
+
+        draft = get_draft(conn, draft_id)
+        old_paths = draft.media_paths if draft else []
+
+        update_draft(conn, draft_id, media_paths=[])
+
+        if draft:
+            insert_draft_change(
+                conn,
+                DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft_id,
+                    field="media_paths",
+                    old_value=json.dumps(old_paths),
+                    new_value="[]",
+                    changed_by="human",
+                ),
+            )
+
+        _send(token, chat_id, f"Media removed from `{draft_id[:12]}`.")
+    finally:
+        conn.close()
 
 
 def btn_edit_angle(

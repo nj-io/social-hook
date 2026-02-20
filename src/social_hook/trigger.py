@@ -12,7 +12,7 @@ from social_hook.config.yaml import load_full_config
 from social_hook.db.connection import get_connection, init_database
 from social_hook.db import operations as ops
 from social_hook.errors import ConfigError, DatabaseError
-from social_hook.filesystem import generate_id, get_db_path
+from social_hook.filesystem import generate_id, get_db_path, get_base_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
 from social_hook.models import CommitInfo, Decision, Draft, DraftTweet, Post
@@ -334,6 +334,60 @@ def run_trigger(
             conn.close()
             return 3
 
+        # Pre-generate draft ID for media output directory
+        draft_id = generate_id("draft")
+
+        # --- Media generation ---
+        media_paths = []
+        media_type_str = None
+        media_spec_dict = None
+
+        # Resolve media type: prefer drafter's choice, fall back to evaluator's recommendation
+        _drafter_media = (
+            getattr(draft_result, 'media_type', None)
+            and draft_result.media_type.value != "none"
+        )
+        _evaluator_media = (
+            getattr(evaluation, 'media_tool', None)
+            and evaluation.media_tool != "none"
+        )
+
+        if config.image_generation.enabled and (_drafter_media or _evaluator_media):
+            if _drafter_media:
+                media_type_str = draft_result.media_type.value
+                media_spec_dict = draft_result.media_spec or {}
+            elif _evaluator_media:
+                media_type_str = evaluation.media_tool
+                media_spec_dict = {}
+
+            try:
+                from social_hook.adapters.registry import get_media_adapter
+
+                api_key = None
+                if media_type_str == "nano_banana_pro":
+                    api_key = config.env.get("GEMINI_API_KEY")
+                    if not api_key:
+                        logger.warning("nano_banana_pro requested but GEMINI_API_KEY not set")
+                        media_type_str = None
+
+                if media_type_str:
+                    media_adapter = get_media_adapter(media_type_str, api_key=api_key)
+                    if media_adapter:
+                        output_dir = str(get_base_path() / "media-cache" / draft_id)
+                        result = media_adapter.generate(
+                            spec=media_spec_dict,
+                            output_dir=output_dir,
+                            dry_run=dry_run,
+                        )
+                        if result.success and result.file_path:
+                            media_paths = [result.file_path]
+                            if verbose:
+                                print(f"Media generated: {result.file_path}")
+                        else:
+                            logger.warning(f"Media generation failed: {result.error}")
+            except Exception as e:
+                logger.warning(f"Media generation error (non-fatal): {e}")
+
         # Calculate optimal time
         schedule = calculate_optimal_time(
             conn,
@@ -347,11 +401,14 @@ def run_trigger(
 
         # Save draft
         draft = Draft(
-            id=generate_id("draft"),
+            id=draft_id,
             project_id=project.id,
             decision_id=decision.id,
             platform=platform,
             content=draft_content,
+            media_paths=media_paths,
+            media_type=media_type_str,
+            media_spec=media_spec_dict,
             suggested_time=schedule.datetime,
             reasoning=draft_reasoning,
         )
@@ -389,6 +446,7 @@ def run_trigger(
             is_thread = bool(thread_tweets)
             tweet_count = len(thread_tweets) if is_thread else None
             suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
+            media_info = f"{media_type_str} ({len(media_paths)} file)" if media_paths else None
 
             msg_text = format_draft_review(
                 project_name=project.name,
@@ -400,6 +458,7 @@ def run_trigger(
                 draft_id=draft.id,
                 is_thread=is_thread,
                 tweet_count=tweet_count,
+                media_info=media_info,
             )
             buttons = get_review_buttons_normalized(draft.id)
 
@@ -411,6 +470,15 @@ def run_trigger(
                 result = adapter.send_message(chat_id, msg)
                 if not result.success:
                     logger.warning(f"Failed to send Telegram notification to {chat_id}")
+
+            # Send media attachments via adapter (if platform supports it)
+            if media_paths:
+                caps = adapter.get_capabilities()
+                if getattr(caps, 'supports_media', False):
+                    for media_path in media_paths:
+                        for chat_id in chat_ids:
+                            adapter.send_media(chat_id, media_path,
+                                             caption=f"Media for draft `{draft.id[:12]}`")
 
             # Set draft context for each chat so immediate replies have context
             from social_hook.bot.commands import set_chat_draft_context

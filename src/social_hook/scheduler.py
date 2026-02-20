@@ -273,7 +273,13 @@ def _post_draft(conn, draft, config):
         # Check if this is a thread (has draft_tweets)
         tweets = ops.get_draft_tweets(conn, draft.id)
         if tweets:
-            tweet_dicts = [{"content": t.content, "media_paths": t.media_paths} for t in tweets]
+            tweet_dicts = []
+            for i, t in enumerate(tweets):
+                td = {"content": t.content, "media_paths": t.media_paths}
+                # Attach draft-level media to first tweet if tweet has no own media
+                if i == 0 and not t.media_paths and draft.media_paths:
+                    td["media_paths"] = draft.media_paths
+                tweet_dicts.append(td)
             thread_result = adapter.post_thread(tweet_dicts)
 
             # Update each draft_tweet with external_id and posted_at
@@ -302,7 +308,7 @@ def _post_draft(conn, draft, config):
                 error=thread_result.error,
             )
 
-        return adapter.post(draft.content)
+        return adapter.post(draft.content, media_paths=draft.media_paths or None)
 
     elif draft.platform == "linkedin":
         from social_hook.adapters.platform.linkedin import LinkedInAdapter
@@ -313,7 +319,7 @@ def _post_draft(conn, draft, config):
 
         adapter = LinkedInAdapter(access_token)
         # LinkedIn doesn't support threads — always post single content
-        return adapter.post(draft.content)
+        return adapter.post(draft.content, media_paths=draft.media_paths or None)
 
     else:
         return PostResult(success=False, error=f"Unsupported platform: {draft.platform}")

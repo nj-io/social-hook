@@ -207,8 +207,8 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
     """
     conn.execute(
         """
-        INSERT INTO drafts (id, project_id, decision_id, platform, status, content, media_paths, suggested_time, scheduled_time, reasoning, superseded_by, retry_count, last_error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO drafts (id, project_id, decision_id, platform, status, content, media_paths, media_type, media_spec, suggested_time, scheduled_time, reasoning, superseded_by, retry_count, last_error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         draft.to_row(),
     )
@@ -232,6 +232,9 @@ def update_draft(
     scheduled_time: Optional[str] = None,
     retry_count: Optional[int] = None,
     last_error: Optional[str] = None,
+    media_paths: Optional[list[str]] = None,
+    media_type: Optional[str] = None,
+    media_spec: Optional[dict] = None,
 ) -> bool:
     """Update a draft.
 
@@ -255,6 +258,15 @@ def update_draft(
     if last_error is not None:
         updates.append("last_error = ?")
         params.append(last_error)
+    if media_paths is not None:
+        updates.append("media_paths = ?")
+        params.append(json.dumps(media_paths))
+    if media_type is not None:
+        updates.append("media_type = ?")
+        params.append(media_type)
+    if media_spec is not None:
+        updates.append("media_spec = ?")
+        params.append(json.dumps(media_spec))
 
     if not updates:
         return False

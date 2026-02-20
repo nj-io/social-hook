@@ -186,7 +186,7 @@ class TestPostDraftThread:
 
             result = _post_draft(conn, draft, config)
             assert result.success is True
-            mock_adapter.post.assert_called_once_with("Short post")
+            mock_adapter.post.assert_called_once_with("Short post", media_paths=None)
             mock_adapter.post_thread.assert_not_called()
 
     @patch("social_hook.adapters.platform.x.XAdapter")
@@ -242,7 +242,7 @@ class TestPostDraftThread:
 
             result = _post_draft(conn, draft, config)
             assert result.success is True
-            mock_adapter.post.assert_called_once_with("Full post content here")
+            mock_adapter.post.assert_called_once_with("Full post content here", media_paths=None)
 
     @patch("social_hook.adapters.platform.x.XAdapter")
     def test_paid_tier_long_single_post(self, MockXAdapter, temp_dir):
@@ -291,7 +291,7 @@ class TestPostDraftThread:
 
         result = _post_draft(conn, draft, config)
         assert result.success is True
-        mock_adapter.post.assert_called_once_with(long_content)
+        mock_adapter.post.assert_called_once_with(long_content, media_paths=None)
 
 
 class TestUpdateDraftTweet:
