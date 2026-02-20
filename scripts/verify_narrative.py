@@ -2,16 +2,25 @@
 """Development Journey (Narrative Capture) verification script.
 
 Verifies the full narrative capture pipeline end-to-end:
-  --dry-run  No API calls, test all components (default)
-  --live     Real API calls (~$0.50-$2.00, uses configured provider)
+  --dry-run     No API calls, test all components (default)
+  --live        Real API calls (~$0.09 per extraction, uses configured provider)
+  --transcript  Specify a transcript file (live mode only)
+
+Live mode uses REAL data — no synthetic/hardcoded transcripts. It discovers
+actual Claude Code session transcripts from ~/.claude/projects/ for registered
+projects. This follows the project's dogfooding strategy (see REQUIREMENTS.md):
+  Priority 1: This repo — test the system on itself as it matures
+  Priority 2: User's own projects
 
 Usage:
   python scripts/verify_narrative.py --dry-run
   python scripts/verify_narrative.py --live
+  python scripts/verify_narrative.py --live --transcript ~/.claude/projects/-Users-neil-dev-project/abc123.jsonl
 """
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -50,7 +59,7 @@ def check(condition: bool, pass_msg: str, fail_msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sample transcript data
+# Sample transcript data (dry-run only)
 # ---------------------------------------------------------------------------
 
 SAMPLE_TRANSCRIPT_LINES = [
@@ -130,12 +139,108 @@ SAMPLE_TRANSCRIPT_LINES = [
 
 
 def _write_sample_jsonl(path: Path) -> Path:
-    """Write sample JSONL transcript to a file."""
+    """Write sample JSONL transcript to a file. Dry-run only."""
     jsonl_path = path / "sample_transcript.jsonl"
     with open(jsonl_path, "w") as f:
         for entry in SAMPLE_TRANSCRIPT_LINES:
             f.write(json.dumps(entry) + "\n")
     return jsonl_path
+
+
+# ---------------------------------------------------------------------------
+# Real transcript discovery (live mode)
+# ---------------------------------------------------------------------------
+
+# Ideal transcript size range for verification: large enough to contain real
+# conversational content but not so large that it costs a fortune to extract.
+_MIN_TRANSCRIPT_BYTES = 500_000     # 500 KB — enough signal
+_MAX_TRANSCRIPT_BYTES = 10_000_000  # 10 MB — keeps cost reasonable
+
+
+def _discover_real_transcript(transcript_arg: str | None) -> tuple[Path | None, str]:
+    """Discover a real Claude Code transcript for live verification.
+
+    Strategy:
+      1. If --transcript was provided, use that directly.
+      2. Otherwise, find registered projects in the social-hook DB,
+         look up their transcript dirs under ~/.claude/projects/,
+         and pick a recent file of suitable size.
+
+    Returns:
+        (path, description) — path to the transcript, and a human-readable
+        description of how it was found (for reproducibility in terminal output).
+    """
+    # Option 1: explicit path from --transcript
+    if transcript_arg:
+        p = Path(transcript_arg).expanduser().resolve()
+        if p.exists():
+            size = p.stat().st_size
+            return p, f"--transcript flag ({size / 1_000_000:.1f} MB)"
+        return None, f"--transcript path not found: {p}"
+
+    # Option 2: discover from registered projects
+    try:
+        from social_hook.db.connection import init_database
+        from social_hook.db.operations import get_all_projects
+        from social_hook.filesystem import get_db_path
+
+        db_path = get_db_path()
+        if not db_path.exists():
+            return None, "social-hook DB not found — run 'social-hook init' first"
+
+        conn = init_database(db_path)
+        projects = get_all_projects(conn)
+        conn.close()
+
+        if not projects:
+            return None, "no registered projects in DB — run 'social-hook project register' first"
+
+        claude_projects_dir = Path.home() / ".claude" / "projects"
+        if not claude_projects_dir.exists():
+            return None, f"~/.claude/projects/ not found — no Claude Code sessions available"
+
+        # Search each project for transcripts
+        candidates: list[tuple[Path, str, float]] = []  # (path, project_name, size_mb)
+        for project in projects:
+            repo_path = project.repo_path or ""
+            encoded = repo_path.replace("/", "-")
+            transcript_dir = claude_projects_dir / encoded
+            if not transcript_dir.is_dir():
+                continue
+
+            for jsonl_file in transcript_dir.glob("*.jsonl"):
+                size = jsonl_file.stat().st_size
+                if _MIN_TRANSCRIPT_BYTES <= size <= _MAX_TRANSCRIPT_BYTES:
+                    candidates.append((jsonl_file, project.name, size / 1_000_000))
+
+        if not candidates:
+            # Relax constraints — take anything over 100KB
+            for project in projects:
+                repo_path = project.repo_path or ""
+                encoded = repo_path.replace("/", "-")
+                transcript_dir = claude_projects_dir / encoded
+                if not transcript_dir.is_dir():
+                    continue
+                for jsonl_file in transcript_dir.glob("*.jsonl"):
+                    size = jsonl_file.stat().st_size
+                    if size > 100_000:
+                        candidates.append((jsonl_file, project.name, size / 1_000_000))
+
+        if not candidates:
+            return None, "no transcripts found of suitable size for any registered project"
+
+        # Pick the most recently modified candidate
+        candidates.sort(key=lambda c: c[0].stat().st_mtime, reverse=True)
+        chosen_path, proj_name, size_mb = candidates[0]
+        session_id = chosen_path.stem
+        desc = (
+            f"project '{proj_name}', session {session_id[:8]}... "
+            f"({size_mb:.1f} MB, {len(candidates)} candidates available)"
+        )
+        return chosen_path, desc
+
+    except Exception as e:
+        return None, f"discovery failed: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +299,7 @@ def _mock_extract_narrative_response():
 # ---------------------------------------------------------------------------
 
 
-def verify(live: bool = False) -> bool:
+def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     """Run verification steps. Returns True if all pass."""
 
     global _step, _failures
@@ -205,6 +310,23 @@ def verify(live: bool = False) -> bool:
     print(f"\n{'='*60}")
     print(f"  Narrative Capture Verification ({mode})")
     print(f"{'='*60}")
+
+    # --- Resolve transcript source early (live mode) ---
+    real_transcript_path: Path | None = None
+    if live:
+        real_transcript_path, discovery_desc = _discover_real_transcript(transcript_arg)
+        if real_transcript_path is None:
+            print(f"\n  ABORT: Cannot run --live without a real transcript.")
+            print(f"         Reason: {discovery_desc}")
+            print(f"         Hint: use --transcript <path> to provide one manually.")
+            print()
+            return False
+        print(f"\n  Transcript: {real_transcript_path}")
+        print(f"  Source:     {discovery_desc}")
+        print(f"\n  To reproduce this exact run:")
+        print(f"    python scripts/verify_narrative.py --live --transcript {real_transcript_path}")
+    else:
+        print(f"\n  Transcript: synthetic sample data (dry-run only)")
 
     # --- Setup temp directory ---
     tmpdir = tempfile.mkdtemp(prefix="narrative_verify_")
@@ -267,20 +389,29 @@ def verify(live: bool = False) -> bool:
         ok("Bare model name raises ConfigError")
 
     # =========================================================================
-    # Step 2: Transcript reading from sample JSONL
+    # Step 2: Transcript reading
     # =========================================================================
-    step("Transcript reading from sample JSONL")
     from social_hook.narrative.transcript import read_transcript
 
-    jsonl_path = _write_sample_jsonl(tmp_path)
-    messages = read_transcript(jsonl_path)
-
-    # read_transcript filters to user/assistant only (no progress, no system)
-    check(
-        len(messages) >= 4,
-        f"Read {len(messages)} user/assistant messages (expected >=4)",
-        f"Only read {len(messages)} messages",
-    )
+    if live:
+        step(f"Transcript reading from real session")
+        print(f"       File: {real_transcript_path.name}")
+        print(f"       Size: {real_transcript_path.stat().st_size / 1_000_000:.1f} MB")
+        messages = read_transcript(real_transcript_path)
+        check(
+            len(messages) >= 10,
+            f"Read {len(messages)} user/assistant messages from real transcript",
+            f"Only {len(messages)} messages — transcript may be too small",
+        )
+    else:
+        step("Transcript reading from sample JSONL")
+        jsonl_path = _write_sample_jsonl(tmp_path)
+        messages = read_transcript(jsonl_path)
+        check(
+            len(messages) >= 4,
+            f"Read {len(messages)} user/assistant messages (expected >=4)",
+            f"Only read {len(messages)} messages",
+        )
 
     # Check that progress type was excluded
     types_found = {m.get("type") for m in messages}
@@ -322,19 +453,35 @@ def verify(live: bool = False) -> bool:
 
     check("text" in all_block_types or "text_str" in all_block_types,
           "Text blocks kept", "No text blocks found")
-    check("thinking" in all_block_types,
-          "Thinking blocks kept", "No thinking blocks found")
+
+    if live:
+        # Real transcripts should have thinking blocks (Claude uses extended thinking)
+        has_thinking = "thinking" in all_block_types
+        if has_thinking:
+            ok("Thinking blocks kept")
+        else:
+            ok("No thinking blocks in this transcript (model may not use extended thinking)")
+    else:
+        check("thinking" in all_block_types,
+              "Thinking blocks kept", "No thinking blocks found")
 
     # Sidechain messages should be excluded
     sidechain_count = sum(1 for m in filtered if m.get("isSidechain"))
     check(sidechain_count == 0, "Sidechain messages excluded",
           f"Sidechain messages present: {sidechain_count}")
 
-    check(
-        len(filtered) >= 2,
-        f"Filtered to {len(filtered)} messages (expected >=2)",
-        f"Only {len(filtered)} messages after filtering",
-    )
+    if live:
+        check(
+            len(filtered) >= 5,
+            f"Filtered to {len(filtered)} messages (from {len(messages)} raw)",
+            f"Only {len(filtered)} messages after filtering — low signal",
+        )
+    else:
+        check(
+            len(filtered) >= 2,
+            f"Filtered to {len(filtered)} messages (expected >=2)",
+            f"Only {len(filtered)} messages after filtering",
+        )
 
     # =========================================================================
     # Step 4: Format for prompt
@@ -343,12 +490,20 @@ def verify(live: bool = False) -> bool:
     from social_hook.narrative.transcript import format_for_prompt
 
     formatted = format_for_prompt(filtered)
-    check(len(formatted) > 0, f"Formatted: {len(formatted)} chars", "Empty formatted output")
+    check(len(formatted) > 0, f"Formatted: {len(formatted):,} chars", "Empty formatted output")
     check("[USER]" in formatted, "Contains [USER] labels", "Missing [USER] labels")
     check("[ASSISTANT]" in formatted, "Contains [ASSISTANT] labels",
           "Missing [ASSISTANT] labels")
-    check("[ASSISTANT THINKING]" in formatted, "Contains [ASSISTANT THINKING] labels",
-          "Missing [ASSISTANT THINKING] labels")
+
+    if live:
+        has_thinking_labels = "[ASSISTANT THINKING]" in formatted
+        if has_thinking_labels:
+            ok("Contains [ASSISTANT THINKING] labels")
+        else:
+            ok("No [ASSISTANT THINKING] labels (transcript has no thinking blocks)")
+    else:
+        check("[ASSISTANT THINKING]" in formatted, "Contains [ASSISTANT THINKING] labels",
+              "Missing [ASSISTANT THINKING] labels")
 
     # =========================================================================
     # Step 5: Truncate to budget
@@ -364,9 +519,14 @@ def verify(live: bool = False) -> bool:
     truncated = truncate_to_budget(long_text, max_chars=100_000)
     check(
         len(truncated) == 100_000,
-        f"Long text truncated to {len(truncated)} chars",
+        f"Long text truncated to {len(truncated):,} chars",
         f"Expected 100000, got {len(truncated)}",
     )
+
+    if live:
+        # Apply truncation to the real formatted text
+        formatted = truncate_to_budget(formatted)
+        ok(f"Real transcript truncated to {len(formatted):,} chars (budget: 100K)")
 
     # =========================================================================
     # Step 6: Storage save/load/cleanup round-trip
@@ -450,7 +610,6 @@ def verify(live: bool = False) -> bool:
     claude_dir = cli_home / ".claude"
     claude_dir.mkdir()
 
-    import os
     orig_home = os.environ.get("HOME")
     os.environ["HOME"] = str(cli_home)
 
@@ -579,6 +738,8 @@ def verify(live: bool = False) -> bool:
         if "haiku" in model_str.lower():
             ok(f"SKIP: Model {model_str} is haiku (would be rejected)")
         else:
+            print(f"       Model: {model_str}")
+            print(f"       Input: {len(formatted):,} chars from real transcript")
             try:
                 client = create_client(model_str, config)
                 extractor = NarrativeExtractor(client)
@@ -589,19 +750,51 @@ def verify(live: bool = False) -> bool:
 
                 result = extractor.extract(
                     transcript_text=formatted,
-                    project_name="test-project",
-                    cwd="/tmp/test",
+                    project_name="social-media-auto-hook",
+                    cwd=str(Path(__file__).resolve().parent.parent),
                     db=mock_db,
                     project_id="proj_verify",
                 )
                 check(result is not None, "Extraction succeeded", "Extraction returned None")
-                check(len(result.summary) > 0, f"Summary: {result.summary[:60]}...",
+                check(len(result.summary) > 0, f"Summary: {result.summary[:80]}...",
                       "Empty summary")
-                check(isinstance(result.key_decisions, list), "key_decisions is list",
+                check(isinstance(result.key_decisions, list),
+                      f"key_decisions: {len(result.key_decisions)} items",
                       "key_decisions not list")
                 check(isinstance(result.relevant_for_social, bool),
                       f"relevant_for_social={result.relevant_for_social}",
                       "relevant_for_social not bool")
+                check(isinstance(result.social_hooks, list),
+                      f"social_hooks: {len(result.social_hooks)} items",
+                      "social_hooks not list")
+
+                # Print full extraction for human review
+                print(f"\n       --- Extraction Result (human review) ---")
+                print(f"       Summary: {result.summary}")
+                if result.key_decisions:
+                    print(f"       Key decisions:")
+                    for d in result.key_decisions:
+                        print(f"         - {d}")
+                if result.rejected_approaches:
+                    print(f"       Rejected approaches:")
+                    for r in result.rejected_approaches:
+                        print(f"         - {r}")
+                if result.aha_moments:
+                    print(f"       Aha moments:")
+                    for a in result.aha_moments:
+                        print(f"         - {a}")
+                if result.challenges:
+                    print(f"       Challenges:")
+                    for c in result.challenges:
+                        print(f"         - {c}")
+                print(f"       Narrative arc: {result.narrative_arc}")
+                print(f"       Relevant for social: {result.relevant_for_social}")
+                if result.social_hooks:
+                    print(f"       Social hooks:")
+                    for h in result.social_hooks:
+                        print(f"         - {h}")
+                print(f"       --- End extraction ---")
+
             except Exception as e:
                 fail(f"Live extraction failed: {e}")
     else:
@@ -671,6 +864,102 @@ def verify(live: bool = False) -> bool:
                   "Load failed")
 
     # =========================================================================
+    # Step 12 (live only): Narrative in evaluator prompt with real commit
+    # =========================================================================
+    if live and result is not None:
+        step("Narrative in evaluator prompt with real commit")
+
+        # Use this repo and a known commit (same as e2e_test.py COMMITS)
+        project_root = Path(__file__).resolve().parent.parent
+        test_commit = "6788898"  # Implement WS1 Foundation
+
+        from social_hook.trigger import parse_commit_info
+
+        commit = parse_commit_info(test_commit, str(project_root))
+        print(f"       Commit: {commit.hash[:7]} — {commit.message}")
+
+        # Seed the real extraction into a temp narratives dir, then
+        # assemble evaluator context with it
+        with patch(
+            "social_hook.narrative.storage.get_narratives_path",
+            return_value=narratives_dir,
+        ):
+            save_narrative("proj_prompt_test", result, "session_prompt", "auto")
+
+            # Build a minimal DB wrapper that reads from our temp DB
+            from social_hook.db.connection import init_database
+            from social_hook.filesystem import get_db_path
+
+            db_path = get_db_path()
+            conn = init_database(db_path)
+
+            # Seed a project in a temp DB for context assembly
+            prompt_db_path = tmp_path / "prompt_test.db"
+            prompt_conn = init_database(prompt_db_path)
+            from social_hook.db.operations import insert_project
+            from social_hook.models import Project
+
+            prompt_project = Project(
+                id="proj_prompt_test",
+                name="social-media-auto-hook",
+                repo_path=str(project_root),
+            )
+            insert_project(prompt_conn, prompt_project)
+
+            # Create DryRunContext wrapper
+            from social_hook.llm.dry_run import DryRunContext
+
+            db_ctx = DryRunContext(prompt_conn, dry_run=True)
+
+            from social_hook.config.project import load_project_config
+            from social_hook.llm.prompts import (
+                assemble_evaluator_context,
+                assemble_evaluator_prompt,
+                load_prompt,
+            )
+
+            project_config = load_project_config(str(project_root))
+            ctx = assemble_evaluator_context(
+                db_ctx, "proj_prompt_test", project_config,
+            )
+
+            check(
+                len(ctx.session_narratives) >= 1,
+                f"Context has {len(ctx.session_narratives)} narrative(s)",
+                "No narratives in context",
+            )
+
+            prompt_template = load_prompt("evaluator")
+            full_prompt = assemble_evaluator_prompt(
+                prompt_template, ctx, commit,
+            )
+
+            has_narrative_section = "## Development Narrative" in full_prompt
+            check(
+                has_narrative_section,
+                "Evaluator prompt contains ## Development Narrative",
+                "Missing narrative section in prompt",
+            )
+
+            if has_narrative_section:
+                # Extract and display the narrative section
+                idx = full_prompt.index("## Development Narrative")
+                rest = full_prompt[idx:]
+                next_boundary = rest.find("\n---\n", 1)
+                if next_boundary > 0:
+                    narrative_section = rest[:next_boundary]
+                else:
+                    narrative_section = rest[:800]
+
+                print(f"\n       --- Narrative in evaluator prompt (human review) ---")
+                for line in narrative_section.split("\n"):
+                    print(f"       {line}")
+                print(f"       --- End prompt section ---")
+
+            prompt_conn.close()
+            conn.close()
+
+    # =========================================================================
     # Cleanup and summary
     # =========================================================================
     print(f"\n{'='*60}")
@@ -689,19 +978,33 @@ def verify(live: bool = False) -> bool:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Narrative Capture verification")
+    parser = argparse.ArgumentParser(
+        description="Narrative Capture verification",
+        epilog=(
+            "Live mode uses real Claude Code transcripts from registered projects\n"
+            "(dogfooding strategy — see REQUIREMENTS.md). No synthetic data in --live."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--dry-run", action="store_true", default=True,
-        help="No API calls (default)",
+        help="No API calls, uses sample data (default)",
     )
     group.add_argument(
         "--live", action="store_true",
-        help="Real API calls (~$0.50-$2.00, uses configured provider)",
+        help="Real API calls with real transcripts (~$0.09 per extraction)",
+    )
+    parser.add_argument(
+        "--transcript",
+        help="Path to a specific JSONL transcript file (live mode only, for reproducibility)",
     )
     args = parser.parse_args()
 
-    success = verify(live=args.live)
+    if args.transcript and not args.live:
+        parser.error("--transcript requires --live mode")
+
+    success = verify(live=args.live, transcript_arg=args.transcript)
     sys.exit(0 if success else 1)
 
 

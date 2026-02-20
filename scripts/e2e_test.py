@@ -513,7 +513,13 @@ class E2ERunner:
                     print("       [...]")
                 print("       " + "-" * 40)
             if "response" in item:
-                print(f'       Response: "{item["response"][:200]}"')
+                resp = item["response"]
+                if len(resp) > 200:
+                    print(f"       Response:")
+                    for line in resp.split("\n"):
+                        print(f"         {line}")
+                else:
+                    print(f'       Response: "{resp}"')
             if "review_question" in item:
                 print(f"       ^ {item['review_question']}")
 
@@ -2774,6 +2780,44 @@ def _write_m_sample_jsonl(directory: Path) -> Path:
     return jsonl_path
 
 
+def _discover_m_transcript(repo_path: str) -> Optional[Path]:
+    """Discover a real Claude Code transcript for the given repo path.
+
+    Follows the dogfooding strategy: use real data from actual sessions.
+    Looks in ~/.claude/projects/{encoded-path}/ for JSONL files of
+    suitable size (500KB-10MB, with fallback to anything over 100KB).
+    Returns the most recently modified candidate, or None.
+    """
+    claude_projects = Path.home() / ".claude" / "projects"
+    if not claude_projects.exists():
+        return None
+
+    encoded = repo_path.replace("/", "-")
+    transcript_dir = claude_projects / encoded
+    if not transcript_dir.is_dir():
+        return None
+
+    min_bytes, max_bytes = 500_000, 10_000_000
+    candidates = []
+    for f in transcript_dir.glob("*.jsonl"):
+        size = f.stat().st_size
+        if min_bytes <= size <= max_bytes:
+            candidates.append(f)
+
+    if not candidates:
+        # Relax: anything over 100KB
+        for f in transcript_dir.glob("*.jsonl"):
+            if f.stat().st_size > 100_000:
+                candidates.append(f)
+
+    if not candidates:
+        return None
+
+    # Most recently modified
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates[0]
+
+
 def test_M_journey(harness: E2EHarness, runner: E2ERunner):
     """M1-M11: Development Journey (Narrative Capture) scenarios."""
     import json as _json
@@ -2783,6 +2827,19 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
 
     if not harness.project_id:
         harness.seed_project()
+
+    # Discover a real transcript for M5/M9 (dogfooding: real data, not synthetic).
+    # The harness symlinks ~/.claude/ so Path.home() resolves correctly.
+    project_root = str(Path(__file__).resolve().parent.parent)
+    _real_transcript = _discover_m_transcript(project_root)
+    if _real_transcript:
+        _size_mb = _real_transcript.stat().st_size / 1_000_000
+        print(f"       Transcript: {_real_transcript.name} ({_size_mb:.1f} MB)")
+    else:
+        print("       Transcript: none found (M5/M9 will use synthetic fallback)")
+
+    # Shared state: M5 stores its extraction result here for M9 to reuse
+    _m5_extraction = {}
 
     # M1: Journey config defaults
     def m1():
@@ -2905,7 +2962,7 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
 
     runner.run_scenario("M4", "Transcript read + filter", m4)
 
-    # M5: Narrative capture happy path (mock LLM)
+    # M5: Narrative capture happy path
     def m5():
         from social_hook.narrative.transcript import (
             filter_for_extraction,
@@ -2915,61 +2972,95 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
         )
         from social_hook.narrative.extractor import NarrativeExtractor
         from social_hook.narrative.storage import save_narrative, load_recent_narratives
-        from social_hook.llm.schemas import ExtractNarrativeInput
 
-        tmp = Path(_tempfile.mkdtemp(prefix="m5_"))
-        jsonl_path = _write_m_sample_jsonl(tmp)
+        use_real = _real_transcript is not None
 
-        # Read → filter → format
-        messages = read_transcript(jsonl_path)
-        filtered = filter_for_extraction(messages)
-        formatted = format_for_prompt(filtered)
-        text = truncate_to_budget(formatted)
+        if use_real:
+            # Real transcript from actual Claude Code session (dogfooding)
+            messages = read_transcript(_real_transcript)
+            filtered = filter_for_extraction(messages)
+            formatted = format_for_prompt(filtered)
+            text = truncate_to_budget(formatted)
 
-        # Mock LLM response
-        tool_use = _SN(
-            type="tool_use",
-            name="extract_narrative",
-            input={
-                "summary": "Built authentication module with bcrypt hashing",
-                "key_decisions": ["Chose bcrypt over argon2"],
-                "rejected_approaches": ["JWT was too complex"],
-                "aha_moments": ["bcrypt salt handling simplifies impl"],
-                "challenges": ["Session expiry timing"],
-                "narrative_arc": "From blank auth to working login",
-                "relevant_for_social": True,
-                "social_hooks": ["Why bcrypt > JWT for dev tools"],
-            },
-        )
-        usage = _SN(
-            input_tokens=5000,
-            output_tokens=300,
-            cache_read_input_tokens=0,
-            cache_creation_input_tokens=0,
-        )
-        mock_response = _SN(content=[tool_use], usage=usage)
+            # Real LLM extraction
+            from social_hook.config.yaml import load_full_config
+            from social_hook.llm.factory import create_client
 
-        mock_client = _MagicMock()
-        mock_client.complete.return_value = mock_response
+            config = load_full_config()
+            model_str = config.journey_capture.model or config.models.evaluator
+            assert "haiku" not in model_str.lower(), \
+                f"Evaluator model is haiku ({model_str}) — extraction needs Sonnet/Opus"
 
-        extractor = NarrativeExtractor(mock_client)
-        mock_db = _MagicMock()
-        mock_db.insert_usage = _MagicMock(return_value="usage_1")
+            client = create_client(model_str, config)
+            extractor = NarrativeExtractor(client)
+            mock_db = _MagicMock()
+            mock_db.insert_usage = _MagicMock(return_value="usage_1")
 
-        result = extractor.extract(
-            transcript_text=text,
-            project_name="test-project",
-            cwd="/tmp/test",
-            db=mock_db,
-            project_id=harness.project_id,
-        )
+            result = extractor.extract(
+                transcript_text=text,
+                project_name="social-media-auto-hook",
+                cwd=project_root,
+                db=mock_db,
+                project_id=harness.project_id,
+            )
+            source_label = f"real transcript ({len(messages)} msgs, model: {model_str})"
+        else:
+            # Fallback: synthetic data with mock LLM
+            tmp = Path(_tempfile.mkdtemp(prefix="m5_"))
+            jsonl_path = _write_m_sample_jsonl(tmp)
+            messages = read_transcript(jsonl_path)
+            filtered = filter_for_extraction(messages)
+            formatted = format_for_prompt(filtered)
+            text = truncate_to_budget(formatted)
+
+            tool_use = _SN(
+                type="tool_use",
+                name="extract_narrative",
+                input={
+                    "summary": "Built authentication module with bcrypt hashing",
+                    "key_decisions": ["Chose bcrypt over argon2"],
+                    "rejected_approaches": ["JWT was too complex"],
+                    "aha_moments": ["bcrypt salt handling simplifies impl"],
+                    "challenges": ["Session expiry timing"],
+                    "narrative_arc": "From blank auth to working login",
+                    "relevant_for_social": True,
+                    "social_hooks": ["Why bcrypt > JWT for dev tools"],
+                },
+            )
+            usage = _SN(
+                input_tokens=5000,
+                output_tokens=300,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=0,
+            )
+            mock_response = _SN(content=[tool_use], usage=usage)
+            mock_client = _MagicMock()
+            mock_client.complete.return_value = mock_response
+
+            extractor = NarrativeExtractor(mock_client)
+            mock_db = _MagicMock()
+            mock_db.insert_usage = _MagicMock(return_value="usage_1")
+
+            result = extractor.extract(
+                transcript_text=text,
+                project_name="test-project",
+                cwd="/tmp/test",
+                db=mock_db,
+                project_id=harness.project_id,
+            )
+            source_label = "synthetic (no real transcript found)"
+
         assert result is not None, "Extraction returned None"
         assert len(result.summary) > 0, "Empty summary"
         assert isinstance(result.key_decisions, list), "key_decisions not list"
-        assert result.relevant_for_social is True, "relevant_for_social not True"
+        assert isinstance(result.relevant_for_social, bool), "relevant_for_social not bool"
 
-        # Save and load
-        narratives_dir = tmp / "narratives"
+        # Store for M9
+        _m5_extraction["result"] = result
+
+        # Save and load round-trip
+        tmp_save = Path(_tempfile.mkdtemp(prefix="m5_save_"))
+        narratives_dir = tmp_save / "narratives"
         narratives_dir.mkdir()
         with _patch(
             "social_hook.narrative.storage.get_narratives_path",
@@ -2982,15 +3073,30 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
             assert len(loaded) == 1, f"Expected 1, got {len(loaded)}"
             assert loaded[0]["summary"] == result.summary, "Summary mismatch"
 
+        review_title = f"Narrative extraction ({source_label})"
+        review_resp = f"Summary: {result.summary}"
+        if result.key_decisions:
+            review_resp += "\nKey decisions:"
+            for d in result.key_decisions:
+                review_resp += f"\n  - {d}"
+        if result.aha_moments:
+            review_resp += "\nAha moments:"
+            for a in result.aha_moments:
+                review_resp += f"\n  - {a}"
+        if result.social_hooks:
+            review_resp += "\nSocial hooks:"
+            for h in result.social_hooks:
+                review_resp += f"\n  - {h}"
+
         runner.add_review_item(
             "M5",
-            title="Narrative capture happy path (mock LLM)",
-            response=f"Summary: {result.summary}",
-            review_question="Does the mock extraction produce reasonable narrative structure?",
+            title=review_title,
+            response=review_resp,
+            review_question="Is the extraction quality good? Do the decisions, aha moments, and social hooks reflect real development activity?",
         )
-        return f"Extracted: {result.summary[:50]}..."
+        return f"Extracted ({source_label}): {result.summary[:50]}..."
 
-    runner.run_scenario("M5", "Narrative capture happy path", m5)
+    runner.run_scenario("M5", "Narrative capture happy path", m5, llm_call=bool(_real_transcript))
 
     # M6: Narrative capture disabled
     def m6():
@@ -3049,21 +3155,27 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
         from social_hook.llm.schemas import ExtractNarrativeInput
         from social_hook.llm.prompts import assemble_evaluator_context
         from social_hook.config.project import load_project_config
+        from social_hook.trigger import parse_commit_info
 
-        # Save a narrative with relevant_for_social=True
+        # Use M5's real extraction if available, otherwise fall back to synthetic
+        if "result" in _m5_extraction:
+            extraction = _m5_extraction["result"]
+            source = "M5 extraction"
+        else:
+            extraction = ExtractNarrativeInput.validate({
+                "summary": "Implemented caching layer with Redis",
+                "key_decisions": ["Chose Redis over Memcached"],
+                "rejected_approaches": ["SQLite cache was too slow"],
+                "aha_moments": ["Connection pooling halved latency"],
+                "challenges": ["Cache invalidation strategy"],
+                "narrative_arc": "From no cache to 10x faster responses",
+                "relevant_for_social": True,
+                "social_hooks": ["Why Redis cache reduced latency by 10x"],
+            })
+            source = "synthetic fallback"
+
         narratives_dir = harness.base / "narratives"
         narratives_dir.mkdir(exist_ok=True)
-
-        extraction = ExtractNarrativeInput.validate({
-            "summary": "Implemented caching layer with Redis",
-            "key_decisions": ["Chose Redis over Memcached"],
-            "rejected_approaches": ["SQLite cache was too slow"],
-            "aha_moments": ["Connection pooling halved latency"],
-            "challenges": ["Cache invalidation strategy"],
-            "narrative_arc": "From no cache to 10x faster responses",
-            "relevant_for_social": True,
-            "social_hooks": ["Why Redis cache reduced latency by 10x"],
-        })
 
         with _patch(
             "social_hook.narrative.storage.get_narratives_path",
@@ -3071,7 +3183,7 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
         ):
             save_narrative(harness.project_id, extraction, "session_m9", "auto")
 
-            # Now assemble evaluator context
+            # Build DB wrapper for context assembly
             class FakeDB:
                 def __init__(self, conn, project_id):
                     self._conn = conn
@@ -3092,19 +3204,36 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
 
             has_narratives = bool(ctx.session_narratives)
             assert has_narratives, "No narratives in evaluator context"
-            assert any(
-                "Redis" in n.get("summary", "") or "cache" in n.get("summary", "").lower()
-                for n in ctx.session_narratives
-            ), "Expected Redis narrative in context"
+
+            # Real commit from this repo's history (same as e2e COMMITS)
+            commit = parse_commit_info(COMMITS["significant"], str(harness.repo_path))
+
+            from social_hook.llm.prompts import assemble_evaluator_prompt, load_prompt
+
+            prompt_template = load_prompt("evaluator")
+            prompt = assemble_evaluator_prompt(prompt_template, ctx, commit)
+
+            assert "## Development Narrative" in prompt, \
+                "Evaluator prompt missing ## Development Narrative section"
+            assert extraction.summary[:20] in prompt, \
+                "Evaluator prompt missing narrative content"
+
+            # Extract the narrative section for human review
+            narrative_start = prompt.index("## Development Narrative")
+            rest = prompt[narrative_start:]
+            next_boundary = rest.find("\n---\n", 1)
+            if next_boundary > 0:
+                narrative_section = rest[:next_boundary]
+            else:
+                narrative_section = rest[:800]
 
             runner.add_review_item(
                 "M9",
-                title="Narratives in evaluator context",
-                response=f"Narratives: {len(ctx.session_narratives)}, "
-                         f"first: {ctx.session_narratives[0].get('summary', '')[:60]}",
-                review_question="Are narratives correctly included in evaluator context?",
+                title=f"Narrative in evaluator prompt (source: {source})",
+                response=narrative_section.strip(),
+                review_question="Does the Development Narrative section render correctly in the evaluator prompt?",
             )
-            return f"Narratives in context: {len(ctx.session_narratives)}"
+            return f"Narratives in context: {len(ctx.session_narratives)}, source: {source}, prompt section rendered"
 
     runner.run_scenario("M9", "Narratives in evaluator context", m9)
 
