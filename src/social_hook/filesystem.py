@@ -54,6 +54,7 @@ def init_filesystem(base: Optional[str | Path] = None) -> Path:
         base / "logs",
         base / "media-cache",
         base / "prompts",
+        base / "narratives",
     ]
 
     for directory in directories:
@@ -140,6 +141,11 @@ scheduling:
   min_gap_minutes: 30
   optimal_days: [Tue, Wed, Thu]
   optimal_hours: [9, 12, 17]
+
+# Development journey capture (requires Claude Code)
+journey_capture:
+  enabled: false
+  # model: anthropic/claude-sonnet-4-5  # defaults to evaluator model
 """
 
 
@@ -186,3 +192,12 @@ def get_logs_path() -> Path:
         Path to ~/.social-hook/logs/
     """
     return get_base_path() / "logs"
+
+
+def get_narratives_path() -> Path:
+    """Get the path to the narratives directory.
+
+    Returns:
+        Path to ~/.social-hook/narratives/
+    """
+    return get_base_path() / "narratives"

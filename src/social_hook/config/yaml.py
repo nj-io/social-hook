@@ -39,6 +39,9 @@ DEFAULT_CONFIG = {
         "optimal_days": ["Tue", "Wed", "Thu"],
         "optimal_hours": [9, 12, 17],
     },
+    "journey_capture": {
+        "enabled": False,
+    },
 }
 
 
@@ -87,6 +90,14 @@ class SchedulingConfig:
 
 
 @dataclass
+class JourneyCaptureConfig:
+    """Development journey capture configuration."""
+
+    enabled: bool = False
+    model: Optional[str] = None  # None = use evaluator model
+
+
+@dataclass
 class Config:
     """Main configuration object."""
 
@@ -94,6 +105,7 @@ class Config:
     platforms: PlatformsConfig = field(default_factory=PlatformsConfig)
     image_generation: ImageGenerationConfig = field(default_factory=ImageGenerationConfig)
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
+    journey_capture: JourneyCaptureConfig = field(default_factory=JourneyCaptureConfig)
 
     # Environment variables (populated by load_full_config)
     env: dict[str, str] = field(default_factory=dict)
@@ -188,11 +200,28 @@ def _parse_config(data: dict[str, Any]) -> Config:
         optimal_hours=sched_data.get("optimal_hours", [9, 12, 17]),
     )
 
+    # Journey capture
+    jc_data = data.get("journey_capture", {})
+    jc_model = jc_data.get("model", None)
+    if jc_model is not None:
+        try:
+            parse_provider_model(jc_model)
+        except ConfigError:
+            raise ConfigError(
+                f"Invalid model '{jc_model}' for journey_capture: must use provider/model-id format "
+                f"(e.g., 'anthropic/claude-opus-4-5', 'claude-cli/sonnet')"
+            )
+    journey_capture = JourneyCaptureConfig(
+        enabled=jc_data.get("enabled", False),
+        model=jc_model,
+    )
+
     return Config(
         models=models,
         platforms=platforms,
         image_generation=image_generation,
         scheduling=scheduling,
+        journey_capture=journey_capture,
     )
 
 

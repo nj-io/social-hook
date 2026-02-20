@@ -1,7 +1,10 @@
 """Prompt loading and context assembly for LLM agents (T17)."""
 
+import logging
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from social_hook.config.project import (
     ContextConfig,
@@ -11,6 +14,23 @@ from social_hook.config.project import (
 )
 from social_hook.errors import PromptNotFoundError
 from social_hook.models import CommitInfo, ProjectContext
+
+
+def _render_narrative_sections(sections: list[str], narratives: list[dict]) -> None:
+    """Append Development Narrative sections to the prompt if narratives exist."""
+    if not narratives:
+        return
+    sections.append("\n---\n## Development Narrative")
+    for n in narratives[:5]:  # Budget: ~2000 tokens
+        sections.append(f"\n### Session: {n.get('summary', 'No summary')}")
+        if n.get('key_decisions'):
+            sections.append("**Key decisions:** " + "; ".join(n['key_decisions'][:3]))
+        if n.get('rejected_approaches'):
+            sections.append("**Rejected approaches:** " + "; ".join(n['rejected_approaches'][:3]))
+        if n.get('aha_moments'):
+            sections.append("**Insights:** " + "; ".join(n['aha_moments'][:3]))
+        if n.get('social_hooks'):
+            sections.append("**Post angles:** " + "; ".join(n['social_hooks'][:3]))
 
 
 def load_prompt(role: str) -> str:
@@ -113,6 +133,9 @@ def assemble_evaluator_prompt(
                 f"- [{n.get('date', 'N/A')}] ({n.get('source', 'unknown')}): "
                 f"{n.get('note', '')}"
             )
+
+    # Development Narrative (from journey capture)
+    _render_narrative_sections(sections, project_context.session_narratives)
 
     # Recent history
     sections.append("\n---\n## Recent History")
@@ -265,6 +288,9 @@ def assemble_drafter_prompt(
                 f"- [{n.get('date', 'N/A')}] ({n.get('source', 'unknown')}): "
                 f"{n.get('note', '')}"
             )
+
+    # Development Narrative (from journey capture)
+    _render_narrative_sections(sections, project_context.session_narratives)
 
     # Project documentation — included when the evaluator requests it
     # (include_project_docs=true) or when audience hasn't been introduced yet.
@@ -504,6 +530,14 @@ def assemble_evaluator_context(
     if project_config.context_notes:
         context_notes = _parse_context_notes(project_config.context_notes)
 
+    # Load session narratives from journey capture storage
+    try:
+        from social_hook.narrative.storage import load_recent_narratives
+        session_narratives = load_recent_narratives(project_id, limit=5)
+    except Exception:
+        logger.debug("Failed to load narratives for %s", project_id, exc_info=True)
+        session_narratives = []
+
     return ProjectContext(
         project=project,
         social_context=project_config.social_context,
@@ -518,6 +552,7 @@ def assemble_evaluator_context(
         memories=memories,
         milestone_summaries=milestone_summaries,
         context_notes=context_notes,
+        session_narratives=session_narratives,
     )
 
 

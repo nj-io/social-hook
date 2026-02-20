@@ -218,6 +218,165 @@ def bot_status():
 
 
 # =============================================================================
+# Hidden commands (called by hooks, not by users)
+# =============================================================================
+
+
+@app.command("narrative-capture", hidden=True)
+def narrative_capture():
+    """Internal: called by PreCompact hook. Reads JSON from stdin."""
+    import json
+    import logging
+    import os
+    import sys
+
+    from social_hook.filesystem import get_base_path
+
+    # Set up file logging for this subprocess
+    log_dir = get_base_path() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(log_dir / "narrative.log")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    logging.getLogger().addHandler(file_handler)
+
+    logger = logging.getLogger("social_hook.narrative_capture")
+
+    try:
+        data = json.loads(sys.stdin.read())
+        session_id = data.get("session_id", "")
+        transcript_path = data.get("transcript_path", "")
+        cwd = data.get("cwd", "")
+        trigger = data.get("trigger", "unknown")
+
+        # Load config, check enabled
+        from social_hook.config.yaml import load_full_config
+
+        config = load_full_config()
+        if not config.journey_capture.enabled:
+            return
+
+        # Init DB
+        from social_hook.db.connection import init_database
+        from social_hook.filesystem import get_db_path
+
+        db_path = get_db_path()
+        conn = init_database(db_path)
+
+        # Normalize cwd and look up project (matches trigger.py pattern)
+        normalized_cwd = os.path.realpath(cwd).rstrip("/")
+        from social_hook.db import operations as ops
+
+        project = ops.get_project_by_path(conn, normalized_cwd)
+        if project is None:
+            from social_hook.trigger import git_remote_origin
+
+            origin = git_remote_origin(cwd)
+            if origin:
+                projects = ops.get_project_by_origin(conn, origin)
+                if projects:
+                    project = projects[0]
+
+        if project is None:
+            logger.debug("No registered project for cwd=%s", cwd)
+            conn.close()
+            return
+
+        if project.paused:
+            logger.debug("Project %s is paused, skipping", project.id)
+            conn.close()
+            return
+
+        # Resolve model, reject Haiku
+        model_str = config.journey_capture.model or config.models.evaluator
+        if "haiku" in model_str.lower():
+            logger.warning(
+                "Skipping narrative extraction: %s is too small. "
+                "Use Sonnet or Opus.",
+                model_str,
+            )
+            conn.close()
+            return
+
+        # Resolve transcript path (with fallback for empty path bug)
+        from pathlib import Path
+
+        from social_hook.narrative.transcript import (
+            discover_transcript_path,
+            filter_for_extraction,
+            format_for_prompt,
+            read_transcript,
+            truncate_to_budget,
+        )
+
+        resolved_path = transcript_path
+        if not resolved_path or not Path(resolved_path).exists():
+            resolved_path = discover_transcript_path(session_id, cwd)
+        if not resolved_path or not Path(resolved_path).exists():
+            logger.debug(
+                "Transcript not found for session=%s cwd=%s",
+                session_id,
+                cwd,
+            )
+            conn.close()
+            return
+
+        # Read -> filter -> format -> truncate
+        messages = read_transcript(resolved_path)
+        filtered = filter_for_extraction(messages)
+        if not filtered:
+            logger.debug("No conversational content in transcript")
+            conn.close()
+            return
+        formatted = format_for_prompt(filtered)
+        text = truncate_to_budget(formatted)
+
+        # Extract narrative
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.factory import create_client
+        from social_hook.narrative.extractor import NarrativeExtractor
+
+        db_ctx = DryRunContext(conn, dry_run=False)
+        client = create_client(model_str, config)
+        extractor = NarrativeExtractor(client)
+        extraction = extractor.extract(
+            transcript_text=text,
+            project_name=project.name,
+            cwd=normalized_cwd,
+            db=db_ctx,
+            project_id=project.id,
+        )
+
+        if extraction is None:
+            conn.close()
+            return
+
+        # Save narrative
+        from social_hook.narrative.storage import (
+            cleanup_old_narratives,
+            save_narrative,
+        )
+
+        save_narrative(project.id, extraction, session_id, trigger)
+        cleanup_old_narratives(project.id)
+
+        logger.info(
+            "Narrative captured for project=%s session=%s",
+            project.id,
+            session_id,
+        )
+        conn.close()
+
+    except Exception:
+        logging.getLogger("social_hook.narrative_capture").exception(
+            "narrative-capture failed"
+        )
+        # Exit 0 -- never disrupt the user's session
+
+
+# =============================================================================
 # Register subcommand modules
 # =============================================================================
 
@@ -226,6 +385,7 @@ from social_hook.cli.inspect import app as inspect_app
 from social_hook.cli.manual import app as manual_app
 from social_hook.cli.setup import app as setup_app
 from social_hook.cli.test_cmd import app as test_app
+from social_hook.cli.journey import app as journey_app
 
 # Project commands: register, unregister, list
 app.add_typer(project_app, name="project", help="Project management.")
@@ -241,3 +401,6 @@ app.add_typer(setup_app, name="setup", help="Configure social-hook.")
 
 # Test command
 app.add_typer(test_app, name="test", help="Test commit evaluation.")
+
+# Journey capture commands: on, off, status
+app.add_typer(journey_app, name="journey", help="Development Journey capture.")

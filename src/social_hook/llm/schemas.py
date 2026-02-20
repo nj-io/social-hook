@@ -273,6 +273,87 @@ class RouteActionInput(BaseModel):
             raise MalformedResponseError(f"Invalid route_action input: {e}") from e
 
 
+class ExtractNarrativeInput(BaseModel):
+    """Extractor tool call: extract_narrative."""
+
+    summary: str
+    key_decisions: list[str]
+    rejected_approaches: list[str]
+    aha_moments: list[str]
+    challenges: list[str]
+    narrative_arc: str
+    relevant_for_social: bool
+    social_hooks: list[str]
+
+    @classmethod
+    def to_tool_schema(cls) -> dict[str, Any]:
+        """Return JSON schema dict for Claude's tools parameter."""
+        return {
+            "name": "extract_narrative",
+            "description": "Extract narrative elements from a development session transcript",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "2-3 sentence session summary",
+                    },
+                    "key_decisions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Decisions made and their reasoning",
+                    },
+                    "rejected_approaches": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Approaches that were tried and abandoned",
+                    },
+                    "aha_moments": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Surprising insights discovered during the session",
+                    },
+                    "challenges": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Difficulties encountered during the session",
+                    },
+                    "narrative_arc": {
+                        "type": "string",
+                        "description": "The story of the session as a narrative arc",
+                    },
+                    "relevant_for_social": {
+                        "type": "boolean",
+                        "description": "Whether this session has social-media-worthy content",
+                    },
+                    "social_hooks": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Potential post angles for social media",
+                    },
+                },
+                "required": [
+                    "summary",
+                    "key_decisions",
+                    "rejected_approaches",
+                    "aha_moments",
+                    "challenges",
+                    "narrative_arc",
+                    "relevant_for_social",
+                    "social_hooks",
+                ],
+            },
+        }
+
+    @classmethod
+    def validate(cls, data: dict[str, Any]) -> "ExtractNarrativeInput":
+        """Validate tool call input data."""
+        try:
+            return cls.model_validate(data)
+        except ValidationError as e:
+            raise MalformedResponseError(f"Invalid extract_narrative input: {e}") from e
+
+
 class ExpertResponseInput(BaseModel):
     """Expert tool call: expert_response."""
 

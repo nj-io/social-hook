@@ -13,11 +13,24 @@ from social_hook.narrative.lifecycle import (
     record_strategy_moment,
 )
 from social_hook.narrative.memories import add_memory, parse_memories_file
+from social_hook.narrative.transcript import (
+    discover_transcript_path,
+    filter_for_extraction,
+    format_for_prompt,
+    read_transcript,
+    truncate_to_budget,
+)
 
 __all__ = [
     # Memories
     "add_memory",
     "parse_memories_file",
+    # Transcript
+    "read_transcript",
+    "discover_transcript_path",
+    "filter_for_extraction",
+    "format_for_prompt",
+    "truncate_to_budget",
     # Lifecycle
     "detect_lifecycle_phase",
     "check_strategy_triggers",

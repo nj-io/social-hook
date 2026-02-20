@@ -11,7 +11,7 @@ app = typer.Typer()
 def setup(
     ctx: typer.Context,
     validate: bool = typer.Option(False, "--validate", help="Validate existing configuration only"),
-    only: Optional[str] = typer.Option(None, "--only", help="Configure only a specific component (models, apikeys, voice, telegram, x, linkedin, image, scheduling)"),
+    only: Optional[str] = typer.Option(None, "--only", help="Configure only a specific component (models, apikeys, voice, telegram, x, linkedin, image, scheduling, journey)"),
 ):
     """Run the interactive setup wizard."""
     if ctx.invoked_subcommand is not None:

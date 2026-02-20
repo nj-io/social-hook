@@ -772,3 +772,4 @@ class ProjectContext:
     memories: list[dict] = field(default_factory=list)
     milestone_summaries: list[dict] = field(default_factory=list)
     context_notes: list[dict] = field(default_factory=list)
+    session_narratives: list[dict] = field(default_factory=list)

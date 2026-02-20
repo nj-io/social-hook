@@ -460,6 +460,10 @@ def _load_existing() -> tuple[dict[str, str], dict[str, Any]]:
                 "enabled": config.image_generation.enabled,
                 "service": config.image_generation.service,
             },
+            "journey_capture": {
+                "enabled": config.journey_capture.enabled,
+                **({"model": config.journey_capture.model} if config.journey_capture.model else {}),
+            },
         }
     except Exception:
         pass  # No existing config — fresh setup
@@ -584,6 +588,11 @@ def run_wizard(
             _setup_image_gen(env_vars, yaml_config, existing_env, progress)
             _save_progress()
 
+        # Journey capture (standalone path)
+        if only == "journey":
+            _setup_journey_capture(yaml_config, progress)
+            _save_progress()
+
         installed = False
         if only is None:
             # Section 8: Scheduling
@@ -591,7 +600,7 @@ def run_wizard(
             _save_progress()
             _show_summary(env_vars, yaml_config)
             # Section 9: Installations
-            installed = _setup_installations(progress)
+            installed = _setup_installations(yaml_config, progress)
 
         # --- Completion message with warnings ---
         warnings: list[str] = []
@@ -1274,6 +1283,9 @@ def _setup_models(yaml_config: dict, existing_yaml: dict, env_vars: dict,
              f"    Drafter:    {yaml_config['models']['drafter']}\n"
              f"    Gatekeeper: {yaml_config['models']['gatekeeper']}")
 
+    # Sub-step: Development Journey setup (part of models section, no section count change)
+    _setup_journey_capture(yaml_config, progress)
+
 
 def _setup_image_gen(env_vars: dict, yaml_config: dict, existing_env: dict,
                      progress: Optional[WizardProgress] = None) -> None:
@@ -1385,6 +1397,69 @@ def _setup_scheduling(base: Path, yaml_config: dict, existing_yaml: dict,
     _success("Scheduling configured")
 
 
+def _setup_journey_capture(yaml_config: dict, progress: Optional[WizardProgress] = None) -> None:
+    """Configure Development Journey capture (narrative extraction from Claude Code sessions)."""
+    import shutil
+
+    has_claude_cli = shutil.which("claude") is not None
+
+    # Show info panel
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+
+        console = Console()
+        if has_claude_cli:
+            console.print(Panel(
+                "Captures reasoning from your Claude Code development\n"
+                "sessions to create richer, more insightful posts.\n\n"
+                "Runs automatically before context compaction.",
+                title="Development Journey",
+                border_style="cyan",
+            ))
+        else:
+            console.print(Panel(
+                "Captures reasoning from your Claude Code development\n"
+                "sessions to create richer, more insightful posts.\n\n"
+                "[yellow]⚠[/yellow] Requires Claude Code (not detected).\n"
+                "  Install Claude Code to enable this feature.",
+                title="Development Journey",
+                border_style="cyan",
+            ))
+    except Exception:
+        typer.echo("\n┌─ Development Journey ─────────────────────────────────┐")
+        typer.echo("│ Captures reasoning from your Claude Code development  │")
+        typer.echo("│ sessions to create richer, more insightful posts.     │")
+        if has_claude_cli:
+            typer.echo("│                                                       │")
+            typer.echo("│ Runs automatically before context compaction.         │")
+        else:
+            typer.echo("│                                                       │")
+            typer.echo("│ ⚠ Requires Claude Code (not detected).               │")
+            typer.echo("│   Install Claude Code to enable this feature.         │")
+        typer.echo("└───────────────────────────────────────────────────────┘")
+
+    if not has_claude_cli:
+        yaml_config.setdefault("journey_capture", {})["enabled"] = False
+        return
+
+    if _confirm("Enable Development Journey?"):
+        yaml_config.setdefault("journey_capture", {})["enabled"] = True
+
+        # Install the PreCompact narrative hook
+        from social_hook.setup.install import install_narrative_hook
+
+        success, msg = install_narrative_hook()
+        if success:
+            _success("Development Journey enabled (using evaluator model)")
+        else:
+            _warn(f"Development Journey enabled but hook install failed: {msg}")
+
+        _info("Restart any active Claude Code sessions for the hook to take effect.")
+    else:
+        yaml_config.setdefault("journey_capture", {})["enabled"] = False
+
+
 # =============================================================================
 # Save, summary, install
 # =============================================================================
@@ -1457,6 +1532,10 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
         if scheduling.get("max_posts_per_day"):
             table.add_row("Max Posts/Day", str(scheduling["max_posts_per_day"]))
 
+        jc = yaml_config.get("journey_capture", {})
+        jc_status = "Enabled" if jc.get("enabled") else "Disabled"
+        table.add_row("Development Journey", jc_status)
+
         console.print()
         console.print(table)
     except Exception:
@@ -1468,7 +1547,7 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
                 typer.echo(f"  {k}: {v}")
 
 
-def _setup_installations(progress: Optional[WizardProgress] = None) -> bool:
+def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[WizardProgress] = None) -> bool:
     """Install hook, cron, and start bot. Returns True if installed, False if skipped."""
     if progress:
         progress.set_section(9, "Installation", substeps=3)
@@ -1480,7 +1559,7 @@ def _setup_installations(progress: Optional[WizardProgress] = None) -> bool:
 
         Console().print(Panel(
             "The following components will be installed:\n\n"
-            "  • Claude Code hook → ~/.claude/hooks.json\n"
+            "  • Claude Code hook → ~/.claude/settings.json\n"
             "    Triggers social-hook on git commit\n\n"
             "  • Scheduler cron job → runs every minute\n"
             "    Posts approved drafts at scheduled times\n\n"
@@ -1509,6 +1588,20 @@ def _setup_installations(progress: Optional[WizardProgress] = None) -> bool:
             _success(msg)
         else:
             _error(msg)
+
+    # Narrative hook (if journey capture enabled)
+    if yaml_config and yaml_config.get("journey_capture", {}).get("enabled"):
+        from social_hook.setup.install import install_narrative_hook, check_narrative_hook_installed
+
+        if check_narrative_hook_installed():
+            _success("Narrative hook already installed")
+        else:
+            success, msg = install_narrative_hook()
+            if success:
+                _success(msg)
+            else:
+                _error(msg)
+
     if progress:
         progress.advance()
 
