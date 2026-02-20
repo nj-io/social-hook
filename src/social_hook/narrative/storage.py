@@ -3,7 +3,7 @@
 import datetime
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from social_hook.filesystem import get_narratives_path
 from social_hook.llm.schemas import ExtractNarrativeInput
@@ -55,18 +55,31 @@ def save_narrative(
     return path
 
 
-def load_recent_narratives(project_id: str, limit: int = 5) -> list[dict]:
+def load_recent_narratives(
+    project_id: str,
+    limit: int = 5,
+    after: Optional[str] = None,
+    before: Optional[str] = None,
+) -> list[dict]:
     """Load N most recent narratives where relevant_for_social is True.
 
     Deduplicates by session_id (keeps latest per session) since a single
     long session can trigger multiple auto-compactions.
 
+    When ``after``/``before`` are provided (ISO 8601 strings), narratives are
+    split into *in-window* (``after < ts <= before``) and *out-of-window*.
+    In-window entries are returned first, then remaining slots filled from
+    out-of-window entries (most recent first), up to ``limit``.  Each returned
+    dict receives an ``_in_window: bool`` flag.
+
     Args:
         project_id: Project identifier.
         limit: Max narratives to return (default 5).
+        after: ISO 8601 timestamp — exclusive lower bound (e.g. parent commit date).
+        before: ISO 8601 timestamp — inclusive upper bound (e.g. current commit date).
 
     Returns:
-        List of narrative dicts, most recent first.
+        List of narrative dicts, most recent first, with ``_in_window`` flag.
     """
     path = _narratives_file(project_id)
     if not path.exists():
@@ -102,9 +115,67 @@ def load_recent_narratives(project_id: str, limit: int = 5) -> list[dict]:
     deduped = list(seen.values())
 
     # Sort by timestamp descending (most recent first).
+    # Works correctly because save_narrative() always writes UTC timestamps.
     deduped.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
 
-    return deduped[:limit]
+    # Parse window boundaries (timezone-aware via datetime.fromisoformat).
+    after_dt = None
+    before_dt = None
+    has_window = False
+    if after:
+        try:
+            after_dt = datetime.datetime.fromisoformat(after)
+        except (ValueError, TypeError):
+            pass
+    if before:
+        try:
+            before_dt = datetime.datetime.fromisoformat(before)
+        except (ValueError, TypeError):
+            pass
+    has_window = after_dt is not None or before_dt is not None
+
+    if not has_window:
+        # No window — backwards-compatible: all entries are "in window".
+        for entry in deduped[:limit]:
+            entry["_in_window"] = True
+        return deduped[:limit]
+
+    # Split into in-window and out-of-window.
+    in_window: list[dict] = []
+    out_of_window: list[dict] = []
+
+    for entry in deduped:
+        ts_str = entry.get("timestamp", "")
+        try:
+            ts = datetime.datetime.fromisoformat(ts_str)
+        except (ValueError, TypeError):
+            # Unparseable timestamp — treat as out-of-window.
+            out_of_window.append(entry)
+            continue
+
+        inside = True
+        if after_dt is not None and ts <= after_dt:
+            inside = False
+        if before_dt is not None and ts > before_dt:
+            inside = False
+
+        if inside:
+            in_window.append(entry)
+        else:
+            out_of_window.append(entry)
+
+    # In-window first, then fill remaining slots from out-of-window.
+    result: list[dict] = []
+    for entry in in_window[:limit]:
+        entry["_in_window"] = True
+        result.append(entry)
+
+    remaining = limit - len(result)
+    for entry in out_of_window[:remaining]:
+        entry["_in_window"] = False
+        result.append(entry)
+
+    return result
 
 
 def cleanup_old_narratives(project_id: str, max_age_days: int = 90) -> int:

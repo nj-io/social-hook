@@ -55,11 +55,112 @@ class TestParseCommitInfo:
         assert commit.hash == commit_hash
         assert commit.message == "Initial commit"
 
+    def test_parse_commit_has_timestamp(self, temp_dir):
+        """parse_commit_info returns ISO 8601 timestamp."""
+        repo = temp_dir / "repo_ts"
+        repo.mkdir()
+        subprocess.run(["git", "init", str(repo)], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.email", "test@test.com"],
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.name", "Test"],
+            capture_output=True,
+        )
+        (repo / "test.py").write_text("print('hello')")
+        subprocess.run(["git", "-C", str(repo), "add", "."], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-m", "First commit"],
+            capture_output=True,
+        )
+
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+        )
+        commit_hash = result.stdout.strip()
+
+        commit = parse_commit_info(commit_hash, str(repo))
+        assert commit.timestamp is not None
+        # ISO 8601 with timezone offset
+        assert "T" in commit.timestamp
+        assert "+" in commit.timestamp or "-" in commit.timestamp[11:]
+
+    def test_first_commit_has_no_parent_timestamp(self, temp_dir):
+        """First commit in a repo has parent_timestamp=None."""
+        repo = temp_dir / "repo_first"
+        repo.mkdir()
+        subprocess.run(["git", "init", str(repo)], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.email", "test@test.com"],
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.name", "Test"],
+            capture_output=True,
+        )
+        (repo / "test.py").write_text("print('hello')")
+        subprocess.run(["git", "-C", str(repo), "add", "."], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-m", "First commit"],
+            capture_output=True,
+        )
+
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+        )
+        commit_hash = result.stdout.strip()
+
+        commit = parse_commit_info(commit_hash, str(repo))
+        assert commit.parent_timestamp is None
+
+    def test_second_commit_has_parent_timestamp(self, temp_dir):
+        """Second commit in a repo has a valid parent_timestamp."""
+        repo = temp_dir / "repo_second"
+        repo.mkdir()
+        subprocess.run(["git", "init", str(repo)], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.email", "test@test.com"],
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.name", "Test"],
+            capture_output=True,
+        )
+        (repo / "test.py").write_text("v1")
+        subprocess.run(["git", "-C", str(repo), "add", "."], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-m", "First"],
+            capture_output=True,
+        )
+        (repo / "test.py").write_text("v2")
+        subprocess.run(["git", "-C", str(repo), "add", "."], capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-m", "Second"],
+            capture_output=True,
+        )
+
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+        )
+        commit_hash = result.stdout.strip()
+
+        commit = parse_commit_info(commit_hash, str(repo))
+        assert commit.timestamp is not None
+        assert commit.parent_timestamp is not None
+        # Both are valid ISO 8601 timestamps
+        assert "T" in commit.parent_timestamp
+
     def test_parse_nonexistent_commit(self, temp_dir):
         """Gracefully handles nonexistent commit."""
         commit = parse_commit_info("nonexistent", str(temp_dir))
         assert commit.hash == "nonexistent"
         assert "(unable to parse)" in commit.message
+        assert commit.timestamp is None
+        assert commit.parent_timestamp is None
 
 
 class TestGitRemoteOrigin:

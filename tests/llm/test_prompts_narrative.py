@@ -219,6 +219,51 @@ class TestEvaluatorPromptNarrative:
         )
         assert "### Session: No summary" in result
 
+    def test_in_window_narrative_no_label(self, sample_project_context, sample_commit):
+        """In-window narratives have no extra label."""
+        sample_project_context.session_narratives = [
+            {"summary": "Recent work", "_in_window": True, "key_decisions": ["d1"]},
+        ]
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "### Session: Recent work" in result
+        assert "(earlier context)" not in result
+
+    def test_out_of_window_narrative_shows_label(self, sample_project_context, sample_commit):
+        """Out-of-window narratives show '(earlier context)' label."""
+        sample_project_context.session_narratives = [
+            {"summary": "Old work", "_in_window": False, "key_decisions": ["d1"]},
+        ]
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "### Session: Old work (earlier context)" in result
+
+    def test_mixed_window_labels(self, sample_project_context, sample_commit):
+        """Mix of in-window and out-of-window narratives renders correctly."""
+        sample_project_context.session_narratives = [
+            {"summary": "Current", "_in_window": True, "key_decisions": []},
+            {"summary": "Previous", "_in_window": False, "key_decisions": []},
+        ]
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "### Session: Current\n" in result or "### Session: Current" in result
+        assert "(earlier context)" not in result.split("### Session: Current")[1].split("###")[0]
+        assert "### Session: Previous (earlier context)" in result
+
+    def test_no_in_window_flag_defaults_to_true(self, sample_project_context, sample_commit):
+        """Narratives without _in_window flag default to in-window (no label)."""
+        sample_project_context.session_narratives = [
+            {"summary": "Legacy narrative", "key_decisions": ["d1"]},
+        ]
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "### Session: Legacy narrative" in result
+        assert "(earlier context)" not in result
+
     def test_empty_lists_omitted(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = [
             {
@@ -322,8 +367,32 @@ class TestEvaluatorContextNarrativeLoading:
             return_value=mock_narratives,
         ) as mock_load:
             ctx = assemble_evaluator_context(db, "proj_nar1", project_config)
-            mock_load.assert_called_once_with("proj_nar1", limit=5)
+            mock_load.assert_called_once_with("proj_nar1", limit=5, after=None, before=None)
             assert ctx.session_narratives == mock_narratives
+
+    def test_passes_timestamps_to_load(self, temp_db):
+        from social_hook.db import operations as ops
+
+        project = Project(id="proj_nar_ts", name="test", repo_path="/tmp/test")
+        ops.insert_project(temp_db, project)
+
+        db = DryRunContext(temp_db, dry_run=False)
+        project_config = ProjectConfig()
+
+        with patch(
+            "social_hook.narrative.storage.load_recent_narratives",
+            return_value=[],
+        ) as mock_load:
+            assemble_evaluator_context(
+                db, "proj_nar_ts", project_config,
+                commit_timestamp="2026-02-20T12:00:00+07:00",
+                parent_timestamp="2026-02-20T10:00:00+07:00",
+            )
+            mock_load.assert_called_once_with(
+                "proj_nar_ts", limit=5,
+                after="2026-02-20T10:00:00+07:00",
+                before="2026-02-20T12:00:00+07:00",
+            )
 
     def test_handles_load_failure_gracefully(self, temp_db):
         from social_hook.db import operations as ops

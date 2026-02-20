@@ -39,6 +39,19 @@ def parse_commit_info(commit_hash: str, repo_path: str) -> CommitInfo:
             capture_output=True, text=True, check=True,
         ).stdout.strip()
 
+        # Get author date (ISO 8601 with timezone)
+        timestamp = subprocess.run(
+            ["git", "-C", repo_path, "log", "-1", "--format=%aI", commit_hash],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        # Get parent commit's author date (fails with exit 128 on first commit)
+        parent_result = subprocess.run(
+            ["git", "-C", repo_path, "log", "-1", "--format=%aI", f"{commit_hash}~1"],
+            capture_output=True, text=True,
+        )
+        parent_timestamp = parent_result.stdout.strip() if parent_result.returncode == 0 else None
+
         # Get stat summary
         stat_output = subprocess.run(
             ["git", "-C", repo_path, "show", "--stat", "--format=", commit_hash],
@@ -86,6 +99,8 @@ def parse_commit_info(commit_hash: str, repo_path: str) -> CommitInfo:
             files_changed=files_changed,
             insertions=insertions,
             deletions=deletions,
+            timestamp=timestamp,
+            parent_timestamp=parent_timestamp,
         )
     except subprocess.CalledProcessError:
         # Return minimal info if git commands fail
@@ -226,13 +241,15 @@ def run_trigger(
 
     project_config = load_project_config(repo_path)
 
-    # 5. Assemble context
+    # 5. Parse commit (needed for timestamp-filtered context)
+    commit = parse_commit_info(commit_hash, repo_path)
+
+    # 6. Assemble context (with commit timestamps for narrative filtering)
     context = assemble_evaluator_context(
         db, project.id, project_config,
+        commit_timestamp=commit.timestamp,
+        parent_timestamp=commit.parent_timestamp,
     )
-
-    # 6. Parse commit
-    commit = parse_commit_info(commit_hash, repo_path)
 
     if verbose:
         print(f"Evaluating commit {commit.hash[:8]}: {commit.message}")

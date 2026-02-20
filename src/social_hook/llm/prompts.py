@@ -22,7 +22,9 @@ def _render_narrative_sections(sections: list[str], narratives: list[dict]) -> N
         return
     sections.append("\n---\n## Development Narrative")
     for n in narratives[:5]:  # Budget: ~2000 tokens
-        sections.append(f"\n### Session: {n.get('summary', 'No summary')}")
+        in_window = n.get("_in_window", True)
+        label = "" if in_window else " (earlier context)"
+        sections.append(f"\n### Session: {n.get('summary', 'No summary')}{label}")
         if n.get('key_decisions'):
             sections.append("**Key decisions:** " + "; ".join(n['key_decisions'][:3]))
         if n.get('rejected_approaches'):
@@ -489,6 +491,8 @@ def assemble_evaluator_context(
     project_id: str,
     project_config: ProjectConfig,
     config: Optional[ContextConfig] = None,
+    commit_timestamp: Optional[str] = None,
+    parent_timestamp: Optional[str] = None,
 ) -> ProjectContext:
     """Gather all DB data into a ProjectContext for agent use.
 
@@ -533,7 +537,11 @@ def assemble_evaluator_context(
     # Load session narratives from journey capture storage
     try:
         from social_hook.narrative.storage import load_recent_narratives
-        session_narratives = load_recent_narratives(project_id, limit=5)
+        session_narratives = load_recent_narratives(
+            project_id, limit=5,
+            after=parent_timestamp,
+            before=commit_timestamp,
+        )
     except Exception:
         logger.debug("Failed to load narratives for %s", project_id, exc_info=True)
         session_narratives = []

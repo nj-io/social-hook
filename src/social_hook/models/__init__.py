@@ -753,6 +753,8 @@ class CommitInfo:
     files_changed: list[str] = field(default_factory=list)
     insertions: int = 0
     deletions: int = 0
+    timestamp: Optional[str] = None  # ISO 8601 author date of this commit
+    parent_timestamp: Optional[str] = None  # ISO 8601 author date of parent commit
 
 
 @dataclass

@@ -170,6 +170,201 @@ class TestLoadRecentNarratives:
 # =============================================================================
 
 
+# =============================================================================
+# load_recent_narratives: time-window filtering
+# =============================================================================
+
+
+class TestLoadRecentNarrativesTimeWindow:
+    """Tests for time-window filtering in load_recent_narratives."""
+
+    def _write_entry(self, path: Path, session_id: str, ts: str, summary: str = ""):
+        """Write a narrative entry with a specific timestamp."""
+        record = {
+            "timestamp": ts,
+            "session_id": session_id,
+            "trigger": "auto",
+            "summary": summary or f"Session {session_id}",
+            "key_decisions": [],
+            "rejected_approaches": [],
+            "aha_moments": [],
+            "challenges": [],
+            "narrative_arc": "",
+            "relevant_for_social": True,
+            "social_hooks": [],
+        }
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    def test_no_window_params_backwards_compatible(self, tmp_path, monkeypatch):
+        """Without after/before, all entries get _in_window=True."""
+        monkeypatch.setattr(
+            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
+        )
+        extraction = FakeExtraction()
+        save_narrative("proj", extraction, "sess-001", "auto")
+
+        result = load_recent_narratives("proj")
+        assert len(result) == 1
+        assert result[0]["_in_window"] is True
+
+    def test_in_window_entries_returned_first(self, tmp_path, monkeypatch):
+        """In-window entries come before out-of-window entries."""
+        monkeypatch.setattr(
+            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
+        )
+        path = tmp_path / "proj.jsonl"
+
+        # Old entry (before window)
+        self._write_entry(path, "old-sess", "2026-02-18T10:00:00+00:00", "Old session")
+        # In-window entry
+        self._write_entry(path, "in-sess", "2026-02-19T15:00:00+00:00", "In-window session")
+        # Another old entry
+        self._write_entry(path, "old2-sess", "2026-02-17T10:00:00+00:00", "Older session")
+
+        result = load_recent_narratives(
+            "proj", limit=5,
+            after="2026-02-19T10:00:00+00:00",
+            before="2026-02-20T10:00:00+00:00",
+        )
+        assert len(result) == 3
+        # In-window first
+        assert result[0]["summary"] == "In-window session"
+        assert result[0]["_in_window"] is True
+        # Then out-of-window (most recent first)
+        assert result[1]["_in_window"] is False
+        assert result[2]["_in_window"] is False
+
+    def test_timezone_safe_comparison(self, tmp_path, monkeypatch):
+        """UTC narrative timestamp compared with +07:00 window boundary."""
+        monkeypatch.setattr(
+            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
+        )
+        path = tmp_path / "proj.jsonl"
+
+        # Narrative at 11:00 UTC = 18:00+07:00
+        self._write_entry(path, "sess-1", "2026-02-20T11:00:00+00:00", "UTC narrative")
+
+        # Window: after 10:30+07:00 (= 03:30 UTC), before 18:30+07:00 (= 11:30 UTC)
+        result = load_recent_narratives(
+            "proj", limit=5,
+            after="2026-02-20T10:30:00+07:00",
+            before="2026-02-20T18:30:00+07:00",
+        )
+        assert len(result) == 1
+        assert result[0]["_in_window"] is True
+
+    def test_boundary_exclusive_after_inclusive_before(self, tmp_path, monkeypatch):
+        """after is exclusive (>), before is inclusive (<=)."""
+        monkeypatch.setattr(
+            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
+        )
+        path = tmp_path / "proj.jsonl"
+
+        # Entry exactly at after boundary
+        self._write_entry(path, "at-after", "2026-02-20T10:00:00+00:00", "At after")
+        # Entry exactly at before boundary
+        self._write_entry(path, "at-before", "2026-02-20T12:00:00+00:00", "At before")
+        # Entry between boundaries
+        self._write_entry(path, "between", "2026-02-20T11:00:00+00:00", "Between")
+
+        result = load_recent_narratives(
+            "proj", limit=5,
+            after="2026-02-20T10:00:00+00:00",
+            before="2026-02-20T12:00:00+00:00",
+        )
+        # "At after" (== after) should be out-of-window (exclusive)
+        # "At before" (== before) should be in-window (inclusive)
+        # "Between" should be in-window
+        in_window = [e for e in result if e["_in_window"]]
+        out_of_window = [e for e in result if not e["_in_window"]]
+        assert len(in_window) == 2
+        assert len(out_of_window) == 1
+        assert out_of_window[0]["summary"] == "At after"
+
+    def test_empty_window_returns_extended_context(self, tmp_path, monkeypatch):
+        """When no narratives fall in window, out-of-window entries still returned."""
+        monkeypatch.setattr(
+            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
+        )
+        path = tmp_path / "proj.jsonl"
+
+        self._write_entry(path, "old-1", "2026-02-18T10:00:00+00:00", "Old 1")
+        self._write_entry(path, "old-2", "2026-02-17T10:00:00+00:00", "Old 2")
+
+        # Window is in the future — no entries match
+        result = load_recent_narratives(
+            "proj", limit=5,
+            after="2026-02-25T00:00:00+00:00",
+            before="2026-02-26T00:00:00+00:00",
+        )
+        assert len(result) == 2
+        assert all(not e["_in_window"] for e in result)
+
+    def test_limit_respected_with_window(self, tmp_path, monkeypatch):
+        """Limit applies to total returned (in-window + extended)."""
+        monkeypatch.setattr(
+            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
+        )
+        path = tmp_path / "proj.jsonl"
+
+        # 3 in-window, 5 out-of-window
+        for i in range(3):
+            self._write_entry(path, f"in-{i}", f"2026-02-20T{10+i}:00:00+00:00")
+        for i in range(5):
+            self._write_entry(path, f"out-{i}", f"2026-02-18T{10+i}:00:00+00:00")
+
+        result = load_recent_narratives(
+            "proj", limit=4,
+            after="2026-02-20T00:00:00+00:00",
+            before="2026-02-21T00:00:00+00:00",
+        )
+        assert len(result) == 4
+        # All 3 in-window + 1 extended
+        in_window = [e for e in result if e["_in_window"]]
+        out_of_window = [e for e in result if not e["_in_window"]]
+        assert len(in_window) == 3
+        assert len(out_of_window) == 1
+
+    def test_only_after_boundary(self, tmp_path, monkeypatch):
+        """With only after (no before), all entries after the boundary are in-window."""
+        monkeypatch.setattr(
+            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
+        )
+        path = tmp_path / "proj.jsonl"
+
+        self._write_entry(path, "old", "2026-02-18T10:00:00+00:00")
+        self._write_entry(path, "new", "2026-02-20T10:00:00+00:00")
+
+        result = load_recent_narratives(
+            "proj", limit=5,
+            after="2026-02-19T00:00:00+00:00",
+        )
+        in_window = [e for e in result if e["_in_window"]]
+        assert len(in_window) == 1
+        assert in_window[0]["session_id"] == "new"
+
+    def test_only_before_boundary(self, tmp_path, monkeypatch):
+        """With only before (no after), all entries before the boundary are in-window."""
+        monkeypatch.setattr(
+            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
+        )
+        path = tmp_path / "proj.jsonl"
+
+        self._write_entry(path, "early", "2026-02-18T10:00:00+00:00")
+        self._write_entry(path, "late", "2026-02-25T10:00:00+00:00")
+
+        result = load_recent_narratives(
+            "proj", limit=5,
+            before="2026-02-20T00:00:00+00:00",
+        )
+        in_window = [e for e in result if e["_in_window"]]
+        out_of_window = [e for e in result if not e["_in_window"]]
+        assert len(in_window) == 1
+        assert in_window[0]["session_id"] == "early"
+        assert len(out_of_window) == 1
+
+
 class TestCleanupOldNarratives:
     """Tests for cleanup_old_narratives."""
 

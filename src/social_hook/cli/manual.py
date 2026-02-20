@@ -81,7 +81,11 @@ def draft(
 
         db = DryRunContext(conn, dry_run=dry_run)
         project_config = load_project_config(project.repo_path)
-        context = assemble_evaluator_context(db, project.id, project_config)
+        context = assemble_evaluator_context(
+            db, project.id, project_config,
+            commit_timestamp=commit.timestamp,
+            parent_timestamp=commit.parent_timestamp,
+        )
 
         # Create draft via LLM
         from social_hook.llm.factory import create_client
