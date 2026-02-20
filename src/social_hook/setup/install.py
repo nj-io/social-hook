@@ -230,13 +230,15 @@ def install_narrative_hook(
     if _find_our_rule_group(pre_compact, NARRATIVE_HOOK_COMMAND) is not None:
         return True, "Narrative hook already installed"
 
-    # No matcher (runs on all compacts)
+    # No matcher (runs on all compacts). Async because the LLM extraction
+    # takes 10-20s and the transcript file survives compaction (append-only).
     rule_group = {
         "hooks": [
             {
                 "type": "command",
                 "command": NARRATIVE_HOOK_COMMAND,
                 "timeout": NARRATIVE_HOOK_TIMEOUT,
+                "async": True,
             },
         ],
     }
