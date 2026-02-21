@@ -127,9 +127,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 6."""
+        """Check schema version returns 7."""
         version = get_schema_version(temp_db)
-        assert version == 6
+        assert version == 7
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent."""
@@ -142,7 +142,7 @@ class TestDatabaseInitialization:
         version2 = get_schema_version(conn2)
         conn2.close()
 
-        assert version1 == version2 == 6
+        assert version1 == version2 == 7
 
 
 # =============================================================================
@@ -283,6 +283,51 @@ class TestDatabaseOperations:
         decisions = get_recent_decisions(temp_db, project.id)
         assert len(decisions) == 1
         assert decisions[0].decision == "post_worthy"
+
+    def test_commit_message_round_trip(self, temp_db):
+        """commit_message persists through insert → get."""
+        project = Project(
+            id=generate_id("project"),
+            name="test-project",
+            repo_path="/tmp/test",
+        )
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="post_worthy",
+            reasoning="Test decision",
+            commit_message="Add user authentication module",
+        )
+        insert_decision(temp_db, decision)
+
+        decisions = get_recent_decisions(temp_db, project.id)
+        assert len(decisions) == 1
+        assert decisions[0].commit_message == "Add user authentication module"
+
+    def test_commit_message_null_for_legacy(self, temp_db):
+        """commit_message defaults to None when not provided."""
+        project = Project(
+            id=generate_id("project"),
+            name="test-project",
+            repo_path="/tmp/test",
+        )
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="post_worthy",
+            reasoning="Test decision",
+        )
+        insert_decision(temp_db, decision)
+
+        decisions = get_recent_decisions(temp_db, project.id)
+        assert len(decisions) == 1
+        assert decisions[0].commit_message is None
 
     def test_insert_draft_with_fk(self, temp_db):
         """Insert draft with FK to decision succeeds."""

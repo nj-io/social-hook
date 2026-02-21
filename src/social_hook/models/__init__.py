@@ -160,6 +160,7 @@ class Decision:
     commit_hash: str
     decision: str  # DecisionType value
     reasoning: str
+    commit_message: Optional[str] = None
     angle: Optional[str] = None
     episode_type: Optional[str] = None  # EpisodeType value
     post_category: Optional[str] = None  # PostCategory value
@@ -197,6 +198,7 @@ class Decision:
             "id": self.id,
             "project_id": self.project_id,
             "commit_hash": self.commit_hash,
+            "commit_message": self.commit_message,
             "decision": self.decision,
             "reasoning": self.reasoning,
             "angle": self.angle,
@@ -221,6 +223,7 @@ class Decision:
             commit_hash=d["commit_hash"],
             decision=d["decision"],
             reasoning=d["reasoning"],
+            commit_message=d.get("commit_message"),
             angle=d.get("angle"),
             episode_type=d.get("episode_type"),
             post_category=d.get("post_category"),
@@ -238,6 +241,7 @@ class Decision:
             self.id,
             self.project_id,
             self.commit_hash,
+            self.commit_message,
             self.decision,
             self.reasoning,
             self.angle,

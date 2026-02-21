@@ -247,6 +247,31 @@ class TestDecisionModel:
         d = decision.to_dict()
         assert d["platforms"]["x"] == "drafted"
 
+    def test_decision_to_row_length(self):
+        """Decision.to_row() returns correct number of columns."""
+        decision = Decision(
+            id="decision_123",
+            project_id="project_123",
+            commit_hash="abc123",
+            decision="post_worthy",
+            reasoning="Test",
+            commit_message="Add auth module",
+        )
+        assert len(decision.to_row()) == 12
+
+    def test_decision_to_dict_includes_commit_message(self):
+        """Decision.to_dict() includes commit_message."""
+        decision = Decision(
+            id="decision_123",
+            project_id="project_123",
+            commit_hash="abc123",
+            decision="post_worthy",
+            reasoning="Test",
+            commit_message="Add auth module",
+        )
+        d = decision.to_dict()
+        assert d["commit_message"] == "Add auth module"
+
 
 class TestLifecycleModel:
     """T3: Lifecycle model tests."""

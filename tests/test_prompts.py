@@ -70,6 +70,7 @@ def sample_project_context():
             Decision(
                 id="dec_1", project_id="proj_test1", commit_hash="prev123",
                 decision="post_worthy", reasoning="Added logging system",
+                commit_message="Add structured logging module",
             ),
         ],
         recent_posts=[
@@ -220,6 +221,19 @@ class TestAssembleEvaluatorPrompt:
             "# Eval", sample_project_context, sample_commit
         )
         assert "Added logging system" in result
+
+    def test_recent_decisions_include_commit_message(self, sample_project_context, sample_commit):
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert "Add structured logging module" in result
+
+    def test_recent_decisions_null_commit_message(self, sample_project_context, sample_commit):
+        sample_project_context.recent_decisions[0].commit_message = None
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit
+        )
+        assert '"N/A"' in result
 
     def test_includes_recent_posts(self, sample_project_context, sample_commit):
         result = assemble_evaluator_prompt(

@@ -142,8 +142,8 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
     """
     conn.execute(
         """
-        INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning, angle, episode_type, post_category, arc_id, media_tool, platforms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO decisions (id, project_id, commit_hash, commit_message, decision, reasoning, angle, episode_type, post_category, arc_id, media_tool, platforms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )

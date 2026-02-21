@@ -261,6 +261,7 @@ def run_trigger(
         commit_hash=commit_hash,
         decision=evaluation.decision,
         reasoning=evaluation.reasoning,
+        commit_message=commit.message,
         angle=getattr(evaluation, "angle", None),
         episode_type=evaluation.episode_type,
         post_category=evaluation.post_category,

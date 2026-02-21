@@ -156,7 +156,7 @@ def assemble_evaluator_prompt(
         sections.append("### Recent Decisions")
         for d in project_context.recent_decisions[:config.recent_decisions]:
             sections.append(
-                f"- [{d.decision}] {d.commit_hash[:8]}: {d.reasoning[:100]}"
+                f"- [{d.decision}] {d.commit_hash[:8]} \"{d.commit_message or 'N/A'}\": {d.reasoning[:100]}"
             )
     if project_context.recent_posts:
         sections.append("### Recent Posts")

@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     id            TEXT PRIMARY KEY,
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
+    commit_message TEXT,
     decision      TEXT NOT NULL CHECK (decision IN ('post_worthy', 'not_post_worthy', 'consolidate', 'deferred')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
