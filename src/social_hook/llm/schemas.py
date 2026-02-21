@@ -207,6 +207,11 @@ class CreateDraftInput(BaseModel):
     @classmethod
     def validate(cls, data: dict[str, Any]) -> "CreateDraftInput":
         """Validate tool call input data."""
+        # LLM sometimes returns a list for content (thread format) instead of a string.
+        # Convert to JSON string so validation passes and thread parsing works downstream.
+        if isinstance(data.get("content"), list):
+            import json
+            data = {**data, "content": json.dumps(data["content"])}
         try:
             return cls.model_validate(data)
         except ValidationError as e:

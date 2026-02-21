@@ -40,6 +40,7 @@ COMMITS = {
     "docs_only": "a7832e6",     # docs: add WS3 integration notes
     "docs_only_2": "b995b4b",   # Add git worktrees section to CLAUDE.md
     "initial": "65fff50",       # Initial commit: Research documentation
+    "web_dashboard": "671c01d", # Add web dashboard + per-platform pipeline
 }
 
 SECTION_MAP = {
@@ -358,63 +359,66 @@ class E2EHarness:
 
 
 # ---------------------------------------------------------------------------
-# Telegram Capture
+# Capture Adapter
 # ---------------------------------------------------------------------------
 
-class TelegramCapture:
-    """Captures Telegram messages while still sending them."""
+class CaptureAdapter:
+    """MessagingAdapter that captures all outbound messages for test assertions.
+
+    Implements the MessagingAdapter interface without inheriting from it
+    to avoid import-time issues with the ABC (tests import this before
+    social_hook packages are on sys.path).
+    """
+
+    platform = "test"
 
     def __init__(self):
         self.messages: list[dict] = []
-        self._originals: dict[str, Any] = {}
 
-    def install(self):
-        import social_hook.bot.buttons as btns
-        import social_hook.bot.commands as cmds
-        import social_hook.bot.notifications as notif
+    def send_message(self, chat_id, message):
+        from social_hook.messaging.base import SendResult
+        self.messages.append({
+            "type": "buttons" if message.buttons else "text",
+            "chat_id": chat_id,
+            "text": message.text,
+            "buttons": [
+                [{"label": b.label, "action": b.action, "payload": b.payload}
+                 for b in row.buttons]
+                for row in message.buttons
+            ] if message.buttons else None,
+        })
+        return SendResult(success=True, message_id=str(len(self.messages)))
 
-        self._originals["notif_send"] = notif.send_notification
-        self._originals["notif_send_buttons"] = notif.send_notification_with_buttons
+    def edit_message(self, chat_id, message_id, message):
+        from social_hook.messaging.base import SendResult
+        self.messages.append({"type": "edit", "chat_id": chat_id, "text": message.text})
+        return SendResult(success=True, message_id=message_id)
 
-        capture = self
+    def answer_callback(self, callback_id, text=""):
+        return True
 
-        def captured_send(token, chat_id, message, **kw):
-            capture.messages.append({
-                "type": "text", "chat_id": chat_id, "text": message,
-            })
-            return capture._originals["notif_send"](token, chat_id, message, **kw)
+    def send_media(self, chat_id, file_path, caption="", parse_mode="markdown"):
+        from social_hook.messaging.base import SendResult
+        self.messages.append({
+            "type": "media", "chat_id": chat_id,
+            "file_path": file_path, "caption": caption,
+        })
+        return SendResult(success=True, message_id=str(len(self.messages)))
 
-        def captured_send_buttons(token, chat_id, message, buttons, **kw):
-            capture.messages.append({
-                "type": "buttons", "chat_id": chat_id,
-                "text": message, "buttons": buttons,
-            })
-            return capture._originals["notif_send_buttons"](
-                token, chat_id, message, buttons, **kw
-            )
-
-        # Patch in ALL modules that imported these functions
-        for mod in [notif, cmds, btns]:
-            mod.send_notification = captured_send
-            mod.send_notification_with_buttons = captured_send_buttons
-
-    def uninstall(self):
-        import social_hook.bot.buttons as btns
-        import social_hook.bot.commands as cmds
-        import social_hook.bot.notifications as notif
-
-        orig_send = self._originals.get("notif_send")
-        orig_send_buttons = self._originals.get("notif_send_buttons")
-        if orig_send:
-            for mod in [notif, cmds, btns]:
-                mod.send_notification = orig_send
-                mod.send_notification_with_buttons = orig_send_buttons
+    def get_capabilities(self):
+        from social_hook.messaging.base import PlatformCapabilities
+        return PlatformCapabilities(
+            max_message_length=100000,
+            supports_buttons=True,
+            supports_media=True,
+            max_buttons_per_row=10,
+        )
 
     def clear(self):
         self.messages.clear()
 
     def last_message_contains(self, text: str) -> bool:
-        return any(text.lower() in m["text"].lower() for m in self.messages)
+        return any(text.lower() in m.get("text", "").lower() for m in self.messages)
 
     def last_message(self) -> Optional[dict]:
         return self.messages[-1] if self.messages else None
@@ -1278,7 +1282,7 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
 # Section D: Draft Lifecycle
 # ---------------------------------------------------------------------------
 
-def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, telegram_capture: TelegramCapture):
+def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """D1-D7: Draft lifecycle scenarios."""
     from social_hook.db import operations as ops
 
@@ -1286,15 +1290,14 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, telegram_capt
         harness.seed_project()
 
     config = harness.load_config()
-    token = config.env.get("TELEGRAM_BOT_TOKEN", "test")
     chat_id = config.env.get("TELEGRAM_CHAT_ID", "test")
 
     # D1: Approve draft
     def d1():
         draft = harness.seed_draft(harness.project_id, status="draft")
         from social_hook.bot.commands import cmd_approve
-        telegram_capture.clear()
-        cmd_approve(token, chat_id, draft.id, config)
+        adapter.clear()
+        cmd_approve(adapter, chat_id, draft.id, config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "approved", f"Status: {updated.status}"
@@ -1306,8 +1309,8 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, telegram_capt
     def d2():
         draft = harness.seed_draft(harness.project_id, status="draft")
         from social_hook.bot.commands import cmd_reject
-        telegram_capture.clear()
-        cmd_reject(token, chat_id, f"{draft.id} too formal", config)
+        adapter.clear()
+        cmd_reject(adapter, chat_id, f"{draft.id} too formal", config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "rejected", f"Status: {updated.status}"
@@ -1321,8 +1324,8 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, telegram_capt
     def d3():
         draft = harness.seed_draft(harness.project_id, status="draft")
         from social_hook.bot.commands import cmd_schedule
-        telegram_capture.clear()
-        cmd_schedule(token, chat_id, draft.id, config)
+        adapter.clear()
+        cmd_schedule(adapter, chat_id, draft.id, config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "scheduled", f"Status: {updated.status}"
@@ -1335,8 +1338,8 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, telegram_capt
     def d4():
         draft = harness.seed_draft(harness.project_id, status="draft")
         from social_hook.bot.commands import cmd_schedule
-        telegram_capture.clear()
-        cmd_schedule(token, chat_id, f"{draft.id} 2026-03-01 14:00", config)
+        adapter.clear()
+        cmd_schedule(adapter, chat_id, f"{draft.id} 2026-03-01 14:00", config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "scheduled", f"Status: {updated.status}"
@@ -1352,8 +1355,8 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, telegram_capt
             scheduled_time=datetime.now(timezone.utc).isoformat(),
         )
         from social_hook.bot.commands import cmd_cancel
-        telegram_capture.clear()
-        cmd_cancel(token, chat_id, draft.id, config)
+        adapter.clear()
+        cmd_cancel(adapter, chat_id, draft.id, config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "cancelled", f"Status: {updated.status}"
@@ -1369,8 +1372,8 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, telegram_capt
             retry_count=1,
         )
         from social_hook.bot.commands import cmd_retry
-        telegram_capture.clear()
-        cmd_retry(token, chat_id, draft.id, config)
+        adapter.clear()
+        cmd_retry(adapter, chat_id, draft.id, config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "scheduled", f"Status: {updated.status}"
@@ -1494,30 +1497,31 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
 # Section F: Bot Commands
 # ---------------------------------------------------------------------------
 
-def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture: TelegramCapture):
+def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """F1-F13: Bot command scenarios."""
+    from social_hook.messaging.base import InboundMessage
+
     if not harness.project_id:
         harness.seed_project()
 
     config = harness.load_config()
-    token = config.env.get("TELEGRAM_BOT_TOKEN", "test")
     chat_id = config.env.get("TELEGRAM_CHAT_ID", "test")
 
     def make_message(text):
-        return {
-            "message_id": 1,
-            "from": {"id": int(chat_id) if chat_id.isdigit() else 0},
-            "chat": {"id": int(chat_id) if chat_id.isdigit() else 0},
-            "text": text,
-        }
+        return InboundMessage(
+            message_id="1",
+            chat_id=chat_id,
+            sender_id=chat_id,
+            text=text,
+        )
 
     from social_hook.bot.commands import handle_command
 
     # F1: Help
     def f1():
-        telegram_capture.clear()
-        handle_command(make_message("/help"), token, config)
-        assert telegram_capture.last_message_contains("command"), \
+        adapter.clear()
+        handle_command(make_message("/help"), adapter, config)
+        assert adapter.last_message_contains("command"), \
             f"Expected 'command' in response"
         return "Help sent"
 
@@ -1525,18 +1529,18 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
 
     # F2: Status with data
     def f2():
-        telegram_capture.clear()
-        handle_command(make_message("/status"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_command(make_message("/status"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Status sent"
 
     runner.run_scenario("F2", "Status with data", f2)
 
     # F3: Status empty (tested with real state — may have projects)
     def f3():
-        telegram_capture.clear()
-        handle_command(make_message("/status"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_command(make_message("/status"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Status sent"
 
     runner.run_scenario("F3", "Status (may have data)", f3)
@@ -1545,28 +1549,28 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
     def f4():
         # Seed a pending draft
         harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_command(make_message("/pending"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_command(make_message("/pending"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Pending list sent"
 
     runner.run_scenario("F4", "Pending list", f4)
 
     # F5: Pending empty
     def f5():
-        telegram_capture.clear()
-        handle_command(make_message("/pending"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_command(make_message("/pending"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Pending response sent"
 
     runner.run_scenario("F5", "Pending (may be empty)", f5)
 
     # F6: Projects list
     def f6():
-        telegram_capture.clear()
-        handle_command(make_message("/projects"), token, config)
-        assert telegram_capture.messages, "No message sent"
-        msg = telegram_capture.last_message()
+        adapter.clear()
+        handle_command(make_message("/projects"), adapter, config)
+        assert adapter.messages, "No message sent"
+        msg = adapter.last_message()
         assert "social-media-auto-hook" in msg["text"].lower() or "project" in msg["text"].lower()
         return "Projects listed"
 
@@ -1574,9 +1578,9 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
 
     # F7: Usage summary
     def f7():
-        telegram_capture.clear()
-        handle_command(make_message("/usage"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_command(make_message("/usage"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Usage sent"
 
     runner.run_scenario("F7", "Usage summary", f7)
@@ -1584,20 +1588,20 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
     # F8: Review draft
     def f8():
         draft = harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_command(make_message(f"/review {draft.id}"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_command(make_message(f"/review {draft.id}"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Review sent"
 
     runner.run_scenario("F8", "Review draft", f8)
 
     # F9: Unknown command
     def f9():
-        telegram_capture.clear()
-        handle_command(make_message("/foo"), token, config)
-        assert telegram_capture.messages, "No message sent"
-        assert telegram_capture.last_message_contains("unknown") or \
-               telegram_capture.last_message_contains("not recognized")
+        adapter.clear()
+        handle_command(make_message("/foo"), adapter, config)
+        assert adapter.messages, "No message sent"
+        assert adapter.last_message_contains("unknown") or \
+               adapter.last_message_contains("not recognized")
         return "Unknown command handled"
 
     runner.run_scenario("F9", "Unknown command", f9)
@@ -1605,8 +1609,8 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
     # F10: Pause project
     def f10():
         from social_hook.db import operations as ops
-        telegram_capture.clear()
-        handle_command(make_message(f"/pause {harness.project_id}"), token, config)
+        adapter.clear()
+        handle_command(make_message(f"/pause {harness.project_id}"), adapter, config)
 
         project = ops.get_project(harness.conn, harness.project_id)
         assert project.paused is True, f"paused={project.paused}"
@@ -1632,8 +1636,8 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
         )
         harness.conn.commit()
 
-        telegram_capture.clear()
-        handle_command(make_message(f"/resume {harness.project_id}"), token, config)
+        adapter.clear()
+        handle_command(make_message(f"/resume {harness.project_id}"), adapter, config)
 
         project = ops.get_project(harness.conn, harness.project_id)
         assert project.paused is False, f"paused={project.paused}"
@@ -1647,9 +1651,9 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
             harness.project_id, status="scheduled",
             scheduled_time=datetime.now(timezone.utc).isoformat(),
         )
-        telegram_capture.clear()
-        handle_command(make_message("/scheduled"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_command(make_message("/scheduled"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Scheduled list sent"
 
     runner.run_scenario("F12", "Scheduled list", f12)
@@ -1684,11 +1688,11 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
         insert_draft(harness.conn, draft)
         harness.conn.commit()
 
-        telegram_capture.clear()
-        handle_command(make_message(f"/review {draft.id}"), token, config)
+        adapter.clear()
+        handle_command(make_message(f"/review {draft.id}"), adapter, config)
 
-        assert telegram_capture.messages, "No message sent"
-        msg_text = telegram_capture.last_message()["text"]
+        assert adapter.messages, "No message sent"
+        msg_text = adapter.last_message()["text"]
         assert "Episode:" in msg_text or "episode" in msg_text.lower(), \
             f"Expected episode_type in review output"
         assert "Angle:" in msg_text or "angle" in msg_text.lower(), \
@@ -1702,34 +1706,33 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, telegram_capture
 # Section G: Bot Buttons
 # ---------------------------------------------------------------------------
 
-def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture: TelegramCapture):
+def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """G1-G14: Bot button scenarios."""
     from social_hook.db import operations as ops
     from social_hook.bot.buttons import handle_callback
+    from social_hook.messaging.base import InboundMessage, CallbackEvent
 
     if not harness.project_id:
         harness.seed_project()
 
     config = harness.load_config()
-    token = config.env.get("TELEGRAM_BOT_TOKEN", "test")
     chat_id = config.env.get("TELEGRAM_CHAT_ID", "test")
 
     def make_callback(data):
-        return {
-            "id": "cb_1",
-            "from": {"id": int(chat_id) if chat_id.isdigit() else 0},
-            "message": {
-                "message_id": 1,
-                "chat": {"id": int(chat_id) if chat_id.isdigit() else 0},
-            },
-            "data": data,
-        }
+        action, _, payload = data.partition(":")
+        return CallbackEvent(
+            callback_id="cb_1",
+            chat_id=chat_id,
+            action=action,
+            payload=payload,
+            message_id="1",
+        )
 
     # G1: Quick approve
     def g1():
         draft = harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_callback(make_callback(f"quick_approve:{draft.id}"), token, config)
+        adapter.clear()
+        handle_callback(make_callback(f"quick_approve:{draft.id}"), adapter, config)
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status in ("scheduled", "approved"), f"Status: {updated.status}"
         return f"Status: {updated.status}"
@@ -1739,9 +1742,9 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
     # G2: Schedule submenu
     def g2():
         draft = harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_callback(make_callback(f"schedule:{draft.id}"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_callback(make_callback(f"schedule:{draft.id}"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Schedule submenu shown"
 
     runner.run_scenario("G2", "Schedule submenu", g2)
@@ -1749,8 +1752,8 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
     # G3: Schedule optimal
     def g3():
         draft = harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_callback(make_callback(f"schedule_optimal:{draft.id}"), token, config)
+        adapter.clear()
+        handle_callback(make_callback(f"schedule_optimal:{draft.id}"), adapter, config)
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "scheduled", f"Status: {updated.status}"
         return f"Scheduled at: {updated.scheduled_time}"
@@ -1760,9 +1763,9 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
     # G4: Edit submenu
     def g4():
         draft = harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_callback(make_callback(f"edit:{draft.id}"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_callback(make_callback(f"edit:{draft.id}"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Edit submenu shown"
 
     runner.run_scenario("G4", "Edit submenu", g4)
@@ -1770,9 +1773,9 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
     # G5: Reject submenu
     def g5():
         draft = harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_callback(make_callback(f"reject:{draft.id}"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_callback(make_callback(f"reject:{draft.id}"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Reject submenu shown"
 
     runner.run_scenario("G5", "Reject submenu", g5)
@@ -1780,8 +1783,8 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
     # G6: Reject now
     def g6():
         draft = harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_callback(make_callback(f"reject_now:{draft.id}"), token, config)
+        adapter.clear()
+        handle_callback(make_callback(f"reject_now:{draft.id}"), adapter, config)
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "rejected", f"Status: {updated.status}"
         return "Draft rejected"
@@ -1794,8 +1797,8 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
             harness.project_id, status="scheduled",
             scheduled_time=datetime.now(timezone.utc).isoformat(),
         )
-        telegram_capture.clear()
-        handle_callback(make_callback(f"cancel:{draft.id}"), token, config)
+        adapter.clear()
+        handle_callback(make_callback(f"cancel:{draft.id}"), adapter, config)
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "cancelled", f"Status: {updated.status}"
         return "Draft cancelled"
@@ -1805,36 +1808,36 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
     # G8: Review
     def g8():
         draft = harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_callback(make_callback(f"review:{draft.id}"), token, config)
-        assert telegram_capture.messages, "No message sent"
+        adapter.clear()
+        handle_callback(make_callback(f"review:{draft.id}"), adapter, config)
+        assert adapter.messages, "No message sent"
         return "Review shown"
 
     runner.run_scenario("G8", "Review button", g8)
 
-    # G9: Edit text → reply saves content
+    # G9: Edit text -> reply saves content
     def g9():
         from social_hook.bot.buttons import _pending_edits, clear_pending_edit
         from social_hook.bot.commands import handle_message
 
         draft = harness.seed_draft(harness.project_id, status="draft",
                                     content="Original content for G9 test")
-        telegram_capture.clear()
+        adapter.clear()
 
         # Step 1: Tap edit_text button to register pending edit
-        handle_callback(make_callback(f"edit_text:{draft.id}"), token, config)
-        assert telegram_capture.messages, "No edit prompt sent"
+        handle_callback(make_callback(f"edit_text:{draft.id}"), adapter, config)
+        assert adapter.messages, "No edit prompt sent"
 
         # Step 2: Reply with new content (handle_message checks pending edit)
         new_content = "Updated content via edit flow"
-        msg = {
-            "message_id": 2,
-            "from": {"id": int(chat_id) if chat_id.isdigit() else 0},
-            "chat": {"id": int(chat_id) if chat_id.isdigit() else 0},
-            "text": new_content,
-        }
-        telegram_capture.clear()
-        handle_message(msg, token, config)
+        msg = InboundMessage(
+            message_id="2",
+            chat_id=chat_id,
+            sender_id=chat_id,
+            text=new_content,
+        )
+        adapter.clear()
+        handle_message(msg, adapter, config)
 
         # Verify: draft content updated in DB
         updated = ops.get_draft(harness.conn, draft.id)
@@ -1850,7 +1853,7 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
 
     runner.run_scenario("G9", "Edit text -> reply saves content", g9)
 
-    # G10: Edit text → expired TTL
+    # G10: Edit text -> expired TTL
     def g10():
         import time as _time
         from unittest.mock import patch as _patch
@@ -1860,11 +1863,11 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
         draft = harness.seed_draft(harness.project_id, status="draft",
                                     content="Original content for G10 test")
         original_content = "Original content for G10 test"
-        telegram_capture.clear()
+        adapter.clear()
 
         # Register pending edit
-        handle_callback(make_callback(f"edit_text:{draft.id}"), token, config)
-        assert telegram_capture.messages, "No edit prompt sent"
+        handle_callback(make_callback(f"edit_text:{draft.id}"), adapter, config)
+        assert adapter.messages, "No edit prompt sent"
 
         # Expire the TTL by patching time.time to return a future value
         real_time = _time.time
@@ -1873,14 +1876,14 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
         with _patch("social_hook.bot.buttons.time") as mock_time:
             mock_time.time.return_value = expired_time
 
-            msg = {
-                "message_id": 3,
-                "from": {"id": int(chat_id) if chat_id.isdigit() else 0},
-                "chat": {"id": int(chat_id) if chat_id.isdigit() else 0},
-                "text": "This should not be saved",
-            }
-            telegram_capture.clear()
-            handle_message(msg, token, config)
+            msg = InboundMessage(
+                message_id="3",
+                chat_id=chat_id,
+                sender_id=chat_id,
+                text="This should not be saved",
+            )
+            adapter.clear()
+            handle_message(msg, adapter, config)
 
         # Verify: draft content unchanged
         updated = ops.get_draft(harness.conn, draft.id)
@@ -1898,19 +1901,19 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
                                       content="Draft A content")
         draft_b = harness.seed_draft(harness.project_id, status="draft",
                                       content="Draft B content")
-        telegram_capture.clear()
+        adapter.clear()
 
         # Register edit for draft A
-        handle_callback(make_callback(f"edit_text:{draft_a.id}"), token, config)
+        handle_callback(make_callback(f"edit_text:{draft_a.id}"), adapter, config)
         assert get_pending_edit(chat_id) == draft_a.id
 
         # Now register edit for draft B (should warn about switching)
-        telegram_capture.clear()
-        handle_callback(make_callback(f"edit_text:{draft_b.id}"), token, config)
+        adapter.clear()
+        handle_callback(make_callback(f"edit_text:{draft_b.id}"), adapter, config)
 
         # Verify warning was sent
-        assert telegram_capture.last_message_contains("switching") or \
-               telegram_capture.last_message_contains("cancelled"), \
+        assert adapter.last_message_contains("switching") or \
+               adapter.last_message_contains("cancelled"), \
             "Expected overwrite warning"
 
         # Verify pending edit is now B
@@ -1923,7 +1926,6 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
     # G11: Adapter bridge sends via adapter when set
     def g11():
         from unittest.mock import MagicMock as _MagicMock
-        from social_hook.bot.buttons import set_adapter as set_buttons_adapter
         from social_hook.messaging.base import SendResult
 
         draft = harness.seed_draft(harness.project_id, status="draft")
@@ -1934,24 +1936,19 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
         )
         mock_adapter.answer_callback.return_value = True
 
-        set_buttons_adapter(mock_adapter)
-        try:
-            telegram_capture.clear()
-            handle_callback(make_callback(f"approve:{draft.id}"), token, config)
+        adapter.clear()
+        handle_callback(make_callback(f"approve:{draft.id}"), mock_adapter, config)
 
-            # Verify adapter was used (not direct HTTP)
-            assert mock_adapter.send_message.called or mock_adapter.answer_callback.called, \
-                "Expected adapter methods to be called"
-            return "Adapter bridge used for button handler"
-        finally:
-            set_buttons_adapter(None)
+        # Verify adapter was used (not direct HTTP)
+        assert mock_adapter.send_message.called or mock_adapter.answer_callback.called, \
+            "Expected adapter methods to be called"
+        return "Adapter bridge used for button handler"
 
     runner.run_scenario("G11", "Adapter bridge sends via adapter", g11)
 
     # G12: Edit media shows current file
     def g12():
         from unittest.mock import MagicMock as _MagicMock
-        from social_hook.bot.buttons import set_adapter as set_buttons_adapter
         from social_hook.messaging.base import SendResult
 
         draft = harness.seed_draft(
@@ -1969,29 +1966,18 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
         mock_adapter.get_capabilities.return_value = caps
         mock_adapter.send_media.return_value = SendResult(success=True)
 
-        set_buttons_adapter(mock_adapter)
-        try:
-            telegram_capture.clear()
-            handle_callback(make_callback(f"edit_media:{draft.id}"), token, config)
+        adapter.clear()
+        handle_callback(make_callback(f"edit_media:{draft.id}"), mock_adapter, config)
 
-            # Verify send_media was called with the file path
-            assert mock_adapter.send_media.called, "Expected send_media to be called"
-            call_args = mock_adapter.send_media.call_args
-            assert "/tmp/test.png" in str(call_args), \
-                f"Expected /tmp/test.png in send_media args: {call_args}"
+        # Verify send_media was called with the file path
+        assert mock_adapter.send_media.called, "Expected send_media to be called"
+        call_args = mock_adapter.send_media.call_args
+        assert "/tmp/test.png" in str(call_args), \
+            f"Expected /tmp/test.png in send_media args: {call_args}"
 
-            # Verify buttons include Regenerate and Remove media
-            assert telegram_capture.messages, "No button message sent"
-            btn_msg = [m for m in telegram_capture.messages if m.get("buttons")]
-            if btn_msg:
-                cb_data = [b["callback_data"] for row in btn_msg[-1]["buttons"] for b in row]
-                assert any("media_regen" in d for d in cb_data), \
-                    f"Expected media_regen button, got {cb_data}"
-                assert any("media_remove" in d for d in cb_data), \
-                    f"Expected media_remove button, got {cb_data}"
-            return "Edit media shows file + action buttons"
-        finally:
-            set_buttons_adapter(None)
+        # Verify buttons include Regenerate and Remove media
+        assert mock_adapter.send_message.called, "No button message sent"
+        return "Edit media shows file + action buttons"
 
     runner.run_scenario("G12", "Edit media shows current file", g12)
 
@@ -2006,7 +1992,7 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
             media_type="mermaid",
             media_spec={"diagram": "graph TD; A-->B"},
         )
-        telegram_capture.clear()
+        adapter.clear()
 
         mock_media_adapter = _MagicMock()
         mock_media_adapter.generate.return_value = MediaResult(
@@ -2017,7 +2003,7 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
             "social_hook.adapters.registry.get_media_adapter",
             return_value=mock_media_adapter,
         ):
-            handle_callback(make_callback(f"media_regen:{draft.id}"), token, config)
+            handle_callback(make_callback(f"media_regen:{draft.id}"), adapter, config)
 
         assert mock_media_adapter.generate.called, "Expected media adapter generate() called"
 
@@ -2035,8 +2021,8 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
             harness.project_id, status="draft",
             media_paths=["/tmp/to_remove.png"],
         )
-        telegram_capture.clear()
-        handle_callback(make_callback(f"media_remove:{draft.id}"), token, config)
+        adapter.clear()
+        handle_callback(make_callback(f"media_remove:{draft.id}"), adapter, config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.media_paths == [], \
@@ -2057,54 +2043,55 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, telegram_capture:
 # Section H: Bot Free-Text (Gatekeeper)
 # ---------------------------------------------------------------------------
 
-def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, telegram_capture: TelegramCapture):
+def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """H1-H5: Bot free-text scenarios."""
+    from social_hook.messaging.base import InboundMessage
+
     if not harness.project_id:
         harness.seed_project()
 
     config = harness.load_config()
-    token = config.env.get("TELEGRAM_BOT_TOKEN", "test")
     chat_id = config.env.get("TELEGRAM_CHAT_ID", "test")
 
     from social_hook.bot.commands import handle_message
 
     def make_message(text):
-        return {
-            "message_id": 1,
-            "from": {"id": int(chat_id) if chat_id.isdigit() else 0},
-            "chat": {"id": int(chat_id) if chat_id.isdigit() else 0},
-            "text": text,
-        }
+        return InboundMessage(
+            message_id="1",
+            chat_id=chat_id,
+            sender_id=chat_id,
+            text=text,
+        )
 
     # H1: Query message
     def h1():
         # Seed a draft so there's something to query
         harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_message(make_message("what's pending?"), token, config)
-        assert telegram_capture.messages, "No response sent"
+        adapter.clear()
+        handle_message(make_message("what's pending?"), adapter, config)
+        assert adapter.messages, "No response sent"
 
         runner.add_review_item(
             "H1",
             title='Gatekeeper: "what\'s pending?"',
-            response=telegram_capture.last_message()["text"] if telegram_capture.messages else "",
+            response=adapter.last_message()["text"] if adapter.messages else "",
             review_question="Helpful and accurate?",
         )
         return "Gatekeeper responded"
 
-    runner.run_scenario("H1", "Query message → gatekeeper routes", h1)
+    runner.run_scenario("H1", "Query message -> gatekeeper routes", h1)
 
     # H2: Expert escalation
     def h2():
         harness.seed_draft(harness.project_id, status="draft")
-        telegram_capture.clear()
-        handle_message(make_message("make it punchier"), token, config)
-        assert telegram_capture.messages, "No response sent"
+        adapter.clear()
+        handle_message(make_message("make it punchier"), adapter, config)
+        assert adapter.messages, "No response sent"
 
         runner.add_review_item(
             "H2",
             title='Expert escalation: "make it punchier"',
-            response=telegram_capture.last_message()["text"] if telegram_capture.messages else "",
+            response=adapter.last_message()["text"] if adapter.messages else "",
             review_question="Did the expert improve the content?",
         )
         return "Expert escalation handled"
@@ -2120,12 +2107,12 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, telegram_capture: 
                                     content="Old draft content for substitution")
         set_chat_draft_context(chat_id, draft.id, harness.project_id)
 
-        telegram_capture.clear()
+        adapter.clear()
         handle_message(
             make_message("use this instead: Brand new post content about automation"),
-            token, config,
+            adapter, config,
         )
-        assert telegram_capture.messages, "No response sent"
+        assert adapter.messages, "No response sent"
 
         # Check if draft content was updated (gatekeeper should route to substitute)
         updated = ops.get_draft(harness.conn, draft.id)
@@ -2139,7 +2126,7 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, telegram_capture: 
         runner.add_review_item(
             "H3",
             title='Substitute via gatekeeper: "use this instead: ..."',
-            response=telegram_capture.last_message()["text"] if telegram_capture.messages else "",
+            response=adapter.last_message()["text"] if adapter.messages else "",
             review_question="Did the Gatekeeper correctly route to substitute? Is the content saved accurately?",
             content_changed=content_changed,
         )
@@ -2156,9 +2143,9 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, telegram_capture: 
                                     content="Original draft for expert refinement test")
         set_chat_draft_context(chat_id, draft.id, harness.project_id)
 
-        telegram_capture.clear()
-        handle_message(make_message("make it punchier and more engaging"), token, config)
-        assert telegram_capture.messages, "No response sent"
+        adapter.clear()
+        handle_message(make_message("make it punchier and more engaging"), adapter, config)
+        assert adapter.messages, "No response sent"
 
         # Check if expert refined and saved
         updated = ops.get_draft(harness.conn, draft.id)
@@ -2172,7 +2159,7 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, telegram_capture: 
         runner.add_review_item(
             "H4",
             title='Expert refine: "make it punchier and more engaging"',
-            response=telegram_capture.last_message()["text"] if telegram_capture.messages else "",
+            response=adapter.last_message()["text"] if adapter.messages else "",
             review_question="Did the Expert improve the draft? Is the refined content better than the original?",
             content_changed=content_changed,
             original="Original draft for expert refinement test",
@@ -2205,10 +2192,10 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, telegram_capture: 
         original_route = Gatekeeper.route
 
         with _patch.object(Gatekeeper, "route", capture_route):
-            telegram_capture.clear()
+            adapter.clear()
             handle_message(
                 make_message("what do you think of this draft?"),
-                token, config,
+                adapter, config,
             )
 
         assert captured_args.get("draft_context") is not None, \
@@ -2219,7 +2206,7 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, telegram_capture: 
         runner.add_review_item(
             "H5",
             title='Gatekeeper context threading: "what do you think of this draft?"',
-            response=telegram_capture.last_message()["text"] if telegram_capture.messages else "",
+            response=adapter.last_message()["text"] if adapter.messages else "",
             review_question="Is the Gatekeeper's response more contextual now? Does it reference the draft content?",
         )
         return "Gatekeeper received draft context and project_id"
@@ -2363,7 +2350,7 @@ def test_J_cli(harness: E2EHarness, runner: E2ERunner):
 # Section K: Cross-Cutting
 # ---------------------------------------------------------------------------
 
-def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, telegram_capture: TelegramCapture):
+def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """K1-K6: Cross-cutting scenarios."""
     from social_hook.db import operations as ops
 
@@ -2371,7 +2358,6 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, telegram_capture
         harness.seed_project()
 
     config = harness.load_config()
-    token = config.env.get("TELEGRAM_BOT_TOKEN", "test")
     chat_id = config.env.get("TELEGRAM_CHAT_ID", "test")
 
     # K1: Full chain: trigger → approve → schedule → post
@@ -2389,14 +2375,14 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, telegram_capture
             return "SKIP: No draft created (evaluator chose not_post_worthy)"
 
         draft = drafts[0]
-        telegram_capture.clear()
-        cmd_approve(token, chat_id, draft.id, config)
+        adapter.clear()
+        cmd_approve(adapter, chat_id, draft.id, config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         if updated.status == "approved":
             # Need to schedule it
             from social_hook.bot.commands import cmd_schedule
-            cmd_schedule(token, chat_id, draft.id, config)
+            cmd_schedule(adapter, chat_id, draft.id, config)
             updated = ops.get_draft(harness.conn, draft.id)
 
         if updated.status == "scheduled":
@@ -2431,8 +2417,8 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, telegram_capture
             return "SKIP: No draft created"
 
         draft = drafts[0]
-        telegram_capture.clear()
-        cmd_reject(token, chat_id, f"{draft.id} not the right angle", config)
+        adapter.clear()
+        cmd_reject(adapter, chat_id, f"{draft.id} not the right angle", config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "rejected", f"Status: {updated.status}"
@@ -3379,7 +3365,7 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
         before_count = len(before_drafts)
 
         exit_code = run_trigger(
-            COMMITS["significant"], str(harness.repo_path),
+            COMMITS["web_dashboard"], str(harness.repo_path),
             verbose=runner.verbose,
         )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
@@ -3639,12 +3625,11 @@ def main():
     real_base = Path(real_home) / ".social-hook"
 
     harness = E2EHarness(real_base=real_base, provider=provider)
-    telegram_capture = TelegramCapture()
+    adapter = CaptureAdapter()
 
     try:
         print("\n  Setting up isolated environment...")
         harness.setup()
-        telegram_capture.install()
         print(f"  Temp HOME: {harness.fake_home}")
         print(f"  Repo: {harness.repo_path}")
 
@@ -3663,7 +3648,7 @@ def main():
 
         if "D" in sections_to_run:
             print("\n--- D. Draft Lifecycle ---")
-            test_D_draft_lifecycle(harness, runner, telegram_capture)
+            test_D_draft_lifecycle(harness, runner, adapter)
 
         if "E" in sections_to_run:
             print("\n--- E. Scheduler ---")
@@ -3671,15 +3656,15 @@ def main():
 
         if "F" in sections_to_run:
             print("\n--- F. Bot Commands ---")
-            test_F_bot_commands(harness, runner, telegram_capture)
+            test_F_bot_commands(harness, runner, adapter)
 
         if "G" in sections_to_run:
             print("\n--- G. Bot Buttons ---")
-            test_G_bot_buttons(harness, runner, telegram_capture)
+            test_G_bot_buttons(harness, runner, adapter)
 
         if "H" in sections_to_run:
             print("\n--- H. Gatekeeper ---")
-            test_H_gatekeeper(harness, runner, telegram_capture)
+            test_H_gatekeeper(harness, runner, adapter)
 
         if "I" in sections_to_run:
             print("\n--- I. Setup Validation ---")
@@ -3691,7 +3676,7 @@ def main():
 
         if "K" in sections_to_run:
             print("\n--- K. Cross-Cutting ---")
-            test_K_crosscutting(harness, runner, telegram_capture)
+            test_K_crosscutting(harness, runner, adapter)
 
         if "L" in sections_to_run:
             print("\n--- L. Multi-Provider ---")
@@ -3712,7 +3697,6 @@ def main():
         if args.verbose:
             traceback.print_exc()
     finally:
-        telegram_capture.uninstall()
         harness.teardown()
 
     runner.print_summary()
