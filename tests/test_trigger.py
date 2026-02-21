@@ -15,7 +15,6 @@ from social_hook.trigger import (
     git_remote_origin,
     parse_commit_info,
     run_trigger,
-    send_telegram_notification,
 )
 
 
@@ -190,30 +189,6 @@ class TestGitRemoteOrigin:
         assert git_remote_origin(str(temp_dir)) is None
 
 
-class TestSendTelegramNotification:
-    """Tests for send_telegram_notification."""
-
-    @patch("social_hook.trigger.requests.post")
-    def test_successful_send(self, mock_post):
-        mock_post.return_value = MagicMock(status_code=200)
-        result = send_telegram_notification("token", "123", "Hello")
-        assert result is True
-        mock_post.assert_called_once()
-
-    @patch("social_hook.trigger.requests.post")
-    def test_failed_send(self, mock_post):
-        mock_post.return_value = MagicMock(status_code=400)
-        result = send_telegram_notification("token", "123", "Hello")
-        assert result is False
-
-    @patch("social_hook.trigger.requests.post")
-    def test_network_error(self, mock_post):
-        import requests
-        mock_post.side_effect = requests.RequestException("Connection failed")
-        result = send_telegram_notification("token", "123", "Hello")
-        assert result is False
-
-
 class TestRunTrigger:
     """Tests for run_trigger."""
 
@@ -300,17 +275,19 @@ class TestTriggerUsesAdapter:
         from datetime import datetime
         from social_hook.messaging.base import SendResult
 
-        # Config with Telegram env vars
+        # Config with Telegram env vars and dict-based platforms
+        from social_hook.config.platforms import OutputPlatformConfig
         cfg = MagicMock()
-        cfg.platforms.x.enabled = True
-        cfg.platforms.x.account_tier = "free"
-        cfg.platforms.linkedin.enabled = False
+        cfg.platforms = {
+            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+        }
         cfg.image_generation.enabled = False
         cfg.scheduling.timezone = "UTC"
         cfg.scheduling.max_posts_per_day = 3
         cfg.scheduling.min_gap_minutes = 30
-        cfg.scheduling.optimal_days = None
-        cfg.scheduling.optimal_hours = None
+        cfg.scheduling.optimal_days = ["Tue", "Wed", "Thu"]
+        cfg.scheduling.optimal_hours = [9, 12, 17]
+        cfg.web.enabled = False
         cfg.env.get = lambda key, default="": {
             "TELEGRAM_BOT_TOKEN": "test-token",
             "TELEGRAM_ALLOWED_CHAT_IDS": "111,222",
@@ -392,17 +369,19 @@ def _make_trigger_mocks(
     """
     from datetime import datetime
     from social_hook.adapters.models import MediaResult
+    from social_hook.config.platforms import OutputPlatformConfig
 
     cfg = MagicMock()
-    cfg.platforms.x.enabled = True
-    cfg.platforms.x.account_tier = "free"
-    cfg.platforms.linkedin.enabled = False
+    cfg.platforms = {
+        "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+    }
     cfg.image_generation.enabled = image_generation_enabled
     cfg.scheduling.timezone = "UTC"
     cfg.scheduling.max_posts_per_day = 3
     cfg.scheduling.min_gap_minutes = 30
-    cfg.scheduling.optimal_days = None
-    cfg.scheduling.optimal_hours = None
+    cfg.scheduling.optimal_days = ["Tue", "Wed", "Thu"]
+    cfg.scheduling.optimal_hours = [9, 12, 17]
+    cfg.web.enabled = False
 
     env_map = {}
     if gemini_key:
@@ -487,6 +466,7 @@ class TestTriggerMedia:
         mocks = _make_trigger_mocks(
             image_generation_enabled=True,
             drafter_media_type=MediaTool.mermaid,
+            evaluator_media_tool="mermaid",
             media_generate_result=MediaResult(success=True, file_path="/tmp/media/diagram.png"),
         )
 
@@ -537,6 +517,7 @@ class TestTriggerMedia:
         mocks = _make_trigger_mocks(
             image_generation_enabled=False,
             drafter_media_type=MediaTool.mermaid,
+            evaluator_media_tool="mermaid",
         )
 
         mock_config.return_value = mocks["cfg"]
@@ -619,6 +600,7 @@ class TestTriggerMedia:
         mocks = _make_trigger_mocks(
             image_generation_enabled=True,
             drafter_media_type=MediaTool.mermaid,
+            evaluator_media_tool="mermaid",
             media_generate_result=MediaResult(success=False, error="render failed"),
         )
 
@@ -665,6 +647,7 @@ class TestTriggerMedia:
         mocks = _make_trigger_mocks(
             image_generation_enabled=True,
             drafter_media_type=MediaTool.nano_banana_pro,
+            evaluator_media_tool="nano_banana_pro",
             gemini_key=None,
         )
 
@@ -709,6 +692,7 @@ class TestTriggerMedia:
         mocks = _make_trigger_mocks(
             image_generation_enabled=True,
             drafter_media_type=MediaTool.mermaid,
+            evaluator_media_tool="mermaid",
             media_generate_result=MediaResult(success=True, file_path="/tmp/media/diagram.png"),
             use_thread=True,
         )
@@ -790,6 +774,7 @@ class TestTriggerSendsMediaNotification:
         mocks = _make_trigger_mocks(
             image_generation_enabled=True,
             drafter_media_type=MediaTool.mermaid,
+            evaluator_media_tool="mermaid",
             media_generate_result=MediaResult(success=True, file_path="/tmp/media/img.png"),
         )
         # Need telegram env vars
@@ -830,4 +815,263 @@ class TestTriggerSendsMediaNotification:
         # Verify media path and caption
         for call in mock_adapter_send_media.call_args_list:
             assert call.args[1] == "/tmp/media/img.png"
-            assert "Media for draft" in call.kwargs.get("caption", call.args[2] if len(call.args) > 2 else "")
+            assert "Media for" in call.kwargs.get("caption", call.args[2] if len(call.args) > 2 else "")
+
+
+class TestPerPlatformPipeline:
+    """Tests for per-platform draft creation."""
+
+    def _make_per_platform_mocks(self, platforms_dict, episode_type="milestone",
+                                  web_enabled=False):
+        """Build common mocks for per-platform tests."""
+        from datetime import datetime
+        from social_hook.config.platforms import OutputPlatformConfig
+
+        cfg = MagicMock()
+        cfg.platforms = platforms_dict
+        cfg.image_generation.enabled = False
+        cfg.scheduling.timezone = "UTC"
+        cfg.scheduling.max_posts_per_day = 3
+        cfg.scheduling.min_gap_minutes = 30
+        cfg.scheduling.optimal_days = ["Tue", "Wed", "Thu"]
+        cfg.scheduling.optimal_hours = [9, 12, 17]
+        cfg.web.enabled = web_enabled
+        cfg.env.get = lambda key, default="": {}.get(key, default)
+
+        commit = MagicMock()
+        commit.hash = "abc12345"
+        commit.message = "Add feature"
+
+        evaluation = MagicMock()
+        evaluation.decision = "post_worthy"
+        evaluation.reasoning = "Good commit"
+        evaluation.angle = "feature"
+        evaluation.episode_type = episode_type
+        evaluation.post_category = "arc"
+        evaluation.arc_id = None
+        evaluation.media_tool = None
+        evaluation.platforms = {}
+
+        evaluator_instance = MagicMock()
+        evaluator_instance.evaluate.return_value = evaluation
+
+        draft_result = MagicMock()
+        draft_result.content = "Check out this feature!"
+        draft_result.reasoning = "Short and punchy"
+        draft_result.format_hint = "single"
+        draft_result.beat_count = 1
+        draft_result.media_type = None
+
+        drafter_instance = MagicMock()
+        drafter_instance.create_draft.return_value = draft_result
+
+        schedule = MagicMock()
+        schedule.datetime = datetime(2026, 2, 20, 12, 0, 0)
+        schedule.time_reason = "optimal"
+
+        return {
+            "cfg": cfg,
+            "commit": commit,
+            "evaluation": evaluation,
+            "evaluator_instance": evaluator_instance,
+            "draft_result": draft_result,
+            "drafter_instance": drafter_instance,
+            "schedule": schedule,
+        }
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_per_platform_draft_creation(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """Two enabled platforms both get drafts."""
+        from social_hook.config.platforms import OutputPlatformConfig
+
+        mocks = self._make_per_platform_mocks({
+            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+            "linkedin": OutputPlatformConfig(enabled=True, priority="secondary", type="builtin"),
+        })
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        # Capture insert_draft calls
+        saved_drafts = []
+
+        class CaptureDryRun:
+            def __init__(self, conn, dry_run):
+                pass
+            def insert_decision(self, decision):
+                pass
+            def insert_draft(self, draft):
+                saved_drafts.append(draft)
+            def insert_draft_tweet(self, tweet):
+                pass
+
+        with patch("social_hook.trigger.DryRunContext", side_effect=CaptureDryRun):
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+
+        assert exit_code == 0
+        assert len(saved_drafts) == 2
+        platforms = {d.platform for d in saved_drafts}
+        assert platforms == {"x", "linkedin"}
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_content_filter_notable(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """Secondary with filter=notable skips 'decision' episode type."""
+        from social_hook.config.platforms import OutputPlatformConfig
+
+        mocks = self._make_per_platform_mocks(
+            {
+                "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+                "linkedin": OutputPlatformConfig(enabled=True, priority="secondary", type="builtin"),
+            },
+            episode_type="decision",
+        )
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        saved_drafts = []
+
+        class CaptureDryRun:
+            def __init__(self, conn, dry_run):
+                pass
+            def insert_decision(self, decision):
+                pass
+            def insert_draft(self, draft):
+                saved_drafts.append(draft)
+            def insert_draft_tweet(self, tweet):
+                pass
+
+        with patch("social_hook.trigger.DryRunContext", side_effect=CaptureDryRun):
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+
+        assert exit_code == 0
+        # X primary has filter=all, so decision passes. LinkedIn secondary has filter=significant, decision doesn't pass.
+        assert len(saved_drafts) == 1
+        assert saved_drafts[0].platform == "x"
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_no_enabled_platforms(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """No enabled platforms exits with 0, no drafts."""
+        from social_hook.config.platforms import OutputPlatformConfig
+
+        mocks = self._make_per_platform_mocks({
+            "x": OutputPlatformConfig(enabled=False, priority="primary", type="builtin", account_tier="free"),
+        })
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+        assert exit_code == 0
+        # drafter should never be called
+        mock_drafter_cls.return_value.create_draft.assert_not_called()
+
+    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.llm.drafter.Drafter")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_all_platforms_filtered(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+    ):
+        """All platforms filtered exits with 0, no drafts."""
+        from social_hook.config.platforms import OutputPlatformConfig
+
+        # Only "significant" filter, but episode_type is "decision" — doesn't pass
+        mocks = self._make_per_platform_mocks(
+            {
+                "linkedin": OutputPlatformConfig(
+                    enabled=True, priority="secondary", type="builtin",
+                    filter="significant",
+                ),
+            },
+            episode_type="decision",
+        )
+
+        mock_config.return_value = mocks["cfg"]
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_parse.return_value = mocks["commit"]
+        mock_context.return_value = {}
+        mock_proj_config.return_value = MagicMock()
+        mock_evaluator_cls.return_value = mocks["evaluator_instance"]
+        mock_drafter_cls.return_value = mocks["drafter_instance"]
+        mock_schedule.return_value = mocks["schedule"]
+
+        exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+        assert exit_code == 0

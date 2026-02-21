@@ -1,0 +1,44 @@
+import Link from "next/link";
+import type { Draft } from "@/lib/types";
+import { StatusBadge } from "./status-badge";
+
+function platformLabel(platform: string): string {
+  const labels: Record<string, string> = {
+    x: "X (Twitter)",
+    linkedin: "LinkedIn",
+  };
+  return labels[platform] ?? platform;
+}
+
+export function DraftCard({ draft }: { draft: Draft }) {
+  const preview = draft.content.length > 140
+    ? draft.content.slice(0, 140) + "..."
+    : draft.content;
+
+  return (
+    <Link
+      href={`/drafts/${draft.id}`}
+      className="block rounded-lg border border-border p-4 transition-colors hover:bg-muted"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              {platformLabel(draft.platform)}
+            </span>
+            <StatusBadge status={draft.status} />
+          </div>
+          <p className="text-sm text-foreground">{preview}</p>
+          {draft.suggested_time && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Scheduled: {new Date(draft.suggested_time).toLocaleString()}
+            </p>
+          )}
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {new Date(draft.created_at).toLocaleDateString()}
+        </span>
+      </div>
+    </Link>
+  );
+}

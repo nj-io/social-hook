@@ -124,6 +124,61 @@ def scheduler_tick(
         typer.echo(f"Processed {processed} draft(s)")
 
 
+@app.command()
+def web(
+    ctx: typer.Context,
+    port: int = typer.Option(3000, "--port", "-p", help="Port for Next.js dev server"),
+    api_port: int = typer.Option(8741, "--api-port", help="Port for FastAPI server"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind to"),
+    install: bool = typer.Option(False, "--install", help="Run npm install before starting"),
+):
+    """Start the web dashboard (Next.js + FastAPI)."""
+    import shutil
+    import subprocess as sp
+
+    if not shutil.which("node"):
+        typer.echo("Error: Node.js is required for the web dashboard but was not found.")
+        typer.echo("Install Node.js from https://nodejs.org/")
+        raise typer.Exit(1)
+
+    web_dir = Path(__file__).resolve().parent.parent.parent.parent / "web"
+    if not web_dir.exists():
+        typer.echo(f"Error: Web directory not found at {web_dir}")
+        typer.echo("The web dashboard may not be installed.")
+        raise typer.Exit(1)
+
+    if install:
+        typer.echo("Running npm install...")
+        result = sp.run(["npm", "install"], cwd=str(web_dir))
+        if result.returncode != 0:
+            typer.echo("Error: npm install failed")
+            raise typer.Exit(1)
+
+    # Start FastAPI in background
+    typer.echo(f"Starting API server on {host}:{api_port}...")
+    api_proc = sp.Popen(
+        ["uvicorn", "social_hook.web.server:app", "--host", host, "--port", str(api_port)],
+    )
+
+    try:
+        # Start Next.js in foreground
+        typer.echo(f"Starting web dashboard on http://{host}:{port}...")
+        import os
+
+        next_env = os.environ.copy()
+        next_env["NEXT_PUBLIC_API_URL"] = f"http://{host}:{api_port}"
+        sp.run(
+            ["npx", "next", "dev", "--port", str(port)],
+            cwd=str(web_dir),
+            env=next_env,
+        )
+    except KeyboardInterrupt:
+        typer.echo("\nShutting down...")
+    finally:
+        api_proc.terminate()
+        api_proc.wait(timeout=5)
+
+
 # =============================================================================
 # Bot subcommand group
 # =============================================================================

@@ -90,14 +90,13 @@ def draft(
         # Create draft via LLM
         from social_hook.llm.factory import create_client
         from social_hook.llm.drafter import Drafter
-        # TODO: EvaluationResult does not exist — draft command is broken (pre-existing bug)
-        from social_hook.llm.evaluator import EvaluationResult
+        from social_hook.llm.schemas import LogDecisionInput
 
         client = create_client(config.models.drafter, config)
         drafter = Drafter(client)
 
-        # Build a minimal evaluation result
-        evaluation = EvaluationResult(
+        # Build a minimal evaluation result from the stored decision
+        evaluation = LogDecisionInput(
             decision=decision.decision,
             reasoning=decision.reasoning,
             angle=decision.angle,
@@ -107,12 +106,21 @@ def draft(
             media_tool=decision.media_tool,
         )
 
+        # Pick first enabled platform (prefer X, then LinkedIn, then first custom)
         platform = "x"
         tier = "free"
-        if config.platforms.x.enabled:
-            tier = config.platforms.x.account_tier or "free"
-        elif config.platforms.linkedin.enabled:
+        x_config = config.platforms.get("x")
+        linkedin_config = config.platforms.get("linkedin")
+        if x_config and x_config.enabled:
+            tier = x_config.account_tier or "free"
+        elif linkedin_config and linkedin_config.enabled:
             platform = "linkedin"
+        else:
+            for pname, pcfg in config.platforms.items():
+                if pcfg.enabled:
+                    platform = pname
+                    tier = getattr(pcfg, "account_tier", None) or "free"
+                    break
 
         draft_result = drafter.create_draft(
             evaluation, context, commit, db,

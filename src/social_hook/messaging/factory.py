@@ -9,15 +9,16 @@ Replace with your own exception for copy-paste reuse.
 from social_hook.errors import ConfigError
 from social_hook.messaging.base import MessagingAdapter
 
-KNOWN_PLATFORMS = {"telegram", "slack"}
+KNOWN_PLATFORMS = {"telegram", "slack", "web"}
 
 
-def create_adapter(platform: str, config) -> MessagingAdapter:
+def create_adapter(platform: str, config=None, **kwargs) -> MessagingAdapter:
     """Create the appropriate messaging adapter.
 
     Args:
-        platform: Platform name ("telegram", "slack")
-        config: Config object with .env dict
+        platform: Platform name ("telegram", "slack", "web")
+        config: Config object with .env dict (optional for web)
+        **kwargs: Platform-specific arguments (e.g., db_path for web)
 
     Returns:
         Configured MessagingAdapter instance
@@ -40,5 +41,13 @@ def create_adapter(platform: str, config) -> MessagingAdapter:
         if not token:
             raise ConfigError("SLACK_BOT_TOKEN required for Slack")
         return SlackAdapter(token=token)
+
+    elif platform == "web":
+        from social_hook.messaging.web import WebAdapter
+
+        db_path = kwargs.get("db_path", "")
+        if not db_path:
+            raise ConfigError("db_path required for WebAdapter")
+        return WebAdapter(db_path=db_path)
 
     raise ConfigError(f"Unknown messaging platform: {platform}")

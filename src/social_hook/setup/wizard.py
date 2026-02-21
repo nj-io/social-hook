@@ -25,7 +25,7 @@ COMMON_TIMEZONES = [
     "UTC",
 ]
 
-WIZARD_TOTAL_SECTIONS = 9
+WIZARD_TOTAL_SECTIONS = 10
 
 
 # =============================================================================
@@ -439,18 +439,23 @@ def _load_existing() -> tuple[dict[str, str], dict[str, Any]]:
 
         config = load_full_config()
         existing_env = dict(config.env) if config.env else {}
+        # Build platforms dict from dynamic registry
+        platforms_yaml: dict[str, Any] = {}
+        for pname, pcfg in config.platforms.items():
+            pentry: dict[str, Any] = {"enabled": pcfg.enabled}
+            if pcfg.account_tier is not None:
+                pentry["account_tier"] = pcfg.account_tier
+            if pcfg.priority != "secondary":
+                pentry["priority"] = pcfg.priority
+            platforms_yaml[pname] = pentry
+
         existing_yaml = {
             "models": {
                 "evaluator": config.models.evaluator,
                 "drafter": config.models.drafter,
                 "gatekeeper": config.models.gatekeeper,
             },
-            "platforms": {
-                "x": {
-                    "enabled": config.platforms.x.enabled,
-                    "account_tier": config.platforms.x.account_tier,
-                },
-            },
+            "platforms": platforms_yaml,
             "scheduling": {
                 "timezone": config.scheduling.timezone,
                 "max_posts_per_day": config.scheduling.max_posts_per_day,
@@ -511,9 +516,10 @@ def run_wizard(
             "  2. API credentials (only what's needed for your chosen providers)\n"
             "  3. Voice & style (how your posts sound)\n"
             "  4. Telegram bot (for draft notifications & approvals)\n"
-            "  5. Platforms (X/Twitter, LinkedIn)\n"
+            "  5. Platforms (X/Twitter, LinkedIn, custom)\n"
             "  6. Image generation\n"
-            "  7. Scheduling preferences\n\n"
+            "  7. Scheduling preferences\n"
+            "  8. Web dashboard\n\n"
             "Press Ctrl+C at any time to cancel.\n"
             "[dim]Existing values shown as defaults.[/dim]",
             title="Welcome",
@@ -528,9 +534,10 @@ def run_wizard(
         typer.echo("  2. API credentials (only what's needed for your chosen providers)")
         typer.echo("  3. Voice & style (how your posts sound)")
         typer.echo("  4. Telegram bot (for draft notifications & approvals)")
-        typer.echo("  5. Platforms (X/Twitter, LinkedIn)")
+        typer.echo("  5. Platforms (X/Twitter, LinkedIn, custom)")
         typer.echo("  6. Image generation")
         typer.echo("  7. Scheduling preferences")
+        typer.echo("  8. Web dashboard")
         typer.echo("\nPress Ctrl+C at any time to cancel.")
         typer.echo("Existing values shown as defaults.\n")
 
@@ -573,17 +580,18 @@ def run_wizard(
             _setup_telegram(env_vars, existing_env, progress)
             _save_progress()
 
-        # Section 5: X (Twitter)
-        if only is None or only == "x":
+        # Section 5: Platforms (X, LinkedIn, custom)
+        if only is None or only == "platforms":
+            _setup_platforms(yaml_config, env_vars, existing_env, existing_yaml, progress)
+            _save_progress()
+        elif only == "x":
             _setup_x(env_vars, yaml_config, existing_env, existing_yaml, progress)
             _save_progress()
-
-        # Section 6: LinkedIn
-        if only is None or only == "linkedin":
+        elif only == "linkedin":
             _setup_linkedin(env_vars, existing_env, progress)
             _save_progress()
 
-        # Section 7: Image generation
+        # Section 6: Image generation
         if only is None or only == "image":
             _setup_image_gen(env_vars, yaml_config, existing_env, progress)
             _save_progress()
@@ -593,13 +601,21 @@ def run_wizard(
             _setup_journey_capture(yaml_config, progress)
             _save_progress()
 
+        # Web dashboard (standalone path)
+        if only == "web":
+            _setup_web_dashboard(yaml_config, progress)
+            _save_progress()
+
         installed = False
         if only is None:
-            # Section 8: Scheduling
+            # Section 7: Scheduling
             _setup_scheduling(base, yaml_config, existing_yaml, progress)
             _save_progress()
+            # Section 9: Web Dashboard
+            _setup_web_dashboard(yaml_config, progress)
+            _save_progress()
             _show_summary(env_vars, yaml_config)
-            # Section 9: Installations
+            # Section 10: Installations
             installed = _setup_installations(yaml_config, progress)
 
         # --- Completion message with warnings ---
@@ -1147,6 +1163,114 @@ def _setup_linkedin(env_vars: dict, existing_env: dict, progress: Optional[Wizar
         progress.advance()
 
 
+def _setup_platforms(yaml_config: dict, env_vars: dict, existing_env: dict,
+                     existing_yaml: dict, progress: Optional[WizardProgress] = None) -> None:
+    """Configure output platforms with primary/secondary priority."""
+    if progress:
+        progress.set_section(5, "Platforms", substeps=5)
+
+    _section("Output Platforms", "Where your content gets published", progress=progress)
+
+    # X (Twitter)
+    if _confirm("Enable X (Twitter)?", default=True):
+        yaml_config.setdefault("platforms", {})["x"] = {"enabled": True}
+
+        priority = _select("X priority:", ["Primary (recommended)", "Secondary"])
+        yaml_config["platforms"]["x"]["priority"] = "primary" if "Primary" in priority else "secondary"
+
+        tier = _select("X account tier:", ["free (280 chars)", "basic", "premium", "premium_plus"])
+        yaml_config["platforms"]["x"]["account_tier"] = tier.split(" ")[0]
+
+        if yaml_config["platforms"]["x"]["priority"] == "primary":
+            _info("X (Primary): All post-worthy commits, up to 3/day")
+        else:
+            _info("X (Secondary): Notable commits only, up to 1/day")
+
+        # Collect X API credentials
+        existing_api_key = existing_env.get("X_API_KEY", "")
+        existing_api_secret = existing_env.get("X_API_SECRET", "")
+        existing_access_token = existing_env.get("X_ACCESS_TOKEN", "")
+        existing_access_secret = existing_env.get("X_ACCESS_SECRET", "")
+
+        if _confirm("Configure X API credentials now?", default=bool(existing_api_key)):
+            def _prompt_x_field(label: str, existing: str) -> str:
+                if existing:
+                    typer.echo(f"  Current {label}: {_obfuscate(existing)}")
+                    return _prompt(label, default=existing, hide_default=True)
+                return _prompt(label)
+
+            api_key = _prompt_x_field("API Key", existing_api_key)
+            api_secret = _prompt_x_field("API Secret", existing_api_secret)
+            access_token = _prompt_x_field("Access Token", existing_access_token)
+            access_secret = _prompt_x_field("Access Token Secret", existing_access_secret)
+
+            env_vars["X_API_KEY"] = api_key
+            env_vars["X_API_SECRET"] = api_secret
+            env_vars["X_ACCESS_TOKEN"] = access_token
+            env_vars["X_ACCESS_SECRET"] = access_secret
+
+    if progress:
+        progress.advance()
+
+    # LinkedIn
+    if _confirm("Enable LinkedIn?", default=False):
+        yaml_config.setdefault("platforms", {})["linkedin"] = {"enabled": True}
+        priority = _select("LinkedIn priority:", ["Secondary (recommended)", "Primary"])
+        yaml_config["platforms"]["linkedin"]["priority"] = "secondary" if "Secondary" in priority else "primary"
+
+        existing_linkedin_token = existing_env.get("LINKEDIN_ACCESS_TOKEN", "")
+        if _confirm("Configure LinkedIn credentials now?", default=bool(existing_linkedin_token)):
+            if existing_linkedin_token:
+                typer.echo(f"  Current: {_obfuscate(existing_linkedin_token)}")
+                token = _prompt("LinkedIn access token", default=existing_linkedin_token, hide_default=True)
+            else:
+                token = _prompt("LinkedIn access token")
+            env_vars["LINKEDIN_ACCESS_TOKEN"] = token
+
+    if progress:
+        progress.advance()
+
+    # Custom platforms
+    while _confirm("Add a custom platform?", default=False):
+        name = _prompt("Platform name (e.g., blog, newsletter)").strip().lower()
+        pcfg: dict[str, Any] = {"enabled": True, "type": "custom"}
+        priority = _select(f"{name} priority:", ["Secondary (recommended)", "Primary"])
+        pcfg["priority"] = "secondary" if "Secondary" in priority else "primary"
+        fmt = _prompt("Content format (e.g., article, email, post)", default="post")
+        pcfg["format"] = fmt
+        desc = _prompt("Description (optional)", default="")
+        if desc:
+            pcfg["description"] = desc
+        yaml_config.setdefault("platforms", {})[name] = pcfg
+        _success(f"Added {name} ({pcfg['priority']})")
+
+    if progress:
+        progress.advance()
+
+
+def _setup_web_dashboard(yaml_config: dict, progress: Optional[WizardProgress] = None) -> None:
+    """Configure web dashboard."""
+    if progress:
+        progress.set_section(9, "Web Dashboard", substeps=2)
+
+    _section("Web Dashboard", "Browser-based settings, drafts, and bot testing", progress=progress)
+    _info("The web dashboard provides:\n"
+          "  - Settings management (all config in one place)\n"
+          "  - Draft review and management\n"
+          "  - Bot interaction testing\n\n"
+          "Runs locally, no API keys required.")
+
+    if not _confirm("Enable web dashboard?", default=True):
+        yaml_config.setdefault("web", {})["enabled"] = False
+        if progress:
+            progress.advance()
+        return
+
+    yaml_config.setdefault("web", {})["enabled"] = True
+    if progress:
+        progress.advance()
+
+
 def _setup_models(yaml_config: dict, existing_yaml: dict, env_vars: dict,
                   existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
     """Configure LLM models with QuickStart/Advanced paths."""
@@ -1291,7 +1415,7 @@ def _setup_image_gen(env_vars: dict, yaml_config: dict, existing_env: dict,
                      progress: Optional[WizardProgress] = None) -> None:
     """Configure image generation."""
     if progress:
-        progress.set_section(7, "Image Gen", substeps=2)
+        progress.set_section(6, "Image Gen", substeps=2)
     _section("Image Generation", "AI-generated visuals for posts", progress=progress)
     if not _confirm("Enable AI image generation?"):
         yaml_config.setdefault("image_generation", {})["enabled"] = False
@@ -1329,7 +1453,7 @@ def _setup_scheduling(base: Path, yaml_config: dict, existing_yaml: dict,
                       progress: Optional[WizardProgress] = None) -> None:
     """Configure scheduling settings."""
     if progress:
-        progress.set_section(8, "Scheduling", substeps=3)
+        progress.set_section(7, "Scheduling", substeps=3)
     _section("Scheduling", "When and how often to post", progress=progress)
 
     existing_sched = existing_yaml.get("scheduling", {})
@@ -1522,9 +1646,11 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
             table.add_row("Gatekeeper Model", models.get("gatekeeper", "default"))
 
         platforms = yaml_config.get("platforms", {})
-        x_config = platforms.get("x", {})
-        if x_config.get("account_tier"):
-            table.add_row("X Tier", x_config["account_tier"])
+        for pname, pcfg in platforms.items():
+            if isinstance(pcfg, dict) and pcfg.get("enabled"):
+                priority = pcfg.get("priority", "secondary")
+                tier_info = f" ({pcfg['account_tier']})" if pcfg.get("account_tier") else ""
+                table.add_row(f"Platform: {pname}", f"{priority}{tier_info}")
 
         scheduling = yaml_config.get("scheduling", {})
         if scheduling.get("timezone"):
@@ -1535,6 +1661,10 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
         jc = yaml_config.get("journey_capture", {})
         jc_status = "Enabled" if jc.get("enabled") else "Disabled"
         table.add_row("Development Journey", jc_status)
+
+        web = yaml_config.get("web", {})
+        web_status = "Enabled" if web.get("enabled") else "Disabled"
+        table.add_row("Web Dashboard", web_status)
 
         console.print()
         console.print(table)
@@ -1550,7 +1680,7 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
 def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[WizardProgress] = None) -> bool:
     """Install hook, cron, and start bot. Returns True if installed, False if skipped."""
     if progress:
-        progress.set_section(9, "Installation", substeps=3)
+        progress.set_section(10, "Installation", substeps=3)
     _section("Installation", "Set up hook, scheduler, and bot", progress=progress)
 
     try:

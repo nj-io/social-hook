@@ -27,6 +27,7 @@ class Evaluator:
         db: Any,
         config: Optional[ContextConfig] = None,
         show_prompt: bool = False,
+        platform_summaries: Optional[list[str]] = None,
     ) -> LogDecisionInput:
         """Evaluate a commit for post-worthiness.
 
@@ -36,12 +37,16 @@ class Evaluator:
             db: Database context (DryRunContext) for usage logging
             config: Context config for prompt assembly limits
             show_prompt: If True, print the full system prompt and user message
+            platform_summaries: Optional list of platform summary strings for context
 
         Returns:
             Validated LogDecisionInput from the LLM
         """
         prompt = load_prompt("evaluator")
-        system = assemble_evaluator_prompt(prompt, context, commit, config)
+        system = assemble_evaluator_prompt(
+            prompt, context, commit, config,
+            platform_summaries=platform_summaries,
+        )
 
         # Check summary freshness and include hint
         freshness = None

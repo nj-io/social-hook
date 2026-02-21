@@ -12,7 +12,6 @@ from social_hook.llm.schemas import (
     GatekeeperOperation,
     LogDecisionInput,
     MediaTool,
-    Platform,
     PostCategorySchema,
     RouteAction,
     RouteActionInput,
@@ -43,10 +42,6 @@ class TestSchemaEnums:
         assert MediaTool.mermaid.value == "mermaid"
         assert MediaTool.nano_banana_pro.value == "nano_banana_pro"
         assert MediaTool.none.value == "none"
-
-    def test_platform_values(self):
-        assert Platform.x.value == "x"
-        assert Platform.linkedin.value == "linkedin"
 
     def test_route_action_values(self):
         assert RouteAction.handle_directly.value == "handle_directly"
@@ -158,7 +153,7 @@ class TestCreateDraftInput:
             "reasoning": "Milestone worth sharing",
         })
         assert result.content == "Just shipped a new feature!"
-        assert result.platform == Platform.x
+        assert result.platform == "x"
         assert result.media_type is None
 
     def test_valid_with_media(self):
@@ -172,13 +167,14 @@ class TestCreateDraftInput:
         assert result.media_type == MediaTool.mermaid
         assert result.media_spec == {"diagram": "graph LR; A-->B"}
 
-    def test_invalid_platform(self):
-        with pytest.raises(MalformedResponseError):
-            CreateDraftInput.validate({
-                "content": "Test",
-                "platform": "tiktok",
-                "reasoning": "Test",
-            })
+    def test_custom_platform_accepted(self):
+        """Platform is now a free-form string — custom platforms are valid."""
+        result = CreateDraftInput.validate({
+            "content": "Test",
+            "platform": "blog",
+            "reasoning": "Test",
+        })
+        assert result.platform == "blog"
 
     def test_missing_content(self):
         with pytest.raises(MalformedResponseError):

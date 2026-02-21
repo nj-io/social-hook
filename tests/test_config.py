@@ -78,8 +78,8 @@ class TestYamlLoading:
         assert config.models.evaluator == "anthropic/claude-opus-4-5"
         assert config.models.drafter == "anthropic/claude-sonnet-4-5"
         assert config.models.gatekeeper == "anthropic/claude-haiku-4-5"
-        assert config.platforms.x.enabled is True
-        assert config.platforms.x.account_tier == "free"
+        assert config.platforms["x"].enabled is True
+        assert config.platforms["x"].account_tier == "free"
         assert config.scheduling.timezone == "America/Los_Angeles"
 
     def test_invalid_model_value(self, temp_dir):

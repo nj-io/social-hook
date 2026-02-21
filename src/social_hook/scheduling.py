@@ -30,6 +30,7 @@ _DAY_MAP = {
 def calculate_optimal_time(
     conn: sqlite3.Connection,
     project_id: str,
+    platform: Optional[str] = None,
     tz: str = "UTC",
     max_posts_per_day: int = 3,
     min_gap_minutes: int = 30,
@@ -48,6 +49,7 @@ def calculate_optimal_time(
     Args:
         conn: Database connection
         project_id: Project ID (for future per-project limits)
+        platform: Filter by platform (None = cross-platform behavior)
         tz: Timezone string (e.g. "America/Los_Angeles")
         max_posts_per_day: Maximum posts per day across all projects
         min_gap_minutes: Minimum minutes between posts
@@ -74,10 +76,12 @@ def calculate_optimal_time(
     today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
     today_start_utc = today_start_local.astimezone(timezone.utc)
 
-    # Count today's posts
+    # Count today's posts (filter by platform when provided)
     today_posts = ops.get_all_recent_posts(
         conn, today_start_utc.strftime("%Y-%m-%d %H:%M:%S")
     )
+    if platform:
+        today_posts = [p for p in today_posts if p.platform == platform]
     posts_today_count = len(today_posts)
 
     # Get last post time
@@ -99,6 +103,9 @@ def calculate_optimal_time(
     scheduled_times = []
     for d in all_pending:
         if d.status == "scheduled" and d.scheduled_time:
+            # Filter by platform when provided
+            if platform and d.platform != platform:
+                continue
             st = d.scheduled_time
             if isinstance(st, str):
                 st = datetime.fromisoformat(st)

@@ -343,18 +343,66 @@ class TestCreateBot:
         assert bot.on_callback is not None
         assert bot.on_message is not None
 
-    def test_create_bot_sets_adapter(self):
-        """create_bot wires a TelegramAdapter into both commands and buttons modules."""
+    def test_create_bot_no_set_adapter(self):
+        """create_bot does not call set_adapter (removed after handler abstraction)."""
+        # set_adapter should not exist in buttons or commands modules
         from social_hook.bot import buttons, commands
-        from social_hook.messaging.telegram import TelegramAdapter
+        assert not hasattr(buttons, "set_adapter")
+        assert not hasattr(commands, "set_adapter")
+        # create_bot should still work without set_adapter
+        bot = create_bot(token="test_token", allowed_chat_ids={"42"})
+        assert isinstance(bot, BotDaemon)
 
-        # Reset before test
-        commands._active_adapter = None
-        buttons._active_adapter = None
+    def test_on_command_uses_parse_message(self):
+        """on_command converts raw dict to InboundMessage via parse_message."""
+        from social_hook.messaging.base import InboundMessage
 
-        create_bot(token="adapter_test_token", allowed_chat_ids={"42"})
+        mock_config = MagicMock()
+        raw_message = {"chat": {"id": 123}, "text": "/status", "from": {"id": 1, "first_name": "Test"}, "message_id": 42}
 
-        assert isinstance(commands._active_adapter, TelegramAdapter)
-        assert isinstance(buttons._active_adapter, TelegramAdapter)
-        # Both should reference the same adapter instance
-        assert commands._active_adapter is buttons._active_adapter
+        # Patch before create_bot so closures capture the mock
+        with patch("social_hook.bot.commands.handle_command") as mock_handler:
+            bot = create_bot(token="test_token", config=mock_config)
+            bot.on_command(raw_message)
+            mock_handler.assert_called_once()
+            msg_arg = mock_handler.call_args[0][0]
+            assert isinstance(msg_arg, InboundMessage)
+            assert msg_arg.chat_id == "123"
+            assert msg_arg.text == "/status"
+
+    def test_on_callback_uses_parse_callback(self):
+        """on_callback converts raw dict to CallbackEvent via parse_callback."""
+        from social_hook.messaging.base import CallbackEvent
+
+        mock_config = MagicMock()
+        raw_callback = {
+            "id": "cb1",
+            "message": {"chat": {"id": 123}, "message_id": 99},
+            "data": "approve:draft_123",
+        }
+
+        with patch("social_hook.bot.buttons.handle_callback") as mock_handler:
+            bot = create_bot(token="test_token", config=mock_config)
+            bot.on_callback(raw_callback)
+            mock_handler.assert_called_once()
+            event_arg = mock_handler.call_args[0][0]
+            assert isinstance(event_arg, CallbackEvent)
+            assert event_arg.chat_id == "123"
+            assert event_arg.action == "approve"
+            assert event_arg.payload == "draft_123"
+
+    def test_on_message_uses_parse_message(self):
+        """on_message converts raw dict to InboundMessage via parse_message."""
+        from social_hook.messaging.base import InboundMessage
+
+        mock_config = MagicMock()
+        raw_message = {"chat": {"id": 456}, "text": "Hello bot", "from": {"id": 2, "first_name": "User"}, "message_id": 7}
+
+        with patch("social_hook.bot.commands.handle_message") as mock_handler:
+            bot = create_bot(token="test_token", config=mock_config)
+            bot.on_message(raw_message)
+            mock_handler.assert_called_once()
+            msg_arg = mock_handler.call_args[0][0]
+            assert isinstance(msg_arg, InboundMessage)
+            assert msg_arg.chat_id == "456"
+            assert msg_arg.text == "Hello bot"

@@ -1,8 +1,11 @@
 """Drafter agent: creates social media content (T14)."""
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from social_hook.config.project import ContextConfig
+
+if TYPE_CHECKING:
+    from social_hook.config.platforms import ResolvedPlatformConfig
 from social_hook.db import operations as ops
 from social_hook.llm.base import LLMClient
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
@@ -30,6 +33,7 @@ class Drafter:
         tier: str = "free",
         arc_context: Optional[dict[str, Any]] = None,
         config: Optional[ContextConfig] = None,
+        platform_config: Optional["ResolvedPlatformConfig"] = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit.
 
@@ -41,6 +45,9 @@ class Drafter:
             platform: Target platform (x, linkedin)
             tier: Account tier (free, premium, premium_plus)
             arc_context: Arc metadata + posts (when post_category == 'arc')
+            config: Context config for doc inclusion
+            platform_config: Resolved platform configuration (when provided,
+                builds platform-specific instructions from config)
 
         Returns:
             Validated CreateDraftInput from the LLM
@@ -79,7 +86,44 @@ class Drafter:
                 "project documentation in the system prompt for context.\n"
             )
 
-        if platform == "x" and tier == "free":
+        if platform_config:
+            # Build platform-specific instructions from resolved config
+            platform_desc = f"Platform: {platform_config.name}"
+            if platform_config.priority:
+                platform_desc += f" ({platform_config.priority})"
+            pc_tier = platform_config.account_tier or "free"
+            if platform_config.account_tier:
+                from social_hook.config.yaml import TIER_CHAR_LIMITS
+                char_limit = TIER_CHAR_LIMITS.get(pc_tier, 25000)
+                platform_desc += f", {pc_tier} tier, {char_limit} char limit"
+            elif platform_config.max_length:
+                platform_desc += f", max {platform_config.max_length} chars"
+            if platform_config.format:
+                platform_desc += f", format: {platform_config.format}"
+            if platform_config.description:
+                platform_desc += f"\nContext: {platform_config.description}"
+
+            user_content = (
+                f"{intro_info}"
+                f"Create a {platform} post for this commit.\n"
+                f"Commit: {commit.hash[:8]} - {commit.message}\n"
+                f"{angle_info}{episode_info}\n"
+                f"{platform_desc}"
+            )
+
+            # X free tier specific format guidance
+            if platform == "x" and pc_tier == "free":
+                user_content += (
+                    f"\nUse the Format Selection Framework: punchy (<100), detailed (240-280), "
+                    f"or set format_hint='thread' if this needs multiple beats (4+). "
+                    f"Avoid links in main post."
+                )
+            elif platform == "x":
+                user_content += (
+                    f"\nUse the Format Selection Framework. Write at whatever length serves the narrative. "
+                    f"Set beat_count for narrative beats. format_hint='thread' for visual separation."
+                )
+        elif platform == "x" and tier == "free":
             from social_hook.config.yaml import TIER_CHAR_LIMITS
 
             char_limit = TIER_CHAR_LIMITS[tier]

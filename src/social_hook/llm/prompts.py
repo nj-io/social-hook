@@ -69,6 +69,7 @@ def assemble_evaluator_prompt(
     project_context: ProjectContext,
     commit: CommitInfo,
     config: Optional[ContextConfig] = None,
+    platform_summaries: Optional[list[str]] = None,
 ) -> str:
     """Assemble full evaluator system prompt with context.
 
@@ -117,6 +118,16 @@ def assemble_evaluator_prompt(
             f"{d.platform}:{d.status}" for d in project_context.pending_drafts
         )
         sections.append(f"- Pending drafts: [{draft_summaries}]")
+
+    # Target platforms
+    if platform_summaries:
+        sections.append("\n---\n## Target Platforms")
+        for ps in platform_summaries:
+            sections.append(f"- {ps}")
+        sections.append(
+            "\nNote: Your decision applies globally. Per-platform content filtering "
+            "is handled downstream. Focus on whether this commit is worth sharing."
+        )
 
     # Memories
     if project_context.memories:

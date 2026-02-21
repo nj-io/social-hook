@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import yaml
 
+from social_hook.config.platforms import OutputPlatformConfig
 from social_hook.errors import ConfigError
 
 # Valid X account tiers and their character limits
@@ -25,8 +26,7 @@ DEFAULT_CONFIG = {
         "gatekeeper": "anthropic/claude-haiku-4-5",
     },
     "platforms": {
-        "x": {"enabled": True, "account_tier": "free"},
-        "linkedin": {"enabled": False},
+        "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
     },
     "image_generation": {
         "enabled": True,
@@ -42,6 +42,10 @@ DEFAULT_CONFIG = {
     "journey_capture": {
         "enabled": False,
     },
+    "web": {
+        "enabled": False,
+        "port": 3000,
+    },
 }
 
 
@@ -52,22 +56,6 @@ class ModelsConfig:
     evaluator: str = "anthropic/claude-opus-4-5"
     drafter: str = "anthropic/claude-opus-4-5"
     gatekeeper: str = "anthropic/claude-haiku-4-5"
-
-
-@dataclass
-class PlatformConfig:
-    """Single platform configuration."""
-
-    enabled: bool = False
-    account_tier: Optional[str] = None
-
-
-@dataclass
-class PlatformsConfig:
-    """All platforms configuration."""
-
-    x: PlatformConfig = field(default_factory=lambda: PlatformConfig(enabled=True, account_tier="free"))
-    linkedin: PlatformConfig = field(default_factory=PlatformConfig)
 
 
 @dataclass
@@ -98,14 +86,25 @@ class JourneyCaptureConfig:
 
 
 @dataclass
+class WebConfig:
+    """Web dashboard configuration."""
+
+    enabled: bool = False
+    port: int = 3000
+
+
+@dataclass
 class Config:
     """Main configuration object."""
 
     models: ModelsConfig = field(default_factory=ModelsConfig)
-    platforms: PlatformsConfig = field(default_factory=PlatformsConfig)
+    platforms: dict[str, OutputPlatformConfig] = field(default_factory=lambda: {
+        "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+    })
     image_generation: ImageGenerationConfig = field(default_factory=ImageGenerationConfig)
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
     journey_capture: JourneyCaptureConfig = field(default_factory=JourneyCaptureConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
     # Environment variables (populated by load_full_config)
     env: dict[str, str] = field(default_factory=dict)
@@ -162,26 +161,63 @@ def _parse_config(data: dict[str, Any]) -> Config:
                 f"(e.g., 'anthropic/claude-opus-4-5', 'claude-cli/sonnet')"
             )
 
-    # Platforms
-    platforms_data = data.get("platforms", {})
-    x_data = platforms_data.get("x", {})
-    linkedin_data = platforms_data.get("linkedin", {})
+    # Platforms (dynamic registry)
+    from social_hook.config.platforms import (
+        CONTENT_FILTERS,
+        FREQUENCY_PRESETS,
+        VALID_PLATFORM_TYPES,
+        VALID_PRIORITIES,
+    )
 
-    x_tier = x_data.get("account_tier", "free")
-    if x_tier not in VALID_TIERS:
-        raise ConfigError(
-            f"Invalid account_tier '{x_tier}', must be one of {VALID_TIERS}"
+    platforms_data = data.get("platforms", {})
+    platforms: dict[str, OutputPlatformConfig] = {}
+
+    for name, pdata in platforms_data.items():
+        if not isinstance(pdata, dict):
+            raise ConfigError(f"Platform '{name}' config must be a dict")
+
+        priority = pdata.get("priority", "secondary")
+        if priority not in VALID_PRIORITIES:
+            raise ConfigError(f"Invalid priority '{priority}' for platform '{name}'")
+
+        ptype = pdata.get("type", "builtin" if name in ("x", "linkedin") else "custom")
+        if ptype not in VALID_PLATFORM_TYPES:
+            raise ConfigError(f"Invalid type '{ptype}' for platform '{name}'")
+
+        # Validate X tier if present
+        account_tier = pdata.get("account_tier")
+        if name == "x" and account_tier and account_tier not in VALID_TIERS:
+            raise ConfigError(
+                f"Invalid account_tier '{account_tier}', must be one of {VALID_TIERS}"
+            )
+
+        # Validate filter/frequency if explicitly set
+        pfilter = pdata.get("filter")
+        if pfilter and pfilter not in CONTENT_FILTERS:
+            raise ConfigError(f"Invalid filter '{pfilter}' for platform '{name}'")
+
+        freq = pdata.get("frequency")
+        if freq and freq not in FREQUENCY_PRESETS:
+            raise ConfigError(f"Invalid frequency '{freq}' for platform '{name}'")
+
+        platforms[name] = OutputPlatformConfig(
+            enabled=pdata.get("enabled", False),
+            priority=priority,
+            type=ptype,
+            account_tier=account_tier,
+            description=pdata.get("description"),
+            format=pdata.get("format"),
+            max_length=pdata.get("max_length"),
+            filter=pfilter,
+            frequency=freq,
+            scheduling=pdata.get("scheduling"),
         )
 
-    platforms = PlatformsConfig(
-        x=PlatformConfig(
-            enabled=x_data.get("enabled", True),
-            account_tier=x_tier,
-        ),
-        linkedin=PlatformConfig(
-            enabled=linkedin_data.get("enabled", False),
-        ),
-    )
+    # Default: X enabled as primary if no platforms specified
+    if not platforms:
+        platforms["x"] = OutputPlatformConfig(
+            enabled=True, priority="primary", type="builtin", account_tier="free",
+        )
 
     # Image generation
     image_data = data.get("image_generation", {})
@@ -216,13 +252,26 @@ def _parse_config(data: dict[str, Any]) -> Config:
         model=jc_model,
     )
 
+    # Web dashboard
+    web_data = data.get("web", {})
+    web_port = web_data.get("port", 3000)
+    if not isinstance(web_port, int) or web_port < 1 or web_port > 65535:
+        raise ConfigError(f"Invalid web port '{web_port}': must be integer 1-65535")
+    web = WebConfig(enabled=web_data.get("enabled", False), port=web_port)
+
     return Config(
         models=models,
         platforms=platforms,
         image_generation=image_generation,
         scheduling=scheduling,
         journey_capture=journey_capture,
+        web=web,
     )
+
+
+def validate_config(data: dict[str, Any]) -> Config:
+    """Validate a raw config dict. Raises ConfigError if invalid."""
+    return _parse_config(data)
 
 
 def load_full_config(

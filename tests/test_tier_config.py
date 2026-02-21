@@ -58,7 +58,7 @@ class TestTierValidation:
             "platforms:\n  x:\n    account_tier: basic\n"
         )
         config = load_config(config_path)
-        assert config.platforms.x.account_tier == "basic"
+        assert config.platforms["x"].account_tier == "basic"
 
     def test_premium_tier_accepted(self, temp_dir):
         config_path = temp_dir / "config.yaml"
@@ -66,7 +66,7 @@ class TestTierValidation:
             "platforms:\n  x:\n    account_tier: premium\n"
         )
         config = load_config(config_path)
-        assert config.platforms.x.account_tier == "premium"
+        assert config.platforms["x"].account_tier == "premium"
 
     def test_premium_plus_tier_accepted(self, temp_dir):
         config_path = temp_dir / "config.yaml"
@@ -74,7 +74,7 @@ class TestTierValidation:
             "platforms:\n  x:\n    account_tier: premium_plus\n"
         )
         config = load_config(config_path)
-        assert config.platforms.x.account_tier == "premium_plus"
+        assert config.platforms["x"].account_tier == "premium_plus"
 
     def test_free_tier_accepted(self, temp_dir):
         config_path = temp_dir / "config.yaml"
@@ -82,8 +82,8 @@ class TestTierValidation:
             "platforms:\n  x:\n    account_tier: free\n"
         )
         config = load_config(config_path)
-        assert config.platforms.x.account_tier == "free"
+        assert config.platforms["x"].account_tier == "free"
 
     def test_default_tier_is_free(self):
         config = load_config(None)
-        assert config.platforms.x.account_tier == "free"
+        assert config.platforms["x"].account_tier == "free"

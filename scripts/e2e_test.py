@@ -54,6 +54,7 @@ SECTION_MAP = {
     "crosscutting": "K",
     "multiprovider": "L",
     "journey": "M",
+    "web": "N",
 }
 
 # Provider presets: maps --provider flag to model configs
@@ -3288,6 +3289,269 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
 
 
 # ---------------------------------------------------------------------------
+# Section N: Web Dashboard + Per-Platform
+# ---------------------------------------------------------------------------
+
+def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
+    """N1-N8: Web Dashboard + Per-Platform scenarios."""
+    import json as _json
+
+    if not harness.project_id:
+        harness.seed_project()
+
+    # Enable web config so WebAdapter can init
+    harness.update_config({"web": {"enabled": True, "port": 3000}})
+
+    # Lazy import of TestClient + FastAPI app -- these require the patched HOME
+    # so DB and config resolve to the isolated temp environment.
+    def _get_test_client():
+        # Force re-import so module-level state picks up patched paths
+        import importlib
+        import social_hook.web.server as srv_mod
+        importlib.reload(srv_mod)
+        from fastapi.testclient import TestClient
+        return TestClient(srv_mod.app)
+
+    # N1: API /help command
+    def n1():
+        client = _get_test_client()
+        resp = client.post("/api/command", json={"text": "/help"})
+        assert resp.status_code == 200, f"Status {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert "events" in data, f"No 'events' in response: {data}"
+        # Check that at least one event contains help text
+        found_help = False
+        for ev in data["events"]:
+            ev_data = ev.get("data", {})
+            text = ev_data.get("text", "")
+            if "command" in text.lower() or "help" in text.lower():
+                found_help = True
+                break
+        assert found_help, f"No help text found in events: {data['events']}"
+
+        runner.add_review_item(
+            "N1",
+            title="API /help command via web",
+            response=data["events"][0].get("data", {}).get("text", "")[:200] if data["events"] else "",
+            review_question="Is the help text complete and well-formatted?",
+        )
+        return f"200 OK, {len(data['events'])} events"
+
+    runner.run_scenario("N1", "API /help command", n1)
+
+    # N2: API callback (approve)
+    def n2():
+        draft = harness.seed_draft(harness.project_id, status="draft")
+        client = _get_test_client()
+        resp = client.post("/api/callback", json={
+            "action": "quick_approve",
+            "payload": draft.id,
+        })
+        assert resp.status_code == 200, f"Status {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert "events" in data, f"No 'events' in response: {data}"
+
+        # Verify draft status changed
+        from social_hook.db import operations as ops
+        updated = ops.get_draft(harness.conn, draft.id)
+        assert updated.status in ("approved", "scheduled"), \
+            f"Draft status after approve: {updated.status}"
+
+        return f"Draft {draft.id[:12]} → {updated.status}"
+
+    runner.run_scenario("N2", "API callback (approve)", n2)
+
+    # N3: Trigger with 2 platforms
+    def n3():
+        from social_hook.trigger import run_trigger
+        from social_hook.db import operations as ops
+
+        # Enable both X and LinkedIn
+        harness.update_config({
+            "platforms": {
+                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+                "linkedin": {"enabled": True, "priority": "secondary"},
+            },
+        })
+
+        # Count drafts before
+        before_drafts = ops.get_pending_drafts(harness.conn, harness.project_id)
+        before_count = len(before_drafts)
+
+        exit_code = run_trigger(
+            COMMITS["significant"], str(harness.repo_path),
+            verbose=runner.verbose,
+        )
+        assert exit_code == 0, f"run_trigger returned {exit_code}"
+
+        # Check for new drafts
+        after_drafts = ops.get_pending_drafts(harness.conn, harness.project_id)
+        new_drafts = after_drafts[: len(after_drafts) - before_count] if len(after_drafts) > before_count else after_drafts
+
+        # We need at least 1 draft. With 2 platforms we expect 2, but the LLM
+        # might decide not_post_worthy. If post_worthy, check platforms differ.
+        decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=5)
+        d = decisions[0] if decisions else None
+
+        if d and d.decision == "post_worthy":
+            # Look for drafts with different platforms
+            platforms_seen = set()
+            for draft in after_drafts:
+                platforms_seen.add(draft.platform)
+
+            detail = f"Decision: post_worthy, platforms: {platforms_seen}"
+            if len(platforms_seen) >= 2:
+                detail += " (multi-platform confirmed)"
+            else:
+                detail += " (only 1 platform - content filter may have excluded one)"
+
+            # Add review items for each platform's draft
+            for draft in after_drafts[:2]:
+                runner.add_review_item(
+                    "N3",
+                    title=f"Per-platform draft ({draft.platform})",
+                    draft_content=draft.content,
+                    review_question=f"Is this draft tailored for {draft.platform}?",
+                )
+        else:
+            detail = f"Decision: {d.decision if d else 'none'} (no multi-platform check)"
+
+        # Restore single-platform config
+        harness.update_config({
+            "platforms": {
+                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+                "linkedin": {"enabled": False},
+            },
+        })
+        return detail
+
+    runner.run_scenario("N3", "Trigger with 2 platforms", n3, llm_call=True)
+
+    # N4: Content filter: notable skips decision episode
+    def n4():
+        from social_hook.config.platforms import passes_content_filter
+
+        # "all" filter passes everything
+        assert passes_content_filter("all", "decision") is True
+        assert passes_content_filter("all", "milestone") is True
+
+        # "notable" filter skips "decision" episode_type
+        assert passes_content_filter("notable", "decision") is False
+        assert passes_content_filter("notable", "milestone") is True
+        assert passes_content_filter("notable", "launch") is True
+        assert passes_content_filter("notable", "synthesis") is True
+
+        # "significant" filter is even stricter
+        assert passes_content_filter("significant", "decision") is False
+        assert passes_content_filter("significant", "demo_proof") is False
+        assert passes_content_filter("significant", "milestone") is True
+        assert passes_content_filter("significant", "launch") is True
+
+        return "Filter logic verified: all > notable > significant"
+
+    runner.run_scenario("N4", "Content filter: notable skips decision", n4)
+
+    # N5: Settings: read config
+    def n5():
+        client = _get_test_client()
+        resp = client.get("/api/settings/config")
+        assert resp.status_code == 200, f"Status {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert "config" in data, f"No 'config' in response: {data}"
+        config = data["config"]
+        assert isinstance(config, dict), f"Config is not dict: {type(config)}"
+        assert "platforms" in config, f"No 'platforms' in config: {list(config.keys())}"
+        assert isinstance(config["platforms"], dict), \
+            f"platforms is not dict: {type(config['platforms'])}"
+        return f"Config keys: {list(config.keys())}"
+
+    runner.run_scenario("N5", "Settings: read config", n5)
+
+    # N6: Settings: update platform priority
+    def n6():
+        client = _get_test_client()
+
+        # Update X priority to secondary
+        resp = client.put("/api/settings/config", json={
+            "platforms": {
+                "x": {"enabled": True, "priority": "secondary", "account_tier": "free"},
+            },
+        })
+        assert resp.status_code == 200, f"PUT status {resp.status_code}: {resp.text}"
+
+        # Re-read and verify
+        resp2 = client.get("/api/settings/config")
+        config = resp2.json()["config"]
+        x_cfg = config.get("platforms", {}).get("x", {})
+        assert x_cfg.get("priority") == "secondary", \
+            f"Expected priority=secondary, got: {x_cfg}"
+
+        # Restore to primary
+        client.put("/api/settings/config", json={
+            "platforms": {
+                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+            },
+        })
+        return "Priority updated and verified"
+
+    runner.run_scenario("N6", "Settings: update platform priority", n6)
+
+    # N7: Settings: add custom platform
+    def n7():
+        client = _get_test_client()
+
+        resp = client.put("/api/settings/config", json={
+            "platforms": {
+                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+                "blog": {
+                    "enabled": True,
+                    "type": "custom",
+                    "priority": "secondary",
+                    "format": "article",
+                    "description": "Technical blog",
+                },
+            },
+        })
+        assert resp.status_code == 200, f"PUT status {resp.status_code}: {resp.text}"
+
+        # Re-read and verify
+        resp2 = client.get("/api/settings/config")
+        config = resp2.json()["config"]
+        platforms = config.get("platforms", {})
+        assert "blog" in platforms, f"blog not in platforms: {list(platforms.keys())}"
+        blog = platforms["blog"]
+        assert blog.get("type") == "custom"
+        assert blog.get("format") == "article"
+
+        # Clean up: remove blog
+        client.put("/api/settings/config", json={
+            "platforms": {
+                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+            },
+        })
+        return f"Custom platform 'blog' added and verified"
+
+    runner.run_scenario("N7", "Settings: add custom platform", n7)
+
+    # N8: SSE endpoint streams events
+    def n8():
+        client = _get_test_client()
+
+        # First send a command to generate some events
+        client.post("/api/command", json={"text": "/help"})
+
+        # Now check the SSE endpoint
+        resp = client.get("/api/events?lastId=0")
+        assert resp.status_code == 200, f"Status {resp.status_code}: {resp.text}"
+        content_type = resp.headers.get("content-type", "")
+        assert "text/event-stream" in content_type, \
+            f"Expected text/event-stream, got: {content_type}"
+        return f"SSE content-type: {content_type}"
+
+    runner.run_scenario("N8", "SSE endpoint streams events", n8)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -3298,7 +3562,7 @@ def main():
     parser.add_argument(
         "--only", type=str, default=None,
         help="Run only a specific section (onboarding, pipeline, narrative, draft, "
-             "scheduler, bot, setup, cli, crosscutting, multiprovider, journey) or scenario (A1, B1, etc.)"
+             "scheduler, bot, setup, cli, crosscutting, multiprovider, journey, web) or scenario (A1, B1, etc.)"
     )
     parser.add_argument(
         "--skip-telegram", action="store_true",
@@ -3344,12 +3608,12 @@ def main():
                 print("  Invalid choice. Enter 1 or 2.")
 
     # Determine which sections to run
-    sections_to_run = set("ABCDEFGHIJKLM")
+    sections_to_run = set("ABCDEFGHIJKLMN")
     if args.only:
         only = args.only
         if only.lower() in SECTION_MAP:
             sections_to_run = set(SECTION_MAP[only.lower()])
-        elif only.upper()[0] in "ABCDEFGHIJKLM":
+        elif only.upper()[0] in "ABCDEFGHIJKLMN":
             # Single scenario — run the whole section
             sections_to_run = {only.upper()[0]}
         else:
@@ -3436,6 +3700,10 @@ def main():
         if "M" in sections_to_run:
             print("\n--- M. Development Journey ---")
             test_M_journey(harness, runner)
+
+        if "N" in sections_to_run:
+            print("\n--- N. Web Dashboard + Per-Platform ---")
+            test_N_web_dashboard(harness, runner)
 
     except KeyboardInterrupt:
         print("\n\nInterrupted.")

@@ -4,14 +4,13 @@ import logging
 import time
 from typing import Any, Optional
 
-import requests
-
-from social_hook.bot.notifications import (
-    format_draft_review,
-    format_error_notification,
-    get_review_buttons,
-    send_notification,
-    send_notification_with_buttons,
+from social_hook.bot.notifications import format_draft_review, get_review_buttons_normalized
+from social_hook.messaging.base import (
+    Button,
+    ButtonRow,
+    InboundMessage,
+    MessagingAdapter,
+    OutboundMessage,
 )
 
 logger = logging.getLogger(__name__)
@@ -19,16 +18,6 @@ logger = logging.getLogger(__name__)
 # Chat draft context: chat_id → (draft_id, project_id, timestamp)
 _chat_draft_context: dict[str, tuple[str, str, float]] = {}
 _CONTEXT_TTL_SECONDS = 3600  # 1 hour
-
-
-# Messaging adapter bridge: when set, _send() uses adapter instead of direct HTTP
-_active_adapter: Optional[Any] = None
-
-
-def set_adapter(adapter) -> None:
-    """Set the active messaging adapter. Called by create_bot()."""
-    global _active_adapter
-    _active_adapter = adapter
 
 
 def set_chat_draft_context(chat_id: str, draft_id: str, project_id: str) -> None:
@@ -48,13 +37,10 @@ def get_chat_draft_context(chat_id: str) -> Optional[tuple[str, str]]:
     return (draft_id, project_id)
 
 
-def _send(token: str, chat_id: str, text: str) -> bool:
-    """Send a plain message. Uses adapter if available, falls back to direct HTTP."""
-    if _active_adapter:
-        from social_hook.bot.notifications import send_via_adapter
-
-        return send_via_adapter(_active_adapter, chat_id, text)
-    return send_notification(token, chat_id, text)
+def _send(adapter: MessagingAdapter, chat_id: str, text: str) -> bool:
+    """Send a plain message via adapter."""
+    result = adapter.send_message(chat_id, OutboundMessage(text=text))
+    return result.success
 
 
 def _get_conn():
@@ -83,16 +69,16 @@ def _parse_command(text: str) -> tuple[str, str]:
     return cmd, args.strip()
 
 
-def handle_command(message: dict, token: str, config: Optional[Any] = None) -> None:
+def handle_command(msg: InboundMessage, adapter: MessagingAdapter, config: Optional[Any] = None) -> None:
     """Route a /command message to its handler.
 
     Args:
-        message: Telegram message dict
-        token: Bot API token
+        msg: Normalized inbound message
+        adapter: Messaging adapter for sending responses
         config: Full Config object
     """
-    chat_id = str(message.get("chat", {}).get("id", ""))
-    text = message.get("text", "")
+    chat_id = msg.chat_id
+    text = msg.text
     cmd, args = _parse_command(text)
 
     handlers = {
@@ -116,24 +102,24 @@ def handle_command(message: dict, token: str, config: Optional[Any] = None) -> N
 
     handler = handlers.get(cmd)
     if handler:
-        handler(token, chat_id, args, config)
+        handler(adapter, chat_id, args, config)
     else:
-        _send(token, chat_id, f"Unknown command: /{cmd}\nUse /help for available commands.")
+        _send(adapter, chat_id, f"Unknown command: /{cmd}\nUse /help for available commands.")
 
 
-def handle_message(message: dict, token: str, config: Optional[Any] = None) -> None:
+def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optional[Any] = None) -> None:
     """Handle a free-text message by routing through Gatekeeper.
 
     Checks for pending edits first (Fix 1), then threads draft/project
     context through to Gatekeeper and Expert (Fix 2).
 
     Args:
-        message: Telegram message dict
-        token: Bot API token
+        msg: Normalized inbound message
+        adapter: Messaging adapter for sending responses
         config: Full Config object
     """
-    chat_id = str(message.get("chat", {}).get("id", ""))
-    text = message.get("text", "")
+    chat_id = msg.chat_id
+    text = msg.text
 
     if not text:
         return
@@ -143,7 +129,7 @@ def handle_message(message: dict, token: str, config: Optional[Any] = None) -> N
 
     pending_draft_id = get_pending_edit(chat_id)
     if pending_draft_id:
-        _save_edit(token, chat_id, pending_draft_id, text)
+        _save_edit(adapter, chat_id, pending_draft_id, text)
         clear_pending_edit(chat_id)
         return
 
@@ -153,13 +139,13 @@ def handle_message(message: dict, token: str, config: Optional[Any] = None) -> N
         from social_hook.errors import ConfigError
 
         if not config:
-            _send(token, chat_id, "Not configured. Run social-hook setup first.")
+            _send(adapter, chat_id, "Not configured. Run social-hook setup first.")
             return
 
         try:
             client = create_client(config.models.gatekeeper, config)
         except ConfigError:
-            _send(token, chat_id, "Model provider not configured. Use /help for commands.")
+            _send(adapter, chat_id, "Model provider not configured. Use /help for commands.")
             return
 
         # Look up draft/project context for this chat (Fix 2)
@@ -191,10 +177,10 @@ def handle_message(message: dict, token: str, config: Optional[Any] = None) -> N
             )
 
             if route.action.value == "handle_directly":
-                _handle_gatekeeper_direct(token, chat_id, route, config)
+                _handle_gatekeeper_direct(adapter, chat_id, route, config)
             elif route.action.value == "escalate_to_expert":
                 _handle_expert_escalation(
-                    token, chat_id, text, route, config,
+                    adapter, chat_id, text, route, config,
                     draft=draft_obj,
                     project_id=project_id,
                     db=db,
@@ -204,11 +190,11 @@ def handle_message(message: dict, token: str, config: Optional[Any] = None) -> N
                 _context_conn.close()
     except Exception as e:
         logger.exception("Error routing message through Gatekeeper")
-        _send(token, chat_id, f"Error processing message: {e}")
+        _send(adapter, chat_id, f"Error processing message: {e}")
 
 
 def _save_edit(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     draft_id: str,
     new_content: str,
@@ -217,7 +203,7 @@ def _save_edit(
     """Save edited content to draft and create audit trail.
 
     Args:
-        token: Bot API token
+        adapter: Messaging adapter for sending responses
         chat_id: Chat to reply in
         draft_id: Draft to update
         new_content: New draft content
@@ -231,7 +217,7 @@ def _save_edit(
     try:
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         old_content = draft.content
@@ -250,7 +236,7 @@ def _save_edit(
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         _send(
-            token,
+            adapter,
             chat_id,
             f"Draft `{draft_id[:12]}` updated.\n\n```\n{new_content[:300]}\n```",
         )
@@ -259,12 +245,12 @@ def _save_edit(
 
 
 def _handle_gatekeeper_direct(
-    token: str, chat_id: str, route: Any, config: Any
+    adapter: MessagingAdapter, chat_id: str, route: Any, config: Any
 ) -> None:
     """Handle a Gatekeeper direct action."""
     op = route.operation
     if op is None:
-        _send(token, chat_id, "Understood.")
+        _send(adapter, chat_id, "Understood.")
         return
 
     op_value = op.value if hasattr(op, "value") else str(op)
@@ -273,27 +259,27 @@ def _handle_gatekeeper_direct(
     if op_value == "approve":
         draft_id = params.get("draft_id", "")
         if draft_id:
-            cmd_approve(token, chat_id, draft_id, config)
+            cmd_approve(adapter, chat_id, draft_id, config)
         else:
-            _send(token, chat_id, "Please specify a draft ID to approve.")
+            _send(adapter, chat_id, "Please specify a draft ID to approve.")
     elif op_value == "reject":
         draft_id = params.get("draft_id", "")
         if draft_id:
-            cmd_reject(token, chat_id, draft_id, config)
+            cmd_reject(adapter, chat_id, draft_id, config)
         else:
-            _send(token, chat_id, "Please specify a draft ID to reject.")
+            _send(adapter, chat_id, "Please specify a draft ID to reject.")
     elif op_value == "schedule":
         draft_id = params.get("draft_id", "")
         time_str = params.get("time", "")
-        cmd_schedule(token, chat_id, f"{draft_id} {time_str}".strip(), config)
+        cmd_schedule(adapter, chat_id, f"{draft_id} {time_str}".strip(), config)
     elif op_value == "cancel":
         draft_id = params.get("draft_id", "")
-        cmd_cancel(token, chat_id, draft_id, config)
+        cmd_cancel(adapter, chat_id, draft_id, config)
     elif op_value == "substitute":
         new_content = params.get("content", "")
         if not new_content:
             logger.warning("Substitute routed but content empty")
-            _send(token, chat_id, "Please specify the new content.")
+            _send(adapter, chat_id, "Please specify the new content.")
             return
         draft_id = params.get("draft_id", "")
         if not draft_id:
@@ -301,18 +287,18 @@ def _handle_gatekeeper_direct(
             if ctx:
                 draft_id = ctx[0]
         if not draft_id:
-            _send(token, chat_id, "No active draft to substitute. Use /review first.")
+            _send(adapter, chat_id, "No active draft to substitute. Use /review first.")
             return
-        _save_edit(token, chat_id, draft_id, new_content, changed_by="gatekeeper")
+        _save_edit(adapter, chat_id, draft_id, new_content, changed_by="gatekeeper")
     elif op_value == "query":
         answer = params.get("answer", "I'll look into that.")
-        _send(token, chat_id, answer)
+        _send(adapter, chat_id, answer)
     else:
-        _send(token, chat_id, "Understood.")
+        _send(adapter, chat_id, "Understood.")
 
 
 def _handle_expert_escalation(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     user_message: str,
     route: Any,
@@ -324,7 +310,7 @@ def _handle_expert_escalation(
     """Handle an Expert escalation.
 
     Args:
-        token: Bot API token
+        adapter: Messaging adapter for sending responses
         chat_id: Chat to reply in
         user_message: Original user message
         route: Gatekeeper route result
@@ -341,7 +327,7 @@ def _handle_expert_escalation(
         try:
             client = create_client(config.models.drafter, config)
         except ConfigError:
-            _send(token, chat_id, "Model provider not configured. Use /help for commands.")
+            _send(adapter, chat_id, "Model provider not configured. Use /help for commands.")
             return
 
         expert = Expert(client)
@@ -371,16 +357,16 @@ def _handle_expert_escalation(
                     save_context_note(
                         project.repo_path, result.context_note, source="telegram"
                     )
-                    _send(token, chat_id, f"Context note saved for {project.name}.")
+                    _send(adapter, chat_id, f"Context note saved for {project.name}.")
                 else:
-                    _send(token, chat_id, "No projects registered to save note to.")
+                    _send(adapter, chat_id, "No projects registered to save note to.")
             finally:
                 conn.close()
         elif action == "refine_draft" and result.refined_content:
             # Fix 4: Save refined content to DB if we have draft context
             if not draft:
                 _send(
-                    token,
+                    adapter,
                     chat_id,
                     f"*Refined draft (no active draft to update):*\n\n"
                     f"```\n{result.refined_content[:500]}\n```",
@@ -410,17 +396,17 @@ def _handle_expert_escalation(
                     f"Draft `{draft.id[:12]}` updated by Expert.\n\n"
                     f"```\n{result.refined_content[:500]}\n```"
                 )
-                buttons = get_review_buttons(draft.id)
-                send_notification_with_buttons(token, chat_id, msg, buttons)
+                buttons = get_review_buttons_normalized(draft.id)
+                adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
             finally:
                 conn.close()
         elif action == "answer_question" and result.answer:
-            _send(token, chat_id, result.answer)
+            _send(adapter, chat_id, result.answer)
         else:
-            _send(token, chat_id, result.reasoning or "Understood.")
+            _send(adapter, chat_id, result.reasoning or "Understood.")
     except Exception as e:
         logger.exception("Error in expert escalation")
-        _send(token, chat_id, f"Error: {e}")
+        _send(adapter, chat_id, f"Error: {e}")
 
 
 # =============================================================================
@@ -447,15 +433,15 @@ HELP_DETAILS = {
 }
 
 
-def cmd_help(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_help(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Show available commands. If args provided, show detailed help."""
     if args.strip():
         cmd_name = args.strip().lstrip("/")
         detail = HELP_DETAILS.get(cmd_name)
         if detail:
-            _send(token, chat_id, f"*/{cmd_name}*\n\n{detail}")
+            _send(adapter, chat_id, f"*/{cmd_name}*\n\n{detail}")
         else:
-            _send(token, chat_id, f"Unknown command: /{cmd_name}")
+            _send(adapter, chat_id, f"Unknown command: /{cmd_name}")
         return
 
     text = (
@@ -476,10 +462,10 @@ def cmd_help(token: str, chat_id: str, args: str, config: Any) -> None:
         "/resume <project\\_id> - Resume a project\n"
         "/help [command] - Show this message"
     )
-    _send(token, chat_id, text)
+    _send(adapter, chat_id, text)
 
 
-def cmd_status(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_status(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Show system status."""
     conn = _get_conn()
     try:
@@ -503,12 +489,12 @@ def cmd_status(token: str, chat_id: str, args: str, config: Any) -> None:
             f"Approved: {len(approved)}",
             f"Scheduled: {len(scheduled)}",
         ]
-        _send(token, chat_id, "\n".join(lines))
+        _send(adapter, chat_id, "\n".join(lines))
     finally:
         conn.close()
 
 
-def cmd_pending(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_pending(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Show pending drafts with action buttons."""
     conn = _get_conn()
     try:
@@ -516,7 +502,7 @@ def cmd_pending(token: str, chat_id: str, args: str, config: Any) -> None:
 
         drafts = get_all_pending_drafts(conn)
         if not drafts:
-            _send(token, chat_id, "No pending drafts.")
+            _send(adapter, chat_id, "No pending drafts.")
             return
 
         for d in drafts[:10]:
@@ -528,20 +514,20 @@ def cmd_pending(token: str, chat_id: str, args: str, config: Any) -> None:
                 f"{d.content[:80]}..."
             )
             buttons = [
-                [
-                    {"text": "Review", "callback_data": f"review:{d.id}"},
-                    {"text": "Quick Approve", "callback_data": f"quick_approve:{d.id}"},
-                ],
+                ButtonRow(buttons=[
+                    Button(label="Review", action="review", payload=d.id),
+                    Button(label="Quick Approve", action="quick_approve", payload=d.id),
+                ]),
             ]
-            send_notification_with_buttons(token, chat_id, text, buttons)
+            adapter.send_message(chat_id, OutboundMessage(text=text, buttons=buttons))
 
         if len(drafts) > 10:
-            _send(token, chat_id, f"...and {len(drafts) - 10} more")
+            _send(adapter, chat_id, f"...and {len(drafts) - 10} more")
     finally:
         conn.close()
 
 
-def cmd_scheduled(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_scheduled(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Show scheduled drafts with cancel buttons."""
     conn = _get_conn()
     try:
@@ -550,21 +536,23 @@ def cmd_scheduled(token: str, chat_id: str, args: str, config: Any) -> None:
         all_pending = get_all_pending_drafts(conn)
         scheduled = [d for d in all_pending if d.status == "scheduled"]
         if not scheduled:
-            _send(token, chat_id, "No scheduled drafts.")
+            _send(adapter, chat_id, "No scheduled drafts.")
             return
 
         for d in scheduled[:10]:
             time_str = d.scheduled_time or "no time"
             text = f"⏰ `{d.id[:12]}` [{d.platform}] {time_str}"
             buttons = [
-                [{"text": "Cancel", "callback_data": f"cancel:{d.id}"}],
+                ButtonRow(buttons=[
+                    Button(label="Cancel", action="cancel", payload=d.id),
+                ]),
             ]
-            send_notification_with_buttons(token, chat_id, text, buttons)
+            adapter.send_message(chat_id, OutboundMessage(text=text, buttons=buttons))
     finally:
         conn.close()
 
 
-def cmd_projects(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_projects(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """List registered projects."""
     conn = _get_conn()
     try:
@@ -572,19 +560,19 @@ def cmd_projects(token: str, chat_id: str, args: str, config: Any) -> None:
 
         projects = get_all_projects(conn)
         if not projects:
-            _send(token, chat_id, "No registered projects.")
+            _send(adapter, chat_id, "No registered projects.")
             return
 
         lines = ["*Registered Projects*", ""]
         for p in projects:
             status = "⏸️ paused" if p.paused else "▶️ active"
             lines.append(f"{status} `{p.id[:12]}` {p.name}")
-        _send(token, chat_id, "\n".join(lines))
+        _send(adapter, chat_id, "\n".join(lines))
     finally:
         conn.close()
 
 
-def cmd_usage(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_usage(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Show token usage summary. Use '/usage recent [N]' for individual operations."""
     arg = args.strip()
 
@@ -598,7 +586,7 @@ def cmd_usage(token: str, chat_id: str, args: str, config: Any) -> None:
             limit = int(parts[1]) if len(parts) > 1 else 10
             entries = get_recent_usage(conn, limit=limit)
             if not entries:
-                _send(token, chat_id, "No usage data found.")
+                _send(adapter, chat_id, "No usage data found.")
                 return
 
             lines = [f"*Recent operations (last {limit})*", ""]
@@ -611,7 +599,7 @@ def cmd_usage(token: str, chat_id: str, args: str, config: Any) -> None:
                 commit = e.get("commit_hash") or ""
                 commit_str = commit[:8] if commit else "—"
                 lines.append(f"`{commit_str}` {op} ({project}) — {inp:,}+{out:,} tok, ${cost:.3f}")
-            _send(token, chat_id, "\n".join(lines))
+            _send(adapter, chat_id, "\n".join(lines))
             return
 
         try:
@@ -633,16 +621,16 @@ def cmd_usage(token: str, chat_id: str, args: str, config: Any) -> None:
             f"Output tokens: {total_output:,}",
             f"Estimated cost: ${total_cost:.2f}",
         ]
-        _send(token, chat_id, "\n".join(lines))
+        _send(adapter, chat_id, "\n".join(lines))
     finally:
         conn.close()
 
 
-def cmd_review(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_review(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Review a draft with full details and action buttons."""
     draft_id = args.strip()
     if not draft_id:
-        _send(token, chat_id, "Usage: /review <draft\\_id>")
+        _send(adapter, chat_id, "Usage: /review <draft\\_id>")
         return
 
     conn = _get_conn()
@@ -651,7 +639,7 @@ def cmd_review(token: str, chat_id: str, args: str, config: Any) -> None:
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
@@ -687,16 +675,16 @@ def cmd_review(token: str, chat_id: str, args: str, config: Any) -> None:
             angle=decision.angle if decision else None,
             evaluator_reasoning=decision.reasoning if decision else None,
         )
-        buttons = get_review_buttons(draft.id)
-        send_notification_with_buttons(token, chat_id, msg, buttons)
+        buttons = get_review_buttons_normalized(draft.id)
+        adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
     finally:
         conn.close()
 
 
-def cmd_register(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_register(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Send instructions for registering a project (requires terminal)."""
     _send(
-        token,
+        adapter,
         chat_id,
         "Registration requires filesystem access.\n\n"
         "Use from terminal:\n"
@@ -704,11 +692,11 @@ def cmd_register(token: str, chat_id: str, args: str, config: Any) -> None:
     )
 
 
-def cmd_approve(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_approve(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Approve a draft for posting."""
     draft_id = args.strip()
     if not draft_id:
-        _send(token, chat_id, "Usage: /approve <draft\\_id>")
+        _send(adapter, chat_id, "Usage: /approve <draft\\_id>")
         return
 
     conn = _get_conn()
@@ -717,28 +705,28 @@ def cmd_approve(token: str, chat_id: str, args: str, config: Any) -> None:
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         if draft.status not in ("draft", "approved"):
             _send(
-                token, chat_id, f"Cannot approve draft with status: {draft.status}"
+                adapter, chat_id, f"Cannot approve draft with status: {draft.status}"
             )
             return
 
         update_draft(conn, draft_id, status="approved")
-        _send(token, chat_id, f"Draft `{draft_id[:12]}` approved.")
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` approved.")
     finally:
         conn.close()
 
 
-def cmd_reject(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_reject(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Reject a draft with optional reason."""
     parts = args.strip().split(None, 1)
     if not parts:
-        _send(token, chat_id, "Usage: /reject <draft\\_id> [reason]")
+        _send(adapter, chat_id, "Usage: /reject <draft\\_id> [reason]")
         return
 
     draft_id = parts[0]
@@ -750,7 +738,7 @@ def cmd_reject(token: str, chat_id: str, args: str, config: Any) -> None:
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
@@ -763,16 +751,16 @@ def cmd_reject(token: str, chat_id: str, args: str, config: Any) -> None:
         msg = f"Draft `{draft_id[:12]}` rejected."
         if reason:
             msg += f"\nReason: {reason}"
-        _send(token, chat_id, msg)
+        _send(adapter, chat_id, msg)
     finally:
         conn.close()
 
 
-def cmd_schedule(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_schedule(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Schedule a draft for posting."""
     parts = args.strip().split(None, 1)
     if not parts:
-        _send(token, chat_id, "Usage: /schedule <draft\\_id> [datetime]")
+        _send(adapter, chat_id, "Usage: /schedule <draft\\_id> [datetime]")
         return
 
     draft_id = parts[0]
@@ -784,7 +772,7 @@ def cmd_schedule(token: str, chat_id: str, args: str, config: Any) -> None:
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
@@ -792,7 +780,7 @@ def cmd_schedule(token: str, chat_id: str, args: str, config: Any) -> None:
         if time_str:
             update_draft(conn, draft_id, status="scheduled", scheduled_time=time_str)
             _send(
-                token,
+                adapter,
                 chat_id,
                 f"Draft `{draft_id[:12]}` scheduled for {time_str}.",
             )
@@ -803,6 +791,7 @@ def cmd_schedule(token: str, chat_id: str, args: str, config: Any) -> None:
             result = calculate_optimal_time(
                 conn,
                 draft.project_id,
+                platform=draft.platform,
                 tz=config.scheduling.timezone if config else "UTC",
                 max_posts_per_day=config.scheduling.max_posts_per_day if config else 3,
                 min_gap_minutes=config.scheduling.min_gap_minutes if config else 30,
@@ -814,7 +803,7 @@ def cmd_schedule(token: str, chat_id: str, args: str, config: Any) -> None:
                 conn, draft_id, status="scheduled", scheduled_time=scheduled_str
             )
             _send(
-                token,
+                adapter,
                 chat_id,
                 f"Draft `{draft_id[:12]}` scheduled for {scheduled_str}\n{result.time_reason}",
             )
@@ -822,11 +811,11 @@ def cmd_schedule(token: str, chat_id: str, args: str, config: Any) -> None:
         conn.close()
 
 
-def cmd_cancel(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_cancel(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Cancel a draft."""
     draft_id = args.strip()
     if not draft_id:
-        _send(token, chat_id, "Usage: /cancel <draft\\_id>")
+        _send(adapter, chat_id, "Usage: /cancel <draft\\_id>")
         return
 
     conn = _get_conn()
@@ -835,22 +824,22 @@ def cmd_cancel(token: str, chat_id: str, args: str, config: Any) -> None:
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         update_draft(conn, draft_id, status="cancelled")
-        _send(token, chat_id, f"Draft `{draft_id[:12]}` cancelled.")
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` cancelled.")
     finally:
         conn.close()
 
 
-def cmd_retry(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_retry(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Retry a failed draft."""
     draft_id = args.strip()
     if not draft_id:
-        _send(token, chat_id, "Usage: /retry <draft\\_id>")
+        _send(adapter, chat_id, "Usage: /retry <draft\\_id>")
         return
 
     conn = _get_conn()
@@ -859,28 +848,28 @@ def cmd_retry(token: str, chat_id: str, args: str, config: Any) -> None:
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         if draft.status != "failed":
             _send(
-                token,
+                adapter,
                 chat_id,
                 f"Can only retry failed drafts (current status: {draft.status}).",
             )
             return
 
         update_draft(conn, draft_id, status="scheduled", retry_count=0, last_error=None)
-        _send(token, chat_id, f"Draft `{draft_id[:12]}` queued for retry.")
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` queued for retry.")
     finally:
         conn.close()
 
 
-def cmd_pause(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_pause(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Pause a project."""
     project_id = args.strip()
     if not project_id:
-        _send(token, chat_id, "Usage: /pause <project\\_id>")
+        _send(adapter, chat_id, "Usage: /pause <project\\_id>")
         return
 
     conn = _get_conn()
@@ -889,27 +878,27 @@ def cmd_pause(token: str, chat_id: str, args: str, config: Any) -> None:
 
         project = get_project(conn, project_id)
         if not project:
-            _send(token, chat_id, f"Project `{project_id}` not found.")
+            _send(adapter, chat_id, f"Project `{project_id}` not found.")
             return
 
         if project.paused:
-            _send(token, chat_id, f"Project `{project.name}` is already paused.")
+            _send(adapter, chat_id, f"Project `{project.name}` is already paused.")
             return
 
         conn.execute(
             "UPDATE projects SET paused = 1 WHERE id = ?", (project_id,)
         )
         conn.commit()
-        _send(token, chat_id, f"Project `{project.name}` paused.")
+        _send(adapter, chat_id, f"Project `{project.name}` paused.")
     finally:
         conn.close()
 
 
-def cmd_resume(token: str, chat_id: str, args: str, config: Any) -> None:
+def cmd_resume(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Resume a paused project."""
     project_id = args.strip()
     if not project_id:
-        _send(token, chat_id, "Usage: /resume <project\\_id>")
+        _send(adapter, chat_id, "Usage: /resume <project\\_id>")
         return
 
     conn = _get_conn()
@@ -918,17 +907,17 @@ def cmd_resume(token: str, chat_id: str, args: str, config: Any) -> None:
 
         project = get_project(conn, project_id)
         if not project:
-            _send(token, chat_id, f"Project `{project_id}` not found.")
+            _send(adapter, chat_id, f"Project `{project_id}` not found.")
             return
 
         if not project.paused:
-            _send(token, chat_id, f"Project `{project.name}` is not paused.")
+            _send(adapter, chat_id, f"Project `{project.name}` is not paused.")
             return
 
         conn.execute(
             "UPDATE projects SET paused = 0 WHERE id = ?", (project_id,)
         )
         conn.commit()
-        _send(token, chat_id, f"Project `{project.name}` resumed.")
+        _send(adapter, chat_id, f"Project `{project.name}` resumed.")
     finally:
         conn.close()

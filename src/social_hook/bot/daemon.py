@@ -245,23 +245,22 @@ def create_bot(
         Configured BotDaemon instance
     """
     from social_hook.bot.buttons import handle_callback
-    from social_hook.bot.buttons import set_adapter as set_buttons_adapter
     from social_hook.bot.commands import handle_command, handle_message
-    from social_hook.bot.commands import set_adapter as set_commands_adapter
     from social_hook.messaging.telegram import TelegramAdapter
 
     adapter = TelegramAdapter(token=token)
-    set_buttons_adapter(adapter)
-    set_commands_adapter(adapter)
 
     def on_command(message: dict) -> None:
-        handle_command(message, token, config)
+        msg = TelegramAdapter.parse_message(message)
+        handle_command(msg, adapter, config)
 
     def on_callback(callback: dict) -> None:
-        handle_callback(callback, token, config)
+        event = TelegramAdapter.parse_callback(callback)
+        handle_callback(event, adapter, config)
 
     def on_message(message: dict) -> None:
-        handle_message(message, token, config)
+        msg = TelegramAdapter.parse_message(message)
+        handle_message(msg, adapter, config)
 
     return BotDaemon(
         token=token,

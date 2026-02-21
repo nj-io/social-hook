@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -185,6 +185,16 @@ CREATE TABLE IF NOT EXISTS milestone_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_milestone_summaries_project ON milestone_summaries(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_milestone_summaries_type ON milestone_summaries(project_id, milestone_type);
+
+-- Web Events (Web Dashboard Message Store)
+CREATE TABLE IF NOT EXISTS web_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    type       TEXT NOT NULL,
+    data       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_events_created ON web_events(created_at);
 """
 
 

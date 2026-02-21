@@ -101,7 +101,7 @@ class TestPostDraftThread:
             "X_API_KEY": "k", "X_API_SECRET": "s",
             "X_ACCESS_TOKEN": "t", "X_ACCESS_TOKEN_SECRET": "ts",
         }
-        config.platforms.x.account_tier = "free"
+        config.platforms = {"x": MagicMock(account_tier="free")}
 
         result = _post_draft(conn, draft, config)
         assert result.success is True
@@ -131,7 +131,7 @@ class TestPostDraftThread:
             "X_API_KEY": "k", "X_API_SECRET": "s",
             "X_ACCESS_TOKEN": "t", "X_ACCESS_TOKEN_SECRET": "ts",
         }
-        config.platforms.x.account_tier = "free"
+        config.platforms = {"x": MagicMock(account_tier="free")}
 
         _post_draft(conn, draft, config)
 
@@ -177,7 +177,7 @@ class TestPostDraftThread:
             "X_API_KEY": "k", "X_API_SECRET": "s",
             "X_ACCESS_TOKEN": "t", "X_ACCESS_TOKEN_SECRET": "ts",
         }
-        config.platforms.x.account_tier = "free"
+        config.platforms = {"x": MagicMock(account_tier="free")}
 
         with patch("social_hook.adapters.platform.x.XAdapter") as MockXAdapter:
             mock_adapter = MagicMock()
@@ -287,7 +287,7 @@ class TestPostDraftThread:
             "X_API_KEY": "k", "X_API_SECRET": "s",
             "X_ACCESS_TOKEN": "t", "X_ACCESS_TOKEN_SECRET": "ts",
         }
-        config.platforms.x.account_tier = "premium"
+        config.platforms = {"x": MagicMock(account_tier="premium")}
 
         result = _post_draft(conn, draft, config)
         assert result.success is True

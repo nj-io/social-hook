@@ -267,7 +267,8 @@ def _post_draft(conn, draft, config):
         if not all([api_key, api_secret, access_token, access_secret]):
             return PostResult(success=False, error="Missing X API credentials")
 
-        tier = config.platforms.x.account_tier or "free"
+        x_config = config.platforms.get("x")
+        tier = (x_config.account_tier if x_config else None) or "free"
         adapter = XAdapter(api_key, api_secret, access_token, access_secret, tier=tier)
 
         # Check if this is a thread (has draft_tweets)

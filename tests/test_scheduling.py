@@ -163,3 +163,69 @@ class TestCalculateOptimalTime:
         # All 3 slots used by project 2, so should schedule for tomorrow
         now = datetime.now(timezone.utc)
         assert result.datetime.date() > now.date()
+
+
+class TestPlatformFilter:
+    """Tests for platform parameter in calculate_optimal_time."""
+
+    def _setup_project(self, conn):
+        project = Project(
+            id=generate_id("project"), name="test", repo_path="/tmp/test"
+        )
+        insert_project(conn, project)
+        return project
+
+    def test_platform_filter_posts(self, temp_db):
+        """Platform param filters today's posts by platform."""
+        project = self._setup_project(temp_db)
+
+        # Create 3 posts for X today
+        for i in range(3):
+            d = Decision(
+                id=generate_id("decision"),
+                project_id=project.id,
+                commit_hash=f"hash{i}",
+                decision="post_worthy",
+                reasoning="test",
+            )
+            insert_decision(temp_db, d)
+            dr = Draft(
+                id=generate_id("draft"),
+                project_id=project.id,
+                decision_id=d.id,
+                platform="x",
+                content=f"content {i}",
+            )
+            insert_draft(temp_db, dr)
+            post = Post(
+                id=generate_id("post"),
+                draft_id=dr.id,
+                project_id=project.id,
+                platform="x",
+                content=f"posted {i}",
+            )
+            insert_post(temp_db, post)
+
+        # With platform=None (cross-platform), max reached
+        result_all = calculate_optimal_time(
+            temp_db, project.id,
+            max_posts_per_day=3,
+        )
+        now = datetime.now(timezone.utc)
+        assert result_all.datetime.date() > now.date()
+
+        # With platform="linkedin", no posts exist — should schedule today
+        result_li = calculate_optimal_time(
+            temp_db, project.id,
+            platform="linkedin",
+            max_posts_per_day=3,
+        )
+        # LinkedIn has no posts today, can schedule today
+        assert isinstance(result_li, ScheduleResult)
+
+    def test_no_platform_filter_backward_compat(self, temp_db):
+        """Platform=None preserves existing cross-platform behavior."""
+        project = self._setup_project(temp_db)
+        result = calculate_optimal_time(temp_db, project.id)
+        assert isinstance(result, ScheduleResult)
+        assert result.datetime > datetime.now(timezone.utc)

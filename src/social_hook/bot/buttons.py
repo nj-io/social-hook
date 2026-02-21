@@ -4,7 +4,13 @@ import logging
 import time
 from typing import Any, Optional
 
-from social_hook.bot.notifications import send_notification, send_notification_with_buttons
+from social_hook.messaging.base import (
+    Button,
+    ButtonRow,
+    CallbackEvent,
+    MessagingAdapter,
+    OutboundMessage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +39,6 @@ def clear_pending_edit(chat_id: str) -> None:
     _pending_edits.pop(chat_id, None)
 
 
-# Messaging adapter bridge: when set, _send() and _answer_callback() use adapter
-_active_adapter: Optional[Any] = None
-
-
-def set_adapter(adapter) -> None:
-    """Set the active messaging adapter. Called by create_bot()."""
-    global _active_adapter
-    _active_adapter = adapter
-
-
 def _get_conn():
     """Get a fresh DB connection (per-request pattern)."""
     from social_hook.db import init_database
@@ -51,58 +47,35 @@ def _get_conn():
     return init_database(get_db_path())
 
 
-def _send(token: str, chat_id: str, text: str) -> bool:
-    """Send a message. Uses adapter if available, falls back to direct HTTP."""
-    if _active_adapter:
-        from social_hook.bot.notifications import send_via_adapter
-
-        return send_via_adapter(_active_adapter, chat_id, text)
-    return send_notification(token, chat_id, text)
+def _send(adapter: MessagingAdapter, chat_id: str, text: str) -> bool:
+    """Send a message via adapter."""
+    result = adapter.send_message(chat_id, OutboundMessage(text=text))
+    return result.success
 
 
-def _answer_callback(token: str, callback_query_id: str, text: str = "") -> bool:
-    """Answer a callback query. Uses adapter if available, falls back to HTTP."""
-    if _active_adapter:
-        return _active_adapter.answer_callback(callback_query_id, text)
-
-    import requests
-
-    try:
-        payload: dict[str, Any] = {"callback_query_id": callback_query_id}
-        if text:
-            payload["text"] = text
-        response = requests.post(
-            f"https://api.telegram.org/bot{token}/answerCallbackQuery",
-            json=payload,
-            timeout=10,
-        )
-        return response.status_code == 200
-    except requests.RequestException:
-        return False
+def _answer_callback(adapter: MessagingAdapter, callback_id: str, text: str = "") -> bool:
+    """Answer a callback query via adapter."""
+    return adapter.answer_callback(callback_id, text)
 
 
-def handle_callback(callback: dict, token: str, config: Optional[Any] = None) -> None:
+def handle_callback(event: CallbackEvent, adapter: MessagingAdapter, config: Optional[Any] = None) -> None:
     """Route a callback query to the appropriate handler.
 
-    Callback data format: "action:draft_id" or "action:draft_id:extra"
+    Callback data format: "action:payload" (already parsed in CallbackEvent)
 
     Args:
-        callback: Telegram callback_query dict
-        token: Bot API token
+        event: Normalized callback event
+        adapter: Messaging adapter for sending responses
         config: Full Config object
     """
-    callback_id = callback.get("id", "")
-    data = callback.get("data", "")
-    message = callback.get("message", {})
-    chat_id = str(message.get("chat", {}).get("id", ""))
+    callback_id = event.callback_id
+    chat_id = event.chat_id
+    action = event.action
+    payload = event.payload
 
-    if not data or not chat_id:
-        _answer_callback(token, callback_id, "Invalid callback")
+    if not action or not chat_id:
+        _answer_callback(adapter, callback_id, "Invalid callback")
         return
-
-    parts = data.split(":", 1)
-    action = parts[0]
-    payload = parts[1] if len(parts) > 1 else ""
 
     handlers = {
         "approve": btn_approve,
@@ -125,20 +98,20 @@ def handle_callback(callback: dict, token: str, config: Optional[Any] = None) ->
 
     handler = handlers.get(action)
     if handler:
-        handler(token, chat_id, callback_id, payload, config)
+        handler(adapter, chat_id, callback_id, payload, config)
     else:
-        _answer_callback(token, callback_id, f"Unknown action: {action}")
+        _answer_callback(adapter, callback_id, f"Unknown action: {action}")
 
 
 def btn_approve(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Handle approve button press."""
-    _answer_callback(token, callback_id, "Approving...")
+    _answer_callback(adapter, callback_id, "Approving...")
 
     conn = _get_conn()
     try:
@@ -147,30 +120,30 @@ def btn_approve(
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         if draft.status not in ("draft", "approved"):
-            _send(token, chat_id, f"Cannot approve draft with status: {draft.status}")
+            _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 
         update_draft(conn, draft_id, status="approved")
-        _send(token, chat_id, f"Draft `{draft_id[:12]}` approved and ready for posting.")
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` approved and ready for posting.")
     finally:
         conn.close()
 
 
 def btn_schedule_optimal(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Handle schedule (optimal time) button press."""
-    _answer_callback(token, callback_id, "Calculating optimal time...")
+    _answer_callback(adapter, callback_id, "Calculating optimal time...")
 
     conn = _get_conn()
     try:
@@ -180,7 +153,7 @@ def btn_schedule_optimal(
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
@@ -188,6 +161,7 @@ def btn_schedule_optimal(
         result = calculate_optimal_time(
             conn,
             draft.project_id,
+            platform=draft.platform,
             tz=config.scheduling.timezone if config else "UTC",
             max_posts_per_day=config.scheduling.max_posts_per_day if config else 3,
             min_gap_minutes=config.scheduling.min_gap_minutes if config else 30,
@@ -197,7 +171,7 @@ def btn_schedule_optimal(
         scheduled_str = result.datetime.isoformat()
         update_draft(conn, draft_id, status="scheduled", scheduled_time=scheduled_str)
         _send(
-            token,
+            adapter,
             chat_id,
             f"Draft `{draft_id[:12]}` scheduled for {scheduled_str}\n{result.time_reason}",
         )
@@ -206,7 +180,7 @@ def btn_schedule_optimal(
 
 
 def btn_edit_text(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
@@ -217,7 +191,7 @@ def btn_edit_text(
     Sends the current content, registers a pending edit, and asks user
     to reply with new text.
     """
-    _answer_callback(token, callback_id, "Edit mode")
+    _answer_callback(adapter, callback_id, "Edit mode")
 
     conn = _get_conn()
     try:
@@ -226,7 +200,7 @@ def btn_edit_text(
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
@@ -235,7 +209,7 @@ def btn_edit_text(
         existing = get_pending_edit(chat_id)
         if existing and existing != draft_id:
             _send(
-                token,
+                adapter,
                 chat_id,
                 f"Switching edit to `{draft_id[:12]}` (edit for `{existing[:12]}` cancelled).",
             )
@@ -243,7 +217,7 @@ def btn_edit_text(
         _pending_edits[chat_id] = (draft_id, time.time())
 
         _send(
-            token,
+            adapter,
             chat_id,
             f"*Current content for* `{draft_id[:12]}`:\n\n"
             f"```\n{draft.content[:500]}\n```\n\n"
@@ -254,14 +228,14 @@ def btn_edit_text(
 
 
 def btn_reject(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Handle reject button press (direct reject)."""
-    _answer_callback(token, callback_id, "Rejecting...")
+    _answer_callback(adapter, callback_id, "Rejecting...")
 
     conn = _get_conn()
     try:
@@ -270,26 +244,26 @@ def btn_reject(
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         update_draft(conn, draft_id, status="rejected")
-        _send(token, chat_id, f"Draft `{draft_id[:12]}` rejected.")
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` rejected.")
     finally:
         conn.close()
 
 
 def btn_quick_approve(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Approve and schedule at optimal time in one step."""
-    _answer_callback(token, callback_id, "Approving and scheduling...")
+    _answer_callback(adapter, callback_id, "Approving and scheduling...")
 
     conn = _get_conn()
     try:
@@ -299,18 +273,19 @@ def btn_quick_approve(
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         if draft.status not in ("draft", "approved"):
-            _send(token, chat_id, f"Cannot approve draft with status: {draft.status}")
+            _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 
         result = calculate_optimal_time(
             conn,
             draft.project_id,
+            platform=draft.platform,
             tz=config.scheduling.timezone if config else "UTC",
             max_posts_per_day=config.scheduling.max_posts_per_day if config else 3,
             min_gap_minutes=config.scheduling.min_gap_minutes if config else 30,
@@ -320,7 +295,7 @@ def btn_quick_approve(
         scheduled_str = result.datetime.isoformat()
         update_draft(conn, draft_id, status="scheduled", scheduled_time=scheduled_str)
         _send(
-            token,
+            adapter,
             chat_id,
             f"Draft `{draft_id[:12]}` approved and scheduled for {scheduled_str}",
         )
@@ -329,37 +304,37 @@ def btn_quick_approve(
 
 
 def btn_schedule_submenu(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Show schedule submenu with optimal/custom options."""
-    _answer_callback(token, callback_id)
+    _answer_callback(adapter, callback_id)
 
     buttons = [
-        [
-            {"text": "Optimal time", "callback_data": f"schedule_optimal:{draft_id}"},
-            {"text": "Custom time", "callback_data": f"schedule_custom:{draft_id}"},
-        ],
+        ButtonRow(buttons=[
+            Button(label="Optimal time", action="schedule_optimal", payload=draft_id),
+            Button(label="Custom time", action="schedule_custom", payload=draft_id),
+        ]),
     ]
-    send_notification_with_buttons(
-        token, chat_id, f"Schedule `{draft_id[:12]}`:", buttons,
-    )
+    adapter.send_message(chat_id, OutboundMessage(
+        text=f"Schedule `{draft_id[:12]}`:", buttons=buttons,
+    ))
 
 
 def btn_schedule_custom(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Prompt user to reply with a custom time."""
-    _answer_callback(token, callback_id)
+    _answer_callback(adapter, callback_id)
     _send(
-        token,
+        adapter,
         chat_id,
         f"Reply with desired time for `{draft_id[:12]}`\n"
         f"(e.g., '2pm', 'tomorrow 9am', '2026-02-15T14:00:00')",
@@ -367,38 +342,38 @@ def btn_schedule_custom(
 
 
 def btn_edit_submenu(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Show edit submenu with text/media/angle options."""
-    _answer_callback(token, callback_id)
+    _answer_callback(adapter, callback_id)
 
     buttons = [
-        [
-            {"text": "Change text", "callback_data": f"edit_text:{draft_id}"},
-            {"text": "Change media", "callback_data": f"edit_media:{draft_id}"},
-        ],
-        [
-            {"text": "Change angle", "callback_data": f"edit_angle:{draft_id}"},
-        ],
+        ButtonRow(buttons=[
+            Button(label="Change text", action="edit_text", payload=draft_id),
+            Button(label="Change media", action="edit_media", payload=draft_id),
+        ]),
+        ButtonRow(buttons=[
+            Button(label="Change angle", action="edit_angle", payload=draft_id),
+        ]),
     ]
-    send_notification_with_buttons(
-        token, chat_id, f"Edit `{draft_id[:12]}`:", buttons,
-    )
+    adapter.send_message(chat_id, OutboundMessage(
+        text=f"Edit `{draft_id[:12]}`:", buttons=buttons,
+    ))
 
 
 def btn_edit_media(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Show current media and action buttons (regenerate/remove)."""
-    _answer_callback(token, callback_id, "Loading media...")
+    _answer_callback(adapter, callback_id, "Loading media...")
     conn = _get_conn()
     try:
         from social_hook.bot.commands import set_chat_draft_context
@@ -406,55 +381,46 @@ def btn_edit_media(
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         if draft.media_paths:
             # Send current media via adapter
-            if _active_adapter:
-                caps = _active_adapter.get_capabilities()
-                if getattr(caps, "supports_media", False):
-                    for path in draft.media_paths:
-                        _active_adapter.send_media(
-                            chat_id,
-                            path,
-                            caption=f"Current media for `{draft_id[:12]}`",
-                        )
+            caps = adapter.get_capabilities()
+            if caps.supports_media:
+                for path in draft.media_paths:
+                    adapter.send_media(
+                        chat_id,
+                        path,
+                        caption=f"Current media for `{draft_id[:12]}`",
+                    )
             # Show action buttons
             buttons = [
-                [
-                    {
-                        "text": "Regenerate",
-                        "callback_data": f"media_regen:{draft_id}",
-                    },
-                    {
-                        "text": "Remove media",
-                        "callback_data": f"media_remove:{draft_id}",
-                    },
-                ]
+                ButtonRow(buttons=[
+                    Button(label="Regenerate", action="media_regen", payload=draft_id),
+                    Button(label="Remove media", action="media_remove", payload=draft_id),
+                ]),
             ]
-            send_notification_with_buttons(
-                token,
-                chat_id,
-                f"Media for `{draft_id[:12]}` ({draft.media_type or 'unknown'}):",
-                buttons,
-            )
+            adapter.send_message(chat_id, OutboundMessage(
+                text=f"Media for `{draft_id[:12]}` ({draft.media_type or 'unknown'}):",
+                buttons=buttons,
+            ))
         else:
-            _send(token, chat_id, f"No media attached to `{draft_id[:12]}`.")
+            _send(adapter, chat_id, f"No media attached to `{draft_id[:12]}`.")
     finally:
         conn.close()
 
 
 def btn_media_regen(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Regenerate media using the stored media_spec."""
-    _answer_callback(token, callback_id, "Regenerating...")
+    _answer_callback(adapter, callback_id, "Regenerating...")
     conn = _get_conn()
     try:
         import json
@@ -467,7 +433,7 @@ def btn_media_regen(
 
         draft = get_draft(conn, draft_id)
         if not draft or not draft.media_type or not draft.media_spec:
-            _send(token, chat_id, "No media spec available for regeneration.")
+            _send(adapter, chat_id, "No media spec available for regeneration.")
             return
 
         api_key = None
@@ -475,7 +441,7 @@ def btn_media_regen(
             api_key = config.env.get("GEMINI_API_KEY") if config else None
             if not api_key:
                 _send(
-                    token,
+                    adapter,
                     chat_id,
                     "Cannot regenerate: GEMINI_API_KEY not configured.",
                 )
@@ -484,11 +450,11 @@ def btn_media_regen(
         try:
             media_adapter = get_media_adapter(draft.media_type, api_key=api_key)
         except ValueError as e:
-            _send(token, chat_id, f"Media adapter error: {e}")
+            _send(adapter, chat_id, f"Media adapter error: {e}")
             return
         if not media_adapter:
             _send(
-                token,
+                adapter,
                 chat_id,
                 f"Media adapter '{draft.media_type}' not available.",
             )
@@ -513,30 +479,29 @@ def btn_media_regen(
                 ),
             )
 
-            if _active_adapter:
-                caps = _active_adapter.get_capabilities()
-                if getattr(caps, "supports_media", False):
-                    _active_adapter.send_media(
-                        chat_id,
-                        result.file_path,
-                        caption=f"Regenerated media for `{draft_id[:12]}`",
-                    )
-            _send(token, chat_id, "Media regenerated.")
+            caps = adapter.get_capabilities()
+            if caps.supports_media:
+                adapter.send_media(
+                    chat_id,
+                    result.file_path,
+                    caption=f"Regenerated media for `{draft_id[:12]}`",
+                )
+            _send(adapter, chat_id, "Media regenerated.")
         else:
-            _send(token, chat_id, f"Regeneration failed: {result.error}")
+            _send(adapter, chat_id, f"Regeneration failed: {result.error}")
     finally:
         conn.close()
 
 
 def btn_media_remove(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Remove media from a draft."""
-    _answer_callback(token, callback_id, "Removing...")
+    _answer_callback(adapter, callback_id, "Removing...")
     conn = _get_conn()
     try:
         import json
@@ -564,65 +529,65 @@ def btn_media_remove(
                 ),
             )
 
-        _send(token, chat_id, f"Media removed from `{draft_id[:12]}`.")
+        _send(adapter, chat_id, f"Media removed from `{draft_id[:12]}`.")
     finally:
         conn.close()
 
 
 def btn_edit_angle(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Prompt user to reply with a new angle."""
-    _answer_callback(token, callback_id)
-    _send(token, chat_id, f"Reply with new angle for `{draft_id[:12]}`")
+    _answer_callback(adapter, callback_id)
+    _send(adapter, chat_id, f"Reply with new angle for `{draft_id[:12]}`")
 
 
 def btn_reject_submenu(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Show reject submenu with just reject/reject with note."""
-    _answer_callback(token, callback_id)
+    _answer_callback(adapter, callback_id)
 
     buttons = [
-        [
-            {"text": "Just reject", "callback_data": f"reject_now:{draft_id}"},
-            {"text": "Reject with note", "callback_data": f"reject_note:{draft_id}"},
-        ],
+        ButtonRow(buttons=[
+            Button(label="Just reject", action="reject_now", payload=draft_id),
+            Button(label="Reject with note", action="reject_note", payload=draft_id),
+        ]),
     ]
-    send_notification_with_buttons(
-        token, chat_id, f"Reject `{draft_id[:12]}`:", buttons,
-    )
+    adapter.send_message(chat_id, OutboundMessage(
+        text=f"Reject `{draft_id[:12]}`:", buttons=buttons,
+    ))
 
 
 def btn_reject_note(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Prompt user to reply with a rejection reason."""
-    _answer_callback(token, callback_id)
-    _send(token, chat_id, f"Reply with rejection reason for `{draft_id[:12]}`")
+    _answer_callback(adapter, callback_id)
+    _send(adapter, chat_id, f"Reply with rejection reason for `{draft_id[:12]}`")
 
 
 def btn_cancel(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Handle cancel button press from scheduled list."""
-    _answer_callback(token, callback_id, "Cancelling...")
+    _answer_callback(adapter, callback_id, "Cancelling...")
 
     conn = _get_conn()
     try:
@@ -631,27 +596,27 @@ def btn_cancel(
 
         draft = get_draft(conn, draft_id)
         if not draft:
-            _send(token, chat_id, f"Draft `{draft_id}` not found.")
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         update_draft(conn, draft_id, status="cancelled")
-        _send(token, chat_id, f"Draft `{draft_id[:12]}` cancelled.")
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` cancelled.")
     finally:
         conn.close()
 
 
 def btn_review(
-    token: str,
+    adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
 ) -> None:
     """Show full draft review via button callback."""
-    _answer_callback(token, callback_id)
+    _answer_callback(adapter, callback_id)
 
     from social_hook.bot.commands import cmd_review
 
-    cmd_review(token, chat_id, draft_id, config)
+    cmd_review(adapter, chat_id, draft_id, config)

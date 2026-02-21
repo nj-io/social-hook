@@ -1,0 +1,33 @@
+"use client";
+
+const sections = [
+  { id: "models", label: "Models" },
+  { id: "api-keys", label: "API Keys" },
+  { id: "platforms", label: "Platforms" },
+  { id: "scheduling", label: "Scheduling" },
+  { id: "image-generation", label: "Image Generation" },
+  { id: "journey-capture", label: "Journey Capture" },
+  { id: "web-dashboard", label: "Web Dashboard" },
+  { id: "voice-style", label: "Voice & Style" },
+  { id: "content-config", label: "Content Config" },
+];
+
+export function SettingsSidebar({ active, onSelect }: { active: string; onSelect: (id: string) => void }) {
+  return (
+    <nav className="w-48 shrink-0 space-y-0.5">
+      {sections.map((s) => (
+        <button
+          key={s.id}
+          onClick={() => onSelect(s.id)}
+          className={`w-full rounded-md px-3 py-2 text-left text-sm font-medium transition-colors ${
+            active === s.id
+              ? "bg-accent text-accent-foreground"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          }`}
+        >
+          {s.label}
+        </button>
+      ))}
+    </nav>
+  );
+}

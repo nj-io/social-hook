@@ -340,19 +340,19 @@ class TestRunWizard:
     @patch("social_hook.setup.wizard._show_summary")
     @patch("social_hook.setup.wizard._save_config_yaml")
     @patch("social_hook.setup.wizard._setup_installations")
+    @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
     @patch("social_hook.setup.wizard._setup_image_gen")
     @patch("social_hook.setup.wizard._setup_models")
-    @patch("social_hook.setup.wizard._setup_linkedin")
-    @patch("social_hook.setup.wizard._setup_x")
+    @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
     def test_full_wizard(self, mock_init, mock_save, mock_api_keys, mock_voice,
-                         mock_telegram, mock_x, mock_linkedin, mock_models,
-                         mock_image, mock_sched, mock_install, mock_yaml,
+                         mock_telegram, mock_platforms, mock_models,
+                         mock_image, mock_sched, mock_web, mock_install, mock_yaml,
                          mock_summary, mock_load, mock_sys):
         mock_sys.stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
@@ -362,6 +362,8 @@ class TestRunWizard:
         mock_voice.assert_called_once()
         mock_models.assert_called_once()
         mock_image.assert_called_once()
+        mock_platforms.assert_called_once()
+        mock_web.assert_called_once()
         mock_load.assert_called_once()
 
     @patch("social_hook.filesystem.init_filesystem")
@@ -429,11 +431,11 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._show_summary")
     @patch("social_hook.setup.wizard._save_config_yaml")
     @patch("social_hook.setup.wizard._setup_installations")
+    @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
     @patch("social_hook.setup.wizard._setup_image_gen")
     @patch("social_hook.setup.wizard._setup_models")
-    @patch("social_hook.setup.wizard._setup_linkedin")
-    @patch("social_hook.setup.wizard._setup_x")
+    @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
@@ -441,8 +443,8 @@ class TestWizardWarnings:
     @patch("social_hook.filesystem.init_filesystem")
     def test_warns_when_missing_keys(
         self, mock_init, mock_save, mock_api_keys, mock_voice,
-        mock_telegram, mock_x, mock_linkedin, mock_models,
-        mock_image, mock_sched, mock_install, mock_yaml,
+        mock_telegram, mock_platforms, mock_models,
+        mock_image, mock_sched, mock_web, mock_install, mock_yaml,
         mock_summary, mock_load, mock_success, mock_warn, mock_sys,
     ):
         mock_sys.stdout.isatty.return_value = False
@@ -464,11 +466,11 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._show_summary")
     @patch("social_hook.setup.wizard._save_config_yaml")
     @patch("social_hook.setup.wizard._setup_installations")
+    @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
     @patch("social_hook.setup.wizard._setup_image_gen")
     @patch("social_hook.setup.wizard._setup_models")
-    @patch("social_hook.setup.wizard._setup_linkedin")
-    @patch("social_hook.setup.wizard._setup_x")
+    @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
@@ -476,8 +478,8 @@ class TestWizardWarnings:
     @patch("social_hook.filesystem.init_filesystem")
     def test_no_warnings_when_existing_keys(
         self, mock_init, mock_save, mock_api_keys, mock_voice,
-        mock_telegram, mock_x, mock_linkedin, mock_models,
-        mock_image, mock_sched, mock_install, mock_yaml,
+        mock_telegram, mock_platforms, mock_models,
+        mock_image, mock_sched, mock_web, mock_install, mock_yaml,
         mock_summary, mock_load, mock_success, mock_warn, mock_sys,
         tmp_path,
     ):
@@ -524,11 +526,11 @@ class TestWelcomePanel:
     @patch("social_hook.setup.wizard._show_summary")
     @patch("social_hook.setup.wizard._save_config_yaml")
     @patch("social_hook.setup.wizard._setup_installations")
+    @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
     @patch("social_hook.setup.wizard._setup_image_gen")
     @patch("social_hook.setup.wizard._setup_models")
-    @patch("social_hook.setup.wizard._setup_linkedin")
-    @patch("social_hook.setup.wizard._setup_x")
+    @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
@@ -543,11 +545,11 @@ class TestWelcomePanel:
 
     @patch("social_hook.setup.wizard._load_existing", return_value=({}, {}))
     @patch("social_hook.setup.wizard._setup_installations")
+    @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
     @patch("social_hook.setup.wizard._setup_image_gen")
     @patch("social_hook.setup.wizard._setup_models")
-    @patch("social_hook.setup.wizard._setup_linkedin")
-    @patch("social_hook.setup.wizard._setup_x")
+    @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
@@ -1137,7 +1139,7 @@ class TestTimezoneSelector:
         yaml_config = {}
         _setup_scheduling(Path("/tmp"), yaml_config, {}, progress=progress)
 
-        assert progress.section == 8
+        assert progress.section == 7
         assert progress.substep == 3
 
 
@@ -1368,7 +1370,7 @@ class TestInstallations:
         progress = WizardProgress()
         _setup_installations(progress=progress)
 
-        assert progress.section == 9
+        assert progress.section == 10
         assert progress.substep == 3
 
 
@@ -1390,14 +1392,18 @@ class TestLoadExisting:
 
     @patch("social_hook.config.load_full_config")
     def test_extracts_existing_config(self, mock_config):
+        from social_hook.config.platforms import OutputPlatformConfig
         from social_hook.setup.wizard import _load_existing
 
         mock_config.return_value = MagicMock(
             env={"ANTHROPIC_API_KEY": "sk-test", "TELEGRAM_BOT_TOKEN": "tok"},
             models=MagicMock(evaluator="anthropic/claude-opus-4-5", drafter="anthropic/claude-opus-4-5", gatekeeper="anthropic/claude-haiku-4-5"),
-            platforms=MagicMock(x=MagicMock(enabled=True, account_tier="free")),
+            platforms={
+                "x": OutputPlatformConfig(enabled=True, priority="primary", account_tier="free"),
+            },
             scheduling=MagicMock(timezone="UTC", max_posts_per_day=3, min_gap_minutes=30),
             image_generation=MagicMock(enabled=True, service="nano_banana_pro"),
+            journey_capture=MagicMock(enabled=False, model=None),
         )
 
         env, yaml = _load_existing()
@@ -1405,6 +1411,7 @@ class TestLoadExisting:
         assert env["ANTHROPIC_API_KEY"] == "sk-test"
         assert yaml["models"]["evaluator"] == "anthropic/claude-opus-4-5"
         assert yaml["platforms"]["x"]["account_tier"] == "free"
+        assert yaml["platforms"]["x"]["priority"] == "primary"
         assert yaml["scheduling"]["timezone"] == "UTC"
         assert yaml["image_generation"]["service"] == "nano_banana_pro"
 
@@ -1486,3 +1493,130 @@ class TestKeysNeededForConfig:
 
         needed = _keys_needed_for_config({})
         assert "ANTHROPIC_API_KEY" in needed
+
+
+# =============================================================================
+# Platform setup tests
+# =============================================================================
+
+
+class TestPlatformSetup:
+    @patch("social_hook.setup.wizard._info")
+    @patch("social_hook.setup.wizard._select")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_platform_primary_secondary(self, mock_confirm, mock_select, mock_info):
+        from social_hook.setup.wizard import _setup_platforms
+
+        # Enable X (primary), enable LinkedIn (secondary), no custom
+        mock_confirm.side_effect = [
+            True,   # Enable X?
+            False,  # Configure X credentials?
+            True,   # Enable LinkedIn?
+            False,  # Configure LinkedIn credentials?
+            False,  # Add custom platform?
+        ]
+        mock_select.side_effect = [
+            "Primary (recommended)",    # X priority
+            "free (280 chars)",         # X tier
+            "Secondary (recommended)",  # LinkedIn priority
+        ]
+
+        yaml_config: dict = {}
+        _setup_platforms(yaml_config, {}, {}, {})
+
+        assert yaml_config["platforms"]["x"]["enabled"] is True
+        assert yaml_config["platforms"]["x"]["priority"] == "primary"
+        assert yaml_config["platforms"]["x"]["account_tier"] == "free"
+        assert yaml_config["platforms"]["linkedin"]["enabled"] is True
+        assert yaml_config["platforms"]["linkedin"]["priority"] == "secondary"
+
+    @patch("social_hook.setup.wizard._success")
+    @patch("social_hook.setup.wizard._prompt")
+    @patch("social_hook.setup.wizard._select")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_custom_platform_setup(self, mock_confirm, mock_select, mock_prompt, mock_success):
+        from social_hook.setup.wizard import _setup_platforms
+
+        # Decline X, decline LinkedIn, add one custom, then decline more
+        mock_confirm.side_effect = [
+            False,  # Enable X?
+            False,  # Enable LinkedIn?
+            True,   # Add custom platform?
+            False,  # Add another custom platform?
+        ]
+        mock_select.side_effect = [
+            "Primary",  # blog priority
+        ]
+        mock_prompt.side_effect = [
+            "blog",     # Platform name
+            "article",  # Content format
+            "Long-form technical articles",  # Description
+        ]
+
+        yaml_config: dict = {}
+        _setup_platforms(yaml_config, {}, {}, {})
+
+        assert "blog" in yaml_config["platforms"]
+        assert yaml_config["platforms"]["blog"]["enabled"] is True
+        assert yaml_config["platforms"]["blog"]["type"] == "custom"
+        assert yaml_config["platforms"]["blog"]["priority"] == "primary"
+        assert yaml_config["platforms"]["blog"]["format"] == "article"
+        assert yaml_config["platforms"]["blog"]["description"] == "Long-form technical articles"
+
+    @patch("social_hook.setup.wizard._info")
+    @patch("social_hook.setup.wizard._select")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_platform_with_progress(self, mock_confirm, mock_select, mock_info):
+        from social_hook.setup.wizard import _setup_platforms
+
+        mock_confirm.side_effect = [False, False, False]  # Decline all
+        progress = WizardProgress()
+        yaml_config: dict = {}
+        _setup_platforms(yaml_config, {}, {}, {}, progress=progress)
+
+        assert progress.section == 5
+
+
+# =============================================================================
+# Web dashboard setup tests
+# =============================================================================
+
+
+class TestWebDashboardSetup:
+    @patch("social_hook.setup.wizard._info")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_web_dashboard_enabled(self, mock_confirm, mock_info):
+        from social_hook.setup.wizard import _setup_web_dashboard
+
+        mock_confirm.return_value = True  # Enable web dashboard
+
+        yaml_config: dict = {}
+        _setup_web_dashboard(yaml_config)
+
+        assert yaml_config["web"]["enabled"] is True
+
+    @patch("social_hook.setup.wizard._info")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_web_dashboard_disabled(self, mock_confirm, mock_info):
+        from social_hook.setup.wizard import _setup_web_dashboard
+
+        mock_confirm.return_value = False  # Disable web dashboard
+
+        yaml_config: dict = {}
+        _setup_web_dashboard(yaml_config)
+
+        assert yaml_config["web"]["enabled"] is False
+
+    @patch("social_hook.setup.wizard._info")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_web_dashboard_with_progress(self, mock_confirm, mock_info):
+        from social_hook.setup.wizard import _setup_web_dashboard
+
+        mock_confirm.return_value = True
+
+        progress = WizardProgress()
+        yaml_config: dict = {}
+        _setup_web_dashboard(yaml_config, progress=progress)
+
+        assert progress.section == 9
+        assert progress.substep == 1

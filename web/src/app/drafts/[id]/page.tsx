@@ -1,0 +1,178 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import Link from "next/link";
+import { fetchDraft, sendCallback } from "@/lib/api";
+import type { Draft } from "@/lib/types";
+import { StatusBadge } from "@/components/status-badge";
+import { MediaPreview } from "@/components/media-preview";
+
+export default function DraftDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
+
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [actionPending, setActionPending] = useState("");
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const result = await fetchDraft(id);
+        setDraft(result);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load draft");
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [id]);
+
+  async function handleAction(action: string) {
+    if (!draft) return;
+    setActionPending(action);
+    try {
+      await sendCallback(action, draft.id);
+      // Reload draft to see updated status
+      const result = await fetchDraft(id);
+      setDraft(result);
+    } catch {
+      // Error handling - reload anyway
+      try {
+        const result = await fetchDraft(id);
+        setDraft(result);
+      } catch {
+        // Ignore
+      }
+    } finally {
+      setActionPending("");
+    }
+  }
+
+  if (loading) {
+    return <p className="text-center text-muted-foreground">Loading...</p>;
+  }
+
+  if (error || !draft) {
+    return (
+      <div className="space-y-4">
+        <Link href="/drafts" className="text-sm text-accent hover:underline">
+          &larr; Back to drafts
+        </Link>
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+          {error || "Draft not found"}
+        </div>
+      </div>
+    );
+  }
+
+  const platformLabel = draft.platform === "x" ? "X (Twitter)" : draft.platform === "linkedin" ? "LinkedIn" : draft.platform;
+
+  return (
+    <div className="space-y-6">
+      <Link href="/drafts" className="text-sm text-accent hover:underline">
+        &larr; Back to drafts
+      </Link>
+
+      <div className="flex items-center gap-3">
+        <h1 className="text-2xl font-bold">Draft Detail</h1>
+        <StatusBadge status={draft.status} />
+      </div>
+
+      {/* Meta info */}
+      <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+        <span>Platform: <span className="font-medium text-foreground">{platformLabel}</span></span>
+        <span>Created: {new Date(draft.created_at).toLocaleString()}</span>
+        {draft.suggested_time && (
+          <span>Scheduled: {new Date(draft.suggested_time).toLocaleString()}</span>
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="rounded-lg border border-border p-4">
+        <h2 className="mb-2 text-sm font-medium text-muted-foreground">Content</h2>
+        <p className="whitespace-pre-wrap text-sm">{draft.content}</p>
+      </div>
+
+      {/* Tweets (for thread-style posts) */}
+      {draft.tweets && draft.tweets.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Thread</h2>
+          {draft.tweets.map((tweet, i) => (
+            <div key={tweet.id} className="rounded-lg border border-border p-3">
+              <span className="text-xs text-muted-foreground">Tweet {i + 1}</span>
+              <p className="mt-1 whitespace-pre-wrap text-sm">{tweet.content}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Media */}
+      {draft.media_paths && (
+        <div>
+          <h2 className="mb-2 text-sm font-medium text-muted-foreground">Media</h2>
+          <MediaPreview paths={draft.media_paths} />
+        </div>
+      )}
+
+      {/* Reasoning */}
+      {draft.reasoning && (
+        <div className="rounded-lg border border-border bg-muted/50 p-4">
+          <h2 className="mb-1 text-sm font-medium text-muted-foreground">AI Reasoning</h2>
+          <p className="whitespace-pre-wrap text-sm">{draft.reasoning}</p>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      {draft.status === "draft" && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => handleAction("approve")}
+            disabled={!!actionPending}
+            className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-700 disabled:opacity-50"
+          >
+            {actionPending === "approve" ? "..." : "Approve"}
+          </button>
+          <button
+            onClick={() => handleAction("reject")}
+            disabled={!!actionPending}
+            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+          >
+            {actionPending === "reject" ? "..." : "Reject"}
+          </button>
+          <button
+            onClick={() => handleAction("schedule")}
+            disabled={!!actionPending}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+          >
+            {actionPending === "schedule" ? "..." : "Schedule"}
+          </button>
+        </div>
+      )}
+
+      {/* Audit trail */}
+      {draft.changes && draft.changes.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-sm font-medium text-muted-foreground">Change History</h2>
+          <div className="space-y-1">
+            {draft.changes.map((change) => (
+              <div key={change.id} className="flex items-baseline gap-2 text-xs">
+                <span className="text-muted-foreground">
+                  {new Date(change.changed_at).toLocaleString()}
+                </span>
+                <span className="font-medium">{change.field}</span>
+                <span className="text-muted-foreground">
+                  {change.old_value} &rarr; {change.new_value}
+                </span>
+                <span className="text-muted-foreground">by {change.changed_by}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

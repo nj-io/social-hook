@@ -2,6 +2,24 @@
 
 Deviations and discoveries from the original multi-provider integration plan.
 
+## 2026-02-21
+
+### Web Dashboard + Per-Platform Content Pipeline
+
+Major feature: web-based dashboard and per-platform content generation.
+
+- **Dynamic platform registry** (`config/platforms.py`): `OutputPlatformConfig` with primary/secondary priority, smart defaults, content filter presets (`all`/`notable`/`significant`), frequency presets (`high`/`moderate`/`low`/`minimal`). Custom platforms supported.
+- **Handler input abstraction**: Bot handlers (`buttons.py`, `commands.py`) now accept `(InboundMessage/CallbackEvent, MessagingAdapter)` instead of raw Telegram dicts. Daemon is the Telegram boundary.
+- **WebAdapter** (`messaging/web.py`): SQLite-backed `MessagingAdapter` for web dashboard communication. Writes to `web_events` table. Reusable core (zero social-hook imports).
+- **Per-platform pipeline** (`trigger.py`): Evaluator makes ONE decision; `passes_content_filter()` gates per-platform draft creation. Drafter receives `ResolvedPlatformConfig` with platform-specific instructions. Media generated once, shared across platforms.
+- **Notifications cleanup** (`notifications.py`): Removed dead functions (`send_notification`, `send_notification_with_buttons`, etc.). Module is now pure formatting helpers.
+- **FastAPI API server** (`web/server.py`): Bot interaction endpoints (`/api/command`, `/api/callback`, `/api/message`), SSE events (`/api/events`), data queries (`/api/drafts`, `/api/projects`), settings management (`/api/settings/*`). Localhost-only CORS, key masking, path traversal protection.
+- **CLI web command**: `social-hook web` starts Next.js + FastAPI servers.
+- **Setup wizard updates**: Platform setup with primary/secondary selection, custom platform creation, web dashboard enable/port selection.
+- **Next.js frontend** (`web/`): Dashboard, draft list/detail, chat with SSE, settings management with platform cards (primary/secondary badges, advanced accordion).
+- **DB migration 006**: `web_events` table for web dashboard event polling.
+- **8 new E2E scenarios** (Section N): Web API endpoints, per-platform pipeline, settings management, SSE streaming.
+
 ## 2026-02-20
 
 ### Media generation pipeline

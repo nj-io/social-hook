@@ -308,7 +308,7 @@ class TestDrafter:
 
         assert isinstance(result, CreateDraftInput)
         assert "auth" in result.content.lower()
-        assert result.platform.value == "x"
+        assert result.platform == "x"
 
     def test_create_draft_linkedin(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
@@ -331,7 +331,7 @@ class TestDrafter:
                 platform="linkedin",
             )
 
-        assert result.platform.value == "linkedin"
+        assert result.platform == "linkedin"
 
     def test_create_draft_with_media(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir

@@ -52,13 +52,6 @@ class MediaTool(str, Enum):
     none = "none"
 
 
-class Platform(str, Enum):
-    """Supported platforms."""
-
-    x = "x"
-    linkedin = "linkedin"
-
-
 class RouteAction(str, Enum):
     """Gatekeeper routing actions."""
 
@@ -161,7 +154,7 @@ class CreateDraftInput(BaseModel):
     """Drafter tool call: create_draft."""
 
     content: str
-    platform: Platform
+    platform: str
     reasoning: str
     media_type: Optional[MediaTool] = None
     media_spec: Optional[dict[str, Any]] = None
@@ -183,7 +176,7 @@ class CreateDraftInput(BaseModel):
                     },
                     "platform": {
                         "type": "string",
-                        "enum": [e.value for e in Platform],
+                        "description": "Target platform name (e.g., 'x', 'linkedin', 'blog')",
                     },
                     "media_type": {
                         "type": "string",

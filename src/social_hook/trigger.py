@@ -6,8 +6,6 @@ import subprocess
 import sys
 from typing import Optional
 
-import requests
-
 from social_hook.config.yaml import load_full_config
 from social_hook.db.connection import get_connection, init_database
 from social_hook.db import operations as ops
@@ -130,39 +128,6 @@ def git_remote_origin(repo_path: str) -> Optional[str]:
         return None
 
 
-def send_telegram_notification(
-    token: str,
-    chat_id: str,
-    message: str,
-) -> bool:
-    """Send a Telegram notification via direct HTTP to Bot API.
-
-    Works independently of the bot daemon.
-
-    Args:
-        token: Telegram Bot API token
-        chat_id: Target chat ID
-        message: Message text (supports Markdown)
-
-    Returns:
-        True if message was sent successfully
-    """
-    try:
-        response = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": message,
-                "parse_mode": "Markdown",
-            },
-            timeout=10,
-        )
-        return response.status_code == 200
-    except requests.RequestException as e:
-        logger.warning(f"Telegram notification failed: {e}")
-        return False
-
-
 def run_trigger(
     commit_hash: str,
     repo_path: str,
@@ -267,9 +232,21 @@ def run_trigger(
         conn.close()
         return 1
 
+    # Build platform summaries for evaluator context
+    platform_summaries = []
+    for pname, pcfg in config.platforms.items():
+        if pcfg.enabled:
+            summary = f"{pname} ({pcfg.priority})"
+            if pcfg.type == "custom" and pcfg.description:
+                summary += f" — {pcfg.description}"
+            platform_summaries.append(summary)
+
     try:
         evaluator = Evaluator(evaluator_client)
-        evaluation = evaluator.evaluate(commit, context, db, show_prompt=show_prompt)
+        evaluation = evaluator.evaluate(
+            commit, context, db, show_prompt=show_prompt,
+            platform_summaries=platform_summaries or None,
+        )
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
         if verbose:
@@ -297,8 +274,44 @@ def run_trigger(
         print(f"Decision: {evaluation.decision}")
         print(f"Reasoning: {evaluation.reasoning}")
 
-    # 9. If post-worthy, create draft
+    # 9. If post-worthy, create drafts per platform
     if evaluation.decision == "post_worthy":
+        from social_hook.config.platforms import (
+            passes_content_filter, resolve_platform,
+        )
+
+        # Resolve all enabled platforms
+        resolved_platforms = {}
+        for pname, pcfg in config.platforms.items():
+            if pcfg.enabled:
+                resolved_platforms[pname] = resolve_platform(
+                    pname, pcfg, config.scheduling,
+                )
+
+        if not resolved_platforms:
+            if verbose:
+                print("No enabled platforms. Skipping draft creation.")
+            conn.close()
+            return 0
+
+        # Apply content filter per platform
+        ep_type = getattr(evaluation, "episode_type", None)
+        # episode_type may be an enum — normalize to string
+        if ep_type is not None and hasattr(ep_type, "value"):
+            ep_type = ep_type.value
+        target_platforms = {}
+        for pname, rpcfg in resolved_platforms.items():
+            if passes_content_filter(rpcfg.filter, ep_type):
+                target_platforms[pname] = rpcfg
+            elif verbose:
+                print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
+
+        if not target_platforms:
+            if verbose:
+                print("All platforms filtered this commit.")
+            conn.close()
+            return 0
+
         try:
             drafter_client = create_client(config.models.drafter, config, verbose=verbose)
         except ConfigError as e:
@@ -308,203 +321,214 @@ def run_trigger(
             conn.close()
             return 1
 
-        try:
-            from social_hook.llm.drafter import Drafter
+        from social_hook.llm.drafter import Drafter
 
-            drafter = Drafter(drafter_client)
+        drafter = Drafter(drafter_client)
 
-            # Determine platform and tier
-            platform = "x"
-            tier = "free"
-            if config.platforms.x.enabled:
-                platform = "x"
-                tier = config.platforms.x.account_tier or "free"
-            elif config.platforms.linkedin.enabled:
-                platform = "linkedin"
-
-            draft_result = drafter.create_draft(
-                evaluation, context, commit, db,
-                platform=platform, tier=tier,
-                config=project_config.context,
-            )
-
-            # Format decision: narrative-driven, tier-enforced
-            use_thread = _needs_thread(draft_result, platform, tier)
-
-            thread_tweets = []
-            if use_thread:
-                thread_result = drafter.create_thread(
-                    evaluation, context, commit, db, platform=platform,
-                )
-                # Parse thread content into individual tweets
-                thread_tweets = _parse_thread_tweets(thread_result.content)
-                # Store full concatenated content for human review
-                draft_content = thread_result.content
-                draft_reasoning = thread_result.reasoning
-            else:
-                draft_content = draft_result.content
-                draft_reasoning = draft_result.reasoning
-        except Exception as e:
-            logger.error(f"LLM API error during drafting: {e}")
-            if verbose:
-                print(f"LLM API error during drafting: {e}", file=sys.stderr)
-            conn.close()
-            return 3
-
-        # Pre-generate draft ID for media output directory
-        draft_id = generate_id("draft")
-
-        # --- Media generation ---
-        media_paths = []
-        media_type_str = None
-        media_spec_dict = None
-
-        # Resolve media type: prefer drafter's choice, fall back to evaluator's recommendation
-        _drafter_media = (
-            getattr(draft_result, 'media_type', None)
-            and draft_result.media_type.value != "none"
-        )
-        _evaluator_media = (
-            getattr(evaluation, 'media_tool', None)
-            and evaluation.media_tool != "none"
+        # Media generation (once, shared across platforms)
+        media_paths, media_type_str, media_spec_dict = _generate_media(
+            config, evaluation, dry_run=dry_run, verbose=verbose,
         )
 
-        if config.image_generation.enabled and (_drafter_media or _evaluator_media):
-            if _drafter_media:
-                media_type_str = draft_result.media_type.value
-                media_spec_dict = draft_result.media_spec or {}
-            elif _evaluator_media:
-                media_type_str = evaluation.media_tool
-                media_spec_dict = {}
-
+        # Draft for each target platform
+        created_drafts = []
+        for pname, rpcfg in target_platforms.items():
             try:
-                from social_hook.adapters.registry import get_media_adapter
-
-                api_key = None
-                if media_type_str == "nano_banana_pro":
-                    api_key = config.env.get("GEMINI_API_KEY")
-                    if not api_key:
-                        logger.warning("nano_banana_pro requested but GEMINI_API_KEY not set")
-                        media_type_str = None
-
-                if media_type_str:
-                    media_adapter = get_media_adapter(media_type_str, api_key=api_key)
-                    if media_adapter:
-                        output_dir = str(get_base_path() / "media-cache" / draft_id)
-                        result = media_adapter.generate(
-                            spec=media_spec_dict,
-                            output_dir=output_dir,
-                            dry_run=dry_run,
-                        )
-                        if result.success and result.file_path:
-                            media_paths = [result.file_path]
-                            if verbose:
-                                print(f"Media generated: {result.file_path}")
-                        else:
-                            logger.warning(f"Media generation failed: {result.error}")
-            except Exception as e:
-                logger.warning(f"Media generation error (non-fatal): {e}")
-
-        # Calculate optimal time
-        schedule = calculate_optimal_time(
-            conn,
-            project.id,
-            tz=config.scheduling.timezone,
-            max_posts_per_day=config.scheduling.max_posts_per_day,
-            min_gap_minutes=config.scheduling.min_gap_minutes,
-            optimal_days=config.scheduling.optimal_days,
-            optimal_hours=config.scheduling.optimal_hours,
-        )
-
-        # Save draft
-        draft = Draft(
-            id=draft_id,
-            project_id=project.id,
-            decision_id=decision.id,
-            platform=platform,
-            content=draft_content,
-            media_paths=media_paths,
-            media_type=media_type_str,
-            media_spec=media_spec_dict,
-            suggested_time=schedule.datetime,
-            reasoning=draft_reasoning,
-        )
-        db.insert_draft(draft)
-
-        # Save thread tweets if applicable
-        if thread_tweets:
-            for position, tweet_content in enumerate(thread_tweets):
-                tweet = DraftTweet(
-                    id=generate_id("tweet"),
-                    draft_id=draft.id,
-                    position=position,
-                    content=tweet_content,
+                draft_result = drafter.create_draft(
+                    evaluation, context, commit, db,
+                    platform=pname,
+                    platform_config=rpcfg,
+                    config=project_config.context,
                 )
-                db.insert_draft_tweet(tweet)
 
-        if verbose:
-            print(f"Draft created: {draft.id}")
-            if thread_tweets:
-                print(f"Format: thread ({len(thread_tweets)} tweets)")
-            print(f"Content: {draft_content[:100]}...")
-            print(f"Suggested time: {schedule.datetime} ({schedule.time_reason})")
+                # Override platform: LLM may return any string for unconstrained field
+                draft_result.platform = pname
 
-        # Send Telegram notification
+                use_thread = _needs_thread(draft_result, pname, rpcfg.account_tier or "free")
+                thread_tweets = []
+                if use_thread:
+                    thread_result = drafter.create_thread(
+                        evaluation, context, commit, db, platform=pname,
+                    )
+                    thread_tweets = _parse_thread_tweets(thread_result.content)
+                    draft_content = thread_result.content
+                    draft_reasoning = thread_result.reasoning
+                else:
+                    draft_content = draft_result.content
+                    draft_reasoning = draft_result.reasoning
+
+                # Per-platform scheduling
+                schedule = calculate_optimal_time(
+                    conn, project.id,
+                    platform=pname,
+                    tz=config.scheduling.timezone,
+                    max_posts_per_day=rpcfg.max_posts_per_day,
+                    min_gap_minutes=rpcfg.min_gap_minutes,
+                    optimal_days=rpcfg.optimal_days,
+                    optimal_hours=rpcfg.optimal_hours,
+                )
+
+                draft = Draft(
+                    id=generate_id("draft"),
+                    project_id=project.id,
+                    decision_id=decision.id,
+                    platform=pname,
+                    content=draft_content,
+                    media_paths=media_paths,
+                    media_type=media_type_str,
+                    media_spec=media_spec_dict,
+                    suggested_time=schedule.datetime,
+                    reasoning=draft_reasoning,
+                )
+                db.insert_draft(draft)
+
+                if thread_tweets:
+                    for pos, tc in enumerate(thread_tweets):
+                        db.insert_draft_tweet(DraftTweet(
+                            id=generate_id("tweet"), draft_id=draft.id,
+                            position=pos, content=tc,
+                        ))
+
+                created_drafts.append((draft, schedule, thread_tweets))
+
+                if verbose:
+                    print(f"Draft created for {pname}: {draft.id}")
+                    if thread_tweets:
+                        print(f"  Format: thread ({len(thread_tweets)} tweets)")
+                    print(f"  Content: {draft_content[:100]}...")
+                    print(f"  Suggested time: {schedule.datetime} ({schedule.time_reason})")
+
+            except Exception as e:
+                logger.error(f"LLM API error during drafting for {pname}: {e}")
+                if verbose:
+                    print(f"LLM API error during drafting for {pname}: {e}", file=sys.stderr)
+                # Continue with other platforms
+
+        # Send notifications
+        if created_drafts and not dry_run:
+            _send_notifications(config, project, commit, created_drafts)
+
+    conn.close()
+    return 0
+
+
+def _generate_media(config, evaluation, dry_run=False, verbose=False):
+    """Generate media based on evaluator's recommendation.
+
+    Called ONCE before the per-platform drafting loop.
+    Uses only evaluation.media_tool (not draft_result).
+
+    Returns:
+        Tuple of (media_paths, media_type_str, media_spec_dict)
+    """
+    media_paths = []
+    media_type_str = None
+    media_spec_dict = None
+
+    _evaluator_media = (
+        getattr(evaluation, 'media_tool', None)
+        and evaluation.media_tool != "none"
+    )
+
+    if config.image_generation.enabled and _evaluator_media:
+        media_type_str = evaluation.media_tool
+        # Handle enum values
+        if hasattr(media_type_str, 'value'):
+            media_type_str = media_type_str.value
+        media_spec_dict = {}
+
+        try:
+            from social_hook.adapters.registry import get_media_adapter
+
+            api_key = None
+            if media_type_str == "nano_banana_pro":
+                api_key = config.env.get("GEMINI_API_KEY")
+                if not api_key:
+                    logger.warning("nano_banana_pro requested but GEMINI_API_KEY not set")
+                    media_type_str = None
+
+            if media_type_str:
+                media_adapter = get_media_adapter(media_type_str, api_key=api_key)
+                if media_adapter:
+                    draft_id = generate_id("draft")
+                    output_dir = str(get_base_path() / "media-cache" / draft_id)
+                    result = media_adapter.generate(
+                        spec=media_spec_dict,
+                        output_dir=output_dir,
+                        dry_run=dry_run,
+                    )
+                    if result.success and result.file_path:
+                        media_paths = [result.file_path]
+                        if verbose:
+                            print(f"Media generated: {result.file_path}")
+                    else:
+                        logger.warning(f"Media generation failed: {result.error}")
+        except Exception as e:
+            logger.warning(f"Media generation error (non-fatal): {e}")
+
+    return media_paths, media_type_str, media_spec_dict
+
+
+def _send_notifications(config, project, commit, created_drafts):
+    """Send notifications for created drafts to all configured channels."""
+    from social_hook.bot.notifications import format_draft_review, get_review_buttons_normalized
+    from social_hook.messaging.base import OutboundMessage
+
+    for draft, schedule, thread_tweets in created_drafts:
+        is_thread = bool(thread_tweets)
+        tweet_count = len(thread_tweets) if is_thread else None
+        suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
+        media_info = f"{draft.media_type} ({len(draft.media_paths)} file)" if draft.media_paths else None
+
+        msg_text = format_draft_review(
+            project_name=project.name,
+            commit_hash=commit.hash[:8],
+            commit_message=commit.message,
+            platform=draft.platform,
+            content=draft.content,
+            suggested_time=suggested_time_str,
+            draft_id=draft.id,
+            is_thread=is_thread,
+            tweet_count=tweet_count,
+            media_info=media_info,
+        )
+        buttons = get_review_buttons_normalized(draft.id)
+        msg = OutboundMessage(text=msg_text, buttons=buttons)
+
+        # Web dashboard (when enabled)
+        if getattr(config, 'web', None) and config.web.enabled:
+            try:
+                from social_hook.messaging.web import WebAdapter
+                from social_hook.filesystem import get_db_path as _get_db_path
+                web_adapter = WebAdapter(db_path=str(_get_db_path()))
+                web_adapter.send_message("web", msg)
+                if draft.media_paths:
+                    for path in draft.media_paths:
+                        web_adapter.send_media("web", path, caption=f"Media for `{draft.id[:12]}`")
+            except Exception as e:
+                logger.warning(f"Web notification failed: {e}")
+
+        # Telegram (when configured)
         telegram_token = config.env.get("TELEGRAM_BOT_TOKEN")
         chat_ids_str = config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
-        if telegram_token and chat_ids_str and not dry_run:
-            from social_hook.bot.notifications import (
-                format_draft_review,
-                get_review_buttons_normalized,
-            )
-            from social_hook.messaging.base import OutboundMessage
+        if telegram_token and chat_ids_str:
             from social_hook.messaging.telegram import TelegramAdapter
-
-            is_thread = bool(thread_tweets)
-            tweet_count = len(thread_tweets) if is_thread else None
-            suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
-            media_info = f"{media_type_str} ({len(media_paths)} file)" if media_paths else None
-
-            msg_text = format_draft_review(
-                project_name=project.name,
-                commit_hash=commit_hash[:8],
-                commit_message=commit.message,
-                platform=platform,
-                content=draft_content,
-                suggested_time=suggested_time_str,
-                draft_id=draft.id,
-                is_thread=is_thread,
-                tweet_count=tweet_count,
-                media_info=media_info,
-            )
-            buttons = get_review_buttons_normalized(draft.id)
-
             adapter = TelegramAdapter(token=telegram_token)
-            msg = OutboundMessage(text=msg_text, buttons=buttons)
-
             chat_ids = [c.strip() for c in chat_ids_str.split(",") if c.strip()]
             for chat_id in chat_ids:
                 result = adapter.send_message(chat_id, msg)
                 if not result.success:
                     logger.warning(f"Failed to send Telegram notification to {chat_id}")
-
-            # Send media attachments via adapter (if platform supports it)
-            if media_paths:
+            if draft.media_paths:
                 caps = adapter.get_capabilities()
-                if getattr(caps, 'supports_media', False):
-                    for media_path in media_paths:
+                if caps.supports_media:
+                    for media_path in draft.media_paths:
                         for chat_id in chat_ids:
                             adapter.send_media(chat_id, media_path,
-                                             caption=f"Media for draft `{draft.id[:12]}`")
-
-            # Set draft context for each chat so immediate replies have context
+                                             caption=f"Media for `{draft.id[:12]}`")
             from social_hook.bot.commands import set_chat_draft_context
-
             for chat_id in chat_ids:
                 set_chat_draft_context(chat_id, draft.id, project.id)
-
-    conn.close()
-    return 0
 
 
 def _needs_thread(draft_result, platform: str, tier: str) -> bool:
