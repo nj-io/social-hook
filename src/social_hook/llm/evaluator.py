@@ -1,6 +1,6 @@
 """Evaluator agent: assesses commits for post-worthiness (T13)."""
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from social_hook.config.project import ContextConfig
 from social_hook.db import operations as ops
@@ -8,6 +8,10 @@ from social_hook.llm.base import LLMClient
 from social_hook.llm.prompts import assemble_evaluator_prompt, load_prompt
 from social_hook.llm.schemas import LogDecisionInput, extract_tool_call
 from social_hook.models import CommitInfo, ProjectContext
+
+if TYPE_CHECKING:
+    from social_hook.config.project import MediaToolGuidance, StrategyConfig, SummaryConfig
+    from social_hook.config.yaml import MediaGenerationConfig
 
 
 class Evaluator:
@@ -28,6 +32,10 @@ class Evaluator:
         config: Optional[ContextConfig] = None,
         show_prompt: bool = False,
         platform_summaries: Optional[list[str]] = None,
+        media_config: Optional["MediaGenerationConfig"] = None,
+        media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
+        strategy_config: Optional["StrategyConfig"] = None,
+        summary_config: Optional["SummaryConfig"] = None,
     ) -> LogDecisionInput:
         """Evaluate a commit for post-worthiness.
 
@@ -38,6 +46,10 @@ class Evaluator:
             config: Context config for prompt assembly limits
             show_prompt: If True, print the full system prompt and user message
             platform_summaries: Optional list of platform summary strings for context
+            media_config: Media generation config (enabled tools)
+            media_guidance: Per-tool content guidance
+            strategy_config: Strategy thresholds (portfolio window, episode prefs)
+            summary_config: Summary refresh thresholds
 
         Returns:
             Validated LogDecisionInput from the LLM
@@ -46,6 +58,10 @@ class Evaluator:
         system = assemble_evaluator_prompt(
             prompt, context, commit, config,
             platform_summaries=platform_summaries,
+            media_config=media_config,
+            media_guidance=media_guidance,
+            strategy_config=strategy_config,
+            summary_config=summary_config,
         )
 
         # Check summary freshness and include hint

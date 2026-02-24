@@ -79,7 +79,7 @@ export default function DashboardPage() {
                   className="rounded-lg border border-border p-4"
                 >
                   <h3 className="font-medium">{project.name}</h3>
-                  <p className="mb-2 truncate text-xs text-muted-foreground">{project.path}</p>
+                  <p className="mb-2 truncate text-xs text-muted-foreground">{project.repo_path}</p>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(projectStatusCounts).map(([status, count]) => (
                       <div key={status} className="flex items-center gap-1">

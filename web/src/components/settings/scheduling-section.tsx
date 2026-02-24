@@ -51,6 +51,24 @@ export function SchedulingSection({ scheduling, onChange }: SchedulingSectionPro
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
           />
         </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">Max posts per week</label>
+          <input
+            type="number"
+            value={scheduling.max_per_week ?? 10}
+            onChange={(e) => update({ max_per_week: Number(e.target.value) })}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">Min tweets for thread</label>
+          <input
+            type="number"
+            value={scheduling.thread_min_tweets ?? 4}
+            onChange={(e) => update({ thread_min_tweets: Number(e.target.value) })}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
       </div>
 
       <div>

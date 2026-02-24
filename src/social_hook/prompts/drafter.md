@@ -79,12 +79,9 @@ Based on the Evaluator's episode_type:
 
 ## Media Selection
 
-Choose media that enhances the post:
-- **mermaid**: Technical architecture, flow diagrams
-- **nano_banana_pro**: Marketing visuals, announcements
-- **playwright**: Screenshots of working features
-- **ray_so**: Code snippets, clever solutions
-- **none**: When text alone is powerful enough
+Refer to the "Media Tool Guide" section below for available tools, usage guidance, and prompt examples. If no Media Tool Guide section is present, use your best judgment.
+
+Choose `none` when text alone is powerful enough.
 
 Avoid using the same media tool for 3+ consecutive posts.
 

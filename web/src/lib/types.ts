@@ -30,11 +30,20 @@ export interface SchedulingConfig {
   min_gap_minutes: number;
   optimal_days: string[];
   optimal_hours: number[];
+  max_per_week?: number;
+  thread_min_tweets?: number;
 }
 
-export interface ImageGenerationConfig {
+export interface MediaToolGuidance {
+  enabled?: boolean | null;  // null = inherit global
+  use_when?: string[];
+  constraints?: string[];
+  prompt_example?: string;
+}
+
+export interface MediaGenerationConfig {
   enabled: boolean;
-  service: string;
+  tools: Record<string, boolean>;
 }
 
 export interface JourneyCaptureConfig {
@@ -51,7 +60,7 @@ export interface Config {
   models: ModelsConfig;
   platforms: Record<string, PlatformConfig>;
   scheduling: SchedulingConfig;
-  image_generation: ImageGenerationConfig;
+  media_generation: MediaGenerationConfig;
   journey_capture: JourneyCaptureConfig;
   web: WebDashboardConfig;
 }
@@ -91,9 +100,10 @@ export interface Draft {
 
 export interface Project {
   id: string;
-  path: string;
+  repo_path: string;
   name: string;
   created_at: string;
+  paused: number;
 }
 
 export interface WebEvent {
@@ -106,4 +116,5 @@ export interface WebEvent {
 export interface EnvVars {
   env: Record<string, string>;
   known_keys: string[];
+  key_groups: Record<string, string[]>;
 }

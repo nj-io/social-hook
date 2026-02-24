@@ -6,6 +6,8 @@ from social_hook.config.project import ContextConfig
 
 if TYPE_CHECKING:
     from social_hook.config.platforms import ResolvedPlatformConfig
+    from social_hook.config.project import MediaToolGuidance
+    from social_hook.config.yaml import MediaGenerationConfig
 from social_hook.db import operations as ops
 from social_hook.llm.base import LLMClient
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
@@ -34,6 +36,8 @@ class Drafter:
         arc_context: Optional[dict[str, Any]] = None,
         config: Optional[ContextConfig] = None,
         platform_config: Optional["ResolvedPlatformConfig"] = None,
+        media_config: Optional["MediaGenerationConfig"] = None,
+        media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit.
 
@@ -48,6 +52,8 @@ class Drafter:
             config: Context config for doc inclusion
             platform_config: Resolved platform configuration (when provided,
                 builds platform-specific instructions from config)
+            media_config: Media generation config (enabled tools)
+            media_guidance: Per-tool content guidance
 
         Returns:
             Validated CreateDraftInput from the LLM
@@ -60,6 +66,8 @@ class Drafter:
             prompt, decision, project_context,
             recent_posts, commit, arc_context=arc_context,
             config=config,
+            media_config=media_config,
+            media_guidance=media_guidance,
         )
 
         # Build narrative-aware user message
@@ -183,6 +191,8 @@ class Drafter:
         commit: CommitInfo,
         db: Any,
         platform: str = "x",
+        media_config: Optional["MediaGenerationConfig"] = None,
+        media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
     ) -> CreateDraftInput:
         """Create a thread (>= 4 tweets) for a post-worthy commit.
 
@@ -192,6 +202,8 @@ class Drafter:
             commit: Git commit information
             db: Database context for usage logging
             platform: Target platform
+            media_config: Media generation config (enabled tools)
+            media_guidance: Per-tool content guidance
 
         Returns:
             Validated CreateDraftInput with thread content
@@ -201,6 +213,8 @@ class Drafter:
         system = assemble_drafter_prompt(
             prompt, decision, project_context,
             project_context.recent_posts, commit,
+            media_config=media_config,
+            media_guidance=media_guidance,
         )
 
         user_content = (

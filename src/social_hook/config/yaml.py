@@ -28,9 +28,14 @@ DEFAULT_CONFIG = {
     "platforms": {
         "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
     },
-    "image_generation": {
+    "media_generation": {
         "enabled": True,
-        "service": "nano_banana_pro",
+        "tools": {
+            "mermaid": True,
+            "nano_banana_pro": True,
+            "playwright": True,
+            "ray_so": True,
+        },
     },
     "scheduling": {
         "timezone": "UTC",
@@ -59,11 +64,20 @@ class ModelsConfig:
 
 
 @dataclass
-class ImageGenerationConfig:
-    """Image generation configuration."""
+class MediaGenerationConfig:
+    """Media generation configuration — infrastructure toggles only.
+
+    Content guidance (use_when, constraints, prompt_example) lives in
+    content-config.yaml via MediaToolGuidance in project.py.
+    """
 
     enabled: bool = True
-    service: str = "nano_banana_pro"
+    tools: dict[str, bool] = field(default_factory=lambda: {
+        "mermaid": True,
+        "nano_banana_pro": True,
+        "playwright": True,
+        "ray_so": True,
+    })
 
 
 @dataclass
@@ -75,6 +89,8 @@ class SchedulingConfig:
     min_gap_minutes: int = 30
     optimal_days: list[str] = field(default_factory=lambda: ["Tue", "Wed", "Thu"])
     optimal_hours: list[int] = field(default_factory=lambda: [9, 12, 17])
+    max_per_week: int = 10
+    thread_min_tweets: int = 4
 
 
 @dataclass
@@ -101,7 +117,7 @@ class Config:
     platforms: dict[str, OutputPlatformConfig] = field(default_factory=lambda: {
         "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
     })
-    image_generation: ImageGenerationConfig = field(default_factory=ImageGenerationConfig)
+    media_generation: MediaGenerationConfig = field(default_factory=MediaGenerationConfig)
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
     journey_capture: JourneyCaptureConfig = field(default_factory=JourneyCaptureConfig)
     web: WebConfig = field(default_factory=WebConfig)
@@ -219,11 +235,19 @@ def _parse_config(data: dict[str, Any]) -> Config:
             enabled=True, priority="primary", type="builtin", account_tier="free",
         )
 
-    # Image generation
-    image_data = data.get("image_generation", {})
-    image_generation = ImageGenerationConfig(
-        enabled=image_data.get("enabled", True),
-        service=image_data.get("service", "nano_banana_pro"),
+    # Media generation
+    media_data = data.get("media_generation", {})
+    default_tools = {
+        "mermaid": True,
+        "nano_banana_pro": True,
+        "playwright": True,
+        "ray_so": True,
+    }
+    tools_data = media_data.get("tools", {})
+    merged_tools = {**default_tools, **tools_data}
+    media_generation = MediaGenerationConfig(
+        enabled=media_data.get("enabled", True),
+        tools=merged_tools,
     )
 
     # Scheduling
@@ -234,6 +258,8 @@ def _parse_config(data: dict[str, Any]) -> Config:
         min_gap_minutes=sched_data.get("min_gap_minutes", 30),
         optimal_days=sched_data.get("optimal_days", ["Tue", "Wed", "Thu"]),
         optimal_hours=sched_data.get("optimal_hours", [9, 12, 17]),
+        max_per_week=sched_data.get("max_per_week", 10),
+        thread_min_tweets=sched_data.get("thread_min_tweets", 4),
     )
 
     # Journey capture
@@ -262,7 +288,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
     return Config(
         models=models,
         platforms=platforms,
-        image_generation=image_generation,
+        media_generation=media_generation,
         scheduling=scheduling,
         journey_capture=journey_capture,
         web=web,

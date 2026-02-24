@@ -18,6 +18,7 @@ class ScheduleResult:
     is_optimal_day: bool
     day_reason: str
     time_reason: str
+    deferred: bool = False
 
 
 # Day name to weekday number mapping (Monday=0)
@@ -36,10 +37,12 @@ def calculate_optimal_time(
     min_gap_minutes: int = 30,
     optimal_days: Optional[list[str]] = None,
     optimal_hours: Optional[list[int]] = None,
+    max_per_week: Optional[int] = None,
 ) -> ScheduleResult:
     """Calculate the optimal time to post.
 
     Algorithm:
+    0. If max_per_week set, count posts in last 7 days → defer if limit reached
     1. Count today's posts (cross-project) → check max_posts_per_day
     2. Get last post time (cross-project) → enforce min_gap_minutes
     3. Find first available optimal hour satisfying all constraints
@@ -55,6 +58,7 @@ def calculate_optimal_time(
         min_gap_minutes: Minimum minutes between posts
         optimal_days: Preferred days (e.g. ["Tue", "Wed", "Thu"])
         optimal_hours: Preferred hours in local time (e.g. [9, 12, 17])
+        max_per_week: Maximum posts per week for this project (None = no limit)
 
     Returns:
         ScheduleResult with optimal datetime (UTC) and reasoning
@@ -71,6 +75,22 @@ def calculate_optimal_time(
 
     now_utc = datetime.now(timezone.utc)
     now_local = now_utc.astimezone(user_tz)
+
+    # Check weekly limit (early exit)
+    if max_per_week is not None:
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE project_id = ? AND posted_at >= datetime('now', '-7 days')",
+            (project_id,),
+        )
+        weekly_count = cursor.fetchone()[0]
+        if weekly_count >= max_per_week:
+            return ScheduleResult(
+                datetime=now_utc,
+                deferred=True,
+                is_optimal_day=False,
+                day_reason=f"Weekly limit ({weekly_count}/{max_per_week}) reached",
+                time_reason="deferred",
+            )
 
     # Get today's start in UTC for querying
     today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)

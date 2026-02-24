@@ -281,12 +281,15 @@ class TestTriggerUsesAdapter:
         cfg.platforms = {
             "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
         }
-        cfg.image_generation.enabled = False
+        cfg.media_generation.enabled = False
+        cfg.media_generation.tools = {"mermaid": True, "nano_banana_pro": True, "playwright": True, "ray_so": True}
         cfg.scheduling.timezone = "UTC"
         cfg.scheduling.max_posts_per_day = 3
         cfg.scheduling.min_gap_minutes = 30
         cfg.scheduling.optimal_days = ["Tue", "Wed", "Thu"]
         cfg.scheduling.optimal_hours = [9, 12, 17]
+        cfg.scheduling.max_per_week = 10
+        cfg.scheduling.thread_min_tweets = 4
         cfg.web.enabled = False
         cfg.env.get = lambda key, default="": {
             "TELEGRAM_BOT_TOKEN": "test-token",
@@ -338,6 +341,7 @@ class TestTriggerUsesAdapter:
         schedule = MagicMock()
         schedule.datetime = datetime(2026, 2, 20, 12, 0, 0)
         schedule.time_reason = "optimal"
+        schedule.deferred = False
         mock_schedule.return_value = schedule
 
         # Adapter send returns success
@@ -355,7 +359,7 @@ class TestTriggerUsesAdapter:
 
 
 def _make_trigger_mocks(
-    image_generation_enabled=False,
+    media_generation_enabled=False,
     drafter_media_type=None,
     evaluator_media_tool=None,
     media_generate_result=None,
@@ -375,12 +379,15 @@ def _make_trigger_mocks(
     cfg.platforms = {
         "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
     }
-    cfg.image_generation.enabled = image_generation_enabled
+    cfg.media_generation.enabled = media_generation_enabled
+    cfg.media_generation.tools = {"mermaid": True, "nano_banana_pro": True, "playwright": True, "ray_so": True}
     cfg.scheduling.timezone = "UTC"
     cfg.scheduling.max_posts_per_day = 3
     cfg.scheduling.min_gap_minutes = 30
     cfg.scheduling.optimal_days = ["Tue", "Wed", "Thu"]
     cfg.scheduling.optimal_hours = [9, 12, 17]
+    cfg.scheduling.max_per_week = 10
+    cfg.scheduling.thread_min_tweets = 4
     cfg.web.enabled = False
 
     env_map = {}
@@ -424,6 +431,7 @@ def _make_trigger_mocks(
     schedule = MagicMock()
     schedule.datetime = datetime(2026, 2, 20, 12, 0, 0)
     schedule.time_reason = "optimal"
+    schedule.deferred = False
 
     if media_generate_result is None:
         media_generate_result = MediaResult(success=True, file_path="/tmp/media/img.png")
@@ -459,12 +467,12 @@ class TestTriggerMedia:
         mock_parse, mock_context, mock_proj_config, mock_create_client,
         mock_evaluator_cls, mock_drafter_cls, mock_schedule,
     ):
-        """When image_generation.enabled and drafter returns media_type, adapter.generate() is called."""
+        """When media_generation.enabled and drafter returns media_type, adapter.generate() is called."""
         from social_hook.adapters.models import MediaResult
         from social_hook.llm.schemas import MediaTool
 
         mocks = _make_trigger_mocks(
-            image_generation_enabled=True,
+            media_generation_enabled=True,
             drafter_media_type=MediaTool.mermaid,
             evaluator_media_tool="mermaid",
             media_generate_result=MediaResult(success=True, file_path="/tmp/media/diagram.png"),
@@ -511,11 +519,11 @@ class TestTriggerMedia:
         mock_parse, mock_context, mock_proj_config, mock_create_client,
         mock_evaluator_cls, mock_drafter_cls, mock_schedule,
     ):
-        """When image_generation.enabled=False, no media adapter is called."""
+        """When media_generation.enabled=False, no media adapter is called."""
         from social_hook.llm.schemas import MediaTool
 
         mocks = _make_trigger_mocks(
-            image_generation_enabled=False,
+            media_generation_enabled=False,
             drafter_media_type=MediaTool.mermaid,
             evaluator_media_tool="mermaid",
         )
@@ -555,7 +563,7 @@ class TestTriggerMedia:
     ):
         """When drafter returns media_type=none and evaluator has no media_tool, skip media."""
         mocks = _make_trigger_mocks(
-            image_generation_enabled=True,
+            media_generation_enabled=True,
             drafter_media_type=None,
             evaluator_media_tool=None,
         )
@@ -598,7 +606,7 @@ class TestTriggerMedia:
         from social_hook.llm.schemas import MediaTool
 
         mocks = _make_trigger_mocks(
-            image_generation_enabled=True,
+            media_generation_enabled=True,
             drafter_media_type=MediaTool.mermaid,
             evaluator_media_tool="mermaid",
             media_generate_result=MediaResult(success=False, error="render failed"),
@@ -645,7 +653,7 @@ class TestTriggerMedia:
         from social_hook.llm.schemas import MediaTool
 
         mocks = _make_trigger_mocks(
-            image_generation_enabled=True,
+            media_generation_enabled=True,
             drafter_media_type=MediaTool.nano_banana_pro,
             evaluator_media_tool="nano_banana_pro",
             gemini_key=None,
@@ -690,7 +698,7 @@ class TestTriggerMedia:
         from social_hook.llm.schemas import MediaTool
 
         mocks = _make_trigger_mocks(
-            image_generation_enabled=True,
+            media_generation_enabled=True,
             drafter_media_type=MediaTool.mermaid,
             evaluator_media_tool="mermaid",
             media_generate_result=MediaResult(success=True, file_path="/tmp/media/diagram.png"),
@@ -772,7 +780,7 @@ class TestTriggerSendsMediaNotification:
         from social_hook.messaging.base import SendResult
 
         mocks = _make_trigger_mocks(
-            image_generation_enabled=True,
+            media_generation_enabled=True,
             drafter_media_type=MediaTool.mermaid,
             evaluator_media_tool="mermaid",
             media_generate_result=MediaResult(success=True, file_path="/tmp/media/img.png"),
@@ -829,12 +837,15 @@ class TestPerPlatformPipeline:
 
         cfg = MagicMock()
         cfg.platforms = platforms_dict
-        cfg.image_generation.enabled = False
+        cfg.media_generation.enabled = False
+        cfg.media_generation.tools = {"mermaid": True, "nano_banana_pro": True, "playwright": True, "ray_so": True}
         cfg.scheduling.timezone = "UTC"
         cfg.scheduling.max_posts_per_day = 3
         cfg.scheduling.min_gap_minutes = 30
         cfg.scheduling.optimal_days = ["Tue", "Wed", "Thu"]
         cfg.scheduling.optimal_hours = [9, 12, 17]
+        cfg.scheduling.max_per_week = 10
+        cfg.scheduling.thread_min_tweets = 4
         cfg.web.enabled = web_enabled
         cfg.env.get = lambda key, default="": {}.get(key, default)
 
@@ -868,6 +879,7 @@ class TestPerPlatformPipeline:
         schedule = MagicMock()
         schedule.datetime = datetime(2026, 2, 20, 12, 0, 0)
         schedule.time_reason = "optimal"
+        schedule.deferred = False
 
         return {
             "cfg": cfg,
@@ -1075,3 +1087,127 @@ class TestPerPlatformPipeline:
 
         exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
         assert exit_code == 0
+
+
+# =============================================================================
+# Per-tool media disable tests (2a)
+# =============================================================================
+
+
+class TestGenerateMediaPerTool:
+    """Tests for per-tool media disable in _generate_media()."""
+
+    def test_per_tool_disabled(self):
+        """When a specific tool is disabled in config.media_generation.tools, _generate_media skips it."""
+        from social_hook.trigger import _generate_media
+
+        cfg = MagicMock()
+        cfg.media_generation.enabled = True
+        cfg.media_generation.tools = {"mermaid": False, "nano_banana_pro": True}
+
+        evaluation = MagicMock()
+        evaluation.media_tool = "mermaid"
+
+        paths, mtype, spec = _generate_media(cfg, evaluation, dry_run=False)
+        assert paths == []
+        assert mtype is None
+        assert spec is None
+
+    def test_global_disabled(self):
+        """When media_generation.enabled=False, _generate_media returns empty."""
+        from social_hook.trigger import _generate_media
+
+        cfg = MagicMock()
+        cfg.media_generation.enabled = False
+        cfg.media_generation.tools = {"mermaid": True}
+
+        evaluation = MagicMock()
+        evaluation.media_tool = "mermaid"
+
+        paths, mtype, spec = _generate_media(cfg, evaluation, dry_run=False)
+        assert paths == []
+        assert mtype is None
+        assert spec is None
+
+    def test_project_override_disables(self):
+        """Project-level media_guidance can disable a tool that's globally enabled."""
+        from social_hook.trigger import _generate_media
+
+        cfg = MagicMock()
+        cfg.media_generation.enabled = True
+        cfg.media_generation.tools = {"mermaid": True}
+
+        evaluation = MagicMock()
+        evaluation.media_tool = "mermaid"
+
+        project_config = MagicMock()
+        guidance = MagicMock()
+        guidance.enabled = False
+        project_config.media_guidance.get.return_value = guidance
+
+        paths, mtype, spec = _generate_media(
+            cfg, evaluation, dry_run=False, project_config=project_config
+        )
+        assert paths == []
+        assert mtype is None
+        assert spec is None
+
+
+# =============================================================================
+# Thread threshold tests (2c)
+# =============================================================================
+
+
+class TestNeedsThreadThreshold:
+    """Tests for configurable thread_min in _needs_thread()."""
+
+    def test_thread_min_3(self):
+        """With thread_min=3, 3 beats triggers thread."""
+        from social_hook.trigger import _needs_thread
+
+        draft = MagicMock()
+        draft.format_hint = None
+        draft.beat_count = 3
+        draft.content = "short"
+        assert _needs_thread(draft, "x", "free", thread_min=3) is True
+
+    def test_thread_min_6(self):
+        """With thread_min=6, 4 beats does NOT trigger thread."""
+        from social_hook.trigger import _needs_thread
+
+        draft = MagicMock()
+        draft.format_hint = None
+        draft.beat_count = 4
+        draft.content = "short"
+        assert _needs_thread(draft, "x", "free", thread_min=6) is False
+
+    def test_default_threshold_4(self):
+        """Default thread_min=4, 4 beats triggers thread."""
+        from social_hook.trigger import _needs_thread
+
+        draft = MagicMock()
+        draft.format_hint = None
+        draft.beat_count = 4
+        draft.content = "short"
+        assert _needs_thread(draft, "x", "free") is True
+
+
+class TestParseThreadTweetsThreshold:
+    """Tests for configurable thread_min in _parse_thread_tweets()."""
+
+    def test_thread_min_3_accepts(self):
+        """With thread_min=3, 3 numbered tweets are accepted."""
+        from social_hook.trigger import _parse_thread_tweets
+
+        content = "1/ First tweet\n\n2/ Second tweet\n\n3/ Third tweet"
+        tweets = _parse_thread_tweets(content, thread_min=3)
+        assert len(tweets) == 3
+
+    def test_default_rejects_3(self):
+        """Default thread_min=4 rejects 3 numbered tweets (falls to single)."""
+        from social_hook.trigger import _parse_thread_tweets
+
+        content = "1/ First\n\n2/ Second\n\n3/ Third"
+        tweets = _parse_thread_tweets(content, thread_min=4)
+        # 3 tweets < 4 min, numbered parse fails, try separators, paragraphs, then fallback
+        assert len(tweets) == 1  # fallback single

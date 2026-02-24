@@ -132,7 +132,7 @@ def capture_telegram_chat_id(token: str, timeout_seconds: int = 60) -> Optional[
     return None
 
 
-def validate_image_gen(service: str, api_key: str) -> tuple[bool, str]:
+def validate_media_gen(service: str, api_key: str) -> tuple[bool, str]:
     """Validate image generation service credentials.
 
     Args:

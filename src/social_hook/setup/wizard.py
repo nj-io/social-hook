@@ -461,9 +461,9 @@ def _load_existing() -> tuple[dict[str, str], dict[str, Any]]:
                 "max_posts_per_day": config.scheduling.max_posts_per_day,
                 "min_gap_minutes": config.scheduling.min_gap_minutes,
             },
-            "image_generation": {
-                "enabled": config.image_generation.enabled,
-                "service": config.image_generation.service,
+            "media_generation": {
+                "enabled": config.media_generation.enabled,
+                "tools": dict(config.media_generation.tools),
             },
             "journey_capture": {
                 "enabled": config.journey_capture.enabled,
@@ -591,9 +591,14 @@ def run_wizard(
             _setup_linkedin(env_vars, existing_env, progress)
             _save_progress()
 
-        # Section 6: Image generation
-        if only is None or only == "image":
-            _setup_image_gen(env_vars, yaml_config, existing_env, progress)
+        # Section 6: Media generation
+        if only is None or only == "media":
+            _setup_media_gen(env_vars, yaml_config, existing_env, progress)
+            _save_progress()
+
+        # Section 6b: Scheduling (standalone path)
+        if only == "scheduling":
+            _setup_scheduling(base, yaml_config, existing_yaml, progress)
             _save_progress()
 
         # Journey capture (standalone path)
@@ -1074,7 +1079,7 @@ def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yam
     existing_api_key = existing_env.get("X_API_KEY", "")
     existing_api_secret = existing_env.get("X_API_SECRET", "")
     existing_access_token = existing_env.get("X_ACCESS_TOKEN", "")
-    existing_access_secret = existing_env.get("X_ACCESS_SECRET", "")
+    existing_access_secret = existing_env.get("X_ACCESS_TOKEN_SECRET", "")
 
     def _prompt_x_field(label: str, existing: str) -> str:
         if existing:
@@ -1118,7 +1123,7 @@ def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yam
     env_vars["X_API_KEY"] = api_key
     env_vars["X_API_SECRET"] = api_secret
     env_vars["X_ACCESS_TOKEN"] = access_token
-    env_vars["X_ACCESS_SECRET"] = access_secret
+    env_vars["X_ACCESS_TOKEN_SECRET"] = access_secret
 
     # Tier selection
     existing_tier = existing_yaml.get("platforms", {}).get("x", {}).get("account_tier", "free")
@@ -1190,7 +1195,7 @@ def _setup_platforms(yaml_config: dict, env_vars: dict, existing_env: dict,
         existing_api_key = existing_env.get("X_API_KEY", "")
         existing_api_secret = existing_env.get("X_API_SECRET", "")
         existing_access_token = existing_env.get("X_ACCESS_TOKEN", "")
-        existing_access_secret = existing_env.get("X_ACCESS_SECRET", "")
+        existing_access_secret = existing_env.get("X_ACCESS_TOKEN_SECRET", "")
 
         if _confirm("Configure X API credentials now?", default=bool(existing_api_key)):
             def _prompt_x_field(label: str, existing: str) -> str:
@@ -1207,7 +1212,7 @@ def _setup_platforms(yaml_config: dict, env_vars: dict, existing_env: dict,
             env_vars["X_API_KEY"] = api_key
             env_vars["X_API_SECRET"] = api_secret
             env_vars["X_ACCESS_TOKEN"] = access_token
-            env_vars["X_ACCESS_SECRET"] = access_secret
+            env_vars["X_ACCESS_TOKEN_SECRET"] = access_secret
 
     if progress:
         progress.advance()
@@ -1411,31 +1416,37 @@ def _setup_models(yaml_config: dict, existing_yaml: dict, env_vars: dict,
     _setup_journey_capture(yaml_config, progress)
 
 
-def _setup_image_gen(env_vars: dict, yaml_config: dict, existing_env: dict,
+def _setup_media_gen(env_vars: dict, yaml_config: dict, existing_env: dict,
                      progress: Optional[WizardProgress] = None) -> None:
-    """Configure image generation."""
+    """Configure media generation."""
     if progress:
-        progress.set_section(6, "Image Gen", substeps=2)
-    _section("Image Generation", "AI-generated visuals for posts", progress=progress)
-    if not _confirm("Enable AI image generation?"):
-        yaml_config.setdefault("image_generation", {})["enabled"] = False
+        progress.set_section(6, "Media Gen", substeps=2)
+    _section("Media Generation", "AI-generated visuals for posts", progress=progress)
+    if not _confirm("Enable AI media generation?"):
+        yaml_config.setdefault("media_generation", {})["enabled"] = False
         return
 
-    service_choices = ["nano_banana_pro"]
-    service = _select("Image generation service:", service_choices, default="nano_banana_pro")
+    yaml_config.setdefault("media_generation", {})["enabled"] = True
 
-    yaml_config.setdefault("image_generation", {})["enabled"] = True
-    yaml_config["image_generation"]["service"] = service
+    # Per-tool enable/disable
+    tool_names = ["mermaid", "nano_banana_pro", "playwright", "ray_so"]
+    tools_config: dict[str, bool] = {}
+    for tool_name in tool_names:
+        enabled = _confirm(f"Enable {tool_name}?", default=True)
+        tools_config[tool_name] = enabled
+    yaml_config["media_generation"]["tools"] = tools_config
+
     if progress:
         progress.advance()
 
-    if service == "nano_banana_pro":
-        from social_hook.setup.validation import validate_image_gen
+    # GEMINI_API_KEY prompt if nano_banana_pro is enabled
+    if tools_config.get("nano_banana_pro"):
+        from social_hook.setup.validation import validate_media_gen
 
         existing_key = existing_env.get("GEMINI_API_KEY", "")
         key = _prompt_api_key(
             "Gemini API key (for Nano Banana Pro)",
-            lambda k: validate_image_gen(service, k),
+            lambda k: validate_media_gen("nano_banana_pro", k),
             existing=existing_key,
         )
         if key:
@@ -1443,7 +1454,7 @@ def _setup_image_gen(env_vars: dict, yaml_config: dict, existing_env: dict,
         elif existing_key:
             _warn("Keeping existing key")
         else:
-            _warn("No Gemini key configured — image generation will not work")
+            _warn("No Gemini key configured — nano_banana_pro will not work")
 
     if progress:
         progress.advance()
@@ -1511,12 +1522,42 @@ def _setup_scheduling(base: Path, yaml_config: dict, existing_yaml: dict,
     if progress:
         progress.advance()
 
+    # Max per week — selector with recommended + custom
+    existing_mpw = str(existing_sched.get("max_per_week", 10))
+    mpw_choices = ["5", "10 (recommended)", "20", "Custom"]
+    default_mpw = next((c for c in mpw_choices if c.startswith(existing_mpw)), "10 (recommended)")
+    max_per_week = _select("Max posts per week:", mpw_choices, default=default_mpw)
+    if max_per_week == "Custom":
+        while True:
+            max_per_week = _prompt("Enter max posts per week", default=existing_mpw)
+            check = _validate_positive_int(max_per_week)
+            if check is True:
+                break
+            _error(check)
+    max_per_week_val = int(max_per_week.split(" ")[0])
+
+    # Thread min tweets — selector with recommended + custom
+    existing_tmt = str(existing_sched.get("thread_min_tweets", 4))
+    tmt_choices = ["3", "4 (recommended)", "6", "Custom"]
+    default_tmt = next((c for c in tmt_choices if c.startswith(existing_tmt)), "4 (recommended)")
+    thread_min = _select("Minimum tweets for thread:", tmt_choices, default=default_tmt)
+    if thread_min == "Custom":
+        while True:
+            thread_min = _prompt("Enter min tweets for thread", default=existing_tmt)
+            check = _validate_positive_int(thread_min)
+            if check is True:
+                break
+            _error(check)
+    thread_min_val = int(thread_min.split(" ")[0])
+
     yaml_config.setdefault("scheduling", {})
     yaml_config["scheduling"]["timezone"] = tz
     yaml_config["scheduling"]["max_posts_per_day"] = max_posts_val
     yaml_config["scheduling"]["min_gap_minutes"] = min_gap_val
     yaml_config["scheduling"]["optimal_days"] = ["Tue", "Wed", "Thu"]
     yaml_config["scheduling"]["optimal_hours"] = [9, 12, 17]
+    yaml_config["scheduling"]["max_per_week"] = max_per_week_val
+    yaml_config["scheduling"]["thread_min_tweets"] = thread_min_val
 
     _success("Scheduling configured")
 
@@ -1637,7 +1678,7 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
         if "LINKEDIN_ACCESS_TOKEN" in env_vars:
             table.add_row("LinkedIn", _obfuscate(env_vars["LINKEDIN_ACCESS_TOKEN"]))
         if "GEMINI_API_KEY" in env_vars:
-            table.add_row("Image Gen (Gemini)", _obfuscate(env_vars["GEMINI_API_KEY"]))
+            table.add_row("Media Gen (Gemini)", _obfuscate(env_vars["GEMINI_API_KEY"]))
 
         models = yaml_config.get("models", {})
         if models:

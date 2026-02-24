@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from social_hook.config.env import KNOWN_KEYS
+from social_hook.config.env import KEY_GROUPS, KNOWN_KEYS
 from social_hook.config.yaml import Config, validate_config
 from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path
@@ -409,7 +409,7 @@ async def api_get_env():
             if value is not None:
                 env_vars[key] = _mask_key(value)
 
-    return {"env": env_vars, "known_keys": KNOWN_KEYS}
+    return {"env": env_vars, "known_keys": KNOWN_KEYS, "key_groups": KEY_GROUPS}
 
 
 @app.put("/api/settings/env")
@@ -510,6 +510,83 @@ async def api_update_content_config(body: ContentConfigUpdate):
     cc_path.parent.mkdir(parents=True, exist_ok=True)
     cc_path.write_text(body.content)
     return {"status": "ok", "path": str(cc_path)}
+
+
+@app.get("/api/settings/content-config/parsed")
+async def api_get_content_config_parsed(project_path: Optional[str] = None):
+    """Return parsed content-config sections as structured JSON."""
+    if project_path:
+        cc_path = Path(project_path) / ".social-hook" / "content-config.yaml"
+        if not cc_path.exists():
+            cc_path = get_db_path().parent / "content-config.yaml"
+    else:
+        cc_path = get_db_path().parent / "content-config.yaml"
+
+    if not cc_path.exists():
+        return {"media_tools": {}, "strategy": {}, "context": {}, "summary": {}}
+
+    try:
+        raw = yaml.safe_load(cc_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
+
+    return {
+        "media_tools": raw.get("media_tools", {}),
+        "strategy": raw.get("strategy", {}),
+        "context": raw.get("context", {}),
+        "summary": raw.get("summary", {}),
+    }
+
+
+@app.put("/api/settings/content-config/parsed")
+async def api_update_content_config_parsed(body: dict[str, Any], project_path: Optional[str] = None):
+    """Update specific content-config sections (merge + write)."""
+    if project_path:
+        project_dir = Path(project_path)
+        if not project_dir.is_dir():
+            raise HTTPException(status_code=400, detail=f"Project path not found: {project_path}")
+        cc_path = project_dir / ".social-hook" / "content-config.yaml"
+    else:
+        cc_path = get_db_path().parent / "content-config.yaml"
+
+    # Read existing
+    if cc_path.exists():
+        try:
+            current = yaml.safe_load(cc_path.read_text()) or {}
+        except yaml.YAMLError:
+            current = {}
+    else:
+        current = {}
+
+    # Merge only recognized sections
+    for section in ("media_tools", "strategy", "context", "summary"):
+        if section in body:
+            if isinstance(body[section], dict) and isinstance(current.get(section), dict):
+                current[section].update(body[section])
+            else:
+                current[section] = body[section]
+
+    # Write back
+    cc_path.parent.mkdir(parents=True, exist_ok=True)
+    cc_path.write_text(yaml.dump(current, default_flow_style=False, sort_keys=False))
+
+    return {"status": "ok"}
+
+
+@app.put("/api/projects/{project_id}/pause")
+async def api_toggle_pause(project_id: str):
+    """Toggle a project's paused state."""
+    conn = _get_conn()
+    try:
+        row = conn.execute("SELECT paused FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        new_paused = 0 if row["paused"] else 1
+        conn.execute("UPDATE projects SET paused = ? WHERE id = ?", (new_paused, project_id))
+        conn.commit()
+        return {"status": "ok", "paused": new_paused}
+    finally:
+        conn.close()
 
 
 @app.post("/api/settings/validate-key")

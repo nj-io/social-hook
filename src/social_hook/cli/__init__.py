@@ -154,6 +154,21 @@ def web(
             typer.echo("Error: npm install failed")
             raise typer.Exit(1)
 
+    import socket
+
+    def _find_free_port(start: int, bind_host: str) -> int:
+        for p in range(start, start + 10):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind((bind_host, p))
+                    return p
+                except OSError:
+                    continue
+        return start
+
+    port = _find_free_port(port, host)
+    api_port = _find_free_port(api_port, host)
+
     # Start FastAPI in background
     typer.echo(f"Starting API server on {host}:{api_port}...")
     api_proc = sp.Popen(

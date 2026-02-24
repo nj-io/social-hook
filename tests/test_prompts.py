@@ -5,7 +5,15 @@ from unittest.mock import patch
 
 import pytest
 
-from social_hook.config.project import ContextConfig, ProjectConfig
+from social_hook.config.project import (
+    ContextConfig,
+    EpisodePreferences,
+    MediaToolGuidance,
+    ProjectConfig,
+    StrategyConfig,
+    SummaryConfig,
+)
+from social_hook.config.yaml import MediaGenerationConfig
 from social_hook.errors import PromptNotFoundError
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import (
@@ -769,3 +777,210 @@ class TestContextNotesInPrompts:
         assert "Note 19" in result
         # Earlier ones should not be present
         assert "Note 0]" not in result
+
+
+# =============================================================================
+# Media Config + Guidance in Prompts
+# =============================================================================
+
+
+class TestEvaluatorMediaTools:
+    """Evaluator prompt: Available Media Tools section."""
+
+    def test_enabled_tools_with_guidance(self, sample_project_context, sample_commit):
+        media_config = MediaGenerationConfig(
+            enabled=True,
+            tools={"mermaid": True, "ray_so": True},
+        )
+        media_guidance = {
+            "mermaid": MediaToolGuidance(
+                use_when=["Technical architecture"],
+                constraints=["Best for technical audience"],
+            ),
+            "ray_so": MediaToolGuidance(
+                use_when=["Code snippets"],
+                constraints=[],
+            ),
+        }
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit,
+            media_config=media_config, media_guidance=media_guidance,
+        )
+        assert "## Available Media Tools" in result
+        assert "mermaid" in result
+        assert "Technical architecture" in result
+        assert "Best for technical audience" in result
+        assert "ray_so" in result
+        assert "Code snippets" in result
+
+    def test_disabled_tool_omitted(self, sample_project_context, sample_commit):
+        media_config = MediaGenerationConfig(
+            enabled=True,
+            tools={"mermaid": True, "ray_so": False},
+        )
+        media_guidance = {
+            "mermaid": MediaToolGuidance(use_when=["Architecture"]),
+            "ray_so": MediaToolGuidance(use_when=["Should not appear"]),
+        }
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit,
+            media_config=media_config, media_guidance=media_guidance,
+        )
+        assert "mermaid" in result
+        assert "Architecture" in result
+        assert "Should not appear" not in result
+
+    def test_tool_with_no_guidance(self, sample_project_context, sample_commit):
+        media_config = MediaGenerationConfig(
+            enabled=True,
+            tools={"mermaid": True, "custom_tool": True},
+        )
+        media_guidance = {
+            "mermaid": MediaToolGuidance(use_when=["Architecture"]),
+            # custom_tool has no guidance entry
+        }
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit,
+            media_config=media_config, media_guidance=media_guidance,
+        )
+        assert "mermaid" in result
+        assert "custom_tool" in result
+
+    def test_media_generation_disabled(self, sample_project_context, sample_commit):
+        media_config = MediaGenerationConfig(
+            enabled=False,
+            tools={"mermaid": True},
+        )
+        media_guidance = {
+            "mermaid": MediaToolGuidance(use_when=["Architecture"]),
+        }
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit,
+            media_config=media_config, media_guidance=media_guidance,
+        )
+        assert "## Available Media Tools" not in result
+
+    def test_all_params_none_no_new_sections(self, sample_project_context, sample_commit):
+        """Backward compat: all new params None -> no new sections appended."""
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit,
+        )
+        assert "## Available Media Tools" not in result
+        assert "## Strategy Preferences" not in result
+        assert "## Summary Freshness" not in result
+
+
+class TestEvaluatorStrategyConfig:
+    """Evaluator prompt: Strategy Preferences section."""
+
+    def test_with_strategy_config(self, sample_project_context, sample_commit):
+        strategy = StrategyConfig(
+            portfolio_window=15,
+            episode_preferences=EpisodePreferences(
+                favor=["milestone", "decision"],
+                avoid=["synthesis"],
+            ),
+        )
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit,
+            strategy_config=strategy,
+        )
+        assert "## Strategy Preferences" in result
+        assert "Consider last 15 posts for variety" in result
+        assert "Favored episode types: milestone, decision" in result
+        assert "Avoid episode types: synthesis" in result
+
+    def test_empty_episode_preferences(self, sample_project_context, sample_commit):
+        strategy = StrategyConfig(
+            portfolio_window=10,
+            episode_preferences=EpisodePreferences(),
+        )
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit,
+            strategy_config=strategy,
+        )
+        assert "## Strategy Preferences" in result
+        assert "Consider last 10 posts" in result
+        assert "Favored episode types" not in result
+        assert "Avoid episode types" not in result
+
+
+class TestEvaluatorSummaryConfig:
+    """Evaluator prompt: Summary Freshness Thresholds section."""
+
+    def test_with_summary_config(self, sample_project_context, sample_commit):
+        summary = SummaryConfig(refresh_after_commits=25, refresh_after_days=7)
+        result = assemble_evaluator_prompt(
+            "# Eval", sample_project_context, sample_commit,
+            summary_config=summary,
+        )
+        assert "## Summary Freshness Thresholds" in result
+        assert "Refresh after 25 commits" in result
+        assert "Refresh after 7 days" in result
+
+
+class TestDrafterMediaGuide:
+    """Drafter prompt: Media Tool Guide section."""
+
+    def test_with_config_and_guidance(self, sample_project_context, sample_commit):
+        media_config = MediaGenerationConfig(
+            enabled=True,
+            tools={"nano_banana_pro": True, "mermaid": True},
+        )
+        media_guidance = {
+            "nano_banana_pro": MediaToolGuidance(
+                use_when=["Marketing visuals"],
+                constraints=["Specify no text"],
+                prompt_example="Clean minimal illustration, tech startup style",
+            ),
+            "mermaid": MediaToolGuidance(
+                use_when=["Architecture"],
+                constraints=["Best for technical audience"],
+            ),
+        }
+        decision = Decision(
+            id="dec_1", project_id="proj_test1", commit_hash="abc123",
+            decision="post_worthy", reasoning="Test",
+        )
+        result = assemble_drafter_prompt(
+            "# Drafter", decision, sample_project_context,
+            [], sample_commit,
+            media_config=media_config, media_guidance=media_guidance,
+        )
+        assert "## Media Tool Guide" in result
+        assert "nano_banana_pro" in result
+        assert "Marketing visuals" in result
+        assert "Specify no text" in result
+        assert "Clean minimal illustration, tech startup style" in result
+        assert "mermaid" in result
+        assert "Architecture" in result
+
+    def test_disabled_tool_omitted_from_drafter(self, sample_project_context, sample_commit):
+        media_config = MediaGenerationConfig(
+            enabled=True,
+            tools={"mermaid": True, "playwright": False},
+        )
+        media_guidance = {
+            "mermaid": MediaToolGuidance(use_when=["Architecture"]),
+            "playwright": MediaToolGuidance(
+                use_when=["Should not appear"],
+                prompt_example="Should not appear either",
+            ),
+        }
+        decision = {"decision": "post_worthy", "reasoning": "Test"}
+        result = assemble_drafter_prompt(
+            "# Drafter", decision, sample_project_context,
+            [], sample_commit,
+            media_config=media_config, media_guidance=media_guidance,
+        )
+        assert "mermaid" in result
+        assert "Should not appear" not in result
+
+    def test_all_params_none_no_media_guide(self, sample_project_context, sample_commit):
+        """Backward compat: no media params -> no Media Tool Guide section."""
+        decision = {"decision": "post_worthy", "reasoning": "Test"}
+        result = assemble_drafter_prompt(
+            "# Drafter", decision, sample_project_context,
+            [], sample_commit,
+        )
+        assert "## Media Tool Guide" not in result

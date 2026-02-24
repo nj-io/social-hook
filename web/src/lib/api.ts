@@ -103,6 +103,31 @@ export async function updateContentConfig(projectPath: string, content: string):
   });
 }
 
+// Content config (parsed/structured)
+export async function fetchContentConfigParsed(projectPath?: string): Promise<Record<string, unknown>> {
+  const params = projectPath ? `?project_path=${encodeURIComponent(projectPath)}` : "";
+  return apiFetch(`/api/settings/content-config/parsed${params}`);
+}
+
+export async function updateContentConfigParsed(
+  sections: Record<string, unknown>,
+  projectPath?: string,
+): Promise<{ status: string }> {
+  const params = projectPath ? `?project_path=${encodeURIComponent(projectPath)}` : "";
+  return apiFetch(`/api/settings/content-config/parsed${params}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(sections),
+  });
+}
+
+// Projects (actions)
+export async function toggleProjectPause(projectId: string): Promise<{ status: string; paused: number }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/pause`, {
+    method: "PUT",
+  });
+}
+
 // Validate API key
 export async function validateApiKey(provider: string, key: string): Promise<{ valid: boolean; provider: string; error?: string }> {
   return apiFetch("/api/settings/validate-key", {

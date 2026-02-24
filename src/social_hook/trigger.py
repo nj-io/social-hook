@@ -246,6 +246,10 @@ def run_trigger(
         evaluation = evaluator.evaluate(
             commit, context, db, show_prompt=show_prompt,
             platform_summaries=platform_summaries or None,
+            media_config=config.media_generation,
+            media_guidance=project_config.media_guidance if project_config else None,
+            strategy_config=project_config.strategy if project_config else None,
+            summary_config=project_config.summary if project_config else None,
         )
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
@@ -329,6 +333,7 @@ def run_trigger(
         # Media generation (once, shared across platforms)
         media_paths, media_type_str, media_spec_dict = _generate_media(
             config, evaluation, dry_run=dry_run, verbose=verbose,
+            project_config=project_config,
         )
 
         # Draft for each target platform
@@ -340,18 +345,28 @@ def run_trigger(
                     platform=pname,
                     platform_config=rpcfg,
                     config=project_config.context,
+                    media_config=config.media_generation,
+                    media_guidance=project_config.media_guidance if project_config else None,
                 )
 
                 # Override platform: LLM may return any string for unconstrained field
                 draft_result.platform = pname
 
-                use_thread = _needs_thread(draft_result, pname, rpcfg.account_tier or "free")
+                use_thread = _needs_thread(
+                    draft_result, pname, rpcfg.account_tier or "free",
+                    thread_min=config.scheduling.thread_min_tweets,
+                )
                 thread_tweets = []
                 if use_thread:
                     thread_result = drafter.create_thread(
                         evaluation, context, commit, db, platform=pname,
+                        media_config=config.media_generation,
+                        media_guidance=project_config.media_guidance if project_config else None,
                     )
-                    thread_tweets = _parse_thread_tweets(thread_result.content)
+                    thread_tweets = _parse_thread_tweets(
+                        thread_result.content,
+                        thread_min=config.scheduling.thread_min_tweets,
+                    )
                     draft_content = thread_result.content
                     draft_reasoning = thread_result.reasoning
                 else:
@@ -367,7 +382,13 @@ def run_trigger(
                     min_gap_minutes=rpcfg.min_gap_minutes,
                     optimal_days=rpcfg.optimal_days,
                     optimal_hours=rpcfg.optimal_hours,
+                    max_per_week=config.scheduling.max_per_week,
                 )
+
+                if schedule.deferred:
+                    if verbose:
+                        print(f"Platform {pname}: deferred ({schedule.day_reason})")
+                    continue
 
                 draft = Draft(
                     id=generate_id("draft"),
@@ -413,11 +434,19 @@ def run_trigger(
     return 0
 
 
-def _generate_media(config, evaluation, dry_run=False, verbose=False):
+def _generate_media(config, evaluation, dry_run=False, verbose=False,
+                    project_config=None):
     """Generate media based on evaluator's recommendation.
 
     Called ONCE before the per-platform drafting loop.
     Uses only evaluation.media_tool (not draft_result).
+
+    Args:
+        config: Global Config object.
+        evaluation: Evaluator result.
+        dry_run: If True, skip real generation.
+        verbose: If True, print details.
+        project_config: Optional ProjectConfig for per-tool overrides.
 
     Returns:
         Tuple of (media_paths, media_type_str, media_spec_dict)
@@ -431,11 +460,24 @@ def _generate_media(config, evaluation, dry_run=False, verbose=False):
         and evaluation.media_tool != "none"
     )
 
-    if config.image_generation.enabled and _evaluator_media:
+    if config.media_generation.enabled and _evaluator_media:
         media_type_str = evaluation.media_tool
         # Handle enum values
         if hasattr(media_type_str, 'value'):
             media_type_str = media_type_str.value
+
+        # Per-tool check: global toggle (config.yaml)
+        tool_enabled = config.media_generation.tools.get(media_type_str, True)
+        # Project-level override (content-config.yaml) — can only DISABLE, not re-enable
+        if tool_enabled:
+            guidance = project_config.media_guidance.get(media_type_str) if project_config else None
+            if guidance and guidance.enabled is not None:
+                tool_enabled = guidance.enabled
+        if not tool_enabled:
+            if verbose:
+                print(f"Media tool {media_type_str} is disabled, skipping")
+            return [], None, None
+
         media_spec_dict = {}
 
         try:
@@ -532,7 +574,8 @@ def _send_notifications(config, project, commit, created_drafts):
                 set_chat_draft_context(chat_id, draft.id, project.id)
 
 
-def _needs_thread(draft_result, platform: str, tier: str) -> bool:
+def _needs_thread(draft_result, platform: str, tier: str,
+                  thread_min: int = 4) -> bool:
     """Determine if content should be posted as a thread.
 
     LLM-driven format decision with platform constraint enforcement.
@@ -557,14 +600,14 @@ def _needs_thread(draft_result, platform: str, tier: str) -> bool:
     if format_hint == "thread":
         return True
 
-    # Content has 4+ narrative beats → thread candidate
-    if beat_count is not None and beat_count >= 4:
+    # Content has thread_min+ narrative beats → thread candidate
+    if beat_count is not None and beat_count >= thread_min:
         return True
 
     return False
 
 
-def _parse_thread_tweets(thread_content: str) -> list[str]:
+def _parse_thread_tweets(thread_content: str, thread_min: int = 4) -> list[str]:
     """Parse thread content into individual tweet texts.
 
     Handles numbered format (1/, 2/) and --- separators.
@@ -575,19 +618,19 @@ def _parse_thread_tweets(thread_content: str) -> list[str]:
     numbered = re.split(r'(?:^|\n+)\d+/\s*', thread_content)
     # First element may be empty if content starts with "1/"
     numbered = [t.strip() for t in numbered if t.strip()]
-    if len(numbered) >= 4:
+    if len(numbered) >= thread_min:
         return numbered
 
     # Try --- separator
     separated = thread_content.split("---")
     separated = [t.strip() for t in separated if t.strip()]
-    if len(separated) >= 4:
+    if len(separated) >= thread_min:
         return separated
 
     # Try double-newline separation
     paragraphs = thread_content.split("\n\n")
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
-    if len(paragraphs) >= 4:
+    if len(paragraphs) >= thread_min:
         return paragraphs
 
     # Fallback: return as single tweet list (shouldn't normally happen for threads)

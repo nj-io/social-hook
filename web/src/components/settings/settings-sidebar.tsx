@@ -3,11 +3,12 @@
 const sections = [
   { id: "models", label: "Models" },
   { id: "api-keys", label: "API Keys" },
+  { id: "projects", label: "Projects" },
   { id: "platforms", label: "Platforms" },
   { id: "scheduling", label: "Scheduling" },
-  { id: "image-generation", label: "Image Generation" },
+  { id: "media-generation", label: "Media Generation" },
   { id: "journey-capture", label: "Journey Capture" },
-  { id: "web-dashboard", label: "Web Dashboard" },
+  { id: "notifications", label: "Notifications" },
   { id: "voice-style", label: "Voice & Style" },
   { id: "content-config", label: "Content Config" },
 ];

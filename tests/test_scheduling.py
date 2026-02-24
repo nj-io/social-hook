@@ -229,3 +229,69 @@ class TestPlatformFilter:
         result = calculate_optimal_time(temp_db, project.id)
         assert isinstance(result, ScheduleResult)
         assert result.datetime > datetime.now(timezone.utc)
+
+
+class TestMaxPerWeekDeferral:
+    """Tests for max_per_week weekly deferral in calculate_optimal_time."""
+
+    def _setup_project(self, conn):
+        project = Project(
+            id=generate_id("project"), name="test", repo_path="/tmp/test"
+        )
+        insert_project(conn, project)
+        return project
+
+    def test_defers_when_weekly_limit_reached(self, temp_db):
+        """When max_per_week posts exist in last 7 days, result is deferred."""
+        project = self._setup_project(temp_db)
+
+        # Create 5 posts (to hit max_per_week=5)
+        for i in range(5):
+            d = Decision(
+                id=generate_id("decision"),
+                project_id=project.id,
+                commit_hash=f"hash{i}",
+                decision="post_worthy",
+                reasoning="test",
+            )
+            insert_decision(temp_db, d)
+            dr = Draft(
+                id=generate_id("draft"),
+                project_id=project.id,
+                decision_id=d.id,
+                platform="x",
+                content=f"content {i}",
+            )
+            insert_draft(temp_db, dr)
+            post = Post(
+                id=generate_id("post"),
+                draft_id=dr.id,
+                project_id=project.id,
+                platform="x",
+                content=f"posted {i}",
+            )
+            insert_post(temp_db, post)
+
+        result = calculate_optimal_time(
+            temp_db, project.id,
+            max_per_week=5,
+        )
+        assert result.deferred is True
+        assert "Weekly limit" in result.day_reason
+
+    def test_no_deferral_when_under_limit(self, temp_db):
+        """When max_per_week is not reached, result is not deferred."""
+        project = self._setup_project(temp_db)
+
+        result = calculate_optimal_time(
+            temp_db, project.id,
+            max_per_week=10,
+        )
+        assert result.deferred is False
+
+    def test_no_deferral_when_max_per_week_none(self, temp_db):
+        """When max_per_week is None (default), no deferral logic runs."""
+        project = self._setup_project(temp_db)
+
+        result = calculate_optimal_time(temp_db, project.id)
+        assert result.deferred is False

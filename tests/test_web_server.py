@@ -494,3 +494,111 @@ class TestSettingsEndpoints:
         data = resp.json()
         assert data["valid"] is False
         assert "Unknown provider" in data["error"]
+
+    def test_get_env_returns_key_groups(self, client, tmp_env):
+        """GET /api/settings/env returns key_groups in response."""
+        resp = client.get("/api/settings/env")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "key_groups" in data
+        assert "Core" in data["key_groups"]
+        assert "ANTHROPIC_API_KEY" in data["key_groups"]["Core"]
+        assert "Telegram" in data["key_groups"]
+        assert "Media Generation" in data["key_groups"]
+        assert "LLM Providers" in data["key_groups"]
+
+    def test_get_content_config_parsed_empty(self, client, tmp_env):
+        """GET /api/settings/content-config/parsed returns empty sections when no file."""
+        resp = client.get("/api/settings/content-config/parsed")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data == {"media_tools": {}, "strategy": {}, "context": {}, "summary": {}}
+
+    def test_get_content_config_parsed_with_data(self, client, tmp_env):
+        """GET /api/settings/content-config/parsed returns structured sections."""
+        cc_path = tmp_env["tmp_path"] / "content-config.yaml"
+        cc_data = {
+            "media_tools": {"mermaid": {"enabled": True}},
+            "strategy": {"narrative_debt_threshold": 5},
+            "context": {"recent_decisions": 20},
+            "summary": {"refresh_after_commits": 10},
+        }
+        cc_path.write_text(yaml.dump(cc_data))
+
+        resp = client.get("/api/settings/content-config/parsed")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["media_tools"]["mermaid"]["enabled"] is True
+        assert data["strategy"]["narrative_debt_threshold"] == 5
+        assert data["context"]["recent_decisions"] == 20
+        assert data["summary"]["refresh_after_commits"] == 10
+
+    def test_update_content_config_parsed_merge(self, client, tmp_env):
+        """PUT /api/settings/content-config/parsed merges and writes correctly."""
+        cc_path = tmp_env["tmp_path"] / "content-config.yaml"
+        cc_data = {
+            "media_tools": {"mermaid": {"enabled": True}},
+            "strategy": {"narrative_debt_threshold": 3},
+        }
+        cc_path.write_text(yaml.dump(cc_data))
+
+        # Update only strategy section
+        resp = client.put(
+            "/api/settings/content-config/parsed",
+            json={"strategy": {"narrative_debt_threshold": 7}},
+        )
+        assert resp.status_code == 200
+
+        # Verify file: strategy updated, media_tools preserved
+        updated = yaml.safe_load(cc_path.read_text())
+        assert updated["strategy"]["narrative_debt_threshold"] == 7
+        assert updated["media_tools"]["mermaid"]["enabled"] is True
+
+    def test_content_config_parsed_round_trip(self, client, tmp_env):
+        """Write via parsed API, read back -> consistent."""
+        # Write initial data
+        resp = client.put(
+            "/api/settings/content-config/parsed",
+            json={
+                "media_tools": {"ray_so": {"enabled": False}},
+                "context": {"max_tokens": 100000},
+            },
+        )
+        assert resp.status_code == 200
+
+        # Read back
+        resp = client.get("/api/settings/content-config/parsed")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["media_tools"]["ray_so"]["enabled"] is False
+        assert data["context"]["max_tokens"] == 100000
+        # Non-provided sections should be empty
+        assert data["strategy"] == {}
+        assert data["summary"] == {}
+
+    def test_toggle_pause(self, client, tmp_env):
+        """PUT /api/projects/{id}/pause toggles paused state."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path, paused) VALUES (?, ?, ?, ?)",
+            ("proj_1", "Test Project", "/tmp/repo", 0),
+        )
+        conn.commit()
+        conn.close()
+
+        # Toggle on
+        resp = client.put("/api/projects/proj_1/pause")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["paused"] == 1
+
+        # Toggle off
+        resp = client.put("/api/projects/proj_1/pause")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["paused"] == 0
+
+    def test_toggle_pause_not_found(self, client, tmp_env):
+        """PUT /api/projects/{id}/pause returns 404 for unknown project."""
+        resp = client.put("/api/projects/nonexistent/pause")
+        assert resp.status_code == 404

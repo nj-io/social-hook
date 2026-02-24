@@ -4,6 +4,8 @@ import pytest
 
 from social_hook.config.yaml import (
     Config,
+    MediaGenerationConfig,
+    SchedulingConfig,
     WebConfig,
     load_config,
     validate_config,
@@ -221,6 +223,101 @@ class TestWebConfig:
         )
         with pytest.raises(ConfigError, match="Invalid web port"):
             load_config(config_path)
+
+
+class TestMediaGenerationConfig:
+    """Test MediaGenerationConfig parsing."""
+
+    def test_defaults_have_four_tools_all_true(self):
+        """Default MediaGenerationConfig has 4 tools, all True."""
+        config = MediaGenerationConfig()
+        assert config.enabled is True
+        assert len(config.tools) == 4
+        assert config.tools["mermaid"] is True
+        assert config.tools["nano_banana_pro"] is True
+        assert config.tools["playwright"] is True
+        assert config.tools["ray_so"] is True
+
+    def test_config_default_uses_media_generation(self):
+        """Default Config() uses media_generation, not image_generation."""
+        config = Config()
+        assert hasattr(config, "media_generation")
+        assert not hasattr(config, "image_generation")
+        assert config.media_generation.enabled is True
+        assert len(config.media_generation.tools) == 4
+
+    def test_per_tool_override_parsing(self, temp_dir):
+        """tools: {mermaid: false} disables mermaid, others default True."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+media_generation:
+  enabled: true
+  tools:
+    mermaid: false
+"""
+        )
+        config = load_config(config_path)
+        assert config.media_generation.enabled is True
+        assert config.media_generation.tools["mermaid"] is False
+        assert config.media_generation.tools["nano_banana_pro"] is True
+        assert config.media_generation.tools["playwright"] is True
+        assert config.media_generation.tools["ray_so"] is True
+
+    def test_disabled_media_generation(self, temp_dir):
+        """media_generation.enabled: false disables all media generation."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            "media_generation:\n  enabled: false\n"
+        )
+        config = load_config(config_path)
+        assert config.media_generation.enabled is False
+
+    def test_empty_media_generation_uses_defaults(self, temp_dir):
+        """Empty media_generation section uses all defaults."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            "media_generation: {}\n"
+        )
+        config = load_config(config_path)
+        assert config.media_generation.enabled is True
+        assert len(config.media_generation.tools) == 4
+
+
+class TestSchedulingConfigExtended:
+    """Test SchedulingConfig new fields."""
+
+    def test_defaults(self):
+        """Default SchedulingConfig has max_per_week=10, thread_min_tweets=4."""
+        config = SchedulingConfig()
+        assert config.max_per_week == 10
+        assert config.thread_min_tweets == 4
+
+    def test_parsing_from_yaml(self, temp_dir):
+        """Parse max_per_week and thread_min_tweets from YAML."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+scheduling:
+  timezone: America/New_York
+  max_per_week: 15
+  thread_min_tweets: 6
+"""
+        )
+        config = load_config(config_path)
+        assert config.scheduling.max_per_week == 15
+        assert config.scheduling.thread_min_tweets == 6
+        assert config.scheduling.timezone == "America/New_York"
+
+    def test_partial_override_keeps_defaults(self, temp_dir):
+        """Override only max_per_week, thread_min_tweets keeps default."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            "scheduling:\n  max_per_week: 20\n"
+        )
+        config = load_config(config_path)
+        assert config.scheduling.max_per_week == 20
+        assert config.scheduling.thread_min_tweets == 4  # default
 
 
 class TestValidateConfig:

@@ -5,9 +5,15 @@ import pytest
 from social_hook.config import load_config, load_env, load_full_config, load_project_config
 from social_hook.config.project import (
     ContextConfig,
+    DEFAULT_MEDIA_GUIDANCE,
+    EpisodePreferences,
+    MediaToolGuidance,
     StrategyConfig,
+    SummaryConfig,
     _parse_context_config,
+    _parse_media_guidance,
     _parse_strategy_config,
+    _parse_summary_config,
     save_memory,
 )
 from social_hook.errors import ConfigError
@@ -473,3 +479,257 @@ strategy:
         assert config.context.recent_decisions == 30
         assert config.context.max_tokens == 150000
         assert config.strategy.narrative_debt_threshold == 3
+
+
+# =============================================================================
+# MediaToolGuidance
+# =============================================================================
+
+
+class TestMediaToolGuidance:
+    """Test MediaToolGuidance and _parse_media_guidance."""
+
+    def test_defaults_have_four_tools(self):
+        """DEFAULT_MEDIA_GUIDANCE has 4 tools with use_when/constraints."""
+        assert len(DEFAULT_MEDIA_GUIDANCE) == 4
+        assert "mermaid" in DEFAULT_MEDIA_GUIDANCE
+        assert "nano_banana_pro" in DEFAULT_MEDIA_GUIDANCE
+        assert "playwright" in DEFAULT_MEDIA_GUIDANCE
+        assert "ray_so" in DEFAULT_MEDIA_GUIDANCE
+
+        # Check mermaid has expected guidance
+        mermaid = DEFAULT_MEDIA_GUIDANCE["mermaid"]
+        assert len(mermaid.use_when) == 2
+        assert len(mermaid.constraints) == 2
+        assert mermaid.enabled is None
+        assert mermaid.prompt_example is None
+
+    def test_parse_empty_dict_returns_defaults(self):
+        """Empty dict returns defaults unchanged."""
+        result = _parse_media_guidance({})
+        assert len(result) == 4
+        assert result["mermaid"].use_when == DEFAULT_MEDIA_GUIDANCE["mermaid"].use_when
+        assert result["ray_so"].constraints == []
+
+    def test_parse_preserves_unspecified_tools(self):
+        """Override one tool, others keep their defaults."""
+        data = {
+            "mermaid": {"enabled": False},
+        }
+        result = _parse_media_guidance(data)
+        assert result["mermaid"].enabled is False
+        # use_when/constraints preserved from default
+        assert len(result["mermaid"].use_when) == 2
+        assert len(result["mermaid"].constraints) == 2
+        # Other tools unchanged
+        assert result["nano_banana_pro"].enabled is None
+        assert len(result["nano_banana_pro"].use_when) == 2
+
+    def test_parse_overrides_specific_fields(self):
+        """Override only specified fields, keep rest from default."""
+        data = {
+            "playwright": {
+                "use_when": ["Custom use case"],
+                "prompt_example": "screenshot of the dashboard",
+            },
+        }
+        result = _parse_media_guidance(data)
+        pw = result["playwright"]
+        assert pw.use_when == ["Custom use case"]
+        assert pw.prompt_example == "screenshot of the dashboard"
+        # constraints kept from default
+        assert len(pw.constraints) == 2
+        assert pw.enabled is None
+
+    def test_parse_adds_custom_tool(self):
+        """Custom tool not in defaults gets added."""
+        data = {
+            "custom_tool": {
+                "enabled": True,
+                "use_when": ["Special case"],
+                "constraints": ["Be careful"],
+            },
+        }
+        result = _parse_media_guidance(data)
+        assert len(result) == 5
+        assert result["custom_tool"].enabled is True
+        assert result["custom_tool"].use_when == ["Special case"]
+
+    def test_parse_does_not_mutate_defaults(self):
+        """Parsing should not mutate DEFAULT_MEDIA_GUIDANCE."""
+        original_mermaid_use_when = DEFAULT_MEDIA_GUIDANCE["mermaid"].use_when[:]
+        data = {"mermaid": {"use_when": ["Overridden"]}}
+        _parse_media_guidance(data)
+        assert DEFAULT_MEDIA_GUIDANCE["mermaid"].use_when == original_mermaid_use_when
+
+    def test_load_project_config_parses_media_guidance(self, temp_dir):
+        """load_project_config parses media_tools from content-config."""
+        project_dir = temp_dir / "project"
+        config_dir = project_dir / ".social-hook"
+        config_dir.mkdir(parents=True)
+        (config_dir / "content-config.yaml").write_text(
+            """\
+media_tools:
+  mermaid:
+    enabled: false
+  ray_so:
+    prompt_example: "highlighted code snippet"
+"""
+        )
+
+        global_base = temp_dir / "global"
+        global_base.mkdir()
+
+        config = load_project_config(project_dir, global_base=global_base)
+        assert config.media_guidance["mermaid"].enabled is False
+        assert config.media_guidance["ray_so"].prompt_example == "highlighted code snippet"
+        # Defaults preserved
+        assert len(config.media_guidance["nano_banana_pro"].use_when) == 2
+
+
+# =============================================================================
+# EpisodePreferences and StrategyConfig extensions
+# =============================================================================
+
+
+class TestStrategyConfigExtended:
+    """Test StrategyConfig new fields: portfolio_window, episode_preferences."""
+
+    def test_default_portfolio_window(self):
+        """Default portfolio_window is 10."""
+        config = StrategyConfig()
+        assert config.portfolio_window == 10
+
+    def test_default_episode_preferences(self):
+        """Default episode_preferences has empty favor/avoid lists."""
+        config = StrategyConfig()
+        assert config.episode_preferences.favor == []
+        assert config.episode_preferences.avoid == []
+
+    def test_episode_preferences_dataclass(self):
+        """EpisodePreferences stores favor/avoid lists."""
+        ep = EpisodePreferences(favor=["milestone", "breakthrough"], avoid=["routine"])
+        assert ep.favor == ["milestone", "breakthrough"]
+        assert ep.avoid == ["routine"]
+
+    def test_parse_strategy_with_new_fields(self):
+        """Parse portfolio_window and episode_preferences from dict."""
+        data = {
+            "narrative_debt_threshold": 5,
+            "portfolio_window": 20,
+            "episode_preferences": {
+                "favor": ["milestone", "breakthrough"],
+                "avoid": ["routine"],
+            },
+        }
+        config = _parse_strategy_config(data)
+        assert config.portfolio_window == 20
+        assert config.episode_preferences.favor == ["milestone", "breakthrough"]
+        assert config.episode_preferences.avoid == ["routine"]
+        assert config.narrative_debt_threshold == 5
+
+    def test_parse_strategy_empty_keeps_defaults(self):
+        """Empty dict keeps default portfolio_window and episode_preferences."""
+        config = _parse_strategy_config({})
+        assert config.portfolio_window == 10
+        assert config.episode_preferences.favor == []
+        assert config.episode_preferences.avoid == []
+
+    def test_parse_strategy_partial_episode_preferences(self):
+        """Partial episode_preferences only sets provided lists."""
+        data = {
+            "episode_preferences": {"favor": ["deep_dive"]},
+        }
+        config = _parse_strategy_config(data)
+        assert config.episode_preferences.favor == ["deep_dive"]
+        assert config.episode_preferences.avoid == []
+
+    def test_load_project_config_parses_strategy_extensions(self, temp_dir):
+        """load_project_config parses extended strategy fields."""
+        project_dir = temp_dir / "project"
+        config_dir = project_dir / ".social-hook"
+        config_dir.mkdir(parents=True)
+        (config_dir / "content-config.yaml").write_text(
+            """\
+strategy:
+  portfolio_window: 15
+  episode_preferences:
+    favor:
+      - milestone
+    avoid:
+      - routine
+"""
+        )
+
+        global_base = temp_dir / "global"
+        global_base.mkdir()
+
+        config = load_project_config(project_dir, global_base=global_base)
+        assert config.strategy.portfolio_window == 15
+        assert config.strategy.episode_preferences.favor == ["milestone"]
+        assert config.strategy.episode_preferences.avoid == ["routine"]
+
+
+# =============================================================================
+# SummaryConfig
+# =============================================================================
+
+
+class TestSummaryConfig:
+    """Test SummaryConfig parsing."""
+
+    def test_defaults(self):
+        """Default SummaryConfig has refresh_after_commits=20, refresh_after_days=14."""
+        config = SummaryConfig()
+        assert config.refresh_after_commits == 20
+        assert config.refresh_after_days == 14
+
+    def test_parse_from_dict(self):
+        """Parse SummaryConfig from dict."""
+        data = {"refresh_after_commits": 50, "refresh_after_days": 30}
+        config = _parse_summary_config(data)
+        assert config.refresh_after_commits == 50
+        assert config.refresh_after_days == 30
+
+    def test_parse_empty_returns_defaults(self):
+        """Empty dict returns default SummaryConfig."""
+        config = _parse_summary_config({})
+        assert config.refresh_after_commits == 20
+        assert config.refresh_after_days == 14
+
+    def test_parse_partial_fills_defaults(self):
+        """Partial dict uses provided values, defaults for rest."""
+        config = _parse_summary_config({"refresh_after_commits": 10})
+        assert config.refresh_after_commits == 10
+        assert config.refresh_after_days == 14  # default
+
+    def test_load_project_config_parses_summary(self, temp_dir):
+        """load_project_config parses summary from content-config."""
+        project_dir = temp_dir / "project"
+        config_dir = project_dir / ".social-hook"
+        config_dir.mkdir(parents=True)
+        (config_dir / "content-config.yaml").write_text(
+            """\
+summary:
+  refresh_after_commits: 30
+  refresh_after_days: 7
+"""
+        )
+
+        global_base = temp_dir / "global"
+        global_base.mkdir()
+
+        config = load_project_config(project_dir, global_base=global_base)
+        assert config.summary.refresh_after_commits == 30
+        assert config.summary.refresh_after_days == 7
+
+    def test_load_project_config_no_summary_uses_defaults(self, temp_dir):
+        """No summary section uses defaults."""
+        project_dir = temp_dir / "project"
+        project_dir.mkdir()
+        global_base = temp_dir / "global"
+        global_base.mkdir()
+
+        config = load_project_config(project_dir, global_base=global_base)
+        assert config.summary.refresh_after_commits == 20
+        assert config.summary.refresh_after_days == 14

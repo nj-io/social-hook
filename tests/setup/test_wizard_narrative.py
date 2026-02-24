@@ -97,7 +97,7 @@ class TestLoadExistingJourneyCapture:
             models=MagicMock(evaluator="claude-cli/sonnet", drafter="claude-cli/sonnet", gatekeeper="claude-cli/haiku"),
             platforms=MagicMock(x=MagicMock(enabled=True, account_tier="free")),
             scheduling=MagicMock(timezone="UTC", max_posts_per_day=3, min_gap_minutes=30),
-            image_generation=MagicMock(enabled=True, service="nano_banana_pro"),
+            media_generation=MagicMock(enabled=True, service="nano_banana_pro"),
             journey_capture=MagicMock(enabled=True, model=None),
         )
 
@@ -113,7 +113,7 @@ class TestLoadExistingJourneyCapture:
             models=MagicMock(evaluator="claude-cli/sonnet", drafter="claude-cli/sonnet", gatekeeper="claude-cli/haiku"),
             platforms=MagicMock(x=MagicMock(enabled=True, account_tier="free")),
             scheduling=MagicMock(timezone="UTC", max_posts_per_day=3, min_gap_minutes=30),
-            image_generation=MagicMock(enabled=True, service="nano_banana_pro"),
+            media_generation=MagicMock(enabled=True, service="nano_banana_pro"),
             journey_capture=MagicMock(enabled=True, model="anthropic/claude-opus-4-5"),
         )
 
@@ -129,7 +129,7 @@ class TestLoadExistingJourneyCapture:
             models=MagicMock(evaluator="claude-cli/sonnet", drafter="claude-cli/sonnet", gatekeeper="claude-cli/haiku"),
             platforms=MagicMock(x=MagicMock(enabled=True, account_tier="free")),
             scheduling=MagicMock(timezone="UTC", max_posts_per_day=3, min_gap_minutes=30),
-            image_generation=MagicMock(enabled=True, service="nano_banana_pro"),
+            media_generation=MagicMock(enabled=True, service="nano_banana_pro"),
             journey_capture=MagicMock(enabled=False, model=None),
         )
 

@@ -27,13 +27,23 @@ KNOWN_KEYS = [
     "LINKEDIN_CLIENT_ID",
     "LINKEDIN_CLIENT_SECRET",
     "LINKEDIN_ACCESS_TOKEN",
-    # Image generation (optional)
+    # Media generation (optional)
     "GEMINI_API_KEY",
     # Additional LLM providers (optional)
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
     "OLLAMA_BASE_URL",
 ]
+
+# Logical grouping for UI display
+KEY_GROUPS = {
+    "Core": ["ANTHROPIC_API_KEY"],
+    "Telegram": ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_CHAT_IDS"],
+    "X / Twitter": ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET"],
+    "LinkedIn": ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET", "LINKEDIN_ACCESS_TOKEN"],
+    "Media Generation": ["GEMINI_API_KEY"],
+    "LLM Providers": ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_BASE_URL"],
+}
 
 
 def load_env(env_path: Optional[str | Path] = None) -> dict[str, str]:

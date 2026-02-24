@@ -342,7 +342,7 @@ class TestRunWizard:
     @patch("social_hook.setup.wizard._setup_installations")
     @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
-    @patch("social_hook.setup.wizard._setup_image_gen")
+    @patch("social_hook.setup.wizard._setup_media_gen")
     @patch("social_hook.setup.wizard._setup_models")
     @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
@@ -407,15 +407,26 @@ class TestRunWizard:
         mock_models.assert_called_once()
 
     @patch("social_hook.setup.wizard._load_existing", return_value=({}, {}))
-    @patch("social_hook.setup.wizard._setup_image_gen")
+    @patch("social_hook.setup.wizard._setup_media_gen")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
-    def test_only_image(self, mock_init, mock_save, mock_image, mock_load, mock_sys):
+    def test_only_media(self, mock_init, mock_save, mock_media, mock_load, mock_sys):
         mock_sys.stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
-        result = run_wizard(only="image")
+        result = run_wizard(only="media")
         assert result is True
-        mock_image.assert_called_once()
+        mock_media.assert_called_once()
+
+    @patch("social_hook.setup.wizard._load_existing", return_value=({}, {}))
+    @patch("social_hook.setup.wizard._setup_scheduling")
+    @patch("social_hook.setup.wizard._save_env")
+    @patch("social_hook.filesystem.init_filesystem")
+    def test_only_scheduling(self, mock_init, mock_save, mock_sched, mock_load, mock_sys):
+        mock_sys.stdout.isatty.return_value = False
+        mock_init.return_value = Path("/tmp/test")
+        result = run_wizard(only="scheduling")
+        assert result is True
+        mock_sched.assert_called_once()
 
 
 # =============================================================================
@@ -433,7 +444,7 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._setup_installations")
     @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
-    @patch("social_hook.setup.wizard._setup_image_gen")
+    @patch("social_hook.setup.wizard._setup_media_gen")
     @patch("social_hook.setup.wizard._setup_models")
     @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
@@ -468,7 +479,7 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._setup_installations")
     @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
-    @patch("social_hook.setup.wizard._setup_image_gen")
+    @patch("social_hook.setup.wizard._setup_media_gen")
     @patch("social_hook.setup.wizard._setup_models")
     @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
@@ -528,7 +539,7 @@ class TestWelcomePanel:
     @patch("social_hook.setup.wizard._setup_installations")
     @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
-    @patch("social_hook.setup.wizard._setup_image_gen")
+    @patch("social_hook.setup.wizard._setup_media_gen")
     @patch("social_hook.setup.wizard._setup_models")
     @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
@@ -547,7 +558,7 @@ class TestWelcomePanel:
     @patch("social_hook.setup.wizard._setup_installations")
     @patch("social_hook.setup.wizard._setup_web_dashboard")
     @patch("social_hook.setup.wizard._setup_scheduling")
-    @patch("social_hook.setup.wizard._setup_image_gen")
+    @patch("social_hook.setup.wizard._setup_media_gen")
     @patch("social_hook.setup.wizard._setup_models")
     @patch("social_hook.setup.wizard._setup_platforms")
     @patch("social_hook.setup.wizard._setup_telegram")
@@ -813,7 +824,7 @@ class TestXTierSelection:
 
         assert mock_prompt.call_count == 4
         assert env_vars["X_API_KEY"] == "key"
-        assert env_vars["X_ACCESS_SECRET"] == "tsecret"
+        assert env_vars["X_ACCESS_TOKEN_SECRET"] == "tsecret"
 
     @patch("social_hook.setup.wizard._confirm")
     def test_skips_when_declined(self, mock_confirm):
@@ -853,34 +864,54 @@ class TestXTierSelection:
         assert yaml_config["platforms"]["x"]["enabled"] is True
 
 
-class TestImageGenStep:
+class TestMediaGenStep:
     @patch("social_hook.setup.wizard._prompt_api_key")
-    @patch("social_hook.setup.wizard._select")
     @patch("social_hook.setup.wizard._confirm")
-    def test_calls_validate_image_gen(self, mock_confirm, mock_select, mock_prompt_key):
-        from social_hook.setup.wizard import _setup_image_gen
+    def test_enables_with_per_tool_flags(self, mock_confirm, mock_prompt_key):
+        from social_hook.setup.wizard import _setup_media_gen
 
-        mock_confirm.return_value = True
-        mock_select.return_value = "nano_banana_pro"
+        # Enable media gen, then enable each tool (4 tools)
+        mock_confirm.side_effect = [True, True, True, True, True]
         mock_prompt_key.return_value = "gemini-key-123"
 
         env_vars = {}
         yaml_config = {}
-        _setup_image_gen(env_vars, yaml_config, {})
+        _setup_media_gen(env_vars, yaml_config, {})
 
-        assert yaml_config["image_generation"]["enabled"] is True
-        assert yaml_config["image_generation"]["service"] == "nano_banana_pro"
+        assert yaml_config["media_generation"]["enabled"] is True
+        assert yaml_config["media_generation"]["tools"]["mermaid"] is True
+        assert yaml_config["media_generation"]["tools"]["nano_banana_pro"] is True
+        assert yaml_config["media_generation"]["tools"]["playwright"] is True
+        assert yaml_config["media_generation"]["tools"]["ray_so"] is True
         assert env_vars["GEMINI_API_KEY"] == "gemini-key-123"
 
     @patch("social_hook.setup.wizard._confirm")
     def test_disabled_when_declined(self, mock_confirm):
-        from social_hook.setup.wizard import _setup_image_gen
+        from social_hook.setup.wizard import _setup_media_gen
 
         mock_confirm.return_value = False
         yaml_config = {}
-        _setup_image_gen({}, yaml_config, {})
+        _setup_media_gen({}, yaml_config, {})
 
-        assert yaml_config["image_generation"]["enabled"] is False
+        assert yaml_config["media_generation"]["enabled"] is False
+
+    @patch("social_hook.setup.wizard._prompt_api_key")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_per_tool_disable(self, mock_confirm, mock_prompt_key):
+        """Individual tools can be disabled while media gen is enabled."""
+        from social_hook.setup.wizard import _setup_media_gen
+
+        # Enable media gen, disable mermaid, enable nano_banana_pro, enable playwright, disable ray_so
+        mock_confirm.side_effect = [True, False, True, True, False]
+        mock_prompt_key.return_value = "gemini-key"
+
+        yaml_config = {}
+        _setup_media_gen({}, yaml_config, {})
+
+        assert yaml_config["media_generation"]["enabled"] is True
+        assert yaml_config["media_generation"]["tools"]["mermaid"] is False
+        assert yaml_config["media_generation"]["tools"]["nano_banana_pro"] is True
+        assert yaml_config["media_generation"]["tools"]["ray_so"] is False
 
 
 class TestApiKeysStep:
@@ -1038,6 +1069,8 @@ class TestTimezoneSelector:
             "UTC",
             "3 (recommended)",
             "30 (recommended)",
+            "10 (recommended)",
+            "4 (recommended)",
         ]
 
         yaml_config = {}
@@ -1053,6 +1086,8 @@ class TestTimezoneSelector:
             "Australia/Sydney",
             "2",
             "60",
+            "10 (recommended)",
+            "4 (recommended)",
         ]
 
         yaml_config = {}
@@ -1070,6 +1105,8 @@ class TestTimezoneSelector:
             "UTC",
             "3 (recommended)",
             "30 (recommended)",
+            "10 (recommended)",
+            "4 (recommended)",
         ]
 
         yaml_config = {}
@@ -1086,6 +1123,8 @@ class TestTimezoneSelector:
             "US/Pacific",
             "5",
             "15",
+            "20",
+            "3",
         ]
 
         yaml_config = {}
@@ -1104,6 +1143,8 @@ class TestTimezoneSelector:
             "UTC",
             "Custom",
             "30 (recommended)",
+            "10 (recommended)",
+            "4 (recommended)",
         ]
         mock_prompt.return_value = "7"
 
@@ -1121,6 +1162,8 @@ class TestTimezoneSelector:
             "UTC",
             "3 (recommended)",
             "Custom",
+            "10 (recommended)",
+            "4 (recommended)",
         ]
         mock_prompt.return_value = "45"
 
@@ -1133,7 +1176,10 @@ class TestTimezoneSelector:
     def test_with_progress(self, mock_select):
         from social_hook.setup.wizard import _setup_scheduling
 
-        mock_select.side_effect = ["UTC", "3 (recommended)", "30 (recommended)"]
+        mock_select.side_effect = [
+            "UTC", "3 (recommended)", "30 (recommended)",
+            "10 (recommended)", "4 (recommended)",
+        ]
 
         progress = WizardProgress()
         yaml_config = {}
@@ -1141,6 +1187,38 @@ class TestTimezoneSelector:
 
         assert progress.section == 7
         assert progress.substep == 3
+
+    @patch("social_hook.setup.wizard._select")
+    def test_max_per_week_stored(self, mock_select):
+        """max_per_week selector value is stored in yaml_config."""
+        from social_hook.setup.wizard import _setup_scheduling
+
+        mock_select.side_effect = [
+            "UTC", "3 (recommended)", "30 (recommended)",
+            "20",
+            "4 (recommended)",
+        ]
+
+        yaml_config = {}
+        _setup_scheduling(Path("/tmp"), yaml_config, {})
+
+        assert yaml_config["scheduling"]["max_per_week"] == 20
+
+    @patch("social_hook.setup.wizard._select")
+    def test_thread_min_tweets_stored(self, mock_select):
+        """thread_min_tweets selector value is stored in yaml_config."""
+        from social_hook.setup.wizard import _setup_scheduling
+
+        mock_select.side_effect = [
+            "UTC", "3 (recommended)", "30 (recommended)",
+            "10 (recommended)",
+            "6",
+        ]
+
+        yaml_config = {}
+        _setup_scheduling(Path("/tmp"), yaml_config, {})
+
+        assert yaml_config["scheduling"]["thread_min_tweets"] == 6
 
 
 # =============================================================================
@@ -1402,7 +1480,7 @@ class TestLoadExisting:
                 "x": OutputPlatformConfig(enabled=True, priority="primary", account_tier="free"),
             },
             scheduling=MagicMock(timezone="UTC", max_posts_per_day=3, min_gap_minutes=30),
-            image_generation=MagicMock(enabled=True, service="nano_banana_pro"),
+            media_generation=MagicMock(enabled=True, tools={"mermaid": True, "nano_banana_pro": True}),
             journey_capture=MagicMock(enabled=False, model=None),
         )
 
@@ -1413,7 +1491,8 @@ class TestLoadExisting:
         assert yaml["platforms"]["x"]["account_tier"] == "free"
         assert yaml["platforms"]["x"]["priority"] == "primary"
         assert yaml["scheduling"]["timezone"] == "UTC"
-        assert yaml["image_generation"]["service"] == "nano_banana_pro"
+        assert yaml["media_generation"]["enabled"] is True
+        assert yaml["media_generation"]["tools"]["mermaid"] is True
 
 
 # =============================================================================

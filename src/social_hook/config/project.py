@@ -1,5 +1,6 @@
 """Per-project configuration loading."""
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -22,12 +23,60 @@ class ContextConfig:
 
 
 @dataclass
+class MediaToolGuidance:
+    """Per-tool content guidance — when/how to use a media tool."""
+
+    enabled: Optional[bool] = None  # None = inherit global, True/False = project override
+    use_when: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    prompt_example: Optional[str] = None
+
+
+DEFAULT_MEDIA_GUIDANCE: dict[str, MediaToolGuidance] = {
+    "mermaid": MediaToolGuidance(
+        use_when=["Technical architecture explanations", "Flow diagrams and processes"],
+        constraints=["Don't overuse - can feel dry/boring", "Best for technical audience"],
+    ),
+    "nano_banana_pro": MediaToolGuidance(
+        use_when=["Marketing/announcement visuals", "Polished graphics for launches"],
+        constraints=["Always specify 'no text' unless text is essential"],
+    ),
+    "playwright": MediaToolGuidance(
+        use_when=["Demonstrating actual UI/product", "Showing working features"],
+        constraints=["Only use when there's actual UI to show", "Ensure no sensitive data visible"],
+    ),
+    "ray_so": MediaToolGuidance(
+        use_when=["Highlighting interesting code snippets", "Code-focused posts"],
+        constraints=[],
+    ),
+}
+
+
+@dataclass
+class EpisodePreferences:
+    """Episode type preferences for content strategy."""
+
+    favor: list[str] = field(default_factory=list)
+    avoid: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SummaryConfig:
+    """Project summary refresh configuration."""
+
+    refresh_after_commits: int = 20
+    refresh_after_days: int = 14
+
+
+@dataclass
 class StrategyConfig:
     """Narrative strategy thresholds."""
 
     narrative_debt_threshold: int = 3
     arc_stagnation_days: int = 14
     strategy_moment_max_gap_days: int = 7
+    portfolio_window: int = 10
+    episode_preferences: EpisodePreferences = field(default_factory=EpisodePreferences)
 
 
 @dataclass
@@ -52,6 +101,10 @@ class ProjectConfig:
     # Typed config sections (parsed from content_config)
     context: ContextConfig = field(default_factory=ContextConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
+    media_guidance: dict[str, MediaToolGuidance] = field(
+        default_factory=lambda: deepcopy(DEFAULT_MEDIA_GUIDANCE)
+    )
+    summary: SummaryConfig = field(default_factory=SummaryConfig)
 
 
 def load_project_config(
@@ -110,6 +163,8 @@ def load_project_config(
     # Parse typed config sections from content_config
     config.context = _parse_context_config(config.content_config.get("context", {}))
     config.strategy = _parse_strategy_config(config.content_config.get("strategy", {}))
+    config.media_guidance = _parse_media_guidance(config.content_config.get("media_tools", {}))
+    config.summary = _parse_summary_config(config.content_config.get("summary", {}))
 
     return config
 
@@ -153,10 +208,61 @@ def _parse_strategy_config(data: dict) -> StrategyConfig:
     """Parse strategy section from content-config.yaml."""
     if not data:
         return StrategyConfig()
+
+    ep_data = data.get("episode_preferences", {})
+    episode_preferences = EpisodePreferences(
+        favor=ep_data.get("favor", []),
+        avoid=ep_data.get("avoid", []),
+    )
+
     return StrategyConfig(
         narrative_debt_threshold=data.get("narrative_debt_threshold", 3),
         arc_stagnation_days=data.get("arc_stagnation_days", 14),
         strategy_moment_max_gap_days=data.get("strategy_moment_max_gap_days", 7),
+        portfolio_window=data.get("portfolio_window", 10),
+        episode_preferences=episode_preferences,
+    )
+
+
+def _parse_media_guidance(data: dict) -> dict[str, MediaToolGuidance]:
+    """Parse media_tools section from content-config.yaml.
+
+    Merges user overrides on top of DEFAULT_MEDIA_GUIDANCE.
+    Any tool in the YAML dict updates the matching default's fields;
+    unspecified tools keep defaults.
+    """
+    result = deepcopy(DEFAULT_MEDIA_GUIDANCE)
+    if not data:
+        return result
+
+    for tool_name, tool_data in data.items():
+        if not isinstance(tool_data, dict):
+            continue
+        if tool_name in result:
+            base = result[tool_name]
+        else:
+            base = MediaToolGuidance()
+            result[tool_name] = base
+
+        if "enabled" in tool_data:
+            base.enabled = tool_data["enabled"]
+        if "use_when" in tool_data:
+            base.use_when = tool_data["use_when"]
+        if "constraints" in tool_data:
+            base.constraints = tool_data["constraints"]
+        if "prompt_example" in tool_data:
+            base.prompt_example = tool_data["prompt_example"]
+
+    return result
+
+
+def _parse_summary_config(data: dict) -> SummaryConfig:
+    """Parse summary section from content-config.yaml."""
+    if not data:
+        return SummaryConfig()
+    return SummaryConfig(
+        refresh_after_commits=data.get("refresh_after_commits", 20),
+        refresh_after_days=data.get("refresh_after_days", 14),
     )
 
 

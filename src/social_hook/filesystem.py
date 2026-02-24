@@ -100,7 +100,7 @@ LINKEDIN_CLIENT_ID=...
 LINKEDIN_CLIENT_SECRET=...
 LINKEDIN_ACCESS_TOKEN=...
 
-# Image Generation (optional)
+# Media Generation (optional)
 GEMINI_API_KEY=...
 
 # OpenAI (required for openai/ provider)
@@ -130,10 +130,13 @@ platforms:
   linkedin:
     enabled: false
 
-image_generation:
+media_generation:
   enabled: true
-  service: nano_banana_pro
-  # Mermaid diagrams always available (no API key needed)
+  tools:
+    mermaid: true
+    nano_banana_pro: true
+    playwright: true
+    ray_so: true
 
 scheduling:
   timezone: America/Los_Angeles

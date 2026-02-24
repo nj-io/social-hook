@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,10 @@ from social_hook.config.project import (
 )
 from social_hook.errors import PromptNotFoundError
 from social_hook.models import CommitInfo, ProjectContext
+
+if TYPE_CHECKING:
+    from social_hook.config.project import MediaToolGuidance, StrategyConfig, SummaryConfig
+    from social_hook.config.yaml import MediaGenerationConfig
 
 
 def _render_narrative_sections(sections: list[str], narratives: list[dict]) -> None:
@@ -64,12 +68,85 @@ def count_tokens(text: str) -> int:
     return len(text) // 4
 
 
+def _get_enabled_tools(
+    media_config: Optional["MediaGenerationConfig"],
+    media_guidance: Optional[dict[str, "MediaToolGuidance"]],
+) -> list[tuple[str, Optional["MediaToolGuidance"]]]:
+    """Return list of (tool_name, guidance_or_None) for enabled tools only.
+
+    A tool is enabled if media_config.tools[name] is True.
+    Disabled tools are omitted even if guidance exists.
+    """
+    if media_config is None:
+        return []
+    if not media_config.enabled:
+        return []
+
+    result = []
+    for tool_name, enabled in media_config.tools.items():
+        if not enabled:
+            continue
+        guidance = media_guidance.get(tool_name) if media_guidance else None
+        result.append((tool_name, guidance))
+    return result
+
+
+def _append_media_tools_section(
+    sections: list[str],
+    media_config: Optional["MediaGenerationConfig"],
+    media_guidance: Optional[dict[str, "MediaToolGuidance"]],
+) -> None:
+    """Append '## Available Media Tools' section to evaluator prompt."""
+    tools = _get_enabled_tools(media_config, media_guidance)
+    if not tools:
+        return
+
+    sections.append("\n---\n## Available Media Tools")
+    for tool_name, guidance in tools:
+        if guidance and (guidance.use_when or guidance.constraints):
+            sections.append(f"\n### {tool_name}")
+            if guidance.use_when:
+                sections.append("**Use when:** " + "; ".join(guidance.use_when))
+            if guidance.constraints:
+                sections.append("**Constraints:** " + "; ".join(guidance.constraints))
+        else:
+            sections.append(f"- {tool_name}")
+
+
+def _append_media_guide_section(
+    sections: list[str],
+    media_config: Optional["MediaGenerationConfig"],
+    media_guidance: Optional[dict[str, "MediaToolGuidance"]],
+) -> None:
+    """Append '## Media Tool Guide' section to drafter prompt."""
+    tools = _get_enabled_tools(media_config, media_guidance)
+    if not tools:
+        return
+
+    sections.append("\n---\n## Media Tool Guide")
+    for tool_name, guidance in tools:
+        if guidance and (guidance.use_when or guidance.constraints or guidance.prompt_example):
+            sections.append(f"\n### {tool_name}")
+            if guidance.use_when:
+                sections.append("**Use when:** " + "; ".join(guidance.use_when))
+            if guidance.constraints:
+                sections.append("**Constraints:** " + "; ".join(guidance.constraints))
+            if guidance.prompt_example:
+                sections.append(f"**Prompt example:** {guidance.prompt_example}")
+        else:
+            sections.append(f"- {tool_name}")
+
+
 def assemble_evaluator_prompt(
     prompt: str,
     project_context: ProjectContext,
     commit: CommitInfo,
     config: Optional[ContextConfig] = None,
     platform_summaries: Optional[list[str]] = None,
+    media_config: Optional["MediaGenerationConfig"] = None,
+    media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
+    strategy_config: Optional["StrategyConfig"] = None,
+    summary_config: Optional["SummaryConfig"] = None,
 ) -> str:
     """Assemble full evaluator system prompt with context.
 
@@ -81,6 +158,11 @@ def assemble_evaluator_prompt(
         project_context: Assembled project state
         commit: Current commit information
         config: Context config for limits
+        platform_summaries: Platform summary strings for context
+        media_config: Media generation config (enabled tools)
+        media_guidance: Per-tool content guidance
+        strategy_config: Strategy thresholds (portfolio window, episode prefs)
+        summary_config: Summary refresh thresholds
 
     Returns:
         Complete system prompt string
@@ -205,6 +287,39 @@ def assemble_evaluator_prompt(
                 sections.append("\n---\n## CLAUDE.md")
                 sections.append(claude_text)
 
+    # Available media tools (dynamic, from config)
+    _append_media_tools_section(sections, media_config, media_guidance)
+
+    # Strategy config
+    if strategy_config:
+        strategy_lines = []
+        if strategy_config.portfolio_window:
+            strategy_lines.append(
+                f"- Consider last {strategy_config.portfolio_window} posts for variety"
+            )
+        if strategy_config.episode_preferences:
+            if strategy_config.episode_preferences.favor:
+                strategy_lines.append(
+                    f"- Favored episode types: {', '.join(strategy_config.episode_preferences.favor)}"
+                )
+            if strategy_config.episode_preferences.avoid:
+                strategy_lines.append(
+                    f"- Avoid episode types: {', '.join(strategy_config.episode_preferences.avoid)}"
+                )
+        if strategy_lines:
+            sections.append("\n---\n## Strategy Preferences")
+            sections.extend(strategy_lines)
+
+    # Summary freshness thresholds
+    if summary_config:
+        sections.append("\n---\n## Summary Freshness Thresholds")
+        sections.append(
+            f"- Refresh after {summary_config.refresh_after_commits} commits"
+        )
+        sections.append(
+            f"- Refresh after {summary_config.refresh_after_days} days"
+        )
+
     # Current commit
     sections.append("\n---\n## Current Commit")
     sections.append(f"- Hash: {commit.hash}")
@@ -239,6 +354,8 @@ def assemble_drafter_prompt(
     commit: CommitInfo,
     arc_context: Optional[dict[str, Any]] = None,
     config: Optional["ContextConfig"] = None,
+    media_config: Optional["MediaGenerationConfig"] = None,
+    media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
 ) -> str:
     """Assemble full drafter system prompt with context.
 
@@ -256,6 +373,8 @@ def assemble_drafter_prompt(
         commit: Current commit information
         arc_context: Arc metadata + posts (when post_category == 'arc')
         config: Context config for doc inclusion limits
+        media_config: Media generation config (enabled tools)
+        media_guidance: Per-tool content guidance
 
     Returns:
         Complete system prompt string
@@ -380,6 +499,9 @@ def assemble_drafter_prompt(
         sections.append("\n---\n## Recent Posts")
         for p in recent_posts[:15]:
             sections.append(f"- [{p.platform}] {p.content[:100]}")
+
+    # Media tool guide (dynamic, from config)
+    _append_media_guide_section(sections, media_config, media_guidance)
 
     # Current commit
     sections.append("\n---\n## Current Commit")

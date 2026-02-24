@@ -27,7 +27,7 @@ Major feature: web-based dashboard and per-platform content generation.
 - Wired evaluator→drafter→media adapter→notification flow
 - `MessagingAdapter.send_media()` with Telegram implementation (sendPhoto/sendDocument)
 - DB: `media_type` and `media_spec` columns on drafts table (migration 005)
-- Trigger pipeline generates media when `image_generation.enabled` is true
+- Trigger pipeline generates media when `media_generation.enabled` is true
 - Notifications include media attachments via platform adapter
 - Scheduler passes `media_paths` to platform adapters for posting
 - Bot: "Change media" button shows current media, supports regeneration and removal

@@ -12,7 +12,7 @@ For post-worthy commits, also provide:
 - **episode_type**: The structural type of post (decision, before_after, demo_proof, milestone, postmortem, launch, synthesis)
 - **post_category**: How this relates to the narrative (arc, opportunistic, experiment)
 - **arc_id**: If this advances an active arc, which one
-- **media_tool**: Suggested media type (mermaid, nano_banana_pro, playwright, ray_so, none)
+- **media_tool**: Suggested media type from the "Available Media Tools" section below, or `none`
 
 ## Decision Criteria
 

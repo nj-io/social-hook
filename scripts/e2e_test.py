@@ -196,7 +196,7 @@ class E2EHarness:
                 "optimal_days": ["Tue", "Wed", "Thu"],
                 "optimal_hours": [9, 12, 17],
             },
-            "image_generation": {"enabled": False},
+            "media_generation": {"enabled": False},
         }
         (self.base / "config.yaml").write_text(yaml.dump(config))
 
@@ -761,7 +761,7 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 # ---------------------------------------------------------------------------
 
 def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
-    """B1-B10: Pipeline scenarios."""
+    """B1-B11: Pipeline scenarios."""
     from social_hook.trigger import run_trigger
     from social_hook.db import get_recent_decisions, get_pending_drafts
 
@@ -985,7 +985,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
     # B10: Pipeline generates media when enabled
     def b10():
         # Enable image generation in config
-        harness.update_config({"image_generation": {"enabled": True}})
+        harness.update_config({"media_generation": {"enabled": True}})
 
         exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
                                 verbose=runner.verbose)
@@ -1009,10 +1009,50 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         )
 
         # Restore image generation to disabled for other tests
-        harness.update_config({"image_generation": {"enabled": False}})
+        harness.update_config({"media_generation": {"enabled": False}})
         return detail
 
     runner.run_scenario("B10", "Pipeline generates media when enabled", b10, llm_call=True)
+
+    # B11: Per-tool media disable
+    def b11():
+        # Enable media generation globally but disable all tools
+        harness.update_config({"media_generation": {
+            "enabled": True,
+            "tools": {
+                "mermaid": False,
+                "nano_banana_pro": False,
+                "playwright": False,
+                "ray_so": False,
+            },
+        }})
+
+        exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
+                                verbose=runner.verbose)
+        assert exit_code == 0, f"run_trigger returned {exit_code}"
+
+        drafts = get_pending_drafts(harness.conn, harness.project_id)
+        assert len(drafts) > 0, "No drafts created"
+
+        # Verify no media files generated (all tools disabled)
+        draft = drafts[0]
+        detail = f"Draft: {draft.id}, media_type={draft.media_type}, media_paths={draft.media_paths}"
+
+        runner.add_review_item(
+            "B11",
+            title="Per-tool media disable",
+            decision="post_worthy",
+            draft_content=draft.content,
+            review_question="Were all media tools correctly skipped despite evaluator suggesting one?",
+            media_type=draft.media_type,
+            media_paths=draft.media_paths,
+        )
+
+        # Restore media generation to disabled for other tests
+        harness.update_config({"media_generation": {"enabled": False}})
+        return detail
+
+    runner.run_scenario("B11", "Per-tool media disable", b11, llm_call=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1408,7 +1448,7 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: Capt
 # ---------------------------------------------------------------------------
 
 def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
-    """E1-E4: Scheduler scenarios."""
+    """E1-E5: Scheduler scenarios."""
     from social_hook.db import operations as ops
 
     if not harness.project_id:
@@ -1491,6 +1531,50 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
         return f"Processed: {count}"
 
     runner.run_scenario("E4", "No due drafts → no-op", e4)
+
+    # E5: max_per_week deferral (structural, no LLM call)
+    def e5():
+        from social_hook.scheduling import calculate_optimal_time
+        from social_hook.db import insert_post, insert_draft, insert_decision
+        from social_hook.filesystem import generate_id
+        from social_hook.models import Decision, Draft, Post
+
+        # Insert fake posts to hit the weekly limit
+        for i in range(10):
+            d = Decision(
+                id=generate_id("decision"),
+                project_id=harness.project_id,
+                commit_hash=f"e5hash{i}",
+                decision="post_worthy",
+                reasoning="test",
+            )
+            insert_decision(harness.conn, d)
+            dr = Draft(
+                id=generate_id("draft"),
+                project_id=harness.project_id,
+                decision_id=d.id,
+                platform="x",
+                content=f"e5 content {i}",
+            )
+            insert_draft(harness.conn, dr)
+            post = Post(
+                id=generate_id("post"),
+                draft_id=dr.id,
+                project_id=harness.project_id,
+                platform="x",
+                content=f"e5 posted {i}",
+            )
+            insert_post(harness.conn, post)
+
+        result = calculate_optimal_time(
+            harness.conn, harness.project_id,
+            max_per_week=10,
+        )
+        assert result.deferred is True, f"Expected deferred=True, got {result.deferred}"
+        assert "Weekly limit" in result.day_reason, f"Expected 'Weekly limit' in day_reason, got: {result.day_reason}"
+        return f"Deferred: {result.day_reason}"
+
+    runner.run_scenario("E5", "max_per_week deferral", e5)
 
 
 # ---------------------------------------------------------------------------

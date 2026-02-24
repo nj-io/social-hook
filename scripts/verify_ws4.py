@@ -51,7 +51,7 @@ def verify_imports():
         ("social_hook.setup.validation", [
             "validate_anthropic_key", "validate_telegram_bot",
             "validate_x_api", "get_linkedin_auth_url",
-            "validate_image_gen",
+            "validate_media_gen",
         ]),
         ("social_hook.setup.install", [
             "install_hook", "uninstall_hook", "check_hook_installed",

@@ -8,7 +8,7 @@ from social_hook.setup.validation import (
     exchange_linkedin_code,
     get_linkedin_auth_url,
     validate_anthropic_key,
-    validate_image_gen,
+    validate_media_gen,
     validate_telegram_bot,
     validate_x_api,
 )
@@ -122,13 +122,13 @@ class TestLinkedInAuth:
         assert success is False
 
 
-class TestValidateImageGen:
-    """Tests for validate_image_gen."""
+class TestValidateMediaGen:
+    """Tests for validate_media_gen."""
 
     @patch("social_hook.setup.validation.requests.post")
     def test_nano_banana_pro_valid(self, mock_post):
         mock_post.return_value = MagicMock(status_code=200)
-        success, msg = validate_image_gen("nano_banana_pro", "valid-key")
+        success, msg = validate_media_gen("nano_banana_pro", "valid-key")
         assert success is True
         assert "Connected" in msg
 
@@ -138,14 +138,14 @@ class TestValidateImageGen:
             status_code=400,
             text="API_KEY_INVALID",
         )
-        success, msg = validate_image_gen("nano_banana_pro", "bad-key")
+        success, msg = validate_media_gen("nano_banana_pro", "bad-key")
         assert success is False
         assert "Invalid" in msg
 
     @patch("social_hook.setup.validation.requests.post")
     def test_nano_banana_pro_forbidden(self, mock_post):
         mock_post.return_value = MagicMock(status_code=403)
-        success, msg = validate_image_gen("nano_banana_pro", "key")
+        success, msg = validate_media_gen("nano_banana_pro", "key")
         assert success is False
         assert "not authorized" in msg.lower()
 
@@ -153,11 +153,11 @@ class TestValidateImageGen:
     def test_nano_banana_pro_network_error(self, mock_post):
         import requests
         mock_post.side_effect = requests.RequestException("timeout")
-        success, msg = validate_image_gen("nano_banana_pro", "key")
+        success, msg = validate_media_gen("nano_banana_pro", "key")
         assert success is False
         assert "connection" in msg.lower() or "error" in msg.lower()
 
     def test_unknown_service(self):
-        success, msg = validate_image_gen("nonexistent", "key")
+        success, msg = validate_media_gen("nonexistent", "key")
         assert success is False
         assert "Unknown" in msg
