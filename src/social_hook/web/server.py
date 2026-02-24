@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from social_hook.config.env import KEY_GROUPS, KNOWN_KEYS
+from social_hook.config.project import DEFAULT_MEDIA_GUIDANCE
 from social_hook.config.yaml import Config, validate_config
 from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path
@@ -530,8 +531,14 @@ async def api_get_content_config_parsed(project_path: Optional[str] = None):
     except yaml.YAMLError:
         raw = {}
 
+    # Merge structural defaults so the UI always shows all tool slots,
+    # even if the YAML doesn't mention them yet
+    yaml_tools = raw.get("media_tools", {})
+    merged_tools = {name: {} for name in DEFAULT_MEDIA_GUIDANCE}
+    merged_tools.update(yaml_tools)
+
     return {
-        "media_tools": raw.get("media_tools", {}),
+        "media_tools": merged_tools,
         "strategy": raw.get("strategy", {}),
         "context": raw.get("context", {}),
         "summary": raw.get("summary", {}),
@@ -539,7 +546,7 @@ async def api_get_content_config_parsed(project_path: Optional[str] = None):
 
 
 @app.put("/api/settings/content-config/parsed")
-async def api_update_content_config_parsed(body: dict[str, Any], project_path: Optional[str] = None):
+async def api_update_content_config_parsed(body: dict[str, Any] = Body(...), project_path: Optional[str] = None):
     """Update specific content-config sections (merge + write)."""
     if project_path:
         project_dir = Path(project_path)

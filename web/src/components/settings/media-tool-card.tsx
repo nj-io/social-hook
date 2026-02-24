@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MediaToolGuidance } from "@/lib/types";
 
 const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -38,35 +38,45 @@ export function MediaToolCard({
   projectSelected,
 }: MediaToolCardProps) {
   const [expanded, setExpanded] = useState(false);
+  // Local state decoupled from parent to avoid re-render/focus-loss on every keystroke
+  const [local, setLocal] = useState<MediaToolGuidance | undefined>(guidance);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync from parent when guidance prop changes (e.g. project switch)
+  useEffect(() => { setLocal(guidance); }, [guidance]);
 
   const description = TOOL_DESCRIPTIONS[toolName] ?? "Media generation tool";
-  const overrideValue = guidance?.enabled === null || guidance?.enabled === undefined
+  const overrideValue = local?.enabled === null || local?.enabled === undefined
     ? "global"
-    : guidance.enabled
+    : local.enabled
       ? "enable"
       : "disable";
 
-  function handleOverrideChange(value: string) {
+  function commitChange(updated: MediaToolGuidance) {
+    setLocal(updated);
     if (!onGuidanceChange) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => onGuidanceChange(updated), 500);
+  }
+
+  function handleOverrideChange(value: string) {
     const newEnabled = value === "global" ? null : value === "enable";
-    onGuidanceChange({ ...guidance, enabled: newEnabled });
+    commitChange({ ...local, enabled: newEnabled });
   }
 
   function handleListChange(field: "use_when" | "constraints", index: number, value: string) {
-    if (!onGuidanceChange || !guidance) return;
-    const list = [...(guidance[field] ?? [])];
+    const list = [...(local?.[field] ?? [])];
     if (value === "") {
       list.splice(index, 1);
     } else {
       list[index] = value;
     }
-    onGuidanceChange({ ...guidance, [field]: list });
+    commitChange({ ...local, [field]: list });
   }
 
   function handleListAdd(field: "use_when" | "constraints") {
-    if (!onGuidanceChange) return;
-    const list = [...(guidance?.[field] ?? []), ""];
-    onGuidanceChange({ ...guidance, [field]: list });
+    const list = [...(local?.[field] ?? []), ""];
+    commitChange({ ...local, [field]: list });
   }
 
   return (
@@ -127,8 +137,8 @@ export function MediaToolCard({
           {/* use_when */}
           <div>
             <label className="mb-1 block text-xs font-medium">Use when</label>
-            {(guidance?.use_when ?? []).map((item, i) => (
-              <div key={`use-when-${i}-${item.slice(0, 10)}`} className="mb-1 flex gap-1">
+            {(local?.use_when ?? []).map((item, i) => (
+              <div key={i} className="mb-1 flex gap-1">
                 <input
                   type="text"
                   value={item}
@@ -136,6 +146,15 @@ export function MediaToolCard({
                   disabled={!projectSelected}
                   className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm disabled:opacity-50"
                 />
+                {projectSelected && (
+                  <button
+                    onClick={() => handleListChange("use_when", i, "")}
+                    className="shrink-0 rounded-md px-1.5 text-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    title="Remove"
+                  >
+                    &times;
+                  </button>
+                )}
               </div>
             ))}
             {projectSelected && (
@@ -151,8 +170,8 @@ export function MediaToolCard({
           {/* constraints */}
           <div>
             <label className="mb-1 block text-xs font-medium">Constraints</label>
-            {(guidance?.constraints ?? []).map((item, i) => (
-              <div key={`constraint-${i}-${item.slice(0, 10)}`} className="mb-1 flex gap-1">
+            {(local?.constraints ?? []).map((item, i) => (
+              <div key={i} className="mb-1 flex gap-1">
                 <input
                   type="text"
                   value={item}
@@ -160,6 +179,15 @@ export function MediaToolCard({
                   disabled={!projectSelected}
                   className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm disabled:opacity-50"
                 />
+                {projectSelected && (
+                  <button
+                    onClick={() => handleListChange("constraints", i, "")}
+                    className="shrink-0 rounded-md px-1.5 text-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    title="Remove"
+                  >
+                    &times;
+                  </button>
+                )}
               </div>
             ))}
             {projectSelected && (
@@ -176,9 +204,9 @@ export function MediaToolCard({
           <div>
             <label className="mb-1 block text-xs font-medium">Prompt example</label>
             <textarea
-              value={guidance?.prompt_example ?? ""}
+              value={local?.prompt_example ?? ""}
               onChange={(e) =>
-                onGuidanceChange?.({ ...guidance, prompt_example: e.target.value || undefined })
+                commitChange({ ...local, prompt_example: e.target.value || undefined })
               }
               disabled={!projectSelected}
               placeholder="Example prompt for this tool..."

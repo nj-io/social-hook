@@ -490,43 +490,43 @@ class TestMediaToolGuidance:
     """Test MediaToolGuidance and _parse_media_guidance."""
 
     def test_defaults_have_four_tools(self):
-        """DEFAULT_MEDIA_GUIDANCE has 4 tools with use_when/constraints."""
+        """DEFAULT_MEDIA_GUIDANCE has 4 structural tool slots (no opinionated content)."""
         assert len(DEFAULT_MEDIA_GUIDANCE) == 4
         assert "mermaid" in DEFAULT_MEDIA_GUIDANCE
         assert "nano_banana_pro" in DEFAULT_MEDIA_GUIDANCE
         assert "playwright" in DEFAULT_MEDIA_GUIDANCE
         assert "ray_so" in DEFAULT_MEDIA_GUIDANCE
 
-        # Check mermaid has expected guidance
+        # Structural only — opinionated guidance lives in content-config.yaml
         mermaid = DEFAULT_MEDIA_GUIDANCE["mermaid"]
-        assert len(mermaid.use_when) == 2
-        assert len(mermaid.constraints) == 2
+        assert mermaid.use_when == []
+        assert mermaid.constraints == []
         assert mermaid.enabled is None
         assert mermaid.prompt_example is None
 
     def test_parse_empty_dict_returns_defaults(self):
-        """Empty dict returns defaults unchanged."""
+        """Empty dict returns structural defaults (empty lists)."""
         result = _parse_media_guidance({})
         assert len(result) == 4
-        assert result["mermaid"].use_when == DEFAULT_MEDIA_GUIDANCE["mermaid"].use_when
+        assert result["mermaid"].use_when == []
         assert result["ray_so"].constraints == []
 
     def test_parse_preserves_unspecified_tools(self):
-        """Override one tool, others keep their defaults."""
+        """Override one tool, others keep structural defaults."""
         data = {
             "mermaid": {"enabled": False},
         }
         result = _parse_media_guidance(data)
         assert result["mermaid"].enabled is False
-        # use_when/constraints preserved from default
-        assert len(result["mermaid"].use_when) == 2
-        assert len(result["mermaid"].constraints) == 2
+        # use_when/constraints remain empty (structural default)
+        assert result["mermaid"].use_when == []
+        assert result["mermaid"].constraints == []
         # Other tools unchanged
         assert result["nano_banana_pro"].enabled is None
-        assert len(result["nano_banana_pro"].use_when) == 2
+        assert result["nano_banana_pro"].use_when == []
 
     def test_parse_overrides_specific_fields(self):
-        """Override only specified fields, keep rest from default."""
+        """Override only specified fields, keep rest from structural default."""
         data = {
             "playwright": {
                 "use_when": ["Custom use case"],
@@ -537,8 +537,8 @@ class TestMediaToolGuidance:
         pw = result["playwright"]
         assert pw.use_when == ["Custom use case"]
         assert pw.prompt_example == "screenshot of the dashboard"
-        # constraints kept from default
-        assert len(pw.constraints) == 2
+        # constraints remain empty (structural default)
+        assert pw.constraints == []
         assert pw.enabled is None
 
     def test_parse_adds_custom_tool(self):
@@ -557,10 +557,11 @@ class TestMediaToolGuidance:
 
     def test_parse_does_not_mutate_defaults(self):
         """Parsing should not mutate DEFAULT_MEDIA_GUIDANCE."""
-        original_mermaid_use_when = DEFAULT_MEDIA_GUIDANCE["mermaid"].use_when[:]
-        data = {"mermaid": {"use_when": ["Overridden"]}}
+        original_mermaid_enabled = DEFAULT_MEDIA_GUIDANCE["mermaid"].enabled
+        data = {"mermaid": {"enabled": True, "use_when": ["Overridden"]}}
         _parse_media_guidance(data)
-        assert DEFAULT_MEDIA_GUIDANCE["mermaid"].use_when == original_mermaid_use_when
+        assert DEFAULT_MEDIA_GUIDANCE["mermaid"].enabled == original_mermaid_enabled
+        assert DEFAULT_MEDIA_GUIDANCE["mermaid"].use_when == []
 
     def test_load_project_config_parses_media_guidance(self, temp_dir):
         """load_project_config parses media_tools from content-config."""
@@ -583,8 +584,8 @@ media_tools:
         config = load_project_config(project_dir, global_base=global_base)
         assert config.media_guidance["mermaid"].enabled is False
         assert config.media_guidance["ray_so"].prompt_example == "highlighted code snippet"
-        # Defaults preserved
-        assert len(config.media_guidance["nano_banana_pro"].use_when) == 2
+        # Unspecified tools have empty structural defaults
+        assert config.media_guidance["nano_banana_pro"].use_when == []
 
 
 # =============================================================================

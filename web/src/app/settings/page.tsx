@@ -75,6 +75,16 @@ export default function SettingsPage() {
     return () => window.removeEventListener("settings-navigate", handleNavigate);
   }, []);
 
+  // Refresh content config (called when Media Generation guidance is saved)
+  const refreshContentConfig = useCallback(async () => {
+    try {
+      const res = await fetchContentConfig(selectedProjectPath || undefined);
+      setContentCfg(res);
+    } catch {
+      // ignore — content config section will show stale data
+    }
+  }, [selectedProjectPath]);
+
   async function saveConfig(updates: Partial<Config>) {
     setSaving(true);
     setSaveStatus("");
@@ -145,49 +155,52 @@ export default function SettingsPage() {
         <SettingsSidebar active={section} onSelect={setSection} />
 
         <div className="min-w-0 flex-1">
-          {section === "models" && (
+          <div className={section !== "models" ? "hidden" : ""}>
             <ModelsSection
               models={models}
               onChange={(m) => saveConfig({ models: m })}
             />
-          )}
+          </div>
 
-          {section === "api-keys" && envData && (
-            <ApiKeysSection
-              env={envData.env}
-              knownKeys={envData.known_keys}
-              keyGroups={envData.key_groups}
-              onRefresh={loadAll}
-            />
-          )}
+          <div className={section !== "api-keys" ? "hidden" : ""}>
+            {envData && (
+              <ApiKeysSection
+                env={envData.env}
+                knownKeys={envData.known_keys}
+                keyGroups={envData.key_groups}
+                onRefresh={loadAll}
+              />
+            )}
+          </div>
 
-          {section === "projects" && (
+          <div className={section !== "projects" ? "hidden" : ""}>
             <ProjectsSection />
-          )}
+          </div>
 
-          {section === "platforms" && (
+          <div className={section !== "platforms" ? "hidden" : ""}>
             <PlatformsSection
               platforms={platforms}
               onChange={(p) => saveConfig({ platforms: p } as Partial<Config>)}
             />
-          )}
+          </div>
 
-          {section === "scheduling" && (
+          <div className={section !== "scheduling" ? "hidden" : ""}>
             <SchedulingSection
               scheduling={scheduling}
               onChange={(s) => saveConfig({ scheduling: s })}
             />
-          )}
+          </div>
 
-          {section === "media-generation" && (
+          <div className={section !== "media-generation" ? "hidden" : ""}>
             <MediaGenerationSection
               config={{ models, platforms, scheduling, media_generation: mediaGen, journey_capture: journeyCapture, web: webCfg }}
               onConfigChange={(updates) => saveConfig(updates)}
               projects={projects}
+              onGuidanceSave={refreshContentConfig}
             />
-          )}
+          </div>
 
-          {section === "journey-capture" && (
+          <div className={section !== "journey-capture" ? "hidden" : ""}>
             <div className="space-y-4">
               <h2 className="text-lg font-semibold">Journey Capture</h2>
               <p className="text-sm text-muted-foreground">
@@ -221,52 +234,54 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
-          )}
+          </div>
 
-          {section === "notifications" && (
+          <div className={section !== "notifications" ? "hidden" : ""}>
             <NotificationsSection
               webCfg={webCfg}
               onChange={(web) => saveConfig({ web })}
               telegramConfigured={telegramConfigured}
             />
-          )}
+          </div>
 
-          {section === "voice-style" && socialCtx && (
-            <div className="space-y-4">
-              {/* Project selector for voice/style */}
-              {projects.length > 0 && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Project</label>
-                  <select
-                    value={selectedProjectPath}
-                    onChange={(e) => loadProjectContent(e.target.value)}
-                    className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
-                  >
-                    <option value="">Global defaults</option>
-                    {projects.map((p) => (
-                      <option key={p.id} value={p.repo_path}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <TextEditorSection
-                title="Voice & Style"
-                description="Edit your social-context.md file that defines your writing voice and style."
-                content={socialCtx.content}
-                filePath={socialCtx.path}
-                onSave={async (content) => {
-                  await updateSocialContext(selectedProjectPath, content);
-                  const res = await fetchSocialContext(selectedProjectPath || undefined);
-                  setSocialCtx(res);
-                }}
-                language="markdown"
-              />
-            </div>
-          )}
+          <div className={section !== "voice-style" ? "hidden" : ""}>
+            {socialCtx && (
+              <div className="space-y-4">
+                {/* Project selector for voice/style */}
+                {projects.length > 0 && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Project</label>
+                    <select
+                      value={selectedProjectPath}
+                      onChange={(e) => loadProjectContent(e.target.value)}
+                      className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                    >
+                      <option value="">Global defaults</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.repo_path}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <TextEditorSection
+                  title="Voice & Style"
+                  description="Edit your social-context.md file that defines your writing voice and style."
+                  content={socialCtx.content}
+                  filePath={socialCtx.path}
+                  onSave={async (content) => {
+                    await updateSocialContext(selectedProjectPath, content);
+                    const res = await fetchSocialContext(selectedProjectPath || undefined);
+                    setSocialCtx(res);
+                  }}
+                  language="markdown"
+                />
+              </div>
+            )}
+          </div>
 
-          {section === "content-config" && (
+          <div className={section !== "content-config" ? "hidden" : ""}>
             <div className="space-y-4">
               {/* Project selector for content config */}
               {projects.length > 0 && (
@@ -309,7 +324,58 @@ export default function SettingsPage() {
                     <p className="text-sm text-muted-foreground">No content config found for this project.</p>
                     <button
                       onClick={async () => {
-                        const template = `# Content Config\n# See docs/templates/content-config.example.yaml for full reference\n\nmedia_tools: {}\n`;
+                        const template = [
+                          "# Content Config",
+                          "# See docs/templates/content-config.example.yaml for full reference",
+                          "",
+                          "media_tools:",
+                          "  mermaid:",
+                          "    use_when:",
+                          '      - "Technical architecture explanations"',
+                          '      - "Flow diagrams and processes"',
+                          "    constraints:",
+                          '      - "Don\'t overuse - can feel dry/boring"',
+                          '      - "Best for technical audience"',
+                          "    prompt_example: |",
+                          "      Create a Mermaid diagram showing the flow from git commit to social post.",
+                          "      Keep it clean and minimal. Use graph LR (left-to-right) orientation.",
+                          "      Maximum 8-10 nodes for readability.",
+                          "",
+                          "  nano_banana_pro:",
+                          "    use_when:",
+                          '      - "Marketing/announcement visuals"',
+                          '      - "Polished graphics for launches"',
+                          "    constraints:",
+                          '      - "Always specify \'no text\' unless text is essential"',
+                          "    prompt_example: |",
+                          "      Create a clean, modern illustration representing [concept].",
+                          "      Style: Minimal, developer-focused, no text overlays.",
+                          "      Colors: Use a limited palette, prefer blues and purples.",
+                          "      Avoid: Stock photo feel, corporate clipart, busy backgrounds.",
+                          "",
+                          "  playwright:",
+                          "    use_when:",
+                          '      - "Demonstrating actual UI/product"',
+                          '      - "Showing working features"',
+                          "    constraints:",
+                          '      - "Only use when there\'s actual UI to show"',
+                          '      - "Ensure no sensitive data visible"',
+                          "    prompt_example: |",
+                          "      Take a screenshot of the application showing [feature].",
+                          "      Ensure the relevant UI element is visible and highlighted.",
+                          "      Use a clean browser window (no bookmarks bar, minimal chrome).",
+                          "",
+                          "  ray_so:",
+                          "    use_when:",
+                          '      - "Highlighting interesting code snippets"',
+                          '      - "Code-focused posts"',
+                          "    constraints: []",
+                          "    prompt_example: |",
+                          "      Create a code screenshot of the following snippet.",
+                          "      Highlight lines that show the key logic.",
+                          "      Use dark theme, include filename if relevant.",
+                          "",
+                        ].join("\n");
                         await updateContentConfig(selectedProjectPath, template);
                         const res = await fetchContentConfig(selectedProjectPath || undefined);
                         setContentCfg(res);
@@ -322,7 +388,7 @@ export default function SettingsPage() {
                 </div>
               )}
             </div>
-          )}
+          </div>
         </div>
       </div>
     </div>

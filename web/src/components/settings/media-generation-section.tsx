@@ -5,13 +5,21 @@ import type { Config, MediaGenerationConfig, MediaToolGuidance, Project } from "
 import { fetchContentConfigParsed, updateContentConfigParsed } from "@/lib/api";
 import { MediaToolCard } from "./media-tool-card";
 
+const DEFAULT_TOOLS: Record<string, boolean> = {
+  mermaid: true,
+  nano_banana_pro: true,
+  playwright: true,
+  ray_so: true,
+};
+
 interface MediaGenerationSectionProps {
   config: Config;
   onConfigChange: (updates: Partial<Config>) => void;
   projects?: Project[];
+  onGuidanceSave?: () => void;
 }
 
-export function MediaGenerationSection({ config, onConfigChange, projects }: MediaGenerationSectionProps) {
+export function MediaGenerationSection({ config, onConfigChange, projects, onGuidanceSave }: MediaGenerationSectionProps) {
   const mediaGen: MediaGenerationConfig = config.media_generation ?? { enabled: true, tools: {} };
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>("");
   const [mediaToolsGuidance, setMediaToolsGuidance] = useState<Record<string, MediaToolGuidance>>({});
@@ -42,9 +50,10 @@ export function MediaGenerationSection({ config, onConfigChange, projects }: Med
   }
 
   function handleToolToggle(toolName: string, enabled: boolean) {
-    const newTools = { ...mediaGen.tools, [toolName]: enabled };
+    // Always include all known tools so partial saves don't lose tools
+    const allTools = { ...DEFAULT_TOOLS, ...mediaGen.tools, [toolName]: enabled };
     onConfigChange({
-      media_generation: { ...mediaGen, tools: newTools },
+      media_generation: { ...mediaGen, tools: allTools },
     });
   }
 
@@ -58,14 +67,13 @@ export function MediaGenerationSection({ config, onConfigChange, projects }: Med
         { media_tools: { [toolName]: guidance } },
         selectedProjectPath || undefined,
       );
+      onGuidanceSave?.();
     } finally {
       setSavingGuidance(false);
     }
   }
 
-  const toolNames = Object.keys(mediaGen.tools).length > 0
-    ? Object.keys(mediaGen.tools)
-    : ["mermaid", "nano_banana_pro", "playwright", "ray_so"];
+  const toolNames = Object.keys({ ...DEFAULT_TOOLS, ...mediaGen.tools });
 
   return (
     <div className="space-y-4">

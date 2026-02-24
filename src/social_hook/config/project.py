@@ -33,22 +33,10 @@ class MediaToolGuidance:
 
 
 DEFAULT_MEDIA_GUIDANCE: dict[str, MediaToolGuidance] = {
-    "mermaid": MediaToolGuidance(
-        use_when=["Technical architecture explanations", "Flow diagrams and processes"],
-        constraints=["Don't overuse - can feel dry/boring", "Best for technical audience"],
-    ),
-    "nano_banana_pro": MediaToolGuidance(
-        use_when=["Marketing/announcement visuals", "Polished graphics for launches"],
-        constraints=["Always specify 'no text' unless text is essential"],
-    ),
-    "playwright": MediaToolGuidance(
-        use_when=["Demonstrating actual UI/product", "Showing working features"],
-        constraints=["Only use when there's actual UI to show", "Ensure no sensitive data visible"],
-    ),
-    "ray_so": MediaToolGuidance(
-        use_when=["Highlighting interesting code snippets", "Code-focused posts"],
-        constraints=[],
-    ),
+    "mermaid": MediaToolGuidance(),
+    "nano_banana_pro": MediaToolGuidance(),
+    "playwright": MediaToolGuidance(),
+    "ray_so": MediaToolGuidance(),
 }
 
 
@@ -227,9 +215,10 @@ def _parse_strategy_config(data: dict) -> StrategyConfig:
 def _parse_media_guidance(data: dict) -> dict[str, MediaToolGuidance]:
     """Parse media_tools section from content-config.yaml.
 
-    Merges user overrides on top of DEFAULT_MEDIA_GUIDANCE.
-    Any tool in the YAML dict updates the matching default's fields;
-    unspecified tools keep defaults.
+    Merges YAML entries on top of DEFAULT_MEDIA_GUIDANCE (structural skeleton).
+    Opinionated defaults (use_when, constraints, prompt_example) live in
+    content-config.yaml, not in Python. DEFAULT_MEDIA_GUIDANCE only ensures
+    all 4 tool slots exist even if the YAML is empty.
     """
     result = deepcopy(DEFAULT_MEDIA_GUIDANCE)
     if not data:

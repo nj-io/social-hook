@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface TextEditorSectionProps {
   title: string;
@@ -13,6 +13,7 @@ interface TextEditorSectionProps {
 
 export function TextEditorSection({ title, description, content: initial, filePath, onSave, language }: TextEditorSectionProps) {
   const [content, setContent] = useState(initial);
+  useEffect(() => { setContent(initial); }, [initial]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
