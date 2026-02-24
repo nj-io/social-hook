@@ -75,6 +75,14 @@ export async function sendMessage(text: string): Promise<{ events: WebEvent[] }>
   });
 }
 
+export async function fetchChatHistory(): Promise<{ events: WebEvent[] }> {
+  return apiFetch("/api/events/history");
+}
+
+export async function clearChatHistory(): Promise<{ ok: boolean }> {
+  return apiFetch("/api/events/clear", { method: "POST" });
+}
+
 // Social context
 export async function fetchSocialContext(projectPath?: string): Promise<{ content: string; path: string }> {
   const params = projectPath ? `?project_path=${encodeURIComponent(projectPath)}` : "";

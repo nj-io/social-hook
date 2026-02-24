@@ -11,10 +11,13 @@ from social_hook.llm.drafter import Drafter
 from social_hook.llm.evaluator import Evaluator
 from social_hook.llm.expert import Expert
 from social_hook.llm.gatekeeper import Gatekeeper
+from social_hook.llm.gatekeeper import _extract_text_content
 from social_hook.llm.schemas import (
     CreateDraftInput,
     ExpertResponseInput,
+    GatekeeperOperation,
     LogDecisionInput,
+    RouteAction,
     RouteActionInput,
 )
 from social_hook.models import (
@@ -584,14 +587,88 @@ class TestGatekeeper:
         call_kwargs = mock_client.complete.call_args[1]
         assert "Auth project" in call_kwargs["system"]
 
-    def test_route_no_tool_raises(self, mock_client, prompts_dir):
+    def test_route_no_tool_falls_back_to_query(self, mock_client, prompts_dir):
+        """Gatekeeper returns fallback query when LLM skips the tool."""
         mock_client.complete.return_value = _mock_response_no_tool()
 
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
-            with pytest.raises(MalformedResponseError):
-                gk.route("test message")
+            result = gk.route("hi")
+
+        assert result.action == RouteAction.handle_directly
+        assert result.operation == GatekeeperOperation.query
+        assert "couldn't make a decision" in result.params["answer"]
+
+    def test_route_no_tool_empty_text_uses_default(self, mock_client, prompts_dir):
+        """Fallback uses default message when no text content is extractable."""
+        # Response with tool-only content (no text blocks)
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "wrong_tool"
+        tool_block.input = {}
+
+        response = MagicMock()
+        response.content = [tool_block]
+        response.usage.input_tokens = 100
+        response.usage.output_tokens = 50
+        response.usage.cache_read_input_tokens = 0
+        response.usage.cache_creation_input_tokens = 0
+        mock_client.complete.return_value = response
+
+        with patch("social_hook.llm.prompts.Path.home",
+                    return_value=prompts_dir.parent.parent):
+            gk = Gatekeeper(mock_client)
+            result = gk.route("test")
+
+        assert result.action == RouteAction.handle_directly
+        assert result.operation == GatekeeperOperation.query
+        assert "social-hook assistant" in result.params["answer"]
+
+
+# =============================================================================
+# _extract_text_content Tests
+# =============================================================================
+
+
+class TestExtractTextContent:
+    """Tests for the _extract_text_content fallback helper."""
+
+    def test_extracts_text_from_text_blocks(self):
+        block = MagicMock()
+        block.type = "text"
+        block.text = "Hello from the LLM"
+        response = MagicMock()
+        response.content = [block]
+
+        assert _extract_text_content(response) == "Hello from the LLM"
+
+    def test_extracts_text_from_mixed_content(self):
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Some text"
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "some_tool"
+        response = MagicMock()
+        response.content = [text_block, tool_block]
+
+        assert _extract_text_content(response) == "Some text"
+
+    def test_returns_empty_for_tool_only_content(self):
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "route_action"
+        response = MagicMock()
+        response.content = [tool_block]
+
+        assert _extract_text_content(response) == ""
+
+    def test_handles_string_blocks(self):
+        response = MagicMock()
+        response.content = ["plain string response"]
+
+        assert _extract_text_content(response) == "plain string response"
 
 
 # =============================================================================

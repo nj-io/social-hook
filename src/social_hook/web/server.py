@@ -161,6 +161,12 @@ def _get_events_since(last_id: int) -> list[dict]:
         conn.close()
 
 
+@app.get("/api/events/history")
+async def api_events_history():
+    """Return all chat events for initial page load."""
+    return {"events": _get_events_since(0)}
+
+
 @app.post("/api/command")
 async def api_command(body: CommandRequest):
     """Execute a bot command via the web adapter."""
@@ -169,8 +175,9 @@ async def api_command(body: CommandRequest):
     adapter = _get_adapter()
     config = _get_config()
 
-    # Snapshot current max event id
+    # Persist user event, run handler synchronously, return all events together.
     before_id = _max_event_id()
+    adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id="web", text=body.text, message_id="web_0")
     handle_command(msg, adapter, config)
@@ -209,7 +216,9 @@ async def api_message(body: MessageRequest):
     adapter = _get_adapter()
     config = _get_config()
 
+    # Persist user event, run handler synchronously, return all events together.
     before_id = _max_event_id()
+    adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id="web", text=body.text, message_id="web_0")
     handle_message(msg, adapter, config)
@@ -230,6 +239,18 @@ def _max_event_id() -> int:
         conn.close()
 
 
+@app.post("/api/events/clear")
+async def api_clear_events():
+    """Clear all chat history from web_events."""
+    conn = _get_conn()
+    try:
+        conn.execute("DELETE FROM web_events")
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # SSE endpoint
 # ---------------------------------------------------------------------------
@@ -242,7 +263,7 @@ async def api_events(lastId: int = Query(0)):
     def event_stream():
         current_id = lastId
         empty_polls = 0
-        max_empty = 30  # ~30 seconds of no data -> close stream
+        max_empty = 10  # ~10 seconds of no data -> close stream
 
         while empty_polls < max_empty:
             events = _get_events_since(current_id)

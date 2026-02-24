@@ -1,10 +1,30 @@
 """Gatekeeper agent: routes Telegram messages (T15)."""
 
+import logging
 from typing import Any, Optional
 
+from social_hook.errors import MalformedResponseError
 from social_hook.llm.base import LLMClient
 from social_hook.llm.prompts import assemble_gatekeeper_prompt, load_prompt
-from social_hook.llm.schemas import RouteActionInput, extract_tool_call
+from social_hook.llm.schemas import (
+    GatekeeperOperation,
+    RouteAction,
+    RouteActionInput,
+    extract_tool_call,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_text_content(response: Any) -> str:
+    """Extract text content from LLM response as fallback."""
+    parts = []
+    for block in response.content:
+        if getattr(block, "type", None) == "text":
+            parts.append(getattr(block, "text", ""))
+        elif isinstance(block, str):
+            parts.append(block)
+    return "\n".join(parts).strip()
 
 
 class Gatekeeper:
@@ -56,5 +76,16 @@ class Gatekeeper:
             project_id=project_id,
         )
 
-        tool_input = extract_tool_call(response, "route_action")
-        return RouteActionInput.validate(tool_input)
+        try:
+            tool_input = extract_tool_call(response, "route_action")
+            return RouteActionInput.validate(tool_input)
+        except MalformedResponseError:
+            # LLM responded with text instead of using the tool — construct
+            # a known-good RouteActionInput directly (not from LLM output).
+            logger.warning("Gatekeeper LLM skipped route_action tool, using text fallback")
+            text = _extract_text_content(response)
+            return RouteActionInput(
+                action=RouteAction.handle_directly,
+                operation=GatekeeperOperation.query,
+                params={"answer": text or "I'm your social-hook assistant. Try sending a draft or ask me a question!"},
+            )

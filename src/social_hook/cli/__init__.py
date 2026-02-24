@@ -166,6 +166,20 @@ def web(
                     continue
         return start
 
+    # Kill any stale process on the API port before starting
+    def _kill_port(p: int) -> None:
+        try:
+            out = sp.check_output(["lsof", "-ti", f":{p}"], text=True).strip()
+            if out:
+                for pid in out.split("\n"):
+                    sp.run(["kill", "-9", pid.strip()], check=False)
+                import time
+                time.sleep(0.5)
+        except (sp.CalledProcessError, FileNotFoundError):
+            pass
+
+    _kill_port(api_port)
+
     port = _find_free_port(port, host)
     api_port = _find_free_port(api_port, host)
 
@@ -191,7 +205,11 @@ def web(
         typer.echo("\nShutting down...")
     finally:
         api_proc.terminate()
-        api_proc.wait(timeout=5)
+        try:
+            api_proc.wait(timeout=3)
+        except sp.TimeoutExpired:
+            api_proc.kill()
+            api_proc.wait(timeout=2)
 
 
 # =============================================================================
