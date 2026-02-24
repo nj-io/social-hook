@@ -448,6 +448,54 @@ class TestAssembleGatekeeperPrompt:
         )
         assert "Test post" in result
 
+    def test_includes_system_snapshot(self, sample_draft):
+        snapshot = "## System Status\n- Projects: my-app (active, build phase)\n- Pending drafts: 2"
+        result = assemble_gatekeeper_prompt(
+            "# Gatekeeper", sample_draft, "how many drafts?",
+            system_snapshot=snapshot,
+        )
+        assert "## System Status" in result
+        assert "my-app (active, build phase)" in result
+        assert "Pending drafts: 2" in result
+
+    def test_no_snapshot(self, sample_draft):
+        result = assemble_gatekeeper_prompt(
+            "# Gatekeeper", sample_draft, "approve",
+        )
+        assert "## System Status" not in result
+
+    def test_snapshot_before_summary(self, sample_draft):
+        snapshot = "## System Status\n- Pending drafts: 1"
+        result = assemble_gatekeeper_prompt(
+            "# Gatekeeper", sample_draft, "test",
+            project_summary="My project summary.",
+            system_snapshot=snapshot,
+        )
+        # Snapshot should appear before project summary
+        snapshot_pos = result.index("## System Status")
+        summary_pos = result.index("## Project Summary")
+        assert snapshot_pos < summary_pos
+
+    def test_includes_chat_history(self, sample_draft):
+        history = "## Recent Chat\n- User: what platforms?\n- Assistant: X is enabled."
+        result = assemble_gatekeeper_prompt(
+            "# Gatekeeper", sample_draft, "what about now?",
+            chat_history=history,
+        )
+        assert "## Recent Chat" in result
+        assert "what platforms?" in result
+
+    def test_chat_history_before_draft(self, sample_draft):
+        history = "## Recent Chat\n- User: hi"
+        result = assemble_gatekeeper_prompt(
+            "# Gatekeeper", sample_draft, "test",
+            chat_history=history,
+        )
+        # Chat history should appear before current draft
+        history_pos = result.index("## Recent Chat")
+        draft_pos = result.index("## Current Draft")
+        assert history_pos < draft_pos
+
 
 # =============================================================================
 # T17: Expert Prompt Assembly

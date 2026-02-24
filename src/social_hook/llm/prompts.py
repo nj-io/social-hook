@@ -526,6 +526,8 @@ def assemble_gatekeeper_prompt(
     draft: Any,
     user_message: str,
     project_summary: Optional[str] = None,
+    system_snapshot: Optional[str] = None,
+    chat_history: Optional[str] = None,
 ) -> str:
     """Assemble gatekeeper system prompt with minimal context.
 
@@ -537,15 +539,23 @@ def assemble_gatekeeper_prompt(
         draft: Current draft object
         user_message: Telegram message to process
         project_summary: Pre-injected project summary (~500 tokens)
+        system_snapshot: Compact system status block (live DB + config data)
+        chat_history: Recent chat messages for conversational context
 
     Returns:
         Complete system prompt string
     """
     sections = [prompt]
 
+    if system_snapshot:
+        sections.append("\n---\n" + system_snapshot)
+
     if project_summary:
         sections.append("\n---\n## Project Summary")
         sections.append(project_summary)
+
+    if chat_history:
+        sections.append("\n---\n" + chat_history)
 
     sections.append("\n---\n## Current Draft")
     if hasattr(draft, "content"):

@@ -51,6 +51,170 @@ def _get_conn():
     return init_database(get_db_path())
 
 
+def _build_system_snapshot(conn, project_id: Optional[str], config) -> str:
+    """Build a compact system status block for Gatekeeper context."""
+    from social_hook.db import operations as ops
+
+    lines = ["## System Status"]
+
+    # Projects
+    projects = ops.get_all_projects(conn)
+    if projects:
+        proj_parts = []
+        for p in projects:
+            status = "paused" if p.paused else "active"
+            lifecycle = ops.get_lifecycle(conn, p.id)
+            phase = lifecycle.phase if lifecycle else "unknown"
+            proj_parts.append(f"{p.name} ({status}, {phase} phase)")
+        lines.append(f"- Projects: {', '.join(proj_parts)}")
+
+    # Pending drafts (for the active project, or all)
+    if project_id:
+        drafts = ops.get_pending_drafts(conn, project_id)
+    else:
+        drafts = ops.get_all_pending_drafts(conn)
+    if drafts:
+        by_status: dict[str, int] = {}
+        for d in drafts:
+            by_status.setdefault(d.status, 0)
+            by_status[d.status] += 1
+        parts = [f"{c} {s}" for s, c in by_status.items()]
+        lines.append(f"- Pending drafts: {len(drafts)} ({', '.join(parts)})")
+    else:
+        lines.append("- Pending drafts: 0")
+
+    # Active arcs (for the active project)
+    if project_id:
+        arcs = ops.get_active_arcs(conn, project_id)
+        if arcs:
+            arc_parts = [f'"{a.theme}" ({a.post_count} posts)' for a in arcs]
+            lines.append(f"- Active arcs: {', '.join(arc_parts)}")
+
+    # Recent posts
+    if project_id:
+        recent = ops.get_recent_posts(conn, project_id, days=7)
+        if recent:
+            last = recent[0]
+            if last.posted_at:
+                from datetime import datetime, timezone
+
+                now = datetime.now(timezone.utc)
+                posted_at = last.posted_at
+                if posted_at.tzinfo is None:
+                    posted_at = posted_at.replace(tzinfo=timezone.utc)
+                delta = now - posted_at
+                if delta.days > 0:
+                    ago = f"{delta.days}d ago"
+                else:
+                    hours = delta.seconds // 3600
+                    ago = f"{hours}h ago" if hours > 0 else "just now"
+                lines.append(f"- Last post: {ago} on {last.platform}")
+            else:
+                lines.append(f"- Last post: recent, on {last.platform}")
+        else:
+            lines.append("- Last post: none in past 7 days")
+
+    # Platforms
+    if config and hasattr(config, "platforms"):
+        plat_parts = []
+        for name, pcfg in config.platforms.items():
+            status = "enabled" if pcfg.enabled else "disabled"
+            tier = f", {pcfg.account_tier} tier" if getattr(pcfg, "account_tier", None) else ""
+            plat_parts.append(f"{name} ({status}{tier})")
+        if plat_parts:
+            lines.append(f"- Platforms: {', '.join(plat_parts)}")
+
+    # Scheduling
+    if config and hasattr(config, "scheduling"):
+        s = config.scheduling
+        days = "/".join(s.optimal_days) if s.optimal_days else "any"
+        hours = "/".join(str(h) for h in s.optimal_hours) if s.optimal_hours else "any"
+        lines.append(f"- Schedule: {s.timezone}, {days} at {hours}, max {s.max_posts_per_day}/day")
+
+    # Media tools
+    if config and hasattr(config, "media_generation") and config.media_generation.enabled:
+        tools = [t for t, enabled in config.media_generation.tools.items() if enabled]
+        if tools:
+            lines.append(f"- Media tools: {', '.join(tools)}")
+
+    # Available commands
+    lines.append("- Commands: /help, /review, /status, /list, /approve, /reject, /schedule")
+
+    return "\n".join(lines)
+
+
+def _build_chat_history(
+    adapter: MessagingAdapter,
+    token_budget: int = 400,
+    time_window_minutes: int = 15,
+) -> Optional[str]:
+    """Build recent chat history for conversational context.
+
+    Fills backwards from most recent messages until the token budget is
+    exhausted or the time window is exceeded. Adapts naturally: short
+    messages → more history, long messages → fewer entries.
+
+    Only works with WebAdapter (has DB-backed event history).
+    Returns None for other adapters (e.g., Telegram).
+    """
+    import json
+    import sqlite3
+
+    from social_hook.llm.prompts import count_tokens
+
+    # Only WebAdapter has _db_path with stored chat events
+    db_path = getattr(adapter, "_db_path", None)
+    if not db_path:
+        return None
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT type, data, created_at FROM web_events
+            WHERE type IN ('user', 'message')
+              AND created_at >= datetime('now', ?)
+            ORDER BY id DESC
+            """,
+            (f"-{time_window_minutes} minutes",),
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    # Build history backwards (most recent first), respecting token budget
+    lines: list[str] = []
+    tokens_used = 0
+    for row in rows:
+        try:
+            data = json.loads(row["data"])
+        except (json.JSONDecodeError, KeyError):
+            continue
+        text = data.get("text", "")
+        if not text:
+            continue
+
+        role = "User" if row["type"] == "user" else "Assistant"
+        line = f"- {role}: {text}"
+        line_tokens = count_tokens(line)
+
+        if tokens_used + line_tokens > token_budget:
+            break
+        lines.append(line)
+        tokens_used += line_tokens
+
+    if not lines:
+        return None
+
+    # Reverse to chronological order
+    lines.reverse()
+    return "## Recent Chat\n" + "\n".join(lines)
+
+
 def _parse_command(text: str) -> tuple[str, str]:
     """Parse a command string into (command, args).
 
@@ -152,28 +316,59 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
         draft_obj = None
         project_id = None
         db = None
+        snapshot = None
+        summary = None
         ctx = get_chat_draft_context(chat_id)
 
         _context_conn = None
         try:
+            # Always open DB — needed for snapshot even without draft context
+            _context_conn = _get_conn()
+            from social_hook.llm.dry_run import DryRunContext
+            db = DryRunContext(_context_conn, dry_run=False)
+
             if ctx:
                 draft_id_ctx, project_id = ctx
-                _context_conn = _get_conn()
                 try:
                     from social_hook.db import get_draft
-                    from social_hook.llm.dry_run import DryRunContext
-
                     draft_obj = get_draft(_context_conn, draft_id_ctx)
-                    db = DryRunContext(_context_conn, dry_run=False)
                 except Exception:
                     pass  # Graceful fallback — context is optional
+
+            # If no project from draft context, use first active project
+            if not project_id:
+                from social_hook.db import operations as ops
+                all_projects = ops.get_all_projects(_context_conn)
+                active = [p for p in all_projects if not p.paused]
+                if active:
+                    project_id = active[0].id
+
+            # Build system snapshot for Gatekeeper context
+            try:
+                snapshot = _build_system_snapshot(_context_conn, project_id, config)
+            except Exception:
+                logger.debug("Failed to build system snapshot", exc_info=True)
+
+            if project_id:
+                from social_hook.db.operations import get_project_summary
+                summary = get_project_summary(_context_conn, project_id)
+
+            # Build chat history for conversational context
+            history = None
+            try:
+                history = _build_chat_history(adapter)
+            except Exception:
+                logger.debug("Failed to build chat history", exc_info=True)
 
             gatekeeper = Gatekeeper(client)
             route = gatekeeper.route(
                 user_message=text,
                 draft_context=draft_obj,
+                project_summary=summary,
                 project_id=project_id,
                 db=db,
+                system_snapshot=snapshot,
+                chat_history=history,
             )
 
             if route.action.value == "handle_directly":

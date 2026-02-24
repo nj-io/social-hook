@@ -7,6 +7,8 @@ import pytest
 
 from social_hook.bot.commands import (
     _CONTEXT_TTL_SECONDS,
+    _build_chat_history,
+    _build_system_snapshot,
     _chat_draft_context,
     _parse_command,
     cmd_approve,
@@ -1281,3 +1283,227 @@ class TestHandleMessageContext:
                 call_kwargs = MockGK.return_value.route.call_args
                 assert call_kwargs[1].get("draft_context") is not None
                 assert call_kwargs[1].get("project_id") == project.id
+                # Verify system snapshot was built and passed
+                assert call_kwargs[1].get("system_snapshot") is not None
+                assert "## System Status" in call_kwargs[1]["system_snapshot"]
+
+
+# =============================================================================
+# _build_system_snapshot Tests
+# =============================================================================
+
+
+class TestBuildSystemSnapshot:
+    """Tests for the system snapshot builder."""
+
+    def test_basic_snapshot(self, temp_dir):
+        """Snapshot includes project, drafts, and config sections."""
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+
+        project = Project(id=generate_id("project"), name="my-app", repo_path="/tmp/my-app")
+        insert_project(conn, project)
+
+        decision = Decision(
+            id=generate_id("decision"), project_id=project.id,
+            commit_hash="abc123", decision="post_worthy", reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"), project_id=project.id,
+            decision_id=decision.id, platform="x",
+            content="Test post", status="draft",
+        )
+        insert_draft(conn, draft)
+
+        config = MagicMock()
+        config.platforms = {"x": MagicMock(enabled=True, account_tier="free")}
+        config.scheduling = MagicMock(
+            timezone="UTC", optimal_days=["Tue", "Wed"],
+            optimal_hours=[9, 17], max_posts_per_day=3,
+        )
+        config.media_generation = MagicMock(enabled=True, tools={"mermaid": True, "ray_so": False})
+
+        result = _build_system_snapshot(conn, project.id, config)
+
+        assert "## System Status" in result
+        assert "my-app" in result
+        assert "Pending drafts: 1" in result
+        assert "1 draft" in result
+        assert "x (enabled, free tier)" in result
+        assert "Schedule: UTC" in result
+        assert "mermaid" in result
+        assert "ray_so" not in result  # disabled tool excluded
+        assert "/help" in result
+        conn.close()
+
+    def test_empty_db(self, temp_dir):
+        """Snapshot works with no projects or drafts."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+
+        config = MagicMock()
+        config.platforms = {}
+        config.scheduling = MagicMock(
+            timezone="UTC", optimal_days=[], optimal_hours=[],
+            max_posts_per_day=3,
+        )
+        config.media_generation = MagicMock(enabled=False)
+
+        result = _build_system_snapshot(conn, None, config)
+
+        assert "## System Status" in result
+        assert "Pending drafts: 0" in result
+        conn.close()
+
+    def test_no_lifecycle(self, temp_dir):
+        """Snapshot shows 'unknown' phase when no lifecycle exists."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+
+        project = Project(id=generate_id("project"), name="new-app", repo_path="/tmp/new")
+        insert_project(conn, project)
+
+        config = MagicMock()
+        config.platforms = {}
+        config.scheduling = MagicMock(
+            timezone="UTC", optimal_days=[], optimal_hours=[],
+            max_posts_per_day=3,
+        )
+        config.media_generation = MagicMock(enabled=False)
+
+        result = _build_system_snapshot(conn, project.id, config)
+
+        assert "new-app (active, unknown phase)" in result
+        conn.close()
+
+    def test_posted_at_none(self, temp_dir):
+        """Snapshot handles posts with posted_at=None gracefully."""
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+
+        decision = Decision(
+            id=generate_id("decision"), project_id=project.id,
+            commit_hash="abc", decision="post_worthy", reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"), project_id=project.id,
+            decision_id=decision.id, platform="x",
+            content="Test", status="posted",
+        )
+        insert_draft(conn, draft)
+
+        # Insert a post with posted_at (SQLite default handles this)
+        from social_hook.db.operations import insert_post
+        from social_hook.models import Post
+
+        post = Post(
+            id=generate_id("post"), draft_id=draft.id,
+            project_id=project.id, platform="x",
+            content="Posted content",
+        )
+        insert_post(conn, post)
+
+        config = MagicMock()
+        config.platforms = {}
+        config.scheduling = MagicMock(
+            timezone="UTC", optimal_days=[], optimal_hours=[],
+            max_posts_per_day=3,
+        )
+        config.media_generation = MagicMock(enabled=False)
+
+        # Should not crash — posted_at comes from DB default
+        result = _build_system_snapshot(conn, project.id, config)
+        assert "Last post:" in result
+        conn.close()
+
+
+# =============================================================================
+# _build_chat_history Tests
+# =============================================================================
+
+
+class TestBuildChatHistory:
+    """Tests for the token-budgeted chat history builder."""
+
+    def test_returns_none_for_non_web_adapter(self, mock_adapter):
+        """Non-WebAdapter (no _db_path) returns None."""
+        result = _build_chat_history(mock_adapter)
+        assert result is None
+
+    def test_builds_history_from_web_events(self, temp_dir):
+        """WebAdapter with recent events returns formatted history."""
+        from social_hook.messaging.web import WebAdapter
+
+        db_path = temp_dir / "web_events.db"
+        adapter = WebAdapter(db_path=str(db_path))
+
+        # Insert some events
+        adapter._insert_event("user", {"text": "what platforms are enabled?"})
+        adapter._insert_event("message", {"text": "X and LinkedIn are enabled."})
+        adapter._insert_event("user", {"text": "what about now?"})
+
+        result = _build_chat_history(adapter)
+
+        assert result is not None
+        assert "## Recent Chat" in result
+        assert "User: what platforms are enabled?" in result
+        assert "Assistant: X and LinkedIn are enabled." in result
+        assert "User: what about now?" in result
+
+    def test_respects_token_budget(self, temp_dir):
+        """History stops when token budget is exhausted."""
+        from social_hook.messaging.web import WebAdapter
+
+        db_path = temp_dir / "web_events.db"
+        adapter = WebAdapter(db_path=str(db_path))
+
+        # Insert many long messages
+        for i in range(20):
+            adapter._insert_event("user", {"text": f"Message {i}: " + "x" * 200})
+            adapter._insert_event("message", {"text": f"Reply {i}: " + "y" * 200})
+
+        result = _build_chat_history(adapter, token_budget=100)
+
+        assert result is not None
+        # Should not contain all 40 messages — budget limits it
+        assert result.count("- User:") + result.count("- Assistant:") < 40
+
+    def test_chronological_order(self, temp_dir):
+        """History is in chronological order (oldest first)."""
+        from social_hook.messaging.web import WebAdapter
+
+        db_path = temp_dir / "web_events.db"
+        adapter = WebAdapter(db_path=str(db_path))
+
+        adapter._insert_event("user", {"text": "first"})
+        adapter._insert_event("message", {"text": "second"})
+        adapter._insert_event("user", {"text": "third"})
+
+        result = _build_chat_history(adapter)
+
+        assert result is not None
+        first_pos = result.index("first")
+        second_pos = result.index("second")
+        third_pos = result.index("third")
+        assert first_pos < second_pos < third_pos
+
+    def test_empty_events(self, temp_dir):
+        """Empty web_events returns None."""
+        from social_hook.messaging.web import WebAdapter
+
+        db_path = temp_dir / "web_events.db"
+        adapter = WebAdapter(db_path=str(db_path))
+
+        result = _build_chat_history(adapter)
+        assert result is None

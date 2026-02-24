@@ -44,6 +44,8 @@ class Gatekeeper:
         project_summary: Optional[str] = None,
         db: Optional[Any] = None,
         project_id: Optional[str] = None,
+        system_snapshot: Optional[str] = None,
+        chat_history: Optional[str] = None,
     ) -> RouteActionInput:
         """Route a user message to the appropriate handler.
 
@@ -53,6 +55,8 @@ class Gatekeeper:
             project_summary: Pre-injected project summary (~500 tokens)
             db: Database context for usage logging
             project_id: Project ID for usage tracking
+            system_snapshot: Compact system status block for context
+            chat_history: Recent chat messages for conversational context
 
         Returns:
             Validated RouteActionInput with routing decision
@@ -65,6 +69,8 @@ class Gatekeeper:
 
         system = assemble_gatekeeper_prompt(
             prompt, draft_context, user_message, project_summary,
+            system_snapshot=system_snapshot,
+            chat_history=chat_history,
         )
 
         response = self.client.complete(

@@ -247,7 +247,7 @@ class RouteActionInput(BaseModel):
                     },
                     "params": {
                         "type": "object",
-                        "description": "Parameters for the operation",
+                        "description": "Parameters for the operation. For query: MUST include 'answer' with a specific response to the user's question.",
                     },
                     "escalation_reason": {
                         "type": "string",
