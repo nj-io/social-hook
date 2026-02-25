@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -196,6 +196,17 @@ CREATE TABLE IF NOT EXISTS web_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_web_events_created ON web_events(created_at);
+
+-- Chat Messages (Platform-Agnostic Chat History for LLM Context)
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id    TEXT NOT NULL,
+    role       TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_lookup
+    ON chat_messages(chat_id, created_at DESC);
 """
 
 

@@ -2,6 +2,7 @@
 
 from social_hook.db.connection import get_connection, init_database
 from social_hook.db.operations import (
+    cleanup_old_chat_messages,
     delete_project,
     get_active_arcs,
     get_all_pending_drafts,
@@ -24,6 +25,7 @@ from social_hook.db.operations import (
     get_project_by_origin,
     get_project_by_path,
     get_project_summary,
+    get_recent_chat_messages,
     get_recent_decisions,
     get_recent_posts,
     get_recent_posts_for_context,
@@ -33,6 +35,7 @@ from social_hook.db.operations import (
     get_usage_summary,
     increment_narrative_debt,
     insert_arc,
+    insert_chat_message,
     insert_decision,
     insert_draft,
     insert_draft_change,
@@ -114,4 +117,8 @@ __all__ = [
     # Milestone Summaries
     "insert_milestone_summary",
     "get_milestone_summaries",
+    # Chat Messages
+    "insert_chat_message",
+    "get_recent_chat_messages",
+    "cleanup_old_chat_messages",
 ]

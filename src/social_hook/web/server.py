@@ -241,10 +241,14 @@ def _max_event_id() -> int:
 
 @app.post("/api/events/clear")
 async def api_clear_events():
-    """Clear all chat history from web_events."""
+    """Clear all chat history from web_events and chat_messages."""
     conn = _get_conn()
     try:
         conn.execute("DELETE FROM web_events")
+        try:
+            conn.execute("DELETE FROM chat_messages WHERE chat_id = 'web'")
+        except sqlite3.OperationalError:
+            pass  # Table may not exist yet
         conn.commit()
         return {"ok": True}
     finally:

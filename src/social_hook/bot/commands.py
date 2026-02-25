@@ -144,7 +144,8 @@ def _build_system_snapshot(conn, project_id: Optional[str], config) -> str:
 
 
 def _build_chat_history(
-    adapter: MessagingAdapter,
+    conn,
+    chat_id: str,
     token_budget: int = 400,
     time_window_minutes: int = 15,
 ) -> Optional[str]:
@@ -154,51 +155,28 @@ def _build_chat_history(
     exhausted or the time window is exceeded. Adapts naturally: short
     messages → more history, long messages → fewer entries.
 
-    Only works with WebAdapter (has DB-backed event history).
-    Returns None for other adapters (e.g., Telegram).
+    Platform-agnostic: queries the chat_messages table in the main DB.
     """
-    import json
-    import sqlite3
-
+    from social_hook.db.operations import get_recent_chat_messages
     from social_hook.llm.prompts import count_tokens
 
-    # Only WebAdapter has _db_path with stored chat events
-    db_path = getattr(adapter, "_db_path", None)
-    if not db_path:
-        return None
-
     try:
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            """
-            SELECT type, data, created_at FROM web_events
-            WHERE type IN ('user', 'message')
-              AND created_at >= datetime('now', ?)
-            ORDER BY id DESC
-            """,
-            (f"-{time_window_minutes} minutes",),
-        ).fetchall()
-        conn.close()
+        rows = get_recent_chat_messages(conn, chat_id, time_window_minutes)
     except Exception:
         return None
 
     if not rows:
         return None
 
-    # Build history backwards (most recent first), respecting token budget
+    # Build history backwards (rows are newest-first), respecting token budget
     lines: list[str] = []
     tokens_used = 0
     for row in rows:
-        try:
-            data = json.loads(row["data"])
-        except (json.JSONDecodeError, KeyError):
-            continue
-        text = data.get("text", "")
+        text = row.get("content", "")
         if not text:
             continue
 
-        role = "User" if row["type"] == "user" else "Assistant"
+        role = "User" if row["role"] == "user" else "Assistant"
         line = f"- {role}: {text}"
         line_tokens = count_tokens(line)
 
@@ -213,6 +191,9 @@ def _build_chat_history(
     # Reverse to chronological order
     lines.reverse()
     return "## Recent Chat\n" + "\n".join(lines)
+
+
+_chat_msg_count = 0  # Amortized cleanup counter
 
 
 def _parse_command(text: str) -> tuple[str, str]:
@@ -353,12 +334,19 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
                 from social_hook.db.operations import get_project_summary
                 summary = get_project_summary(_context_conn, project_id)
 
-            # Build chat history for conversational context
+            # Build chat history BEFORE storing inbound to avoid duplication
             history = None
             try:
-                history = _build_chat_history(adapter)
+                history = _build_chat_history(_context_conn, chat_id)
             except Exception:
                 logger.debug("Failed to build chat history", exc_info=True)
+
+            # Store inbound message
+            from social_hook.db.operations import insert_chat_message
+            try:
+                insert_chat_message(_context_conn, chat_id, "user", text)
+            except Exception:
+                logger.debug("Failed to store inbound chat message", exc_info=True)
 
             gatekeeper = Gatekeeper(client)
             route = gatekeeper.route(
@@ -371,15 +359,33 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
                 chat_history=history,
             )
 
+            response_text = None
             if route.action.value == "handle_directly":
-                _handle_gatekeeper_direct(adapter, chat_id, route, config)
+                response_text = _handle_gatekeeper_direct(adapter, chat_id, route, config)
             elif route.action.value == "escalate_to_expert":
-                _handle_expert_escalation(
+                response_text = _handle_expert_escalation(
                     adapter, chat_id, text, route, config,
                     draft=draft_obj,
                     project_id=project_id,
                     db=db,
                 )
+
+            # Store outbound response
+            if response_text:
+                try:
+                    insert_chat_message(_context_conn, chat_id, "assistant", response_text)
+                except Exception:
+                    logger.debug("Failed to store outbound chat message", exc_info=True)
+
+            # Amortized cleanup
+            global _chat_msg_count
+            _chat_msg_count += 1
+            if _chat_msg_count % 50 == 0:
+                try:
+                    from social_hook.db.operations import cleanup_old_chat_messages
+                    cleanup_old_chat_messages(_context_conn)
+                except Exception:
+                    logger.debug("Chat message cleanup failed", exc_info=True)
         finally:
             if _context_conn:
                 _context_conn.close()
@@ -441,12 +447,12 @@ def _save_edit(
 
 def _handle_gatekeeper_direct(
     adapter: MessagingAdapter, chat_id: str, route: Any, config: Any
-) -> None:
-    """Handle a Gatekeeper direct action."""
+) -> Optional[str]:
+    """Handle a Gatekeeper direct action. Returns response text for chat history."""
     op = route.operation
     if op is None:
         _send(adapter, chat_id, "Understood.")
-        return
+        return "Understood."
 
     op_value = op.value if hasattr(op, "value") else str(op)
     params = route.params or {}
@@ -457,39 +463,48 @@ def _handle_gatekeeper_direct(
             cmd_approve(adapter, chat_id, draft_id, config)
         else:
             _send(adapter, chat_id, "Please specify a draft ID to approve.")
+        return None  # Operational — response sent inside cmd_*
     elif op_value == "reject":
         draft_id = params.get("draft_id", "")
         if draft_id:
             cmd_reject(adapter, chat_id, draft_id, config)
         else:
             _send(adapter, chat_id, "Please specify a draft ID to reject.")
+        return None
     elif op_value == "schedule":
         draft_id = params.get("draft_id", "")
         time_str = params.get("time", "")
         cmd_schedule(adapter, chat_id, f"{draft_id} {time_str}".strip(), config)
+        return None
     elif op_value == "cancel":
         draft_id = params.get("draft_id", "")
         cmd_cancel(adapter, chat_id, draft_id, config)
+        return None
     elif op_value == "substitute":
         new_content = params.get("content", "")
         if not new_content:
             logger.warning("Substitute routed but content empty")
-            _send(adapter, chat_id, "Please specify the new content.")
-            return
+            msg = "Please specify the new content."
+            _send(adapter, chat_id, msg)
+            return msg
         draft_id = params.get("draft_id", "")
         if not draft_id:
             ctx = get_chat_draft_context(chat_id)
             if ctx:
                 draft_id = ctx[0]
         if not draft_id:
-            _send(adapter, chat_id, "No active draft to substitute. Use /review first.")
-            return
+            msg = "No active draft to substitute. Use /review first."
+            _send(adapter, chat_id, msg)
+            return msg
         _save_edit(adapter, chat_id, draft_id, new_content, changed_by="gatekeeper")
+        return None
     elif op_value == "query":
         answer = params.get("answer", "I'll look into that.")
         _send(adapter, chat_id, answer)
+        return answer
     else:
         _send(adapter, chat_id, "Understood.")
+        return "Understood."
 
 
 def _handle_expert_escalation(
@@ -501,8 +516,8 @@ def _handle_expert_escalation(
     draft: Any = None,
     project_id: Optional[str] = None,
     db: Any = None,
-) -> None:
-    """Handle an Expert escalation.
+) -> Optional[str]:
+    """Handle an Expert escalation. Returns response text for chat history.
 
     Args:
         adapter: Messaging adapter for sending responses
@@ -522,8 +537,9 @@ def _handle_expert_escalation(
         try:
             client = create_client(config.models.drafter, config)
         except ConfigError:
-            _send(adapter, chat_id, "Model provider not configured. Use /help for commands.")
-            return
+            msg = "Model provider not configured. Use /help for commands."
+            _send(adapter, chat_id, msg)
+            return msg
 
         expert = Expert(client)
 
@@ -552,21 +568,24 @@ def _handle_expert_escalation(
                     save_context_note(
                         project.repo_path, result.context_note, source="telegram"
                     )
-                    _send(adapter, chat_id, f"Context note saved for {project.name}.")
+                    msg = f"Context note saved for {project.name}."
+                    _send(adapter, chat_id, msg)
+                    return msg
                 else:
-                    _send(adapter, chat_id, "No projects registered to save note to.")
+                    msg = "No projects registered to save note to."
+                    _send(adapter, chat_id, msg)
+                    return msg
             finally:
                 conn.close()
         elif action == "refine_draft" and result.refined_content:
             # Fix 4: Save refined content to DB if we have draft context
             if not draft:
-                _send(
-                    adapter,
-                    chat_id,
+                msg = (
                     f"*Refined draft (no active draft to update):*\n\n"
-                    f"```\n{result.refined_content[:500]}\n```",
+                    f"```\n{result.refined_content[:500]}\n```"
                 )
-                return
+                _send(adapter, chat_id, msg)
+                return msg
 
             from social_hook.db import insert_draft_change, update_draft
             from social_hook.filesystem import generate_id
@@ -593,15 +612,21 @@ def _handle_expert_escalation(
                 )
                 buttons = get_review_buttons_normalized(draft.id)
                 adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
+                return msg
             finally:
                 conn.close()
         elif action == "answer_question" and result.answer:
             _send(adapter, chat_id, result.answer)
+            return result.answer
         else:
-            _send(adapter, chat_id, result.reasoning or "Understood.")
+            msg = result.reasoning or "Understood."
+            _send(adapter, chat_id, msg)
+            return msg
     except Exception as e:
         logger.exception("Error in expert escalation")
-        _send(adapter, chat_id, f"Error: {e}")
+        msg = f"Error: {e}"
+        _send(adapter, chat_id, msg)
+        return msg
 
 
 # =============================================================================

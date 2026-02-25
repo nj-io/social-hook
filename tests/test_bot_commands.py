@@ -1433,77 +1433,177 @@ class TestBuildSystemSnapshot:
 # =============================================================================
 
 
+class TestChatMessageOperations:
+    """Tests for chat message DB operations."""
+
+    def test_insert_and_retrieve(self, temp_dir):
+        """Insert a message and query it back."""
+        from social_hook.db.operations import insert_chat_message, get_recent_chat_messages
+
+        conn = init_database(temp_dir / "test.db")
+        try:
+            row_id = insert_chat_message(conn, "chat_1", "user", "hello world")
+            assert row_id > 0
+
+            msgs = get_recent_chat_messages(conn, "chat_1")
+            assert len(msgs) == 1
+            assert msgs[0]["role"] == "user"
+            assert msgs[0]["content"] == "hello world"
+            assert "created_at" in msgs[0]
+        finally:
+            conn.close()
+
+    def test_time_window_filtering(self, temp_dir):
+        """Only recent messages within time window are returned."""
+        from social_hook.db.operations import insert_chat_message, get_recent_chat_messages
+
+        conn = init_database(temp_dir / "test.db")
+        try:
+            # Insert an old message by manipulating created_at
+            conn.execute(
+                "INSERT INTO chat_messages (chat_id, role, content, created_at) VALUES (?, ?, ?, datetime('now', '-60 minutes'))",
+                ("chat_1", "user", "old message"),
+            )
+            conn.commit()
+
+            # Insert a recent message
+            insert_chat_message(conn, "chat_1", "user", "new message")
+
+            msgs = get_recent_chat_messages(conn, "chat_1", time_window_minutes=15)
+            assert len(msgs) == 1
+            assert msgs[0]["content"] == "new message"
+        finally:
+            conn.close()
+
+    def test_cleanup_old_messages(self, temp_dir):
+        """Cleanup deletes only old messages."""
+        from social_hook.db.operations import insert_chat_message, cleanup_old_chat_messages, get_recent_chat_messages
+
+        conn = init_database(temp_dir / "test.db")
+        try:
+            # Insert an old message
+            conn.execute(
+                "INSERT INTO chat_messages (chat_id, role, content, created_at) VALUES (?, ?, ?, datetime('now', '-10 days'))",
+                ("chat_1", "user", "ancient message"),
+            )
+            conn.commit()
+
+            # Insert a recent message
+            insert_chat_message(conn, "chat_1", "user", "fresh message")
+
+            deleted = cleanup_old_chat_messages(conn, days=7)
+            assert deleted == 1
+
+            # Recent message should still be there
+            msgs = get_recent_chat_messages(conn, "chat_1", time_window_minutes=60)
+            assert len(msgs) == 1
+            assert msgs[0]["content"] == "fresh message"
+        finally:
+            conn.close()
+
+    def test_limit_parameter(self, temp_dir):
+        """Limit caps the number of returned messages."""
+        from social_hook.db.operations import insert_chat_message, get_recent_chat_messages
+
+        conn = init_database(temp_dir / "test.db")
+        try:
+            for i in range(10):
+                insert_chat_message(conn, "chat_1", "user", f"msg {i}")
+
+            msgs = get_recent_chat_messages(conn, "chat_1", limit=3)
+            assert len(msgs) == 3
+        finally:
+            conn.close()
+
+
 class TestBuildChatHistory:
-    """Tests for the token-budgeted chat history builder."""
+    """Tests for the token-budgeted chat history builder (platform-agnostic)."""
 
-    def test_returns_none_for_non_web_adapter(self, mock_adapter):
-        """Non-WebAdapter (no _db_path) returns None."""
-        result = _build_chat_history(mock_adapter)
-        assert result is None
+    def test_returns_none_for_empty_history(self, temp_dir):
+        """Empty chat_messages table returns None."""
+        conn = init_database(temp_dir / "test.db")
+        try:
+            result = _build_chat_history(conn, "chat_1")
+            assert result is None
+        finally:
+            conn.close()
 
-    def test_builds_history_from_web_events(self, temp_dir):
-        """WebAdapter with recent events returns formatted history."""
-        from social_hook.messaging.web import WebAdapter
+    def test_builds_history_from_chat_messages(self, temp_dir):
+        """Chat messages are formatted into history block."""
+        from social_hook.db.operations import insert_chat_message
 
-        db_path = temp_dir / "web_events.db"
-        adapter = WebAdapter(db_path=str(db_path))
+        conn = init_database(temp_dir / "test.db")
+        try:
+            insert_chat_message(conn, "chat_1", "user", "what platforms are enabled?")
+            insert_chat_message(conn, "chat_1", "assistant", "X and LinkedIn are enabled.")
+            insert_chat_message(conn, "chat_1", "user", "what about now?")
 
-        # Insert some events
-        adapter._insert_event("user", {"text": "what platforms are enabled?"})
-        adapter._insert_event("message", {"text": "X and LinkedIn are enabled."})
-        adapter._insert_event("user", {"text": "what about now?"})
+            result = _build_chat_history(conn, "chat_1")
 
-        result = _build_chat_history(adapter)
-
-        assert result is not None
-        assert "## Recent Chat" in result
-        assert "User: what platforms are enabled?" in result
-        assert "Assistant: X and LinkedIn are enabled." in result
-        assert "User: what about now?" in result
+            assert result is not None
+            assert "## Recent Chat" in result
+            assert "User: what platforms are enabled?" in result
+            assert "Assistant: X and LinkedIn are enabled." in result
+            assert "User: what about now?" in result
+        finally:
+            conn.close()
 
     def test_respects_token_budget(self, temp_dir):
         """History stops when token budget is exhausted."""
-        from social_hook.messaging.web import WebAdapter
+        from social_hook.db.operations import insert_chat_message
 
-        db_path = temp_dir / "web_events.db"
-        adapter = WebAdapter(db_path=str(db_path))
+        conn = init_database(temp_dir / "test.db")
+        try:
+            for i in range(20):
+                insert_chat_message(conn, "chat_1", "user", f"Message {i}: " + "x" * 200)
+                insert_chat_message(conn, "chat_1", "assistant", f"Reply {i}: " + "y" * 200)
 
-        # Insert many long messages
-        for i in range(20):
-            adapter._insert_event("user", {"text": f"Message {i}: " + "x" * 200})
-            adapter._insert_event("message", {"text": f"Reply {i}: " + "y" * 200})
+            result = _build_chat_history(conn, "chat_1", token_budget=100)
 
-        result = _build_chat_history(adapter, token_budget=100)
-
-        assert result is not None
-        # Should not contain all 40 messages — budget limits it
-        assert result.count("- User:") + result.count("- Assistant:") < 40
+            assert result is not None
+            # Should not contain all 40 messages — budget limits it
+            assert result.count("- User:") + result.count("- Assistant:") < 40
+        finally:
+            conn.close()
 
     def test_chronological_order(self, temp_dir):
         """History is in chronological order (oldest first)."""
-        from social_hook.messaging.web import WebAdapter
+        from social_hook.db.operations import insert_chat_message
 
-        db_path = temp_dir / "web_events.db"
-        adapter = WebAdapter(db_path=str(db_path))
+        conn = init_database(temp_dir / "test.db")
+        try:
+            insert_chat_message(conn, "chat_1", "user", "first")
+            insert_chat_message(conn, "chat_1", "assistant", "second")
+            insert_chat_message(conn, "chat_1", "user", "third")
 
-        adapter._insert_event("user", {"text": "first"})
-        adapter._insert_event("message", {"text": "second"})
-        adapter._insert_event("user", {"text": "third"})
+            result = _build_chat_history(conn, "chat_1")
 
-        result = _build_chat_history(adapter)
+            assert result is not None
+            first_pos = result.index("first")
+            second_pos = result.index("second")
+            third_pos = result.index("third")
+            assert first_pos < second_pos < third_pos
+        finally:
+            conn.close()
 
-        assert result is not None
-        first_pos = result.index("first")
-        second_pos = result.index("second")
-        third_pos = result.index("third")
-        assert first_pos < second_pos < third_pos
+    def test_chat_id_isolation(self, temp_dir):
+        """Messages from chat_a don't appear in chat_b's history."""
+        from social_hook.db.operations import insert_chat_message
 
-    def test_empty_events(self, temp_dir):
-        """Empty web_events returns None."""
-        from social_hook.messaging.web import WebAdapter
+        conn = init_database(temp_dir / "test.db")
+        try:
+            insert_chat_message(conn, "chat_a", "user", "message for A")
+            insert_chat_message(conn, "chat_b", "user", "message for B")
 
-        db_path = temp_dir / "web_events.db"
-        adapter = WebAdapter(db_path=str(db_path))
+            result_a = _build_chat_history(conn, "chat_a")
+            result_b = _build_chat_history(conn, "chat_b")
 
-        result = _build_chat_history(adapter)
-        assert result is None
+            assert result_a is not None
+            assert "message for A" in result_a
+            assert "message for B" not in result_a
+
+            assert result_b is not None
+            assert "message for B" in result_b
+            assert "message for A" not in result_b
+        finally:
+            conn.close()

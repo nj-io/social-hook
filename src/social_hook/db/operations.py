@@ -1049,3 +1049,57 @@ def get_milestone_summaries(
         (project_id, since_days),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+# =============================================================================
+# Chat Messages
+# =============================================================================
+
+
+def insert_chat_message(conn: sqlite3.Connection, chat_id: str, role: str, content: str) -> int:
+    """Insert a chat message. Returns row ID."""
+    cursor = conn.execute(
+        """
+        INSERT INTO chat_messages (chat_id, role, content)
+        VALUES (?, ?, ?)
+        """,
+        (chat_id, role, content),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_recent_chat_messages(
+    conn: sqlite3.Connection,
+    chat_id: str,
+    time_window_minutes: int = 15,
+    limit: int = 50,
+) -> list[dict]:
+    """Fetch recent chat messages for a chat, newest first.
+
+    Returns list of dicts with keys: role, content, created_at.
+    """
+    rows = conn.execute(
+        """
+        SELECT role, content, created_at FROM chat_messages
+        WHERE chat_id = ?
+          AND created_at >= datetime('now', ?)
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (chat_id, f"-{time_window_minutes} minutes", limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def cleanup_old_chat_messages(conn: sqlite3.Connection, days: int = 7) -> int:
+    """Delete chat messages older than N days. Returns rows deleted."""
+    cursor = conn.execute(
+        """
+        DELETE FROM chat_messages
+        WHERE created_at < datetime('now', ?)
+        """,
+        (f"-{days} days",),
+    )
+    conn.commit()
+    return cursor.rowcount
