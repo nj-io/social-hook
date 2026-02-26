@@ -572,7 +572,7 @@ class TestSettingsEndpoints:
         assert "key_groups" in data
         assert "Core" in data["key_groups"]
         assert "ANTHROPIC_API_KEY" in data["key_groups"]["Core"]
-        assert "Telegram" in data["key_groups"]
+        assert "Telegram" not in data["key_groups"]  # Managed in Channels section
         assert "Media Generation" in data["key_groups"]
         assert "LLM Providers" in data["key_groups"]
 

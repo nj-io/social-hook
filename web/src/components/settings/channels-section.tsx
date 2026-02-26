@@ -2,19 +2,23 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ChannelConfig, ChannelsStatusResponse } from "@/lib/types";
-import { fetchChannelsStatus, testChannel, startBotDaemon, stopBotDaemon } from "@/lib/api";
+import { fetchChannelsStatus, testChannel, startBotDaemon, stopBotDaemon, updateEnv } from "@/lib/api";
 
 interface ChannelsSectionProps {
   channels: Record<string, ChannelConfig>;
   onChange: (channels: Record<string, ChannelConfig>) => void;
+  env: Record<string, string>;
+  onEnvRefresh: () => void;
 }
 
-export function ChannelsSection({ channels, onChange }: ChannelsSectionProps) {
+export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: ChannelsSectionProps) {
   const [status, setStatus] = useState<ChannelsStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [daemonAction, setDaemonAction] = useState(false);
+  const [tokenValue, setTokenValue] = useState("");
+  const [tokenSaving, setTokenSaving] = useState(false);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -79,8 +83,19 @@ export function ChannelsSection({ channels, onChange }: ChannelsSectionProps) {
     }
   }
 
-  function navigateToApiKeys() {
-    window.dispatchEvent(new CustomEvent("settings-navigate", { detail: "api-keys" }));
+  async function handleTokenSave() {
+    if (!tokenValue) return;
+    setTokenSaving(true);
+    try {
+      await updateEnv("TELEGRAM_BOT_TOKEN", tokenValue);
+      setTokenValue("");
+      onEnvRefresh();
+      await loadStatus();
+    } catch {
+      // Input retains value so user can retry
+    } finally {
+      setTokenSaving(false);
+    }
   }
 
   if (loading) {
@@ -129,14 +144,26 @@ export function ChannelsSection({ channels, onChange }: ChannelsSectionProps) {
             </div>
           </div>
 
-          {!telegramStatus?.credentials_configured && (
-            <button
-              onClick={navigateToApiKeys}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted"
-            >
-              Set up in API Keys
-            </button>
-          )}
+          {/* Bot Token */}
+          <div>
+            <label className="mb-1 block text-sm font-medium">Bot Token</label>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={tokenValue}
+                onChange={(e) => setTokenValue(e.target.value)}
+                placeholder={env.TELEGRAM_BOT_TOKEN ? `Current: ${env.TELEGRAM_BOT_TOKEN}` : "Not set"}
+                className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+              />
+              <button
+                onClick={handleTokenSave}
+                disabled={!tokenValue || tokenSaving}
+                className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
+              >
+                {tokenSaving ? "..." : "Save"}
+              </button>
+            </div>
+          </div>
 
           {telegramConfig.enabled && (
             <div>

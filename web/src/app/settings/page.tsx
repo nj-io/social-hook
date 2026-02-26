@@ -263,6 +263,8 @@ function SettingsContent() {
             <ChannelsSection
               channels={channels}
               onChange={(ch) => saveConfig({ channels: ch } as Partial<Config>)}
+              env={envData?.env ?? {}}
+              onEnvRefresh={loadAll}
             />
           </section>
 
