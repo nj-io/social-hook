@@ -39,9 +39,6 @@ KNOWN_KEYS = [
 # Logical grouping for UI display
 KEY_GROUPS = {
     "Core": ["ANTHROPIC_API_KEY"],
-    "X / Twitter": ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET"],
-    "LinkedIn": ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET", "LINKEDIN_ACCESS_TOKEN"],
-    "Media Generation": ["GEMINI_API_KEY"],
     "LLM Providers": ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_BASE_URL"],
 }
 

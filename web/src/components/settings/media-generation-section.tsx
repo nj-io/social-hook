@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Config, MediaGenerationConfig, MediaToolGuidance, Project } from "@/lib/types";
-import { fetchContentConfigParsed, updateContentConfigParsed } from "@/lib/api";
+import { fetchContentConfigParsed, updateContentConfigParsed, updateEnv } from "@/lib/api";
 import { MediaToolCard } from "./media-tool-card";
 
 const DEFAULT_TOOLS: Record<string, boolean> = {
@@ -17,14 +17,18 @@ interface MediaGenerationSectionProps {
   onConfigChange: (updates: Partial<Config>) => void;
   projects?: Project[];
   onGuidanceSave?: () => void;
+  env: Record<string, string>;
+  onEnvRefresh: () => void;
 }
 
-export function MediaGenerationSection({ config, onConfigChange, projects, onGuidanceSave }: MediaGenerationSectionProps) {
+export function MediaGenerationSection({ config, onConfigChange, projects, onGuidanceSave, env, onEnvRefresh }: MediaGenerationSectionProps) {
   const mediaGen: MediaGenerationConfig = config.media_generation ?? { enabled: true, tools: {} };
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>("");
   const [mediaToolsGuidance, setMediaToolsGuidance] = useState<Record<string, MediaToolGuidance>>({});
   const [loadingGuidance, setLoadingGuidance] = useState(false);
   const [savingGuidance, setSavingGuidance] = useState(false);
+  const [geminiKeyValue, setGeminiKeyValue] = useState("");
+  const [geminiKeySaving, setGeminiKeySaving] = useState(false);
 
   const loadGuidance = useCallback(async (projectPath: string) => {
     setLoadingGuidance(true);
@@ -73,6 +77,20 @@ export function MediaGenerationSection({ config, onConfigChange, projects, onGui
     }
   }
 
+  async function handleGeminiKeySave() {
+    if (!geminiKeyValue) return;
+    setGeminiKeySaving(true);
+    try {
+      await updateEnv("GEMINI_API_KEY", geminiKeyValue);
+      setGeminiKeyValue("");
+      onEnvRefresh();
+    } catch {
+      // Input retains value for retry
+    } finally {
+      setGeminiKeySaving(false);
+    }
+  }
+
   const toolNames = Object.keys({ ...DEFAULT_TOOLS, ...mediaGen.tools });
 
   return (
@@ -97,6 +115,28 @@ export function MediaGenerationSection({ config, onConfigChange, projects, onGui
           />
         </button>
         <span className="text-sm">{mediaGen.enabled ? "Enabled" : "Disabled"}</span>
+      </div>
+
+      {/* Gemini API Key */}
+      <div>
+        <label className="mb-1 block text-sm font-medium">Gemini API Key</label>
+        <div className="flex gap-2">
+          <input
+            type="password"
+            value={geminiKeyValue}
+            onChange={(e) => setGeminiKeyValue(e.target.value)}
+            placeholder={env.GEMINI_API_KEY ? `Current: ${env.GEMINI_API_KEY}` : "Not set"}
+            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+          />
+          <button
+            onClick={handleGeminiKeySave}
+            disabled={!geminiKeyValue || geminiKeySaving}
+            className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
+          >
+            {geminiKeySaving ? "..." : "Save"}
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">Required for AI image generation (nano_banana_pro).</p>
       </div>
 
       {/* Project selector for per-project guidance */}

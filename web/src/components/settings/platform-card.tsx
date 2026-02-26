@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { PlatformConfig, SchedulingOverride } from "@/lib/types";
+import { updateEnv } from "@/lib/api";
 
 const FILTERS = ["all", "notable", "significant"];
 const FREQUENCIES = ["high", "moderate", "low", "minimal"];
@@ -15,15 +16,50 @@ function platformDisplayName(name: string): string {
   return names[name] ?? name;
 }
 
+const PLATFORM_ENV_KEYS: Record<string, { key: string; label: string }[]> = {
+  x: [
+    { key: "X_API_KEY", label: "API Key" },
+    { key: "X_API_SECRET", label: "API Secret" },
+    { key: "X_ACCESS_TOKEN", label: "Access Token" },
+    { key: "X_ACCESS_TOKEN_SECRET", label: "Access Token Secret" },
+  ],
+  linkedin: [
+    { key: "LINKEDIN_CLIENT_ID", label: "Client ID" },
+    { key: "LINKEDIN_CLIENT_SECRET", label: "Client Secret" },
+    { key: "LINKEDIN_ACCESS_TOKEN", label: "Access Token" },
+  ],
+};
+
 interface PlatformCardProps {
   name: string;
   config: PlatformConfig;
   onChange: (config: PlatformConfig) => void;
   onRemove?: () => void;
+  env: Record<string, string>;
+  onEnvRefresh: () => void;
 }
 
-export function PlatformCard({ name, config, onChange, onRemove }: PlatformCardProps) {
+export function PlatformCard({ name, config, onChange, onRemove, env, onEnvRefresh }: PlatformCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [keyValues, setKeyValues] = useState<Record<string, string>>({});
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+
+  const envKeys = PLATFORM_ENV_KEYS[name];
+
+  async function handleKeySave(envKey: string) {
+    const value = keyValues[envKey];
+    if (!value) return;
+    setSavingKey(envKey);
+    try {
+      await updateEnv(envKey, value);
+      setKeyValues((prev) => { const next = { ...prev }; delete next[envKey]; return next; });
+      onEnvRefresh();
+    } catch {
+      // Input retains value for retry
+    } finally {
+      setSavingKey(null);
+    }
+  }
 
   function update(partial: Partial<PlatformConfig>) {
     onChange({ ...config, ...partial });
@@ -84,6 +120,34 @@ export function PlatformCard({ name, config, onChange, onRemove }: PlatformCardP
           <option value="secondary">Secondary</option>
         </select>
       </div>
+
+      {/* Credentials */}
+      {envKeys && (
+        <div className="space-y-2 border-t border-border px-4 py-3">
+          <p className="text-xs font-medium text-muted-foreground">Credentials</p>
+          {envKeys.map(({ key, label }) => (
+            <div key={key}>
+              <label className="mb-1 block text-xs font-medium">{label}</label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={keyValues[key] ?? ""}
+                  onChange={(e) => setKeyValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                  placeholder={env[key] ? `Current: ${env[key]}` : "Not set"}
+                  className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-accent"
+                />
+                <button
+                  onClick={() => handleKeySave(key)}
+                  disabled={!keyValues[key] || savingKey === key}
+                  className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
+                >
+                  {savingKey === key ? "..." : "Save"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Advanced toggle */}
       <div className="border-t border-border px-4 py-2">

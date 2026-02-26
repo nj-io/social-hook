@@ -8,9 +8,11 @@ import { AddPlatformModal } from "./add-platform-modal";
 interface PlatformsSectionProps {
   platforms: Record<string, PlatformConfig>;
   onChange: (platforms: Record<string, PlatformConfig>) => void;
+  env: Record<string, string>;
+  onEnvRefresh: () => void;
 }
 
-export function PlatformsSection({ platforms, onChange }: PlatformsSectionProps) {
+export function PlatformsSection({ platforms, onChange, env, onEnvRefresh }: PlatformsSectionProps) {
   const [modalOpen, setModalOpen] = useState(false);
 
   function handlePlatformChange(name: string, config: PlatformConfig) {
@@ -52,6 +54,8 @@ export function PlatformsSection({ platforms, onChange }: PlatformsSectionProps)
             config={config}
             onChange={(c) => handlePlatformChange(name, c)}
             onRemove={config.type === "custom" ? () => handleRemove(name) : undefined}
+            env={env}
+            onEnvRefresh={onEnvRefresh}
           />
         ))}
       </div>
