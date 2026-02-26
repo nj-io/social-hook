@@ -1,10 +1,10 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { fetchConfig, fetchContentConfig, fetchEnv, fetchProjects, fetchSocialContext, updateConfig, updateContentConfig, updateSocialContext } from "@/lib/api";
 import type { Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig, WebDashboardConfig } from "@/lib/types";
-import { SettingsSidebar } from "@/components/settings/settings-sidebar";
+import { SettingsSidebar, sections } from "@/components/settings/settings-sidebar";
 import { ModelsSection } from "@/components/settings/models-section";
 import { ApiKeysSection } from "@/components/settings/api-keys-section";
 import { PlatformsSection } from "@/components/settings/platforms-section";
@@ -32,7 +32,7 @@ const DEFAULT_SCHEDULING: SchedulingConfig = {
 
 function SettingsContent() {
   const searchParams = useSearchParams();
-  const [section, setSection] = useState(searchParams.get("section") || "models");
+  const [activeSection, setActiveSection] = useState(searchParams.get("section") || "models");
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [envData, setEnvData] = useState<{ env: Record<string, string>; known_keys: string[]; key_groups: Record<string, string[]> } | null>(null);
   const [socialCtx, setSocialCtx] = useState<{ content: string; path: string } | null>(null);
@@ -43,6 +43,10 @@ function SettingsContent() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
+  const scrollingToRef = useRef(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [contentHeight, setContentHeight] = useState("100vh");
 
   const loadAll = useCallback(async () => {
     try {
@@ -69,15 +73,78 @@ function SettingsContent() {
     loadAll();
   }, [loadAll]);
 
+  // Dynamically measure space above the scroll area so it fills the remaining viewport
+  useEffect(() => {
+    function measure() {
+      if (!headerRef.current) return;
+      const rect = headerRef.current.getBoundingClientRect();
+      setContentHeight(`calc(100vh - ${rect.bottom}px)`);
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [loading]);
+
   // Listen for navigation events from child components (e.g. Notifications → API Keys link)
   useEffect(() => {
     function handleNavigate(e: Event) {
       const detail = (e as CustomEvent<string>).detail;
-      if (detail) setSection(detail);
+      if (detail) scrollToSection(detail);
     }
     window.addEventListener("settings-navigate", handleNavigate);
     return () => window.removeEventListener("settings-navigate", handleNavigate);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Scroll-spy: update active section based on scroll position within the content panel
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const sectionIds = sections.map((s) => s.id);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (scrollingToRef.current) return;
+        // Find the topmost visible section
+        const visible: { id: string; top: number }[] = [];
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            visible.push({ id: entry.target.id, top: entry.boundingClientRect.top });
+          }
+        }
+        if (visible.length > 0) {
+          // Pick the one closest to the top of the scroll container
+          visible.sort((a, b) => a.top - b.top);
+          const topId = visible[0].id;
+          if (sectionIds.includes(topId)) {
+            setActiveSection(topId);
+          }
+        }
+      },
+      { root: container, rootMargin: "0px 0px -60% 0px", threshold: 0 }
+    );
+
+    // Observe all section elements
+    for (const id of sectionIds) {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    }
+
+    return () => observer.disconnect();
+  }, [loading]);
+
+  function scrollToSection(id: string) {
+    setActiveSection(id);
+    const el = document.getElementById(id);
+    const container = scrollContainerRef.current;
+    if (!el || !container) return;
+    scrollingToRef.current = true;
+    const top = el.offsetTop - container.offsetTop;
+    container.scrollTo({ top, behavior: "smooth" });
+    // Re-enable scroll-spy after animation
+    setTimeout(() => {
+      scrollingToRef.current = false;
+    }, 600);
+  }
 
   // Refresh content config (called when Media Generation guidance is saved)
   const refreshContentConfig = useCallback(async () => {
@@ -147,8 +214,8 @@ function SettingsContent() {
   const telegramConfigured = !!(envData?.env?.TELEGRAM_BOT_TOKEN && envData?.env?.TELEGRAM_ALLOWED_CHAT_IDS);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div>
+      <div ref={headerRef} className="flex items-center justify-between pb-4">
         <div>
           <h1 className="text-2xl font-bold">Settings</h1>
           <p className="text-muted-foreground">Configure your social media pipeline.</p>
@@ -160,18 +227,18 @@ function SettingsContent() {
         )}
       </div>
 
-      <div className="flex gap-8">
-        <SettingsSidebar active={section} onSelect={setSection} />
+      <div className="flex gap-8" style={{ height: contentHeight }}>
+        <SettingsSidebar active={activeSection} onSelect={scrollToSection} />
 
-        <div className="min-w-0 flex-1">
-          <div className={section !== "models" ? "hidden" : ""}>
+        <div ref={scrollContainerRef} className="min-w-0 flex-1 space-y-12 overflow-y-auto scroll-smooth pb-[50vh]">
+          <section id="models" className="pt-1">
             <ModelsSection
               models={models}
               onChange={(m) => saveConfig({ models: m })}
             />
-          </div>
+          </section>
 
-          <div className={section !== "api-keys" ? "hidden" : ""}>
+          <section id="api-keys" className="pt-1">
             {envData && (
               <ApiKeysSection
                 env={envData.env}
@@ -180,47 +247,47 @@ function SettingsContent() {
                 onRefresh={loadAll}
               />
             )}
-          </div>
+          </section>
 
-          <div className={section !== "projects" ? "hidden" : ""}>
+          <section id="projects" className="pt-1">
             <ProjectsSection />
-          </div>
+          </section>
 
-          <div className={section !== "installations" ? "hidden" : ""}>
+          <section id="installations" className="pt-1">
             <InstallationsSection />
-          </div>
+          </section>
 
-          <div className={section !== "platforms" ? "hidden" : ""}>
+          <section id="platforms" className="pt-1">
             <PlatformsSection
               platforms={platforms}
               onChange={(p) => saveConfig({ platforms: p } as Partial<Config>)}
             />
-          </div>
+          </section>
 
-          <div className={section !== "scheduling" ? "hidden" : ""}>
+          <section id="scheduling" className="pt-1">
             <SchedulingSection
               scheduling={scheduling}
               onChange={(s) => saveConfig({ scheduling: s })}
             />
-          </div>
+          </section>
 
-          <div className={section !== "media-generation" ? "hidden" : ""}>
+          <section id="media-generation" className="pt-1">
             <MediaGenerationSection
               config={{ models, platforms, scheduling, media_generation: mediaGen, journey_capture: journeyCapture, web: webCfg }}
               onConfigChange={(updates) => saveConfig(updates)}
               projects={projects}
               onGuidanceSave={refreshContentConfig}
             />
-          </div>
+          </section>
 
-          <div className={section !== "consolidation" ? "hidden" : ""}>
+          <section id="consolidation" className="pt-1">
             <ConsolidationSection
               consolidation={consolidation}
               onChange={(c) => saveConfig({ consolidation: c })}
             />
-          </div>
+          </section>
 
-          <div className={section !== "journey-capture" ? "hidden" : ""}>
+          <section id="journey-capture" className="pt-1">
             <div className="space-y-4">
               <h2 className="text-lg font-semibold">Journey Capture</h2>
               <p className="text-sm text-muted-foreground">
@@ -254,17 +321,17 @@ function SettingsContent() {
                 />
               </div>
             </div>
-          </div>
+          </section>
 
-          <div className={section !== "notifications" ? "hidden" : ""}>
+          <section id="notifications" className="pt-1">
             <NotificationsSection
               webCfg={webCfg}
               onChange={(web) => saveConfig({ web })}
               telegramConfigured={telegramConfigured}
             />
-          </div>
+          </section>
 
-          <div className={section !== "voice-style" ? "hidden" : ""}>
+          <section id="voice-style" className="pt-1">
             {socialCtx && (
               <div className="space-y-4">
                 {/* Project selector for voice/style */}
@@ -299,9 +366,9 @@ function SettingsContent() {
                 />
               </div>
             )}
-          </div>
+          </section>
 
-          <div className={section !== "content-config" ? "hidden" : ""}>
+          <section id="content-config" className="pt-1">
             <div className="space-y-4">
               {/* Project selector for content config */}
               {projects.length > 0 && (
@@ -408,7 +475,7 @@ function SettingsContent() {
                 </div>
               )}
             </div>
-          </div>
+          </section>
         </div>
       </div>
     </div>
