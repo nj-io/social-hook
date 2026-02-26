@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -12,6 +12,7 @@ import {
 import type { Decision, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 import { DecisionBadge } from "@/components/decision-badge";
+import { useDataEvents } from "@/lib/use-data-events";
 
 const DECISIONS_PER_PAGE = 10;
 
@@ -27,6 +28,26 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState("");
   const [decisionOffset, setDecisionOffset] = useState(0);
   const [hasMoreDecisions, setHasMoreDecisions] = useState(false);
+
+  const reload = useCallback(async () => {
+    try {
+      const [detail, dec, po, us] = await Promise.all([
+        fetchProjectDetail(id),
+        fetchProjectDecisions(id, DECISIONS_PER_PAGE, decisionOffset),
+        fetchProjectPosts(id, 20),
+        fetchProjectUsage(id),
+      ]);
+      setProject(detail);
+      setDecisions(dec.decisions);
+      setHasMoreDecisions(dec.decisions.length === DECISIONS_PER_PAGE);
+      setPosts(po.posts);
+      setUsage(us);
+    } catch {
+      // Silent refresh failure
+    }
+  }, [id, decisionOffset]);
+
+  useDataEvents(["decision", "draft", "post", "project"], reload, id);
 
   useEffect(() => {
     async function load() {

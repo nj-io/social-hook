@@ -275,6 +275,7 @@ def run_trigger(
         commit_summary=getattr(evaluation, "commit_summary", None),
     )
     db.insert_decision(decision)
+    db.emit_data_event("decision", "created", decision.id, project.id)
 
     if verbose:
         print(f"Decision: {evaluation.decision}")
@@ -404,6 +405,7 @@ def run_trigger(
                     reasoning=draft_reasoning,
                 )
                 db.insert_draft(draft)
+                db.emit_data_event("draft", "created", draft.id, project.id)
 
                 if thread_tweets:
                     for pos, tc in enumerate(thread_tweets):

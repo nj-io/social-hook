@@ -3,17 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebEvent } from "@/lib/types";
 import { clearChatHistory, fetchChatHistory } from "@/lib/api";
-import { GatewayClient, type GatewayEnvelope } from "@/lib/websocket";
+import { useGateway } from "@/lib/gateway-context";
 import { ButtonRow } from "./button-row";
 
 export function ChatPanel() {
   const [events, setEvents] = useState<WebEvent[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [connected, setConnected] = useState(false);
   const lastIdRef = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const gatewayRef = useRef<GatewayClient | null>(null);
+  const { connected, sendCommand, addListener, removeListener, subscribe } = useGateway();
 
   const addEvents = useCallback((newEvents: WebEvent[]) => {
     setEvents((prev) => {
@@ -26,29 +25,9 @@ export function ChatPanel() {
     });
   }, []);
 
+  // Load chat history on mount
   useEffect(() => {
     let cancelled = false;
-
-    const gateway = new GatewayClient(
-      (envelope: GatewayEnvelope) => {
-        if (envelope.type === "event" && envelope.payload) {
-          const ev = envelope.payload as unknown as WebEvent;
-          if (ev.id) {
-            if (ev.id > lastIdRef.current) lastIdRef.current = ev.id;
-            addEvents([ev]);
-          }
-        }
-      },
-      (isConnected: boolean) => {
-        setConnected(isConnected);
-        if (isConnected && gatewayRef.current) {
-          // Subscribe with last seen ID for gap-free delivery
-          gatewayRef.current.subscribe("web", lastIdRef.current || undefined);
-        }
-      },
-    );
-    gatewayRef.current = gateway;
-
     async function init() {
       try {
         const { events: history } = await fetchChatHistory();
@@ -60,18 +39,33 @@ export function ChatPanel() {
       } catch {
         // History unavailable — WS will catch up
       }
-      if (!cancelled) {
-        gateway.connect();
-      }
     }
-
     init();
+    return () => { cancelled = true; };
+  }, []);
 
+  // Register listener for chat events
+  useEffect(() => {
+    addListener("chat-panel", (envelope) => {
+      if (envelope.type === "event" && envelope.payload) {
+        const ev = envelope.payload as unknown as WebEvent;
+        // Skip data_change events — handled by useDataEvents
+        if (ev.type === "data_change") return;
+        if (ev.id) {
+          if (ev.id > lastIdRef.current) lastIdRef.current = ev.id;
+          addEvents([ev]);
+        }
+      }
+    });
     return () => {
-      cancelled = true;
-      gateway.disconnect();
+      removeListener("chat-panel");
     };
-  }, [addEvents]);
+  }, [addListener, removeListener, addEvents]);
+
+  // Subscribe on connect for gap-free delivery
+  useEffect(() => {
+    if (connected) subscribe("web", lastIdRef.current || undefined);
+  }, [connected, subscribe]);
 
   // Auto-scroll
   useEffect(() => {
@@ -96,7 +90,7 @@ export function ChatPanel() {
 
     try {
       const command = text.startsWith("/") ? "send_command" : "send_message";
-      gatewayRef.current?.sendCommand(command, text);
+      sendCommand(command, text);
       // WS events will arrive via onEvent callback and replace/supplement the optimistic message
     } catch {
       // Error will appear in chat if server responds

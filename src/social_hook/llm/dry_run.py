@@ -15,6 +15,7 @@ _WRITE_PREFIXES = (
     "reset_",
     "set_",
     "record_",
+    "emit_",
 )
 
 # Prefixes that indicate read operations (always pass through)

@@ -85,6 +85,7 @@ def consolidation_tick(
             # Mark as processed (direct DB write, not via DryRunContext)
             if not dry_run:
                 ops.mark_decisions_processed(conn, decision_ids, batch_id)
+                ops.emit_data_event(conn, "decision", "updated", project_id=project.id)
 
             total_processed += len(decisions)
 
@@ -197,6 +198,7 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
             post_category=getattr(evaluation, "post_category", None),
             media_tool=getattr(evaluation, "media_tool", None),
         )
+        ops.emit_data_event(conn, "decision", "updated", most_recent.id, project.id)
 
     # Create drafts per platform (following trigger.py pattern)
     resolved_platforms = {}
@@ -300,6 +302,7 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
                 reasoning=draft_reasoning,
             )
             db.insert_draft(draft)
+            db.emit_data_event("draft", "created", draft.id, project.id)
 
             if thread_tweets:
                 for pos, tc in enumerate(thread_tweets):

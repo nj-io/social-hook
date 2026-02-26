@@ -1,16 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchDrafts, fetchProjects } from "@/lib/api";
 import type { Draft, Project } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
+import { useDataEvents } from "@/lib/use-data-events";
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const reload = useCallback(async () => {
+    try {
+      const [p, d] = await Promise.all([fetchProjects(), fetchDrafts()]);
+      setProjects(p.projects);
+      setDrafts(d.drafts);
+    } catch {
+      // Silent refresh failure
+    }
+  }, []);
+
+  useDataEvents(["decision", "draft", "post", "project"], reload);
 
   useEffect(() => {
     async function load() {

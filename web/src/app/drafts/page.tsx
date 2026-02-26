@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchDrafts } from "@/lib/api";
 import type { Draft } from "@/lib/types";
 import { DraftCard } from "@/components/draft-card";
+import { useDataEvents } from "@/lib/use-data-events";
 
 const STATUSES = ["All", "draft", "approved", "scheduled", "posted", "rejected", "failed"];
 
@@ -12,6 +13,20 @@ export default function DraftsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("All");
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
+
+  const reload = useCallback(async () => {
+    try {
+      const status = filterRef.current === "All" ? undefined : filterRef.current;
+      const result = await fetchDrafts(status);
+      setDrafts(result.drafts);
+    } catch {
+      // Silent refresh failure
+    }
+  }, []);
+
+  useDataEvents(["draft"], reload);
 
   useEffect(() => {
     async function load() {

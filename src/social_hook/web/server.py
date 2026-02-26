@@ -24,6 +24,7 @@ from social_hook.config.yaml import Config, KNOWN_CHANNELS, validate_config
 from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
+from social_hook.db import operations as ops
 from social_hook.messaging.gateway import GatewayHub, GatewayEnvelope
 
 import logging
@@ -236,6 +237,12 @@ async def api_callback(body: CallbackRequest):
         payload=body.payload,
     )
     handle_callback(event, adapter, config)
+
+    cb_conn = _get_conn()
+    try:
+        ops.emit_data_event(cb_conn, "draft", "updated", body.payload)
+    finally:
+        cb_conn.close()
 
     events = _get_events_since(before_id)
     return {"events": events}
@@ -948,6 +955,7 @@ async def api_toggle_pause(project_id: str):
         new_paused = 0 if row["paused"] else 1
         conn.execute("UPDATE projects SET paused = ? WHERE id = ?", (new_paused, project_id))
         conn.commit()
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
         return {"status": "ok", "paused": new_paused}
     finally:
         conn.close()

@@ -4,6 +4,7 @@ from social_hook.db.connection import get_connection, init_database
 from social_hook.db.operations import (
     cleanup_old_chat_messages,
     delete_project,
+    emit_data_event,
     get_active_arcs,
     get_all_pending_drafts,
     get_all_projects,
@@ -127,4 +128,6 @@ __all__ = [
     "insert_chat_message",
     "get_recent_chat_messages",
     "cleanup_old_chat_messages",
+    # Data Events
+    "emit_data_event",
 ]

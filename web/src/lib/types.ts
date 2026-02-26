@@ -223,6 +223,13 @@ export interface ChannelsStatusResponse {
   daemon_running: boolean;
 }
 
+export interface DataChangeEvent {
+  entity: string;
+  action: string;
+  entity_id: string;
+  project_id: string;
+}
+
 export interface ProjectDetail extends Project {
   lifecycle?: Lifecycle;
   arcs: Arc[];

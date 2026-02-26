@@ -179,6 +179,7 @@ def scheduler_tick(
                 if result.success:
                     # Record success
                     ops.update_draft(conn, draft.id, status="posted")
+                    ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
                     post = Post(
                         id=generate_id("post"),
                         draft_id=draft.id,
@@ -189,6 +190,7 @@ def scheduler_tick(
                         content=draft.content,
                     )
                     ops.insert_post(conn, post)
+                    ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
 
                     send_notification(
                         config,
@@ -312,6 +314,7 @@ def _handle_post_failure(conn, draft, error_msg, config, dry_run):
             retry_count=new_retry_count,
             last_error=error_msg,
         )
+        ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
         logger.error(f"Draft {draft.id} failed after {new_retry_count} attempts: {error_msg}")
 
         project = ops.get_project(conn, draft.project_id)
@@ -339,6 +342,7 @@ def _handle_post_failure(conn, draft, error_msg, config, dry_run):
             retry_count=new_retry_count,
             last_error=error_msg,
         )
+        ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
         logger.info(
             f"Draft {draft.id} retry {new_retry_count}/3 scheduled for "
             f"{retry_time.strftime('%H:%M UTC')} (backoff: {backoff_minutes}m)"

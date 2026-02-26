@@ -1,8 +1,11 @@
 """Database CRUD operations."""
 
 import json
+import logging
 import sqlite3
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from social_hook.models import (
     Arc,
@@ -1215,3 +1218,32 @@ def cleanup_old_chat_messages(conn: sqlite3.Connection, days: int = 7) -> int:
     )
     conn.commit()
     return cursor.rowcount
+
+
+# =============================================================================
+# Data Events (WebSocket broadcast)
+# =============================================================================
+
+
+def emit_data_event(
+    conn: sqlite3.Connection,
+    entity: str,
+    action: str,
+    entity_id: str = "",
+    project_id: str = "",
+) -> None:
+    """Write a data-change event to web_events for WebSocket broadcast.
+
+    Non-fatal: failures are logged but don't interrupt the caller.
+    """
+    try:
+        conn.execute(
+            "INSERT INTO web_events (type, data) VALUES (?, ?)",
+            ("data_change", json.dumps({
+                "entity": entity, "action": action,
+                "entity_id": entity_id, "project_id": project_id,
+            })),
+        )
+        conn.commit()
+    except Exception:
+        logger.debug("Failed to emit data event", exc_info=True)

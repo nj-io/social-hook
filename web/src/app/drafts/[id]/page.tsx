@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchDraft, sendCallback } from "@/lib/api";
@@ -8,6 +8,7 @@ import type { Decision, Draft } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 import { DecisionBadge } from "@/components/decision-badge";
 import { MediaPreview } from "@/components/media-preview";
+import { useDataEvents } from "@/lib/use-data-events";
 
 export default function DraftDetailPage() {
   const params = useParams();
@@ -17,6 +18,17 @@ export default function DraftDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionPending, setActionPending] = useState("");
+
+  const reload = useCallback(async () => {
+    try {
+      const result = await fetchDraft(id);
+      setDraft(result);
+    } catch {
+      // Silent refresh failure
+    }
+  }, [id]);
+
+  useDataEvents(["draft"], reload);
 
   useEffect(() => {
     async function load() {

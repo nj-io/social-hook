@@ -737,6 +737,9 @@ class TestTriggerMedia:
             def insert_draft_tweet(self, tweet):
                 pass
 
+            def emit_data_event(self, *args, **kwargs):
+                pass
+
         # We need to patch DryRunContext to capture the draft
         with patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter), \
              patch("social_hook.trigger.DryRunContext", side_effect=lambda conn, dry_run: CaptureDryRun(conn)):
@@ -938,6 +941,8 @@ class TestPerPlatformPipeline:
                 saved_drafts.append(draft)
             def insert_draft_tweet(self, tweet):
                 pass
+            def emit_data_event(self, *args, **kwargs):
+                pass
 
         with patch("social_hook.trigger.DryRunContext", side_effect=CaptureDryRun):
             exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
@@ -995,6 +1000,8 @@ class TestPerPlatformPipeline:
             def insert_draft(self, draft):
                 saved_drafts.append(draft)
             def insert_draft_tweet(self, tweet):
+                pass
+            def emit_data_event(self, *args, **kwargs):
                 pass
 
         with patch("social_hook.trigger.DryRunContext", side_effect=CaptureDryRun):
