@@ -1,4 +1,4 @@
-import type { Config, Decision, Draft, EnvVars, InstallationsStatus, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
+import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -208,4 +208,13 @@ export async function startBotDaemon(): Promise<{ success: boolean; message: str
 
 export async function stopBotDaemon(): Promise<{ success: boolean; message: string }> {
   return apiFetch("/api/installations/bot_daemon/stop", { method: "POST" });
+}
+
+// Channels
+export async function fetchChannelsStatus(): Promise<ChannelsStatusResponse> {
+  return apiFetch("/api/channels/status");
+}
+
+export async function testChannel(channel: string): Promise<{ success: boolean; error?: string; info?: Record<string, string> }> {
+  return apiFetch(`/api/channels/${encodeURIComponent(channel)}/test`, { method: "POST" });
 }

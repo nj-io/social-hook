@@ -242,7 +242,7 @@ class TestBotDaemon:
 
 class TestCreateBot:
     def test_creates_daemon_with_runner(self):
-        bot = create_bot(token="test_token", allowed_chat_ids={"123"})
+        bot = create_bot(MagicMock(channels={}, env={}), token="test_token", allowed_chat_ids={"123"})
         assert isinstance(bot, BotDaemon)
         assert len(bot._runners) == 1
         assert isinstance(bot._runners[0], TelegramRunner)
@@ -253,15 +253,17 @@ class TestCreateBot:
         from social_hook.bot import buttons, commands
         assert not hasattr(buttons, "set_adapter")
         assert not hasattr(commands, "set_adapter")
-        bot = create_bot(token="test_token", allowed_chat_ids={"42"})
+        bot = create_bot(MagicMock(channels={}, env={}), token="test_token", allowed_chat_ids={"42"})
         assert isinstance(bot, BotDaemon)
 
     def test_on_command_uses_parse_message(self):
         from social_hook.messaging.base import InboundMessage
         mock_config = MagicMock()
+        mock_config.channels = {}
+        mock_config.env = {}
         raw_message = {"chat": {"id": 123}, "text": "/status", "from": {"id": 1, "first_name": "Test"}, "message_id": 42}
         with patch("social_hook.bot.commands.handle_command") as mock_handler:
-            bot = create_bot(token="test_token", config=mock_config)
+            bot = create_bot(mock_config, token="test_token")
             runner = bot._runners[0]
             runner.on_command(raw_message)
             mock_handler.assert_called_once()
@@ -273,13 +275,15 @@ class TestCreateBot:
     def test_on_callback_uses_parse_callback(self):
         from social_hook.messaging.base import CallbackEvent
         mock_config = MagicMock()
+        mock_config.channels = {}
+        mock_config.env = {}
         raw_callback = {
             "id": "cb1",
             "message": {"chat": {"id": 123}, "message_id": 99},
             "data": "approve:draft_123",
         }
         with patch("social_hook.bot.buttons.handle_callback") as mock_handler:
-            bot = create_bot(token="test_token", config=mock_config)
+            bot = create_bot(mock_config, token="test_token")
             runner = bot._runners[0]
             runner.on_callback(raw_callback)
             mock_handler.assert_called_once()
@@ -292,9 +296,11 @@ class TestCreateBot:
     def test_on_message_uses_parse_message(self):
         from social_hook.messaging.base import InboundMessage
         mock_config = MagicMock()
+        mock_config.channels = {}
+        mock_config.env = {}
         raw_message = {"chat": {"id": 456}, "text": "Hello bot", "from": {"id": 2, "first_name": "User"}, "message_id": 7}
         with patch("social_hook.bot.commands.handle_message") as mock_handler:
-            bot = create_bot(token="test_token", config=mock_config)
+            bot = create_bot(mock_config, token="test_token")
             runner = bot._runners[0]
             runner.on_message(raw_message)
             mock_handler.assert_called_once()
@@ -302,3 +308,62 @@ class TestCreateBot:
             assert isinstance(msg_arg, InboundMessage)
             assert msg_arg.chat_id == "456"
             assert msg_arg.text == "Hello bot"
+
+    def test_channel_aware_telegram(self):
+        """create_bot reads channels config when present."""
+        from social_hook.config.yaml import ChannelConfig
+        mock_config = MagicMock()
+        mock_config.channels = {"telegram": ChannelConfig(enabled=True, allowed_chat_ids=["123"])}
+        mock_config.env = {"TELEGRAM_BOT_TOKEN": "test_token"}
+        bot = create_bot(mock_config)
+        assert isinstance(bot, BotDaemon)
+        assert len(bot._runners) == 1
+        assert bot._runners[0].allowed_chat_ids == {"123"}
+
+    def test_channel_aware_no_token_warns(self):
+        """Enabled telegram without token produces no runner."""
+        from social_hook.config.yaml import ChannelConfig
+        from social_hook.errors import ConfigError
+        mock_config = MagicMock()
+        mock_config.channels = {"telegram": ChannelConfig(enabled=True)}
+        mock_config.env = {}
+        with pytest.raises(ConfigError, match="No channel runners"):
+            create_bot(mock_config)
+
+    def test_legacy_fallback_from_env(self):
+        """Legacy path reads token from config.env."""
+        mock_config = MagicMock()
+        mock_config.channels = {}
+        mock_config.env = {"TELEGRAM_BOT_TOKEN": "env_token", "TELEGRAM_ALLOWED_CHAT_IDS": "111,222"}
+        bot = create_bot(mock_config)
+        assert isinstance(bot, BotDaemon)
+        assert len(bot._runners) == 1
+
+    def test_legacy_no_token_raises(self):
+        """Legacy path with no token raises ConfigError."""
+        from social_hook.errors import ConfigError
+        mock_config = MagicMock()
+        mock_config.channels = {}
+        mock_config.env = {}
+        with pytest.raises(ConfigError):
+            create_bot(mock_config)
+
+    def test_web_channel_skipped(self):
+        """Web channel is skipped (handled by FastAPI)."""
+        from social_hook.config.yaml import ChannelConfig
+        from social_hook.errors import ConfigError
+        mock_config = MagicMock()
+        mock_config.channels = {"web": ChannelConfig(enabled=True)}
+        mock_config.env = {}
+        with pytest.raises(ConfigError, match="No channel runners"):
+            create_bot(mock_config)
+
+    def test_slack_channel_skipped(self):
+        """Slack channel is skipped (not yet implemented)."""
+        from social_hook.config.yaml import ChannelConfig
+        from social_hook.errors import ConfigError
+        mock_config = MagicMock()
+        mock_config.channels = {"slack": ChannelConfig(enabled=True)}
+        mock_config.env = {}
+        with pytest.raises(ConfigError, match="No channel runners"):
+            create_bot(mock_config)

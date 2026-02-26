@@ -7,6 +7,7 @@ const sections = [
   { id: "api-keys", label: "API Keys" },
   { id: "projects", label: "Projects" },
   { id: "installations", label: "Installations" },
+  { id: "channels", label: "Channels" },
   { id: "platforms", label: "Platforms" },
   { id: "scheduling", label: "Scheduling" },
   { id: "media-generation", label: "Media Generation" },

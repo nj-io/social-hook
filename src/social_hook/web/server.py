@@ -20,7 +20,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from social_hook.config.env import KEY_GROUPS, KNOWN_KEYS
 from social_hook.constants import PROJECT_NAME, PROJECT_SLUG, PROJECT_DESCRIPTION, CONFIG_DIR_NAME
 from social_hook.config.project import DEFAULT_MEDIA_GUIDANCE
-from social_hook.config.yaml import Config, validate_config
+from social_hook.config.yaml import Config, KNOWN_CHANNELS, validate_config
 from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
@@ -1051,3 +1051,66 @@ async def api_stop_bot_daemon():
     if stop_bot():
         return {"success": True, "message": "Bot daemon stopped"}
     return {"success": False, "message": "Failed to stop bot daemon"}
+
+
+# ---------------------------------------------------------------------------
+# Channels endpoints
+# ---------------------------------------------------------------------------
+
+_CHANNEL_CREDENTIALS = {
+    "telegram": "TELEGRAM_BOT_TOKEN",
+}
+
+
+@app.get("/api/channels/status")
+async def api_channels_status():
+    """Return status of all known channels and daemon running state."""
+    from social_hook.bot.process import is_running
+    config = _get_config()
+    channels_status = {}
+    for name in sorted(KNOWN_CHANNELS):
+        if name == "web":
+            channels_status[name] = {"enabled": True, "credentials_configured": True, "allowed_chat_ids": []}
+            continue
+        ch_cfg = config.channels.get(name)
+        cred_key = _CHANNEL_CREDENTIALS.get(name)
+        channels_status[name] = {
+            "enabled": ch_cfg.enabled if ch_cfg else False,
+            "credentials_configured": bool(config.env.get(cred_key)) if cred_key else False,
+            "allowed_chat_ids": ch_cfg.allowed_chat_ids if ch_cfg else [],
+        }
+    return {"channels": channels_status, "daemon_running": is_running()}
+
+
+@app.post("/api/channels/{channel}/test")
+async def api_test_channel(channel: str):
+    """Test channel connectivity."""
+    if channel not in KNOWN_CHANNELS:
+        raise HTTPException(status_code=400, detail=f"Unknown channel: {channel}")
+
+    if channel == "web":
+        return {"success": True, "info": {"status": "Built-in, always available"}}
+
+    if channel == "slack":
+        return {"success": False, "error": "Slack support coming soon"}
+
+    if channel == "telegram":
+        config = _get_config()
+        tg_token = config.env.get("TELEGRAM_BOT_TOKEN")
+        if not tg_token:
+            return {"success": False, "error": "TELEGRAM_BOT_TOKEN not configured"}
+        try:
+            import requests
+            resp = await asyncio.to_thread(
+                requests.get,
+                f"https://api.telegram.org/bot{tg_token}/getMe",
+                timeout=5,
+            )
+            data = resp.json()
+            if data.get("ok") and data.get("result", {}).get("username"):
+                return {"success": True, "info": {"username": data["result"]["username"]}}
+            return {"success": False, "error": "Failed to connect to Telegram API"}
+        except Exception:
+            return {"success": False, "error": "Failed to connect to Telegram API"}
+
+    return {"success": False, "error": f"Testing not supported for {channel}"}

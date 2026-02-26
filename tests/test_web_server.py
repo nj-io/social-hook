@@ -807,6 +807,14 @@ class TestInstallationEndpoints:
             assert resp.status_code == 200
             mock_uninstall.assert_called_once()
 
+    def test_bot_daemon_start_already_running(self, client, tmp_env):
+        with patch("social_hook.bot.process.is_running", return_value=True):
+            resp = client.post("/api/installations/bot_daemon/start")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
+            assert "already running" in data["message"]
+
     def test_project_detail_includes_journey_capture(self, client, tmp_env):
         """Project detail response includes journey_capture_enabled."""
         conn = sqlite3.connect(str(tmp_env["db_path"]))
@@ -824,3 +832,108 @@ class TestInstallationEndpoints:
             assert resp.status_code == 200
             data = resp.json()
             assert "journey_capture_enabled" in data
+
+
+# ---------------------------------------------------------------------------
+# Channels endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestChannelsEndpoints:
+    def test_channels_status(self, client, tmp_env):
+        """GET /api/channels/status returns all channel statuses."""
+        with patch("social_hook.bot.process.is_running", return_value=False):
+            resp = client.get("/api/channels/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "channels" in data
+            assert "daemon_running" in data
+            assert data["daemon_running"] is False
+            # All 3 known channels present
+            assert "telegram" in data["channels"]
+            assert "slack" in data["channels"]
+            assert "web" in data["channels"]
+            # Web is always enabled
+            assert data["channels"]["web"]["enabled"] is True
+            assert data["channels"]["web"]["credentials_configured"] is True
+
+    def test_channels_status_with_config(self, client, tmp_env):
+        """Channels status reflects config.yaml settings."""
+        config = {
+            "channels": {"telegram": {"enabled": True, "allowed_chat_ids": ["123"]}},
+        }
+        tmp_env["config_path"].write_text(yaml.dump(config))
+        import social_hook.web.server as srv
+        srv._config = None
+
+        tmp_env["env_path"].write_text('TELEGRAM_BOT_TOKEN="test_token"\n')
+        srv._config = None
+
+        with patch("social_hook.bot.process.is_running", return_value=True):
+            resp = client.get("/api/channels/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["channels"]["telegram"]["enabled"] is True
+            assert data["channels"]["telegram"]["credentials_configured"] is True
+            assert data["channels"]["telegram"]["allowed_chat_ids"] == ["123"]
+            assert data["daemon_running"] is True
+
+    def test_test_channel_web(self, client, tmp_env):
+        """POST /api/channels/web/test always succeeds."""
+        resp = client.post("/api/channels/web/test")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+
+    def test_test_channel_slack(self, client, tmp_env):
+        """POST /api/channels/slack/test returns coming soon."""
+        resp = client.post("/api/channels/slack/test")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert "coming soon" in data["error"].lower()
+
+    def test_test_channel_unknown(self, client, tmp_env):
+        """POST /api/channels/unknown/test returns 400."""
+        resp = client.post("/api/channels/unknown/test")
+        assert resp.status_code == 400
+
+    def test_test_channel_telegram_no_token(self, client, tmp_env):
+        """POST /api/channels/telegram/test without token returns error."""
+        resp = client.post("/api/channels/telegram/test")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert "not configured" in data["error"]
+
+    def test_test_channel_telegram_success(self, client, tmp_env):
+        """POST /api/channels/telegram/test with valid token returns username."""
+        tmp_env["env_path"].write_text('TELEGRAM_BOT_TOKEN="test_token"\n')
+        import social_hook.web.server as srv
+        srv._config = None
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"ok": True, "result": {"username": "my_test_bot"}}
+
+        with patch("requests.get", return_value=mock_resp):
+            resp = client.post("/api/channels/telegram/test")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
+            assert data["info"]["username"] == "my_test_bot"
+
+    def test_test_channel_telegram_failure(self, client, tmp_env):
+        """POST /api/channels/telegram/test with bad token returns sanitized error."""
+        tmp_env["env_path"].write_text('TELEGRAM_BOT_TOKEN="bad_token"\n')
+        import social_hook.web.server as srv
+        srv._config = None
+
+        import requests as req_lib
+        with patch("requests.get", side_effect=req_lib.RequestException("Connection failed with token")):
+            resp = client.post("/api/channels/telegram/test")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is False
+            assert "Failed to connect" in data["error"]
+            # Verify token is NOT in error message
+            assert "bad_token" not in data["error"]

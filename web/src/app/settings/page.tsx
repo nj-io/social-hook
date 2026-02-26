@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { fetchConfig, fetchContentConfig, fetchEnv, fetchProjects, fetchSocialContext, updateConfig, updateContentConfig, updateSocialContext } from "@/lib/api";
-import type { Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig, WebDashboardConfig } from "@/lib/types";
+import type { ChannelConfig, Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig, WebDashboardConfig } from "@/lib/types";
 import { SettingsSidebar, sections } from "@/components/settings/settings-sidebar";
 import { ModelsSection } from "@/components/settings/models-section";
 import { ApiKeysSection } from "@/components/settings/api-keys-section";
@@ -15,6 +15,7 @@ import { ConsolidationSection } from "@/components/settings/consolidation-sectio
 import { NotificationsSection } from "@/components/settings/notifications-section";
 import { ProjectsSection } from "@/components/settings/projects-section";
 import { InstallationsSection } from "@/components/settings/installations-section";
+import { ChannelsSection } from "@/components/settings/channels-section";
 
 const DEFAULT_MODELS: ModelsConfig = {
   evaluator: "anthropic/claude-opus-4-5",
@@ -210,6 +211,7 @@ function SettingsContent() {
   const journeyCapture: JourneyCaptureConfig = (config?.journey_capture as JourneyCaptureConfig) ?? { enabled: false };
   const webCfg: WebDashboardConfig = (config?.web as WebDashboardConfig) ?? { enabled: false, port: 3000 };
   const consolidation: ConsolidationConfig = (config?.consolidation as ConsolidationConfig) ?? { enabled: false, mode: "notify_only", batch_size: 20 };
+  const channels: Record<string, ChannelConfig> = (config?.channels as Record<string, ChannelConfig>) ?? {};
 
   const telegramConfigured = !!(envData?.env?.TELEGRAM_BOT_TOKEN && envData?.env?.TELEGRAM_ALLOWED_CHAT_IDS);
 
@@ -255,6 +257,13 @@ function SettingsContent() {
 
           <section id="installations" className="pt-1">
             <InstallationsSection />
+          </section>
+
+          <section id="channels" className="pt-1">
+            <ChannelsSection
+              channels={channels}
+              onChange={(ch) => saveConfig({ channels: ch } as Partial<Config>)}
+            />
           </section>
 
           <section id="platforms" className="pt-1">

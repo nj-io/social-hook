@@ -12,6 +12,9 @@ from social_hook.errors import ConfigError
 
 # Valid X account tiers and their character limits
 VALID_TIERS = ("free", "basic", "premium", "premium_plus")
+
+# NOTE: Keep in sync with KNOWN_PLATFORMS in messaging/factory.py
+KNOWN_CHANNELS = {"telegram", "slack", "web"}
 TIER_CHAR_LIMITS = {
     "free": 280,
     "basic": 25_000,
@@ -57,6 +60,7 @@ DEFAULT_CONFIG = {
         "mode": "notify_only",
         "batch_size": 20,
     },
+    "channels": {},
 }
 
 
@@ -125,6 +129,13 @@ class ConsolidationConfig:
 
 
 @dataclass
+class ChannelConfig:
+    """Configuration for a single messaging channel."""
+    enabled: bool = False
+    allowed_chat_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     """Main configuration object."""
 
@@ -137,6 +148,7 @@ class Config:
     journey_capture: JourneyCaptureConfig = field(default_factory=JourneyCaptureConfig)
     web: WebConfig = field(default_factory=WebConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
+    channels: dict[str, ChannelConfig] = field(default_factory=dict)
 
     # Environment variables (populated by load_full_config)
     env: dict[str, str] = field(default_factory=dict)
@@ -319,6 +331,22 @@ def _parse_config(data: dict[str, Any]) -> Config:
         batch_size=cons_batch,
     )
 
+    # Channels
+    channels_data = data.get("channels", {})
+    channels: dict[str, ChannelConfig] = {}
+    for name, ch_data in channels_data.items():
+        if not isinstance(ch_data, dict):
+            raise ConfigError(f"Channel '{name}' config must be a dict")
+        if name not in KNOWN_CHANNELS:
+            raise ConfigError(f"Unknown channel '{name}': must be one of {sorted(KNOWN_CHANNELS)}")
+        chat_ids = ch_data.get("allowed_chat_ids", [])
+        if not isinstance(chat_ids, list):
+            raise ConfigError(f"Channel '{name}' allowed_chat_ids must be a list")
+        channels[name] = ChannelConfig(
+            enabled=ch_data.get("enabled", False),
+            allowed_chat_ids=[str(cid) for cid in chat_ids],
+        )
+
     return Config(
         models=models,
         platforms=platforms,
@@ -327,6 +355,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
         journey_capture=journey_capture,
         web=web,
         consolidation=consolidation,
+        channels=channels,
     )
 
 

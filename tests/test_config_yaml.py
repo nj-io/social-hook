@@ -3,7 +3,9 @@
 import pytest
 
 from social_hook.config.yaml import (
+    ChannelConfig,
     Config,
+    KNOWN_CHANNELS,
     MediaGenerationConfig,
     SchedulingConfig,
     WebConfig,
@@ -374,3 +376,82 @@ class TestConsolidationConfigParsing:
         """String batch_size raises ConfigError."""
         with pytest.raises(ConfigError, match="must be positive integer"):
             validate_config({"consolidation": {"batch_size": "twenty"}})
+
+
+class TestChannelConfigParsing:
+    """Test channels config parsing and validation."""
+
+    def test_channels_defaults_empty(self):
+        """Default config has empty channels dict."""
+        config = Config()
+        assert config.channels == {}
+
+    def test_channels_from_yaml(self, temp_dir):
+        """Parse channels config from YAML."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            "channels:\n  telegram:\n    enabled: true\n    allowed_chat_ids:\n      - '123'\n      - '456'\n"
+        )
+        config = load_config(config_path)
+        assert "telegram" in config.channels
+        assert config.channels["telegram"].enabled is True
+        assert config.channels["telegram"].allowed_chat_ids == ["123", "456"]
+
+    def test_channels_disabled_by_default(self, temp_dir):
+        """Channel without enabled: defaults to False."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text("channels:\n  telegram:\n    allowed_chat_ids: []\n")
+        config = load_config(config_path)
+        assert config.channels["telegram"].enabled is False
+
+    def test_unknown_channel_raises(self, temp_dir):
+        """Unknown channel name raises ConfigError."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text("channels:\n  discord:\n    enabled: true\n")
+        with pytest.raises(ConfigError, match="Unknown channel"):
+            load_config(config_path)
+
+    def test_channel_not_dict_raises(self, temp_dir):
+        """Non-dict channel value raises ConfigError."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text("channels:\n  telegram: true\n")
+        with pytest.raises(ConfigError, match="must be a dict"):
+            load_config(config_path)
+
+    def test_channel_chat_ids_not_list_raises(self, temp_dir):
+        """Non-list allowed_chat_ids raises ConfigError."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text("channels:\n  telegram:\n    enabled: true\n    allowed_chat_ids: '123'\n")
+        with pytest.raises(ConfigError, match="must be a list"):
+            load_config(config_path)
+
+    def test_channel_chat_ids_coerced_to_str(self, temp_dir):
+        """Integer chat IDs are coerced to strings."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text("channels:\n  telegram:\n    enabled: true\n    allowed_chat_ids:\n      - 123\n      - 456\n")
+        config = load_config(config_path)
+        assert config.channels["telegram"].allowed_chat_ids == ["123", "456"]
+
+    def test_multiple_channels(self, temp_dir):
+        """Parse multiple channels."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            "channels:\n  telegram:\n    enabled: true\n  web:\n    enabled: true\n  slack:\n    enabled: false\n"
+        )
+        config = load_config(config_path)
+        assert len(config.channels) == 3
+        assert config.channels["telegram"].enabled is True
+        assert config.channels["web"].enabled is True
+        assert config.channels["slack"].enabled is False
+
+    def test_empty_channels_section(self, temp_dir):
+        """Empty channels section results in empty dict."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text("channels: {}\n")
+        config = load_config(config_path)
+        assert config.channels == {}
+
+    def test_validate_config_with_channels(self):
+        """validate_config works with channels data."""
+        result = validate_config({"channels": {"telegram": {"enabled": True}}})
+        assert result.channels["telegram"].enabled is True

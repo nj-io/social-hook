@@ -6,8 +6,6 @@ import {
   fetchInstallationsStatus,
   installComponent,
   uninstallComponent,
-  startBotDaemon,
-  stopBotDaemon,
 } from "@/lib/api";
 
 const COMPONENTS = [
@@ -25,11 +23,6 @@ const COMPONENTS = [
     key: "scheduler_cron",
     name: "Scheduler Cron",
     description: "Posts scheduled drafts every minute",
-  },
-  {
-    key: "bot_daemon",
-    name: "Bot Daemon",
-    description: "Interactive messaging (Telegram, future platforms)",
   },
 ] as const;
 
@@ -54,16 +47,11 @@ export function InstallationsSection() {
     loadStatus();
   }, [loadStatus]);
 
-  async function handleAction(component: string, action: "install" | "uninstall" | "start" | "stop") {
+  async function handleAction(component: string, action: "install" | "uninstall") {
     setActionInProgress(component);
     setMessage("");
     try {
-      let result: { success: boolean; message: string };
-      if (component === "bot_daemon") {
-        result = action === "start" ? await startBotDaemon() : await stopBotDaemon();
-      } else {
-        result = action === "install" ? await installComponent(component) : await uninstallComponent(component);
-      }
+      const result = action === "install" ? await installComponent(component) : await uninstallComponent(component);
       setMessage(result.message);
       await loadStatus();
     } catch (e) {
@@ -82,7 +70,7 @@ export function InstallationsSection() {
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Installations</h2>
       <p className="text-sm text-muted-foreground">
-        Manage hooks, cron jobs, and daemons that power the content pipeline.
+        Manage hooks and cron jobs that power the content pipeline.
       </p>
 
       {message && (
@@ -92,7 +80,6 @@ export function InstallationsSection() {
       <div className="space-y-2">
         {COMPONENTS.map((comp) => {
           const isInstalled = status?.[comp.key as keyof InstallationsStatus] ?? false;
-          const isBotDaemon = comp.key === "bot_daemon";
 
           return (
             <div
@@ -109,29 +96,17 @@ export function InstallationsSection() {
                         : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
                     }`}
                   >
-                    {isBotDaemon
-                      ? isInstalled ? "Running" : "Stopped"
-                      : isInstalled ? "Installed" : "Not installed"}
+                    {isInstalled ? "Installed" : "Not installed"}
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">{comp.description}</p>
               </div>
               <button
-                onClick={() => {
-                  if (isBotDaemon) {
-                    handleAction(comp.key, isInstalled ? "stop" : "start");
-                  } else {
-                    handleAction(comp.key, isInstalled ? "uninstall" : "install");
-                  }
-                }}
+                onClick={() => handleAction(comp.key, isInstalled ? "uninstall" : "install")}
                 disabled={actionInProgress === comp.key}
                 className="ml-4 shrink-0 rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
               >
-                {actionInProgress === comp.key
-                  ? "..."
-                  : isBotDaemon
-                    ? isInstalled ? "Stop" : "Start"
-                    : isInstalled ? "Uninstall" : "Install"}
+                {actionInProgress === comp.key ? "..." : isInstalled ? "Uninstall" : "Install"}
               </button>
             </div>
           );

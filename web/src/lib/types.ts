@@ -70,6 +70,7 @@ export interface Config {
   journey_capture: JourneyCaptureConfig;
   web: WebDashboardConfig;
   consolidation?: ConsolidationConfig;
+  channels?: Record<string, ChannelConfig>;
 }
 
 export interface DraftTweet {
@@ -204,6 +205,22 @@ export interface InstallationsStatus {
   narrative_hook: boolean;
   scheduler_cron: boolean;
   bot_daemon: boolean;
+}
+
+export interface ChannelConfig {
+  enabled: boolean;
+  allowed_chat_ids: string[];
+}
+
+export interface ChannelStatus {
+  enabled: boolean;
+  credentials_configured: boolean;
+  allowed_chat_ids: string[];
+}
+
+export interface ChannelsStatusResponse {
+  channels: Record<string, ChannelStatus>;
+  daemon_running: boolean;
 }
 
 export interface ProjectDetail extends Project {

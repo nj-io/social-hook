@@ -59,12 +59,11 @@ class BotDaemon:
             runner.stop()
 
 
-def create_bot(
+def _create_telegram_runner(
     token: str,
-    allowed_chat_ids: Optional[set[str]] = None,
-    config: Optional[Any] = None,
-) -> BotDaemon:
-    """Create a configured BotDaemon with TelegramRunner."""
+    allowed_chat_ids: Optional[set[str]],
+    config: Any,
+) -> "TelegramRunner":
     from social_hook.bot.buttons import handle_callback
     from social_hook.bot.commands import handle_command, handle_message
     from social_hook.bot.runners.telegram import TelegramRunner
@@ -84,11 +83,64 @@ def create_bot(
         msg = TelegramAdapter.parse_message(message)
         handle_message(msg, adapter, config)
 
-    runner = TelegramRunner(
+    return TelegramRunner(
         token=token,
         allowed_chat_ids=allowed_chat_ids,
         on_command=on_command,
         on_callback=on_callback,
         on_message=on_message,
     )
-    return BotDaemon(runners=[runner])
+
+
+def create_bot(
+    config: Any,
+    *,
+    token: Optional[str] = None,
+    allowed_chat_ids: Optional[set[str]] = None,
+) -> BotDaemon:
+    """Create a configured BotDaemon.
+
+    If config.channels has enabled entries, uses those.
+    Otherwise falls back to token param or config.env vars.
+    """
+    from social_hook.errors import ConfigError
+
+    runners = []
+
+    # Channel-aware path
+    channels = getattr(config, 'channels', None) or {}
+    enabled_channels = {k: v for k, v in channels.items() if getattr(v, 'enabled', False)}
+
+    if enabled_channels:
+        env = getattr(config, 'env', {}) or {}
+        for name, ch_cfg in enabled_channels.items():
+            if name == "telegram":
+                tg_token = env.get("TELEGRAM_BOT_TOKEN")
+                if tg_token:
+                    chat_ids = set(ch_cfg.allowed_chat_ids) if ch_cfg.allowed_chat_ids else set()
+                    runners.append(_create_telegram_runner(tg_token, chat_ids, config))
+                else:
+                    logger.warning("Telegram channel enabled but TELEGRAM_BOT_TOKEN not set")
+            elif name == "web":
+                pass  # Handled by FastAPI server
+            elif name == "slack":
+                logger.warning("Slack channel not yet implemented, skipping")
+            else:
+                logger.warning(f"Unknown channel '{name}', skipping")
+    else:
+        # Legacy fallback
+        if token is None:
+            env = getattr(config, 'env', {}) or {}
+            token = env.get("TELEGRAM_BOT_TOKEN")
+            if not token:
+                raise ConfigError("No channels configured and TELEGRAM_BOT_TOKEN not set")
+            allowed_str = env.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
+            if allowed_str:
+                allowed_chat_ids = {s.strip() for s in allowed_str.split(",") if s.strip()}
+
+        runners.append(_create_telegram_runner(token, allowed_chat_ids, config))
+
+    if not runners:
+        raise ConfigError("No channel runners could be created — check credentials")
+
+    return BotDaemon(runners=runners)

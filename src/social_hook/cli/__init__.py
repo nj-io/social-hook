@@ -259,18 +259,15 @@ def bot_start(
     config_path = ctx.obj.get("config") if ctx.obj else None
     config = load_full_config(str(config_path) if config_path else None)
 
-    token = config.env.get("TELEGRAM_BOT_TOKEN")
-    if not token:
-        typer.echo("Error: TELEGRAM_BOT_TOKEN not set in .env")
-        raise typer.Exit(1)
-
-    allowed_str = config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
-    allowed = {s.strip() for s in allowed_str.split(",") if s.strip()} if allowed_str else set()
-
     from social_hook.bot.daemon import create_bot
     from social_hook.bot.process import get_pid_file
+    from social_hook.errors import ConfigError
 
-    bot = create_bot(token=token, allowed_chat_ids=allowed, config=config)
+    try:
+        bot = create_bot(config=config)
+    except ConfigError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
 
     if daemon:
         import shutil
