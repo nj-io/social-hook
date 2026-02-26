@@ -93,6 +93,15 @@ def get_project_by_origin(
     return [Project.from_dict(dict(row)) for row in rows]
 
 
+def set_project_paused(conn: sqlite3.Connection, project_id: str, paused: bool) -> None:
+    """Set a project's paused state."""
+    conn.execute(
+        "UPDATE projects SET paused = ? WHERE id = ?",
+        (1 if paused else 0, project_id),
+    )
+    conn.commit()
+
+
 def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     """Delete a project and all associated data.
 
@@ -131,6 +140,31 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
     conn.commit()
     return True
+
+
+def update_discovery_files(
+    conn: sqlite3.Connection,
+    project_id: str,
+    files: list[str],
+) -> bool:
+    """Update project discovery files.
+
+    Stores the list of files selected during two-pass project discovery
+    as a JSON-serialized string.
+
+    Args:
+        conn: Database connection
+        project_id: Project ID to update
+        files: List of file paths selected by discovery
+
+    Returns True if a row was updated.
+    """
+    cursor = conn.execute(
+        "UPDATE projects SET discovery_files = ? WHERE id = ?",
+        (json.dumps(files), project_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 # =============================================================================
@@ -264,6 +298,7 @@ def update_decision(
     angle: Optional[str] = None,
     episode_type: Optional[str] = None,
     post_category: Optional[str] = None,
+    arc_id: Optional[str] = None,
     media_tool: Optional[str] = None,
     platforms: Optional[str] = None,
 ) -> bool:
@@ -291,6 +326,9 @@ def update_decision(
     if post_category is not None:
         updates.append("post_category = ?")
         params.append(post_category)
+    if arc_id is not None:
+        updates.append("arc_id = ?")
+        params.append(arc_id)
     if media_tool is not None:
         updates.append("media_tool = ?")
         params.append(media_tool)

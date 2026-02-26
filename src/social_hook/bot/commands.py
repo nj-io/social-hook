@@ -52,8 +52,15 @@ def _get_conn():
     return init_database(get_db_path())
 
 
-def _build_system_snapshot(conn, project_id: Optional[str], config) -> str:
-    """Build a compact system status block for Gatekeeper context."""
+def _build_system_snapshot(conn, project_id: Optional[str], config, arcs=None) -> str:
+    """Build a compact system status block for Gatekeeper context.
+
+    Args:
+        conn: DB connection
+        project_id: Active project ID (optional)
+        config: App config
+        arcs: Pre-fetched active arcs (optional, avoids duplicate DB call)
+    """
     from social_hook.db import operations as ops
 
     lines = ["## System Status"]
@@ -86,7 +93,8 @@ def _build_system_snapshot(conn, project_id: Optional[str], config) -> str:
 
     # Active arcs (for the active project)
     if project_id:
-        arcs = ops.get_active_arcs(conn, project_id)
+        if arcs is None:
+            arcs = ops.get_active_arcs(conn, project_id)
         if arcs:
             arc_parts = [f'"{a.theme}" ({a.post_count} posts)' for a in arcs]
             lines.append(f"- Active arcs: {', '.join(arc_parts)}")
@@ -325,15 +333,40 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
                 if active:
                     project_id = active[0].id
 
-            # Build system snapshot for Gatekeeper context
-            try:
-                snapshot = _build_system_snapshot(_context_conn, project_id, config)
-            except Exception:
-                logger.debug("Failed to build system snapshot", exc_info=True)
+            # Fetch enriched context for Gatekeeper
+            gk_recent_decisions = None
+            gk_recent_posts = None
+            gk_lifecycle_phase = None
+            gk_active_arcs = None
+            gk_narrative_debt = None
+            gk_audience_introduced = None
+            gk_linked_decision = None
 
             if project_id:
+                from social_hook.db import operations as ops
                 from social_hook.db.operations import get_project_summary
+
                 summary = get_project_summary(_context_conn, project_id)
+
+                try:
+                    gk_recent_decisions = ops.get_recent_decisions(_context_conn, project_id, limit=10)
+                    gk_recent_posts = ops.get_recent_posts_for_context(_context_conn, project_id, limit=5)
+                    lifecycle = ops.get_lifecycle(_context_conn, project_id)
+                    gk_lifecycle_phase = lifecycle.phase if lifecycle else None
+                    gk_active_arcs = ops.get_active_arcs(_context_conn, project_id)
+                    debt = ops.get_narrative_debt(_context_conn, project_id)
+                    gk_narrative_debt = debt.debt_counter if debt else 0
+                    gk_audience_introduced = ops.get_audience_introduced(_context_conn, project_id)
+                    if draft_obj and hasattr(draft_obj, "decision_id") and draft_obj.decision_id:
+                        gk_linked_decision = ops.get_decision(_context_conn, draft_obj.decision_id)
+                except Exception:
+                    logger.debug("Failed to fetch gatekeeper context", exc_info=True)
+
+            # Build system snapshot, reusing already-fetched arcs
+            try:
+                snapshot = _build_system_snapshot(_context_conn, project_id, config, arcs=gk_active_arcs)
+            except Exception:
+                logger.debug("Failed to build system snapshot", exc_info=True)
 
             # Build chat history BEFORE storing inbound to avoid duplication
             history = None
@@ -358,6 +391,13 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
                 db=db,
                 system_snapshot=snapshot,
                 chat_history=history,
+                recent_decisions=gk_recent_decisions,
+                recent_posts=gk_recent_posts,
+                lifecycle_phase=gk_lifecycle_phase,
+                active_arcs=gk_active_arcs,
+                narrative_debt=gk_narrative_debt,
+                audience_introduced=gk_audience_introduced,
+                linked_decision=gk_linked_decision,
             )
 
             response_text = None

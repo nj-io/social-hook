@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebEvent } from "@/lib/types";
 import { clearChatHistory, fetchChatHistory } from "@/lib/api";
 import { useGateway } from "@/lib/gateway-context";
+import { getSessionId } from "@/lib/session";
 import { ButtonRow } from "./button-row";
 
 export function ChatPanel() {
@@ -12,7 +13,7 @@ export function ChatPanel() {
   const [sending, setSending] = useState(false);
   const lastIdRef = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const { connected, sendCommand, addListener, removeListener, subscribe } = useGateway();
+  const { connected, send, sendCommand, addListener, removeListener } = useGateway();
 
   const addEvents = useCallback((newEvents: WebEvent[]) => {
     setEvents((prev) => {
@@ -32,9 +33,10 @@ export function ChatPanel() {
       try {
         const { events: history } = await fetchChatHistory();
         if (cancelled) return;
-        if (history.length > 0) {
-          setEvents(history);
-          lastIdRef.current = history[history.length - 1].id;
+        const chatEvents = history.filter((e) => e.type !== "data_change");
+        if (chatEvents.length > 0) {
+          setEvents(chatEvents);
+          lastIdRef.current = chatEvents[chatEvents.length - 1].id;
         }
       } catch {
         // History unavailable — WS will catch up
@@ -62,10 +64,19 @@ export function ChatPanel() {
     };
   }, [addListener, removeListener, addEvents]);
 
-  // Subscribe on connect for gap-free delivery
+  // Subscribe on connect for gap-free delivery, including session_id for scoped routing
   useEffect(() => {
-    if (connected) subscribe("web", lastIdRef.current || undefined);
-  }, [connected, subscribe]);
+    if (connected) {
+      send({
+        type: "subscribe",
+        payload: {
+          channel: "web",
+          session_id: getSessionId(),
+          ...(lastIdRef.current ? { last_seen_id: lastIdRef.current } : {}),
+        },
+      });
+    }
+  }, [connected, send]);
 
   // Auto-scroll
   useEffect(() => {
@@ -101,6 +112,7 @@ export function ChatPanel() {
 
   function renderEvent(event: WebEvent) {
     const data = event.data;
+    if (!data.text && event.type !== "user") return null;
     const text = (data.text as string) ?? JSON.stringify(data);
     const buttons = data.buttons as { label: string; action: string; payload: string }[][] | undefined;
     const isUser = event.type === "user";

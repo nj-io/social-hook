@@ -8,6 +8,9 @@ import {
   fetchProjectDecisions,
   fetchProjectPosts,
   fetchProjectUsage,
+  updateProjectSummary,
+  regenerateProjectSummary,
+  createDraftFromDecision,
 } from "@/lib/api";
 import type { Decision, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
@@ -28,6 +31,11 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState("");
   const [decisionOffset, setDecisionOffset] = useState(0);
   const [hasMoreDecisions, setHasMoreDecisions] = useState(false);
+  const [editingSummary, setEditingSummary] = useState(false);
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [expandedDecisions, setExpandedDecisions] = useState<Set<string>>(new Set());
+  const [creatingDraft, setCreatingDraft] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -115,9 +123,90 @@ export default function ProjectDetailPage() {
           {project.paused === 1 && <StatusBadge status="paused" />}
         </div>
         <p className="mt-1 truncate text-sm text-muted-foreground">{project.repo_path}</p>
-        {project.summary && (
-          <p className="mt-2 text-sm">{project.summary}</p>
-        )}
+        {/* Project Summary */}
+        <div className="mt-4 rounded-lg border border-border p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-muted-foreground">Project Summary</h2>
+            <div className="flex items-center gap-2">
+              {!editingSummary && (
+                <>
+                  <button
+                    onClick={() => {
+                      setSummaryDraft(project.summary || "");
+                      setEditingSummary(true);
+                    }}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setSummaryLoading(true);
+                      try {
+                        const res = await regenerateProjectSummary(id);
+                        setProject((prev) => prev ? { ...prev, summary: res.summary } : prev);
+                      } catch {
+                        // Silent failure
+                      } finally {
+                        setSummaryLoading(false);
+                      }
+                    }}
+                    disabled={summaryLoading}
+                    className="text-xs text-accent hover:underline disabled:opacity-50"
+                  >
+                    {summaryLoading ? "Regenerating..." : "Regenerate"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {editingSummary ? (
+            <div className="space-y-2">
+              <textarea
+                rows={4}
+                value={summaryDraft}
+                onChange={(e) => setSummaryDraft(e.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    setSummaryLoading(true);
+                    try {
+                      await updateProjectSummary(id, summaryDraft);
+                      setProject((prev) => prev ? { ...prev, summary: summaryDraft } : prev);
+                      setEditingSummary(false);
+                    } catch {
+                      // Silent failure
+                    } finally {
+                      setSummaryLoading(false);
+                    }
+                  }}
+                  disabled={summaryLoading}
+                  className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => setEditingSummary(false)}
+                  className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm">{project.summary || "No summary yet. Click Regenerate to create one."}</p>
+          )}
+
+          <p className="mt-2 text-xs text-muted-foreground">
+            Adjust context depth in{" "}
+            <Link href="/settings?section=context" className="text-accent hover:underline">
+              Settings &gt; Context
+            </Link>
+          </p>
+        </div>
 
         {/* Lifecycle */}
         {project.lifecycle && (
@@ -185,27 +274,78 @@ export default function ProjectDetailPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {decisions.map((d) => (
-                    <tr key={d.id}>
-                      <td className="py-2 pr-4">
-                        <DecisionBadge decision={d.decision} />
-                      </td>
-                      <td className="py-2 pr-4">
-                        <div>
-                          <code className="text-xs">{d.commit_hash.slice(0, 7)}</code>
-                          <p className="truncate text-xs text-muted-foreground" style={{ maxWidth: "200px" }}>
-                            {d.commit_message}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
-                      <td className="hidden py-2 pr-4 text-xs sm:table-cell">{d.episode_type || "-"}</td>
-                      <td className="hidden py-2 pr-4 text-xs md:table-cell">{d.post_category || "-"}</td>
-                      <td className="py-2 text-xs text-muted-foreground">
-                        {new Date(d.created_at).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))}
+                  {decisions.map((d) => {
+                    const isExpanded = expandedDecisions.has(d.id);
+                    return (
+                      <tr
+                        key={d.id}
+                        className="group cursor-pointer hover:bg-muted/30"
+                        onClick={() => {
+                          setExpandedDecisions((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(d.id)) next.delete(d.id);
+                            else next.add(d.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        <td className="py-2 pr-4">
+                          <DecisionBadge decision={d.decision} />
+                        </td>
+                        <td className="py-2 pr-4">
+                          <div>
+                            <code className="text-xs">{d.commit_hash.slice(0, 7)}</code>
+                            <p className="truncate text-xs text-muted-foreground" style={{ maxWidth: "200px" }}>
+                              {d.commit_message}
+                            </p>
+                            {isExpanded && (
+                              <div className="mt-2 space-y-2">
+                                <div className="rounded border border-border bg-muted/50 p-2">
+                                  <p className="text-xs font-medium text-muted-foreground">Reasoning</p>
+                                  <p className="mt-1 whitespace-pre-wrap text-xs">{d.reasoning || "No reasoning recorded."}</p>
+                                </div>
+                                {d.media_tool && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Media: <span className="font-medium text-foreground">{d.media_tool}</span>
+                                  </p>
+                                )}
+                                {d.arc_id && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Arc: <span className="font-mono text-foreground">{d.arc_id.slice(0, 12)}</span>
+                                  </p>
+                                )}
+                                {d.decision === "post_worthy" && (
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      setCreatingDraft(d.id);
+                                      try {
+                                        await createDraftFromDecision(d.id, "x");
+                                      } catch {
+                                        // Silent — draft list will update via data events
+                                      } finally {
+                                        setCreatingDraft(null);
+                                      }
+                                    }}
+                                    disabled={creatingDraft === d.id}
+                                    className="rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                                  >
+                                    {creatingDraft === d.id ? "Creating..." : "Create Draft"}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
+                        <td className="hidden py-2 pr-4 text-xs sm:table-cell">{d.episode_type || "-"}</td>
+                        <td className="hidden py-2 pr-4 text-xs md:table-cell">{d.post_category || "-"}</td>
+                        <td className="py-2 text-xs text-muted-foreground">
+                          {new Date(d.created_at).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

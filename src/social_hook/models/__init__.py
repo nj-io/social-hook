@@ -108,6 +108,7 @@ class Project:
     summary_updated_at: Optional[datetime] = None
     audience_introduced: bool = False
     paused: bool = False
+    discovery_files: Optional[str] = None  # JSON-serialized list of file paths
     created_at: Optional[datetime] = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -120,6 +121,7 @@ class Project:
             "summary_updated_at": _to_iso(self.summary_updated_at),
             "audience_introduced": self.audience_introduced,
             "paused": self.paused,
+            "discovery_files": self.discovery_files,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -134,6 +136,7 @@ class Project:
             summary_updated_at=_from_iso(d.get("summary_updated_at")),
             audience_introduced=bool(d.get("audience_introduced", False)),
             paused=bool(d.get("paused", False)),
+            discovery_files=d.get("discovery_files"),
             created_at=_from_iso(d.get("created_at")),
         )
 

@@ -435,28 +435,65 @@ def assemble_drafter_prompt(
 
     if include_docs and project_context.project.repo_path:
         repo = Path(project_context.project.repo_path)
-        if config.include_readme:
-            readme_path = repo / "README.md"
-            if readme_path.exists():
-                readme_text = readme_path.read_text(encoding="utf-8")
-                if count_tokens(readme_text) > config.max_doc_tokens:
-                    readme_text = (
-                        readme_text[: config.max_doc_tokens * 4]
-                        + "\n[...truncated]"
-                    )
-                sections.append("\n---\n## README")
-                sections.append(readme_text)
-        if config.include_claude_md:
-            claude_path = repo / "CLAUDE.md"
-            if claude_path.exists():
-                claude_text = claude_path.read_text(encoding="utf-8")
-                if count_tokens(claude_text) > config.max_doc_tokens:
-                    claude_text = (
-                        claude_text[: config.max_doc_tokens * 4]
-                        + "\n[...truncated]"
-                    )
-                sections.append("\n---\n## CLAUDE.md")
-                sections.append(claude_text)
+
+        # When audience hasn't been introduced and discovery files exist,
+        # load those files instead of just README+CLAUDE.md for deeper
+        # project understanding in first posts.
+        discovery_files_loaded = False
+        if not project_context.audience_introduced and project_context.project.discovery_files:
+            try:
+                import json as _json
+                disc_files = _json.loads(project_context.project.discovery_files)
+                if disc_files:
+                    sections.append("\n---\n## Project Documentation (Discovery)")
+                    tokens_used = 0
+                    for rel_path in disc_files:
+                        fpath = repo / rel_path
+                        if not fpath.exists() or not fpath.is_file():
+                            continue
+                        try:
+                            content = fpath.read_text(encoding="utf-8", errors="replace")
+                            file_tokens = count_tokens(content)
+                            if tokens_used + file_tokens > config.max_doc_tokens:
+                                remaining = config.max_doc_tokens - tokens_used
+                                if remaining > 100:
+                                    content = content[:remaining * 4] + "\n[...truncated]"
+                                    sections.append(f"\n### {rel_path}")
+                                    sections.append(content)
+                                break
+                            sections.append(f"\n### {rel_path}")
+                            sections.append(content)
+                            tokens_used += file_tokens
+                        except (OSError, UnicodeDecodeError):
+                            continue
+                    discovery_files_loaded = True
+            except (ValueError, TypeError):
+                pass
+
+        # Fallback to README + CLAUDE.md when no discovery files loaded
+        if not discovery_files_loaded:
+            if config.include_readme:
+                readme_path = repo / "README.md"
+                if readme_path.exists():
+                    readme_text = readme_path.read_text(encoding="utf-8")
+                    if count_tokens(readme_text) > config.max_doc_tokens:
+                        readme_text = (
+                            readme_text[: config.max_doc_tokens * 4]
+                            + "\n[...truncated]"
+                        )
+                    sections.append("\n---\n## README")
+                    sections.append(readme_text)
+            if config.include_claude_md:
+                claude_path = repo / "CLAUDE.md"
+                if claude_path.exists():
+                    claude_text = claude_path.read_text(encoding="utf-8")
+                    if count_tokens(claude_text) > config.max_doc_tokens:
+                        claude_text = (
+                            claude_text[: config.max_doc_tokens * 4]
+                            + "\n[...truncated]"
+                        )
+                    sections.append("\n---\n## CLAUDE.md")
+                    sections.append(claude_text)
 
     # Project summary
     if project_context.project_summary:
@@ -529,11 +566,18 @@ def assemble_gatekeeper_prompt(
     project_summary: Optional[str] = None,
     system_snapshot: Optional[str] = None,
     chat_history: Optional[str] = None,
+    recent_decisions: Optional[list[Any]] = None,
+    recent_posts: Optional[list[Any]] = None,
+    lifecycle_phase: Optional[str] = None,
+    active_arcs: Optional[list[Any]] = None,
+    narrative_debt: Optional[int] = None,
+    audience_introduced: Optional[bool] = None,
+    linked_decision: Optional[Any] = None,
 ) -> str:
-    """Assemble gatekeeper system prompt with minimal context.
+    """Assemble gatekeeper system prompt with enriched context.
 
-    Per TECH_ARCH L1632-1654: Pre-injected project summary, current draft,
-    and user message.
+    Per TECH_ARCH: Pre-injected project summary, current draft,
+    and user message, plus enriched project state for better routing.
 
     Args:
         prompt: Base gatekeeper prompt template
@@ -542,6 +586,13 @@ def assemble_gatekeeper_prompt(
         project_summary: Pre-injected project summary (~500 tokens)
         system_snapshot: Compact system status block (live DB + config data)
         chat_history: Recent chat messages for conversational context
+        recent_decisions: Recent evaluation decisions for context
+        recent_posts: Recent published posts for context
+        lifecycle_phase: Current project lifecycle phase
+        active_arcs: Active narrative arcs
+        narrative_debt: Current narrative debt counter
+        audience_introduced: Whether audience has been introduced
+        linked_decision: Decision linked to the current draft
 
     Returns:
         Complete system prompt string
@@ -551,12 +602,62 @@ def assemble_gatekeeper_prompt(
     if system_snapshot:
         sections.append("\n---\n" + system_snapshot)
 
+    # Project State section (between snapshot and summary)
+    state_lines = []
+    if lifecycle_phase is not None:
+        state_lines.append(f"- Lifecycle phase: {lifecycle_phase}")
+    if audience_introduced is not None:
+        state_lines.append(f"- Audience introduced: {audience_introduced}")
+    if narrative_debt is not None:
+        state_lines.append(f"- Narrative debt: {narrative_debt}")
+    if state_lines:
+        sections.append("\n---\n## Project State")
+        sections.extend(state_lines)
+
+    # Active Arcs
+    if active_arcs:
+        sections.append("\n---\n## Active Arcs")
+        for arc in active_arcs:
+            theme = arc.theme if hasattr(arc, "theme") else str(arc)
+            post_count = arc.post_count if hasattr(arc, "post_count") else 0
+            sections.append(f'- "{theme}" ({post_count} posts)')
+
+    # Recent Decisions
+    if recent_decisions:
+        sections.append("\n---\n## Recent Decisions (last %d)" % len(recent_decisions))
+        for d in recent_decisions:
+            decision = d.decision if hasattr(d, "decision") else d.get("decision", "?")
+            commit_hash = d.commit_hash[:8] if hasattr(d, "commit_hash") else "?"
+            msg = d.commit_message or "N/A" if hasattr(d, "commit_message") else d.get("commit_message", "N/A")
+            reasoning = d.reasoning[:80] if hasattr(d, "reasoning") else str(d.get("reasoning", ""))[:80]
+            sections.append(f"- [{decision}] {commit_hash}: {msg} — {reasoning}")
+
+    # Recent Posts
+    if recent_posts:
+        sections.append("\n---\n## Recent Posts (last %d)" % len(recent_posts))
+        for p in recent_posts:
+            platform = p.platform if hasattr(p, "platform") else p.get("platform", "?")
+            content = p.content[:100] if hasattr(p, "content") else str(p.get("content", ""))[:100]
+            sections.append(f"- [{platform}] {content}")
+
     if project_summary:
         sections.append("\n---\n## Project Summary")
         sections.append(project_summary)
 
     if chat_history:
         sections.append("\n---\n" + chat_history)
+
+    # Linked Decision (for current draft)
+    if linked_decision:
+        sections.append("\n---\n## Linked Decision (for current draft)")
+        reasoning = linked_decision.reasoning if hasattr(linked_decision, "reasoning") else linked_decision.get("reasoning", "")
+        sections.append(f"- Reasoning: {reasoning[:200]}")
+        angle = linked_decision.angle if hasattr(linked_decision, "angle") else linked_decision.get("angle")
+        if angle:
+            sections.append(f"- Angle: {angle}")
+        episode_type = linked_decision.episode_type if hasattr(linked_decision, "episode_type") else linked_decision.get("episode_type")
+        if episode_type:
+            sections.append(f"- Episode type: {episode_type}")
 
     sections.append("\n---\n## Current Draft")
     if hasattr(draft, "content"):

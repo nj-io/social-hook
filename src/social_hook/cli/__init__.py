@@ -327,6 +327,75 @@ def bot_status():
         typer.echo("Bot is not running.")
 
 
+@app.command()
+def discover(
+    ctx: typer.Context,
+    project_id: str = typer.Argument(..., help="Project ID to discover"),
+):
+    """Run two-pass project discovery and print results."""
+    from social_hook.config.yaml import load_full_config
+    from social_hook.db.connection import get_connection, init_database
+    from social_hook.db import operations as ops
+    from social_hook.filesystem import get_db_path
+
+    verbose = ctx.obj.get("verbose", False)
+    config_path = ctx.obj.get("config")
+
+    try:
+        config = load_full_config(
+            yaml_path=str(config_path) if config_path else None,
+        )
+    except Exception as e:
+        typer.echo(f"Config error: {e}", err=True)
+        raise typer.Exit(1)
+
+    db_path = get_db_path()
+    conn = init_database(db_path)
+
+    project = ops.get_project(conn, project_id)
+    if project is None:
+        typer.echo(f"Project not found: {project_id}", err=True)
+        conn.close()
+        raise typer.Exit(1)
+
+    from social_hook.config.project import load_project_config
+    from social_hook.llm.discovery import discover_project
+    from social_hook.llm.dry_run import DryRunContext
+    from social_hook.llm.factory import create_client
+
+    project_config = load_project_config(project.repo_path)
+    dry_run = ctx.obj.get("dry_run", False)
+    db_ctx = DryRunContext(conn, dry_run=dry_run)
+
+    client = create_client(config.models.evaluator, config, verbose=verbose)
+
+    typer.echo(f"Discovering project: {project.name} ({project.repo_path})")
+
+    summary, selected_files = discover_project(
+        client=client,
+        repo_path=project.repo_path,
+        project_docs=project_config.context.project_docs,
+        max_doc_tokens=project_config.context.max_doc_tokens,
+        db=db_ctx,
+        project_id=project.id,
+    )
+
+    if summary:
+        if not dry_run:
+            ops.update_project_summary(conn, project.id, summary)
+            ops.update_discovery_files(conn, project.id, selected_files)
+        typer.echo(f"\nSelected files ({len(selected_files)}):")
+        for f in selected_files:
+            typer.echo(f"  {f}")
+        typer.echo(f"\nSummary:\n{summary}")
+    else:
+        typer.echo("Discovery failed - no summary generated.", err=True)
+        conn.close()
+        raise typer.Exit(1)
+
+    conn.close()
+
+
 # =============================================================================
 # Hidden commands (called by hooks, not by users)
 # =============================================================================

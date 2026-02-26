@@ -1,6 +1,7 @@
 """Arc management with business rules (T19)."""
 
 import sqlite3
+from datetime import datetime, timezone
 from typing import Optional
 
 from social_hook.db import operations as ops
@@ -47,6 +48,26 @@ def get_active_arcs(conn: sqlite3.Connection, project_id: str) -> list[Arc]:
 def get_arc(conn: sqlite3.Connection, arc_id: str) -> Optional[Arc]:
     """Get a single arc by ID."""
     return ops.get_arc(conn, arc_id)
+
+
+def increment_arc_post_count(conn: sqlite3.Connection, arc_id: str) -> bool:
+    """Increment an arc's post count and update last_post_at.
+
+    Args:
+        conn: Database connection
+        arc_id: Arc to update
+
+    Returns:
+        True if the arc was updated, False if not found
+    """
+    arc = ops.get_arc(conn, arc_id)
+    if arc is None:
+        return False
+    return ops.update_arc(
+        conn, arc_id,
+        post_count=arc.post_count + 1,
+        last_post_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 def update_arc(

@@ -138,6 +138,7 @@ class Config:
     journey_capture: JourneyCaptureConfig = field(default_factory=JourneyCaptureConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
     channels: dict[str, ChannelConfig] = field(default_factory=dict)
+    notification_level: str = "all_decisions"  # "all_decisions" or "drafts_only"
 
     # Environment variables (populated by load_full_config)
     env: dict[str, str] = field(default_factory=dict)
@@ -329,6 +330,13 @@ def _parse_config(data: dict[str, Any]) -> Config:
             allowed_chat_ids=[str(cid) for cid in chat_ids],
         )
 
+    # Notification level
+    notification_level = data.get("notification_level", "all_decisions")
+    if notification_level not in ("all_decisions", "drafts_only"):
+        raise ConfigError(
+            f"Invalid notification_level '{notification_level}': must be 'all_decisions' or 'drafts_only'"
+        )
+
     return Config(
         models=models,
         platforms=platforms,
@@ -337,6 +345,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
         journey_capture=journey_capture,
         consolidation=consolidation,
         channels=channels,
+        notification_level=notification_level,
     )
 
 

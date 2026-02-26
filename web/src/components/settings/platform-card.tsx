@@ -8,6 +8,11 @@ const FILTERS = ["all", "notable", "significant"];
 const FREQUENCIES = ["high", "moderate", "low", "minimal"];
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+const TIERS: Record<string, string[]> = {
+  x: ["free", "basic", "premium", "pro"],
+  linkedin: ["free", "premium"],
+};
+
 function platformDisplayName(name: string): string {
   const names: Record<string, string> = {
     x: "X (Twitter)",
@@ -105,6 +110,20 @@ export function PlatformCard({ name, config, onChange, onRemove, env, onEnvRefre
             {effectiveFrequency !== "smart default" ? `${effectiveFrequency} frequency` : ""}
           </p>
         </div>
+
+        {/* Tier selector */}
+        {(TIERS[name] || config.type === "custom") && (
+          <select
+            value={config.account_tier ?? ""}
+            onChange={(e) => update({ account_tier: e.target.value || undefined })}
+            className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+          >
+            <option value="">Tier</option>
+            {(TIERS[name] ?? ["free", "premium"]).map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        )}
 
         {/* Priority badge */}
         <select

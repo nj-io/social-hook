@@ -26,8 +26,9 @@ class WebAdapter(MessagingAdapter):
 
     platform = "web"
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, *, scope_id: Optional[str] = None) -> None:
         self._db_path = db_path
+        self._scope_id = scope_id
         self._lock = threading.Lock()
         self._write_count = 0
         self._ensure_table()
@@ -108,10 +109,13 @@ class WebAdapter(MessagingAdapter):
                     id         INTEGER PRIMARY KEY AUTOINCREMENT,
                     type       TEXT NOT NULL,
                     data       TEXT NOT NULL,
+                    session_id TEXT DEFAULT NULL,
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
                 CREATE INDEX IF NOT EXISTS idx_web_events_created
                     ON web_events(created_at);
+                CREATE INDEX IF NOT EXISTS idx_web_events_session
+                    ON web_events(session_id);
                 """
             )
 
@@ -120,8 +124,8 @@ class WebAdapter(MessagingAdapter):
         with self._lock:
             with self._get_conn() as conn:
                 cursor = conn.execute(
-                    "INSERT INTO web_events (type, data) VALUES (?, ?)",
-                    (event_type, json.dumps(data)),
+                    "INSERT INTO web_events (type, data, session_id) VALUES (?, ?, ?)",
+                    (event_type, json.dumps(data), self._scope_id),
                 )
                 row_id = cursor.lastrowid
                 conn.commit()

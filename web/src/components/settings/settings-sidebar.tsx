@@ -15,6 +15,7 @@ const sections = [
   { id: "journey-capture", label: "Journey Capture" },
   { id: "voice-style", label: "Voice & Style" },
   { id: "content-config", label: "Content Config" },
+  { id: "context", label: "Context" },
 ];
 
 export { sections };

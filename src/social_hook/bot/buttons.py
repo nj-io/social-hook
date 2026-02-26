@@ -58,7 +58,7 @@ def _answer_callback(adapter: MessagingAdapter, callback_id: str, text: str = ""
     return adapter.answer_callback(callback_id, text)
 
 
-def handle_callback(event: CallbackEvent, adapter: MessagingAdapter, config: Optional[Any] = None) -> None:
+def handle_callback(event: CallbackEvent, adapter: MessagingAdapter, config: Optional[Any] = None, **kwargs: Any) -> None:
     """Route a callback query to the appropriate handler.
 
     Callback data format: "action:payload" (already parsed in CallbackEvent)
@@ -67,6 +67,7 @@ def handle_callback(event: CallbackEvent, adapter: MessagingAdapter, config: Opt
         event: Normalized callback event
         adapter: Messaging adapter for sending responses
         config: Full Config object
+        **kwargs: Forward-compat for future parameters
     """
     callback_id = event.callback_id
     chat_id = event.chat_id
@@ -98,7 +99,7 @@ def handle_callback(event: CallbackEvent, adapter: MessagingAdapter, config: Opt
 
     handler = handlers.get(action)
     if handler:
-        handler(adapter, chat_id, callback_id, payload, config)
+        handler(adapter, chat_id, callback_id, payload, config, **kwargs)
     else:
         _answer_callback(adapter, callback_id, f"Unknown action: {action}")
 
@@ -109,6 +110,7 @@ def btn_approve(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Handle approve button press."""
     _answer_callback(adapter, callback_id, "Approving...")
@@ -141,6 +143,7 @@ def btn_schedule_optimal(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Handle schedule (optimal time) button press."""
     _answer_callback(adapter, callback_id, "Calculating optimal time...")
@@ -185,6 +188,7 @@ def btn_edit_text(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Handle edit text button press.
 
@@ -233,6 +237,7 @@ def btn_reject(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Handle reject button press (direct reject)."""
     _answer_callback(adapter, callback_id, "Rejecting...")
@@ -261,6 +266,7 @@ def btn_quick_approve(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Approve and schedule at optimal time in one step."""
     _answer_callback(adapter, callback_id, "Approving and scheduling...")
@@ -309,6 +315,7 @@ def btn_schedule_submenu(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Show schedule submenu with optimal/custom options."""
     _answer_callback(adapter, callback_id)
@@ -330,6 +337,7 @@ def btn_schedule_custom(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Prompt user to reply with a custom time."""
     _answer_callback(adapter, callback_id)
@@ -347,6 +355,7 @@ def btn_edit_submenu(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Show edit submenu with text/media/angle options."""
     _answer_callback(adapter, callback_id)
@@ -371,6 +380,7 @@ def btn_edit_media(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Show current media and action buttons (regenerate/remove)."""
     _answer_callback(adapter, callback_id, "Loading media...")
@@ -418,6 +428,7 @@ def btn_media_regen(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Regenerate media using the stored media_spec."""
     _answer_callback(adapter, callback_id, "Regenerating...")
@@ -499,6 +510,7 @@ def btn_media_remove(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Remove media from a draft."""
     _answer_callback(adapter, callback_id, "Removing...")
@@ -540,6 +552,7 @@ def btn_edit_angle(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Prompt user to reply with a new angle."""
     _answer_callback(adapter, callback_id)
@@ -552,6 +565,7 @@ def btn_reject_submenu(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Show reject submenu with just reject/reject with note."""
     _answer_callback(adapter, callback_id)
@@ -573,6 +587,7 @@ def btn_reject_note(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Prompt user to reply with a rejection reason."""
     _answer_callback(adapter, callback_id)
@@ -585,6 +600,7 @@ def btn_cancel(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Handle cancel button press from scheduled list."""
     _answer_callback(adapter, callback_id, "Cancelling...")
@@ -613,6 +629,7 @@ def btn_review(
     callback_id: str,
     draft_id: str,
     config: Optional[Any],
+    **kwargs: Any,
 ) -> None:
     """Show full draft review via button callback."""
     _answer_callback(adapter, callback_id)

@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchDraft, sendCallback } from "@/lib/api";
+import { fetchDraft } from "@/lib/api";
 import type { Decision, Draft } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 import { DecisionBadge } from "@/components/decision-badge";
 import { MediaPreview } from "@/components/media-preview";
+import { MediaSpecEditor } from "@/components/media-spec-editor";
+import { DraftActionPanel } from "@/components/draft-action-panel";
 import { useDataEvents } from "@/lib/use-data-events";
 
 export default function DraftDetailPage() {
@@ -17,7 +19,6 @@ export default function DraftDetailPage() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [actionPending, setActionPending] = useState("");
 
   const reload = useCallback(async () => {
     try {
@@ -43,27 +44,6 @@ export default function DraftDetailPage() {
     }
     load();
   }, [id]);
-
-  async function handleAction(action: string) {
-    if (!draft) return;
-    setActionPending(action);
-    try {
-      await sendCallback(action, draft.id);
-      // Reload draft to see updated status
-      const result = await fetchDraft(id);
-      setDraft(result);
-    } catch {
-      // Error handling - reload anyway
-      try {
-        const result = await fetchDraft(id);
-        setDraft(result);
-      } catch {
-        // Ignore
-      }
-    } finally {
-      setActionPending("");
-    }
-  }
 
   if (loading) {
     return <p className="text-center text-muted-foreground">Loading...</p>;
@@ -131,6 +111,13 @@ export default function DraftDetailPage() {
         </div>
       )}
 
+      {/* Media Spec Editor */}
+      <MediaSpecEditor
+        draftId={draft.id}
+        mediaSpec={draft.media_spec ? (typeof draft.media_spec === "string" ? JSON.parse(draft.media_spec) : draft.media_spec) : {}}
+        onUpdate={reload}
+      />
+
       {/* Reasoning */}
       {draft.reasoning && (
         <div className="rounded-lg border border-border bg-muted/50 p-4">
@@ -143,31 +130,7 @@ export default function DraftDetailPage() {
       {draft.decision && <EvaluatorAnalysis decision={draft.decision} />}
 
       {/* Action buttons */}
-      {draft.status === "draft" && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleAction("approve")}
-            disabled={!!actionPending}
-            className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-700 disabled:opacity-50"
-          >
-            {actionPending === "approve" ? "..." : "Approve"}
-          </button>
-          <button
-            onClick={() => handleAction("reject")}
-            disabled={!!actionPending}
-            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
-          >
-            {actionPending === "reject" ? "..." : "Reject"}
-          </button>
-          <button
-            onClick={() => handleAction("schedule")}
-            disabled={!!actionPending}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
-          >
-            {actionPending === "schedule" ? "..." : "Schedule"}
-          </button>
-        </div>
-      )}
+      <DraftActionPanel draft={draft} onUpdate={reload} />
 
       {/* Audit trail */}
       {draft.changes && draft.changes.length > 0 && (

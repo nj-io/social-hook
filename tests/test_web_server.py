@@ -34,8 +34,11 @@ def tmp_env(tmp_path):
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             type       TEXT NOT NULL,
             data       TEXT NOT NULL,
+            session_id TEXT DEFAULT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+        CREATE INDEX IF NOT EXISTS idx_web_events_session
+            ON web_events(session_id);
         CREATE TABLE IF NOT EXISTS drafts (
             id TEXT PRIMARY KEY,
             project_id TEXT,
@@ -83,6 +86,7 @@ def tmp_env(tmp_path):
             summary_updated_at TEXT,
             audience_introduced INTEGER DEFAULT 0,
             paused INTEGER DEFAULT 0,
+            discovery_files TEXT DEFAULT NULL,
             created_at TEXT DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS decisions (
@@ -835,6 +839,34 @@ class TestInstallationEndpoints:
             data = resp.json()
             assert "journey_capture_enabled" in data
 
+    def test_put_project_summary(self, client, tmp_env):
+        """PUT /api/projects/{id}/summary updates the project summary."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute("INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)", ("proj_1", "Test", "/tmp/repo"))
+        conn.commit()
+        conn.close()
+
+        resp = client.put(
+            "/api/projects/proj_1/summary",
+            json={"summary": "Updated summary text"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+        # Verify summary was persisted
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        row = conn.execute("SELECT summary FROM projects WHERE id = ?", ("proj_1",)).fetchone()
+        conn.close()
+        assert row[0] == "Updated summary text"
+
+    def test_put_project_summary_not_found(self, client, tmp_env):
+        """PUT /api/projects/{id}/summary returns 404 for unknown project."""
+        resp = client.put(
+            "/api/projects/nonexistent/summary",
+            json={"summary": "text"},
+        )
+        assert resp.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # Channels endpoint tests
@@ -954,3 +986,200 @@ class TestChannelsEndpoints:
             assert "Failed to connect" in data["error"]
             # Verify token is NOT in error message
             assert "bad_token" not in data["error"]
+
+
+# ---------------------------------------------------------------------------
+# Session isolation tests
+# ---------------------------------------------------------------------------
+
+
+class TestSessionIsolation:
+    def test_different_sessions_produce_isolated_events(self, client, tmp_env):
+        """Commands with different X-Session-Id headers create isolated event streams."""
+        with patch("social_hook.bot.commands.handle_command") as mock_cmd:
+            mock_cmd.return_value = None
+
+            # Send command from session A
+            resp_a = client.post(
+                "/api/command",
+                json={"text": "/help"},
+                headers={"X-Session-Id": "session-a"},
+            )
+            assert resp_a.status_code == 200
+            events_a = resp_a.json()["events"]
+
+            # Send command from session B
+            resp_b = client.post(
+                "/api/command",
+                json={"text": "/status"},
+                headers={"X-Session-Id": "session-b"},
+            )
+            assert resp_b.status_code == 200
+            events_b = resp_b.json()["events"]
+
+            # Events from session B should NOT include events from session A
+            a_ids = {e["id"] for e in events_a}
+            b_ids = {e["id"] for e in events_b}
+            assert a_ids.isdisjoint(b_ids), "Session events should not overlap"
+
+    def test_session_scoped_history(self, client, tmp_env):
+        """GET /api/events/history scoped to session returns only that session's events."""
+        # Insert events for two sessions directly
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO web_events (type, data, session_id) VALUES (?, ?, ?)",
+            ("message", json.dumps({"text": "from A"}), "sess-1"),
+        )
+        conn.execute(
+            "INSERT INTO web_events (type, data, session_id) VALUES (?, ?, ?)",
+            ("message", json.dumps({"text": "from B"}), "sess-2"),
+        )
+        # Broadcast event (no session)
+        conn.execute(
+            "INSERT INTO web_events (type, data) VALUES (?, ?)",
+            ("data_change", json.dumps({"entity": "draft"})),
+        )
+        conn.commit()
+        conn.close()
+
+        # Session 1 should see its event + broadcast
+        resp = client.get(
+            "/api/events/history",
+            headers={"X-Session-Id": "sess-1"},
+        )
+        assert resp.status_code == 200
+        events = resp.json()["events"]
+        texts = [e["data"].get("text") for e in events]
+        assert "from A" in texts
+        assert "from B" not in texts
+
+    def test_broadcast_events_visible_to_all_sessions(self, client, tmp_env):
+        """Events with session_id=NULL (broadcast) appear for all sessions."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO web_events (type, data) VALUES (?, ?)",
+            ("message", json.dumps({"text": "broadcast msg"})),
+        )
+        conn.commit()
+        conn.close()
+
+        # Both sessions should see the broadcast event
+        for session in ("alpha", "beta"):
+            resp = client.get(
+                "/api/events/history",
+                headers={"X-Session-Id": session},
+            )
+            assert resp.status_code == 200
+            events = resp.json()["events"]
+            texts = [e["data"].get("text") for e in events]
+            assert "broadcast msg" in texts
+
+    def test_scoped_events_only_for_their_session(self, client, tmp_env):
+        """Events with a session_id only appear in that session's history."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO web_events (type, data, session_id) VALUES (?, ?, ?)",
+            ("message", json.dumps({"text": "private"}), "only-me"),
+        )
+        conn.commit()
+        conn.close()
+
+        # Same session should see it
+        resp = client.get(
+            "/api/events/history",
+            headers={"X-Session-Id": "only-me"},
+        )
+        events = resp.json()["events"]
+        assert any(e["data"].get("text") == "private" for e in events)
+
+        # Different session should NOT see it
+        resp = client.get(
+            "/api/events/history",
+            headers={"X-Session-Id": "other-session"},
+        )
+        events = resp.json()["events"]
+        assert not any(e["data"].get("text") == "private" for e in events)
+
+    def test_clear_events_scoped_to_session(self, client, tmp_env):
+        """POST /api/events/clear only clears the requesting session's events."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO web_events (type, data, session_id) VALUES (?, ?, ?)",
+            ("message", json.dumps({"text": "keep me"}), "session-keep"),
+        )
+        conn.execute(
+            "INSERT INTO web_events (type, data, session_id) VALUES (?, ?, ?)",
+            ("message", json.dumps({"text": "delete me"}), "session-delete"),
+        )
+        conn.commit()
+        conn.close()
+
+        # Clear session-delete
+        resp = client.post(
+            "/api/events/clear",
+            headers={"X-Session-Id": "session-delete"},
+        )
+        assert resp.status_code == 200
+
+        # Verify session-delete events are gone
+        resp = client.get(
+            "/api/events/history",
+            headers={"X-Session-Id": "session-delete"},
+        )
+        events = resp.json()["events"]
+        assert not any(e["data"].get("text") == "delete me" for e in events)
+
+        # Verify session-keep events are still there
+        resp = client.get(
+            "/api/events/history",
+            headers={"X-Session-Id": "session-keep"},
+        )
+        events = resp.json()["events"]
+        assert any(e["data"].get("text") == "keep me" for e in events)
+
+    def test_message_endpoint_session_scoped(self, client, tmp_env):
+        """POST /api/message uses session-scoped adapter."""
+        with patch("social_hook.bot.commands.handle_message") as mock_msg:
+            mock_msg.return_value = None
+
+            resp = client.post(
+                "/api/message",
+                json={"text": "hello"},
+                headers={"X-Session-Id": "msg-session"},
+            )
+            assert resp.status_code == 200
+
+            # Verify handler was called with scoped chat_id
+            call_args = mock_msg.call_args
+            msg_arg = call_args[0][0]
+            assert msg_arg.chat_id == "web:msg-session"
+
+    def test_callback_endpoint_session_scoped(self, client, tmp_env):
+        """POST /api/callback uses session-scoped adapter."""
+        with patch("social_hook.bot.buttons.handle_callback") as mock_cb:
+            mock_cb.return_value = None
+
+            resp = client.post(
+                "/api/callback",
+                json={"action": "approve", "payload": "draft_1"},
+                headers={"X-Session-Id": "cb-session"},
+            )
+            assert resp.status_code == 200
+
+            # Verify handler was called with scoped chat_id
+            call_args = mock_cb.call_args
+            event_arg = call_args[0][0]
+            assert event_arg.chat_id == "web:cb-session"
+
+    def test_default_session_without_header(self, client, tmp_env):
+        """Endpoints work with default session when no X-Session-Id header sent."""
+        with patch("social_hook.bot.commands.handle_command") as mock_cmd:
+            mock_cmd.return_value = None
+
+            # No X-Session-Id header — should default to "web"
+            resp = client.post("/api/command", json={"text": "/help"})
+            assert resp.status_code == 200
+
+            call_args = mock_cmd.call_args
+            msg_arg = call_args[0][0]
+            assert msg_arg.chat_id == "web:web"

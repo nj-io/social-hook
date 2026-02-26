@@ -92,6 +92,7 @@ class LogDecisionInput(BaseModel):
     episode_type: Optional[EpisodeTypeSchema] = None
     post_category: Optional[PostCategorySchema] = None
     arc_id: Optional[str] = None
+    new_arc_theme: Optional[str] = None
     media_tool: Optional[MediaTool] = None
     include_project_docs: Optional[bool] = None
     commit_summary: Optional[str] = None
@@ -131,7 +132,11 @@ class LogDecisionInput(BaseModel):
                     },
                     "arc_id": {
                         "type": "string",
-                        "description": "ID of active arc, if applicable",
+                        "description": "ID of an existing active arc this commit continues. Mutually exclusive with new_arc_theme.",
+                    },
+                    "new_arc_theme": {
+                        "type": "string",
+                        "description": "Theme for a NEW narrative arc this commit starts (e.g. 'Building the auth system'). Mutually exclusive with arc_id.",
                     },
                     "media_tool": {
                         "type": "string",

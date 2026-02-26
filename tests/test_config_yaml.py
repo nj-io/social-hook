@@ -407,3 +407,38 @@ class TestChannelConfigParsing:
         """validate_config works with channels data."""
         result = validate_config({"channels": {"telegram": {"enabled": True}}})
         assert result.channels["telegram"].enabled is True
+
+
+class TestNotificationLevelConfig:
+    """Test notification_level config parsing and validation."""
+
+    def test_default_all_decisions(self):
+        """Default notification_level is all_decisions."""
+        config = Config()
+        assert config.notification_level == "all_decisions"
+
+    def test_all_decisions_from_yaml(self, temp_dir):
+        """Parse notification_level=all_decisions from YAML."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text("notification_level: all_decisions\n")
+        config = load_config(config_path)
+        assert config.notification_level == "all_decisions"
+
+    def test_drafts_only_from_yaml(self, temp_dir):
+        """Parse notification_level=drafts_only from YAML."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text("notification_level: drafts_only\n")
+        config = load_config(config_path)
+        assert config.notification_level == "drafts_only"
+
+    def test_invalid_level_raises(self, temp_dir):
+        """Invalid notification_level raises ConfigError."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text("notification_level: everything\n")
+        with pytest.raises(ConfigError, match="Invalid notification_level"):
+            load_config(config_path)
+
+    def test_validate_config_with_notification_level(self):
+        """validate_config accepts valid notification_level."""
+        result = validate_config({"notification_level": "drafts_only"})
+        assert result.notification_level == "drafts_only"

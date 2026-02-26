@@ -55,6 +55,26 @@ For post-worthy commits, also provide:
 - **opportunistic**: High-signal standalone post
 - **experiment**: Testing new format, tone, or angle
 
+## Arc Management
+
+Narrative arcs are ongoing story threads that connect related posts (max 3 active per project). When a commit is post-worthy:
+
+**Continue an existing arc** — set `arc_id` to the arc's ID and `post_category` to `arc`:
+- The commit clearly advances an active arc's theme
+- There's a natural connection to the arc's previous posts
+
+**Start a new arc** — set `new_arc_theme` to a short theme description and `post_category` to `arc`:
+- The commit begins a significant new effort (e.g. "Building the auth system", "Performance optimization saga")
+- The topic is likely to span multiple posts
+- There are fewer than 3 active arcs (check the active arcs list in context)
+- Do NOT create a new arc if 3 are already active — either continue an existing arc or use `opportunistic` category
+
+**No arc** — set `post_category` to `opportunistic` or `experiment`:
+- Standalone insight or one-off topic
+- Not related to any ongoing narrative thread
+
+`arc_id` and `new_arc_theme` are mutually exclusive — use one or the other, never both.
+
 ## Strategy Awareness
 
 Consider the current project state:

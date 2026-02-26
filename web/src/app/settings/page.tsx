@@ -1,8 +1,8 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { fetchConfig, fetchContentConfig, fetchEnv, fetchProjects, fetchSocialContext, updateConfig, updateContentConfig, updateSocialContext } from "@/lib/api";
+import { fetchConfig, fetchContentConfig, fetchContentConfigParsed, fetchEnv, fetchProjects, fetchSocialContext, updateConfig, updateContentConfig, updateContentConfigParsed, updateSocialContext } from "@/lib/api";
+import { useSectionNav } from "@/lib/use-section-nav";
 import type { ChannelConfig, Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig } from "@/lib/types";
 import { SettingsSidebar, sections } from "@/components/settings/settings-sidebar";
 import { ModelsSection } from "@/components/settings/models-section";
@@ -31,37 +31,43 @@ const DEFAULT_SCHEDULING: SchedulingConfig = {
 };
 
 function SettingsContent() {
-  const searchParams = useSearchParams();
-  const [activeSection, setActiveSection] = useState(searchParams.get("section") || "models");
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [envData, setEnvData] = useState<{ env: Record<string, string>; known_keys: string[]; key_groups: Record<string, string[]> } | null>(null);
   const [socialCtx, setSocialCtx] = useState<{ content: string; path: string } | null>(null);
   const [contentCfg, setContentCfg] = useState<{ content: string; path: string } | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectPath, setSelectedProjectPath] = useState("");
+  const [contextConfig, setContextConfig] = useState<{ max_doc_tokens?: number; project_docs?: string[] }>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
-  const scrollingToRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState("100vh");
 
+  const { activeSection, scrollToSection } = useSectionNav({
+    sections,
+    defaultSection: "models",
+    scrollContainerRef,
+  });
+
   const loadAll = useCallback(async () => {
     try {
-      const [cfgRes, envRes, scRes, ccRes, projRes] = await Promise.all([
+      const [cfgRes, envRes, scRes, ccRes, projRes, ccParsed] = await Promise.all([
         fetchConfig(),
         fetchEnv(),
         fetchSocialContext(),
         fetchContentConfig(),
         fetchProjects(),
+        fetchContentConfigParsed(),
       ]);
       setConfig(cfgRes.config);
       setEnvData(envRes);
       setSocialCtx(scRes);
       setContentCfg(ccRes);
       setProjects(projRes.projects);
+      setContextConfig(ccParsed.context || {});
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load settings");
     } finally {
@@ -84,56 +90,6 @@ function SettingsContent() {
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
   }, [loading]);
-
-  // Scroll-spy: update active section based on scroll position within the content panel
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const sectionIds = sections.map((s) => s.id);
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (scrollingToRef.current) return;
-        // Find the topmost visible section
-        const visible: { id: string; top: number }[] = [];
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            visible.push({ id: entry.target.id, top: entry.boundingClientRect.top });
-          }
-        }
-        if (visible.length > 0) {
-          // Pick the one closest to the top of the scroll container
-          visible.sort((a, b) => a.top - b.top);
-          const topId = visible[0].id;
-          if (sectionIds.includes(topId)) {
-            setActiveSection(topId);
-          }
-        }
-      },
-      { root: container, rootMargin: "0px 0px -60% 0px", threshold: 0 }
-    );
-
-    // Observe all section elements
-    for (const id of sectionIds) {
-      const el = document.getElementById(id);
-      if (el) observer.observe(el);
-    }
-
-    return () => observer.disconnect();
-  }, [loading]);
-
-  function scrollToSection(id: string) {
-    setActiveSection(id);
-    const el = document.getElementById(id);
-    const container = scrollContainerRef.current;
-    if (!el || !container) return;
-    scrollingToRef.current = true;
-    const top = el.offsetTop - container.offsetTop;
-    container.scrollTo({ top, behavior: "smooth" });
-    // Re-enable scroll-spy after animation
-    setTimeout(() => {
-      scrollingToRef.current = false;
-    }, 600);
-  }
 
   // Refresh content config (called when Media Generation guidance is saved)
   const refreshContentConfig = useCallback(async () => {
@@ -466,6 +422,62 @@ function SettingsContent() {
                   </div>
                 </div>
               )}
+            </div>
+          </section>
+
+          <section id="context" className="pt-1">
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold">Context</h2>
+              <p className="text-sm text-muted-foreground">
+                Control how much project documentation the AI reads when generating summaries and drafts.
+              </p>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Max Document Tokens</label>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Maximum tokens to include from project documentation files (README, CLAUDE.md, discovery files)
+                  when generating summaries and drafts. Higher values give the AI more project context but use
+                  more of the context window. Default: 10,000.
+                </p>
+                <input
+                  type="number"
+                  min={1000}
+                  max={100000}
+                  step={1000}
+                  value={contextConfig.max_doc_tokens ?? 10000}
+                  onChange={async (e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (isNaN(val)) return;
+                    setContextConfig((prev) => ({ ...prev, max_doc_tokens: val }));
+                  }}
+                  onBlur={async () => {
+                    await updateContentConfigParsed({ context: { ...contextConfig } });
+                  }}
+                  className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Priority Documentation Files</label>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Glob patterns for files to prioritize during project discovery (e.g., docs/ARCHITECTURE.md,
+                  src/**/README.md). These files are loaded first when generating project summaries. One
+                  pattern per line.
+                </p>
+                <textarea
+                  rows={4}
+                  value={(contextConfig.project_docs || []).join("\n")}
+                  onChange={(e) => {
+                    const docs = e.target.value.split("\n").filter((l) => l.trim());
+                    setContextConfig((prev) => ({ ...prev, project_docs: docs }));
+                  }}
+                  onBlur={async () => {
+                    await updateContentConfigParsed({ context: { ...contextConfig } });
+                  }}
+                  placeholder="docs/ARCHITECTURE.md&#10;src/**/README.md"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-accent"
+                />
+              </div>
             </div>
           </section>
         </div>

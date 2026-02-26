@@ -216,6 +216,32 @@ def run_trigger(
         parent_timestamp=commit.parent_timestamp,
     )
 
+    # 6b. Auto-discovery: seed project summary if missing
+    if getattr(context, "project_summary", None) is None:
+        try:
+            from social_hook.llm.factory import create_client as _create_client
+            from social_hook.llm.discovery import discover_project
+
+            discovery_client = _create_client(config.models.evaluator, config, verbose=verbose)
+            summary, selected_files = discover_project(
+                client=discovery_client,
+                repo_path=repo_path,
+                project_docs=project_config.context.project_docs if project_config else [],
+                max_doc_tokens=project_config.context.max_doc_tokens if project_config else 10000,
+                db=db,
+                project_id=project.id,
+            )
+            if summary:
+                db.update_project_summary(project.id, summary)
+                db.update_discovery_files(project.id, selected_files)
+                context.project_summary = summary
+                if verbose:
+                    print(f"Project discovery complete: {len(selected_files)} files analyzed")
+        except Exception as e:
+            logger.warning(f"Project discovery failed (non-fatal): {e}")
+            if verbose:
+                print(f"Project discovery skipped: {e}", file=sys.stderr)
+
     if verbose:
         print(f"Evaluating commit {commit.hash[:8]}: {commit.message}")
 
@@ -276,6 +302,34 @@ def run_trigger(
     )
     db.insert_decision(decision)
     db.emit_data_event("decision", "created", decision.id, project.id)
+
+    # 8b. Arc activation: create new arc or link to existing
+    if evaluation.decision == "post_worthy":
+        _arc_id = getattr(evaluation, "arc_id", None)
+        _new_arc_theme = getattr(evaluation, "new_arc_theme", None)
+
+        if _new_arc_theme and not _arc_id:
+            # Evaluator wants to start a new arc
+            try:
+                from social_hook.narrative.arcs import create_arc as _create_arc
+                new_arc_id = _create_arc(db.conn, project.id, _new_arc_theme)
+                # Update decision with the new arc ID
+                db.update_decision(decision.id, arc_id=new_arc_id)
+                decision.arc_id = new_arc_id
+                if verbose:
+                    print(f"Created new arc: {new_arc_id} ({_new_arc_theme})")
+            except Exception as e:
+                logger.warning(f"Arc creation failed (non-fatal): {e}")
+                if verbose:
+                    print(f"Arc creation skipped: {e}", file=sys.stderr)
+
+    # 8c. Send decision notification for non-post_worthy decisions
+    if (
+        not dry_run
+        and config.notification_level == "all_decisions"
+        and evaluation.decision != "post_worthy"
+    ):
+        _send_decision_notification(config, project, commit, decision)
 
     if verbose:
         print(f"Decision: {evaluation.decision}")
@@ -428,6 +482,16 @@ def run_trigger(
                 if verbose:
                     print(f"LLM API error during drafting for {pname}: {e}", file=sys.stderr)
                 # Continue with other platforms
+
+        # Increment arc post count if drafts were created for an arc
+        if created_drafts and decision.arc_id:
+            try:
+                from social_hook.narrative.arcs import increment_arc_post_count
+                increment_arc_post_count(db.conn, decision.arc_id)
+                if verbose:
+                    print(f"Incremented post count for arc: {decision.arc_id}")
+            except Exception as e:
+                logger.warning(f"Arc post count increment failed (non-fatal): {e}")
 
         # Send notifications
         if created_drafts and not dry_run:
@@ -583,6 +647,52 @@ def _send_notifications(config, project, commit, created_drafts):
             from social_hook.bot.commands import set_chat_draft_context
             for chat_id in chat_ids:
                 set_chat_draft_context(chat_id, draft.id, project.id)
+
+
+def _send_decision_notification(config, project, commit, decision):
+    """Send a notification for a non-post_worthy decision to all configured channels."""
+    from social_hook.messaging.base import OutboundMessage
+
+    reasoning_preview = (decision.reasoning[:200] + "...") if len(decision.reasoning) > 200 else decision.reasoning
+
+    msg_text = (
+        f"Commit evaluated\n\n"
+        f"Project: {project.name}\n"
+        f"Commit: {commit.hash[:8]} - {commit.message}\n"
+        f"Decision: {decision.decision}\n"
+        f"Reasoning: {reasoning_preview}"
+    )
+    msg = OutboundMessage(text=msg_text)
+
+    channels = getattr(config, "channels", None) or {}
+
+    # Web dashboard
+    web_ch = channels.get("web")
+    if not web_ch or web_ch.enabled:
+        try:
+            from social_hook.messaging.web import WebAdapter
+            from social_hook.filesystem import get_db_path as _get_db_path
+            web_adapter = WebAdapter(db_path=str(_get_db_path()))
+            web_adapter.send_message("web", msg)
+        except Exception as e:
+            logger.warning(f"Web decision notification failed: {e}")
+
+    # Telegram
+    token = config.env.get("TELEGRAM_BOT_TOKEN")
+    telegram_ch = channels.get("telegram")
+    telegram_enabled = telegram_ch.enabled if telegram_ch else bool(token)
+    chat_ids = (
+        telegram_ch.allowed_chat_ids if telegram_ch
+        else [c.strip() for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if c.strip()]
+    )
+
+    if telegram_enabled and token and chat_ids:
+        from social_hook.messaging.telegram import TelegramAdapter
+        adapter = TelegramAdapter(token=token)
+        for chat_id in chat_ids:
+            result = adapter.send_message(chat_id, msg)
+            if not result.success:
+                logger.warning(f"Failed to send Telegram decision notification to {chat_id}")
 
 
 def _needs_thread(draft_result, platform: str, tier: str,

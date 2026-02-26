@@ -1219,3 +1219,247 @@ class TestParseThreadTweetsThreshold:
         tweets = _parse_thread_tweets(content, thread_min=4)
         # 3 tweets < 4 min, numbered parse fails, try separators, paragraphs, then fallback
         assert len(tweets) == 1  # fallback single
+
+
+# =============================================================================
+# Decision notification tests (Chunk 3)
+# =============================================================================
+
+
+class TestDecisionNotification:
+    """Tests for _send_decision_notification and notification_level config."""
+
+    @patch("social_hook.trigger._send_decision_notification")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_notification_sent_for_not_post_worthy(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_send_notif,
+    ):
+        """Decision notification sent for not_post_worthy when level=all_decisions."""
+        from social_hook.config.platforms import OutputPlatformConfig
+
+        cfg = MagicMock()
+        cfg.platforms = {
+            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+        }
+        cfg.media_generation.enabled = False
+        cfg.notification_level = "all_decisions"
+        cfg.channels = {}
+        cfg.env.get = lambda key, default="": {}.get(key, default)
+        mock_config.return_value = cfg
+
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test-proj", repo_path="/tmp")
+
+        commit = MagicMock()
+        commit.hash = "abc12345"
+        commit.message = "Fix typo"
+        commit.timestamp = None
+        commit.parent_timestamp = None
+        mock_parse.return_value = commit
+        mock_context.return_value = MagicMock(project_summary="test")
+        mock_proj_config.return_value = MagicMock()
+
+        evaluator_instance = MagicMock()
+        evaluation = MagicMock()
+        evaluation.decision = "not_post_worthy"
+        evaluation.reasoning = "Minor fix"
+        evaluation.angle = None
+        evaluation.episode_type = None
+        evaluation.post_category = None
+        evaluation.arc_id = None
+        evaluation.media_tool = None
+        evaluation.platforms = {}
+        evaluation.commit_summary = None
+        evaluator_instance.evaluate.return_value = evaluation
+        mock_evaluator_cls.return_value = evaluator_instance
+
+        exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+        assert exit_code == 0
+        mock_send_notif.assert_called_once()
+        args = mock_send_notif.call_args[0]
+        assert args[1].name == "test-proj"  # project
+
+    @patch("social_hook.trigger._send_decision_notification")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_notification_skipped_for_post_worthy(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_send_notif,
+    ):
+        """Decision notification NOT sent for post_worthy (draft notification handles it)."""
+        from social_hook.config.platforms import OutputPlatformConfig
+        from social_hook.config.yaml import ChannelConfig
+
+        cfg = MagicMock()
+        cfg.platforms = {
+            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+        }
+        cfg.media_generation.enabled = False
+        cfg.notification_level = "all_decisions"
+        cfg.channels = {"web": ChannelConfig(enabled=False)}
+        cfg.env.get = lambda key, default="": {}.get(key, default)
+        cfg.scheduling.timezone = "UTC"
+        cfg.scheduling.max_posts_per_day = 3
+        cfg.scheduling.min_gap_minutes = 30
+        cfg.scheduling.optimal_days = ["Tue", "Wed", "Thu"]
+        cfg.scheduling.optimal_hours = [9, 12, 17]
+        cfg.scheduling.max_per_week = 10
+        cfg.scheduling.thread_min_tweets = 4
+        mock_config.return_value = cfg
+
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test-proj", repo_path="/tmp")
+
+        commit = MagicMock()
+        commit.hash = "abc12345"
+        commit.message = "Add feature"
+        commit.timestamp = None
+        commit.parent_timestamp = None
+        mock_parse.return_value = commit
+        mock_context.return_value = MagicMock(project_summary="test")
+        mock_proj_config.return_value = MagicMock()
+
+        evaluator_instance = MagicMock()
+        evaluation = MagicMock()
+        evaluation.decision = "post_worthy"
+        evaluation.reasoning = "Great commit"
+        evaluation.angle = "feature"
+        evaluation.episode_type = "launch"
+        evaluation.post_category = "arc"
+        evaluation.arc_id = None
+        evaluation.media_tool = None
+        evaluation.platforms = {}
+        evaluation.commit_summary = None
+        evaluator_instance.evaluate.return_value = evaluation
+        mock_evaluator_cls.return_value = evaluator_instance
+
+        exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+        assert exit_code == 0
+        mock_send_notif.assert_not_called()
+
+    @patch("social_hook.trigger._send_decision_notification")
+    @patch("social_hook.llm.evaluator.Evaluator")
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_notification_skipped_when_drafts_only(
+        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_create_client,
+        mock_evaluator_cls, mock_send_notif,
+    ):
+        """Decision notification NOT sent when notification_level=drafts_only."""
+        cfg = MagicMock()
+        cfg.platforms = {}
+        cfg.media_generation.enabled = False
+        cfg.notification_level = "drafts_only"
+        cfg.channels = {}
+        cfg.env.get = lambda key, default="": {}.get(key, default)
+        mock_config.return_value = cfg
+
+        mock_init_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test-proj", repo_path="/tmp")
+
+        commit = MagicMock()
+        commit.hash = "abc12345"
+        commit.message = "Fix typo"
+        commit.timestamp = None
+        commit.parent_timestamp = None
+        mock_parse.return_value = commit
+        mock_context.return_value = MagicMock(project_summary="test")
+        mock_proj_config.return_value = MagicMock()
+
+        evaluator_instance = MagicMock()
+        evaluation = MagicMock()
+        evaluation.decision = "not_post_worthy"
+        evaluation.reasoning = "Minor fix"
+        evaluation.angle = None
+        evaluation.episode_type = None
+        evaluation.post_category = None
+        evaluation.arc_id = None
+        evaluation.media_tool = None
+        evaluation.platforms = {}
+        evaluation.commit_summary = None
+        evaluator_instance.evaluate.return_value = evaluation
+        mock_evaluator_cls.return_value = evaluator_instance
+
+        exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+        assert exit_code == 0
+        mock_send_notif.assert_not_called()
+
+    def test_send_decision_notification_message_format(self):
+        """_send_decision_notification formats message correctly."""
+        from social_hook.trigger import _send_decision_notification
+        from social_hook.messaging.base import OutboundMessage
+        from social_hook.config.yaml import ChannelConfig
+
+        cfg = MagicMock()
+        cfg.channels = {"web": ChannelConfig(enabled=False)}
+        cfg.env.get = lambda key, default="": {}.get(key, default)
+
+        project = MagicMock()
+        project.name = "social-hook"
+        commit = MagicMock()
+        commit.hash = "abc12345abcdef"
+        commit.message = "Fix typo in README"
+        decision = MagicMock()
+        decision.decision = "not_post_worthy"
+        decision.reasoning = "Minor documentation fix, not interesting"
+
+        with patch("social_hook.messaging.web.WebAdapter") as mock_web:
+            _send_decision_notification(cfg, project, commit, decision)
+            # Web disabled, so WebAdapter.send_message not called
+            mock_web.return_value.send_message.assert_not_called()
+
+    def test_send_decision_notification_web(self):
+        """_send_decision_notification sends to web when enabled."""
+        from social_hook.trigger import _send_decision_notification
+
+        cfg = MagicMock()
+        cfg.channels = {}  # No web config = enabled by default
+        cfg.env.get = lambda key, default="": {}.get(key, default)
+
+        project = MagicMock()
+        project.name = "test-proj"
+        commit = MagicMock()
+        commit.hash = "abc12345abcdef"
+        commit.message = "Fix typo"
+        decision = MagicMock()
+        decision.decision = "not_post_worthy"
+        decision.reasoning = "Minor fix"
+
+        with patch("social_hook.trigger.get_db_path", return_value=Path("/tmp/test.db")):
+            with patch("social_hook.messaging.web.WebAdapter") as mock_web_cls:
+                mock_adapter = MagicMock()
+                mock_web_cls.return_value = mock_adapter
+                _send_decision_notification(cfg, project, commit, decision)
+                mock_adapter.send_message.assert_called_once()
+                msg = mock_adapter.send_message.call_args[0][1]
+                assert "not_post_worthy" in msg.text
+                assert "test-proj" in msg.text
+                assert "abc12345" in msg.text

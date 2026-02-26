@@ -47,6 +47,13 @@ class Gatekeeper:
         project_id: Optional[str] = None,
         system_snapshot: Optional[str] = None,
         chat_history: Optional[str] = None,
+        recent_decisions: Optional[list] = None,
+        recent_posts: Optional[list] = None,
+        lifecycle_phase: Optional[str] = None,
+        active_arcs: Optional[list] = None,
+        narrative_debt: Optional[int] = None,
+        audience_introduced: Optional[bool] = None,
+        linked_decision: Optional[Any] = None,
     ) -> RouteActionInput:
         """Route a user message to the appropriate handler.
 
@@ -58,6 +65,13 @@ class Gatekeeper:
             project_id: Project ID for usage tracking
             system_snapshot: Compact system status block for context
             chat_history: Recent chat messages for conversational context
+            recent_decisions: Recent evaluation decisions for context
+            recent_posts: Recent published posts for context
+            lifecycle_phase: Current project lifecycle phase
+            active_arcs: Active narrative arcs
+            narrative_debt: Current narrative debt counter
+            audience_introduced: Whether audience has been introduced
+            linked_decision: Decision linked to the current draft
 
         Returns:
             Validated RouteActionInput with routing decision
@@ -72,6 +86,13 @@ class Gatekeeper:
             prompt, draft_context, user_message, project_summary,
             system_snapshot=system_snapshot,
             chat_history=chat_history,
+            recent_decisions=recent_decisions,
+            recent_posts=recent_posts,
+            lifecycle_phase=lifecycle_phase,
+            active_arcs=active_arcs,
+            narrative_debt=narrative_debt,
+            audience_introduced=audience_introduced,
+            linked_decision=linked_decision,
         )
 
         response = self.client.complete(

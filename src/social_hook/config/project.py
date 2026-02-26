@@ -21,6 +21,7 @@ class ContextConfig:
     include_readme: bool = True
     include_claude_md: bool = True
     max_doc_tokens: int = 10000
+    project_docs: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -190,6 +191,7 @@ def _parse_context_config(data: dict) -> ContextConfig:
         include_readme=data.get("include_readme", True),
         include_claude_md=data.get("include_claude_md", True),
         max_doc_tokens=data.get("max_doc_tokens", 10000),
+        project_docs=data.get("project_docs", []),
     )
 
 

@@ -1,7 +1,10 @@
 import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
+import { getSessionId } from "./session";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
+  const headers = new Headers(init?.headers);
+  headers.set("X-Session-Id", getSessionId());
+  const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`API error ${res.status}: ${body}`);
@@ -89,6 +92,26 @@ export async function fetchProjectArcs(
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/arcs`);
 }
 
+// Project summary
+export async function updateProjectSummary(
+  projectId: string,
+  summary: string,
+): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/summary`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ summary }),
+  });
+}
+
+export async function regenerateProjectSummary(
+  projectId: string,
+): Promise<{ summary: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/regenerate-summary`, {
+    method: "POST",
+  });
+}
+
 // Bot interaction
 export async function sendCommand(text: string): Promise<{ events: WebEvent[] }> {
   return apiFetch("/api/command", {
@@ -103,6 +126,18 @@ export async function sendCallback(action: string, payload: string): Promise<{ e
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, payload }),
+  });
+}
+
+export async function sendCallbackExtended(
+  action: string,
+  payload: string,
+  data: Record<string, unknown>,
+): Promise<{ events: WebEvent[] }> {
+  return apiFetch("/api/callback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, payload, ...data }),
   });
 }
 
@@ -217,4 +252,28 @@ export async function fetchChannelsStatus(): Promise<ChannelsStatusResponse> {
 
 export async function testChannel(channel: string): Promise<{ success: boolean; error?: string; info?: Record<string, string> }> {
   return apiFetch(`/api/channels/${encodeURIComponent(channel)}/test`, { method: "POST" });
+}
+
+// Draft media spec
+export async function updateDraftMediaSpec(
+  draftId: string,
+  mediaSpec: Record<string, unknown>,
+): Promise<{ status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/media-spec`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ media_spec: mediaSpec }),
+  });
+}
+
+// Decisions
+export async function createDraftFromDecision(
+  decisionId: string,
+  platform: string,
+): Promise<{ draft_id: string; status: string }> {
+  return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}/create-draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ platform }),
+  });
 }

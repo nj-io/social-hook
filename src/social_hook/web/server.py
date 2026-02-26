@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -104,12 +104,19 @@ def _load_config_from_disk() -> Config:
         return Config()
 
 
-def _get_adapter():
-    """Return lazy WebAdapter singleton."""
+def _get_adapter(scope_id: str | None = None):
+    """Return a WebAdapter, optionally scoped to a session.
+
+    With no scope_id, returns a shared broadcast adapter (events visible to all).
+    With a scope_id, returns a session-scoped adapter (events scoped to that session).
+    """
+    if scope_id is not None:
+        from social_hook.messaging.web import WebAdapter
+        return WebAdapter(db_path=str(get_db_path()), scope_id=scope_id)
+
     global _adapter
     if _adapter is None:
         from social_hook.messaging.web import WebAdapter
-
         _adapter = WebAdapter(db_path=str(get_db_path()))
     return _adapter
 
@@ -176,14 +183,26 @@ class ValidateKeyRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _get_events_since(last_id: int) -> list[dict]:
-    """Query web_events for rows with id > last_id."""
+def _get_events_since(last_id: int, session_id: str | None = None) -> list[dict]:
+    """Query web_events for rows with id > last_id.
+
+    If session_id is provided, returns only events that are either unscoped
+    (broadcast, session_id IS NULL) or scoped to that specific session.
+    """
     conn = _get_conn()
     try:
-        rows = conn.execute(
-            "SELECT id, type, data, created_at FROM web_events WHERE id > ? ORDER BY id ASC",
-            (last_id,),
-        ).fetchall()
+        if session_id:
+            rows = conn.execute(
+                "SELECT id, type, data, created_at FROM web_events "
+                "WHERE id > ? AND (session_id IS NULL OR session_id = ?) "
+                "ORDER BY id ASC",
+                (last_id, session_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, type, data, created_at FROM web_events WHERE id > ? ORDER BY id ASC",
+                (last_id,),
+            ).fetchall()
         return [
             {"id": row["id"], "type": row["type"], "data": json.loads(row["data"]),
              "created_at": row["created_at"]}
@@ -196,42 +215,44 @@ def _get_events_since(last_id: int) -> list[dict]:
 
 
 @app.get("/api/events/history")
-async def api_events_history():
-    """Return all chat events for initial page load."""
-    return {"events": _get_events_since(0)}
+async def api_events_history(x_session_id: str = Header("web")):
+    """Return all chat events for initial page load, scoped to session."""
+    return {"events": _get_events_since(0, session_id=x_session_id)}
 
 
 @app.post("/api/command")
-async def api_command(body: CommandRequest):
+async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
     """Execute a bot command via the web adapter."""
     from social_hook.bot.commands import handle_command
 
-    adapter = _get_adapter()
+    adapter = _get_adapter(scope_id=x_session_id)
     config = _get_config()
+    chat_id = f"web:{x_session_id}"
 
     # Persist user event, run handler synchronously, return all events together.
     before_id = _max_event_id()
     adapter._insert_event("user", {"text": body.text})
 
-    msg = InboundMessage(chat_id="web", text=body.text, message_id="web_0")
+    msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
     handle_command(msg, adapter, config)
 
-    events = _get_events_since(before_id)
+    events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
 
 
 @app.post("/api/callback")
-async def api_callback(body: CallbackRequest):
+async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
     """Execute a button callback via the web adapter."""
     from social_hook.bot.buttons import handle_callback
 
-    adapter = _get_adapter()
+    adapter = _get_adapter(scope_id=x_session_id)
     config = _get_config()
+    chat_id = f"web:{x_session_id}"
 
     before_id = _max_event_id()
 
     event = CallbackEvent(
-        chat_id="web",
+        chat_id=chat_id,
         callback_id="web_0",
         action=body.action,
         payload=body.payload,
@@ -244,26 +265,27 @@ async def api_callback(body: CallbackRequest):
     finally:
         cb_conn.close()
 
-    events = _get_events_since(before_id)
+    events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
 
 
 @app.post("/api/message")
-async def api_message(body: MessageRequest):
+async def api_message(body: MessageRequest, x_session_id: str = Header("web")):
     """Send a free-text message via the web adapter."""
     from social_hook.bot.commands import handle_message
 
-    adapter = _get_adapter()
+    adapter = _get_adapter(scope_id=x_session_id)
     config = _get_config()
+    chat_id = f"web:{x_session_id}"
 
     # Persist user event, run handler synchronously, return all events together.
     before_id = _max_event_id()
     adapter._insert_event("user", {"text": body.text})
 
-    msg = InboundMessage(chat_id="web", text=body.text, message_id="web_0")
+    msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
     handle_message(msg, adapter, config)
 
-    events = _get_events_since(before_id)
+    events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
 
 
@@ -280,13 +302,14 @@ def _max_event_id() -> int:
 
 
 @app.post("/api/events/clear")
-async def api_clear_events():
-    """Clear all chat history from web_events and chat_messages."""
+async def api_clear_events(x_session_id: str = Header("web")):
+    """Clear chat history from web_events and chat_messages for this session."""
     conn = _get_conn()
+    chat_id = f"web:{x_session_id}"
     try:
-        conn.execute("DELETE FROM web_events")
+        conn.execute("DELETE FROM web_events WHERE session_id = ?", (x_session_id,))
         try:
-            conn.execute("DELETE FROM chat_messages WHERE chat_id = 'web'")
+            conn.execute("DELETE FROM chat_messages WHERE chat_id = ?", (chat_id,))
         except sqlite3.OperationalError:
             pass  # Table may not exist yet
         conn.commit()
@@ -329,6 +352,10 @@ async def api_events(lastId: int = Query(0)):
 # ---------------------------------------------------------------------------
 
 
+# Per-connection session tracking for scoped event routing
+_ws_sessions: dict[str, str] = {}  # client_id -> session_id
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     origin = ws.headers.get("origin", "")
@@ -350,6 +377,7 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
+        _ws_sessions.pop(client_id, None)
         await _hub.disconnect(client_id)
 
 
@@ -357,29 +385,34 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
     if envelope.type == "command":
         command_type = envelope.payload.get("command")
         text = envelope.payload.get("text", "")
-        adapter = _get_adapter()
+        session_id = _ws_sessions.get(client_id, "web")
+        adapter = _get_adapter(scope_id=session_id)
+        chat_id = f"web:{session_id}"
         adapter._insert_event("user", {"text": text})
         await _hub.send(client_id, GatewayEnvelope(type="ack", reply_to=envelope.id, payload={}))
         try:
             if command_type == "send_command":
                 from social_hook.bot.commands import handle_command
-                msg = InboundMessage(chat_id="web", text=text, message_id="web_0")
+                msg = InboundMessage(chat_id=chat_id, text=text, message_id="web_0")
                 await asyncio.to_thread(handle_command, msg, adapter, _get_config())
             elif command_type == "send_callback":
                 from social_hook.bot.buttons import handle_callback
-                event = CallbackEvent(chat_id="web", callback_id="ws", action=envelope.payload.get("action", ""), payload=envelope.payload.get("payload", ""))
+                event = CallbackEvent(chat_id=chat_id, callback_id="ws", action=envelope.payload.get("action", ""), payload=envelope.payload.get("payload", ""))
                 await asyncio.to_thread(handle_callback, event, adapter, _get_config())
             elif command_type == "send_message":
                 from social_hook.bot.commands import handle_message
-                msg = InboundMessage(chat_id="web", text=text, message_id="web_0")
+                msg = InboundMessage(chat_id=chat_id, text=text, message_id="web_0")
                 await asyncio.to_thread(handle_message, msg, adapter, _get_config())
         except Exception as e:
             await _hub.send(client_id, GatewayEnvelope(type="error", reply_to=envelope.id, payload={"message": str(e)}))
     elif envelope.type == "subscribe":
+        # Register session_id for this WS connection
+        session_id = envelope.payload.get("session_id", "web")
+        _ws_sessions[client_id] = session_id
         last_seen_id = envelope.payload.get("last_seen_id", 0)
         # 0 means no replay needed (client loads history via REST on init)
         if last_seen_id:
-            missed = _get_events_since(last_seen_id)
+            missed = _get_events_since(last_seen_id, session_id=session_id)
             for ev in missed:
                 await _hub.send(client_id, GatewayEnvelope(type="event", channel="web", payload=ev))
         channel = envelope.payload.get("channel", "web")
@@ -390,7 +423,11 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
 
 
 async def _event_bridge_loop():
-    """Poll web_events and broadcast new entries to WS clients."""
+    """Poll web_events and broadcast new entries to WS clients.
+
+    Broadcast events (session_id IS NULL) go to all connections.
+    Scoped events go only to the connection with a matching session_id.
+    """
     bridge_conn = sqlite3.connect(str(get_db_path()))
     bridge_conn.row_factory = sqlite3.Row
     try:
@@ -403,13 +440,21 @@ async def _event_bridge_loop():
                 last_id = row[0] if row else 0
                 continue
             rows = bridge_conn.execute(
-                "SELECT id, type, data, created_at FROM web_events WHERE id > ? ORDER BY id ASC",
+                "SELECT id, type, data, session_id, created_at FROM web_events WHERE id > ? ORDER BY id ASC",
                 (last_id,),
             ).fetchall()
             for r in rows:
                 ev = {"id": r["id"], "type": r["type"], "data": json.loads(r["data"]), "created_at": r["created_at"]}
                 envelope = GatewayEnvelope(type="event", channel="web", payload=ev)
-                await _hub.broadcast(envelope, channel="web")
+                event_session_id = r["session_id"]
+                if event_session_id is None:
+                    # Broadcast event (e.g., notifications from trigger pipeline)
+                    await _hub.broadcast(envelope, channel="web")
+                else:
+                    # Scoped event -- send only to matching WS connection(s)
+                    for cid, sid in list(_ws_sessions.items()):
+                        if sid == event_session_id:
+                            await _hub.send(cid, envelope)
                 last_id = r["id"]
     except asyncio.CancelledError:
         pass
@@ -474,6 +519,25 @@ async def api_draft_detail(draft_id: str):
             draft["decision"] = None
 
         return draft
+    finally:
+        conn.close()
+
+
+@app.put("/api/drafts/{draft_id}/media-spec")
+async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Update media_spec on a draft."""
+    media_spec = body.get("media_spec")
+    if media_spec is None:
+        raise HTTPException(status_code=400, detail="media_spec is required")
+    conn = _get_conn()
+    try:
+        updated = ops.update_draft(conn, draft_id, media_spec=media_spec)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        row = conn.execute("SELECT project_id FROM drafts WHERE id = ?", (draft_id,)).fetchone()
+        if row:
+            ops.emit_data_event(conn, "draft", "updated", draft_id, row["project_id"])
+        return {"status": "updated"}
     finally:
         conn.close()
 
@@ -649,6 +713,56 @@ async def api_project_usage(
             "total_cost_cents": sum(r["total_cost_cents"] for r in rows_list),
             "entries": rows_list,
         }
+    finally:
+        conn.close()
+
+
+@app.post("/api/decisions/{decision_id}/create-draft")
+async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] = Body(...)):
+    """Create a draft from an existing decision (decision override).
+
+    Allows manually triggering draft creation for a decision that was
+    originally marked as not_post_worthy, consolidated, or deferred.
+
+    Body:
+        platform: Target platform name (required)
+    """
+    platform = body.get("platform")
+    if not platform:
+        raise HTTPException(status_code=400, detail="platform is required")
+
+    conn = _get_conn()
+    try:
+        decision_row = conn.execute(
+            "SELECT * FROM decisions WHERE id = ?", (decision_id,)
+        ).fetchone()
+        if not decision_row:
+            raise HTTPException(status_code=404, detail="Decision not found")
+
+        decision = dict(decision_row)
+        project_id = decision["project_id"]
+
+        from social_hook.filesystem import generate_id
+        draft_id = generate_id("draft")
+
+        conn.execute(
+            """
+            INSERT INTO drafts (id, project_id, decision_id, platform, status, content, reasoning)
+            VALUES (?, ?, ?, ?, 'draft', ?, ?)
+            """,
+            (
+                draft_id,
+                project_id,
+                decision_id,
+                platform,
+                f"[Override] {decision.get('commit_message', 'No commit message')}",
+                f"Manual draft from decision {decision_id[:12]}",
+            ),
+        )
+        conn.commit()
+        ops.emit_data_event(conn, "draft", "created", draft_id, project_id)
+
+        return {"draft_id": draft_id, "status": "created"}
     finally:
         conn.close()
 
@@ -949,14 +1063,81 @@ async def api_toggle_pause(project_id: str):
     """Toggle a project's paused state."""
     conn = _get_conn()
     try:
-        row = conn.execute("SELECT paused FROM projects WHERE id = ?", (project_id,)).fetchone()
-        if not row:
+        project = ops.get_project(conn, project_id)
+        if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        new_paused = 0 if row["paused"] else 1
-        conn.execute("UPDATE projects SET paused = ? WHERE id = ?", (new_paused, project_id))
-        conn.commit()
+        new_paused = not project.paused
+        ops.set_project_paused(conn, project_id, new_paused)
         ops.emit_data_event(conn, "project", "updated", project_id, project_id)
         return {"status": "ok", "paused": new_paused}
+    finally:
+        conn.close()
+
+
+class SummaryUpdate(BaseModel):
+    summary: str
+
+
+@app.put("/api/projects/{project_id}/summary")
+async def api_update_summary(project_id: str, body: SummaryUpdate):
+    """Update a project's summary text."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        ops.update_project_summary(conn, project_id, body.summary)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/regenerate-summary")
+async def api_regenerate_summary(project_id: str):
+    """Regenerate a project's summary using LLM discovery."""
+    conn = _get_conn()
+    try:
+        project = ops.get_project(conn, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        config = _get_config()
+        evaluator_model = config.models.evaluator
+
+        from social_hook.llm.factory import create_client
+        from social_hook.llm.discovery import discover_project
+
+        client = create_client(evaluator_model, config)
+
+        # Load context settings from content-config.yaml
+        cc_path = get_db_path().parent / "content-config.yaml"
+        max_doc_tokens = 10000
+        project_docs: list[str] | None = None
+        if cc_path.exists():
+            try:
+                cc_raw = yaml.safe_load(cc_path.read_text()) or {}
+                ctx = cc_raw.get("context", {})
+                max_doc_tokens = ctx.get("max_doc_tokens", 10000)
+                project_docs = ctx.get("project_docs") or None
+            except yaml.YAMLError:
+                pass
+
+        summary, files = await asyncio.to_thread(
+            discover_project,
+            client,
+            project.repo_path,
+            project_docs=project_docs,
+            max_doc_tokens=max_doc_tokens,
+            db=conn,
+            project_id=project_id,
+        )
+
+        if summary:
+            ops.update_project_summary(conn, project_id, summary)
+            if files:
+                ops.update_discovery_files(conn, project_id, files)
+            ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+
+        return {"summary": summary or ""}
     finally:
         conn.close()
 

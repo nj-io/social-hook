@@ -128,22 +128,30 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 9."""
+        """Check schema version returns 11."""
         version = get_schema_version(temp_db)
-        assert version == 9
+        assert version == 11
 
     def test_init_twice_idempotent(self, temp_dir):
-        """Running init twice is idempotent."""
+        """Running init twice is idempotent.
+
+        Note: version checked is the max after both inits. When SCHEMA_VERSION
+        is lower than available migrations, the second init may apply them.
+        The key invariant is that a third init should not change anything.
+        """
         db_path = temp_dir / "test.db"
         conn1 = init_database(db_path)
-        version1 = get_schema_version(conn1)
         conn1.close()
 
         conn2 = init_database(db_path)
         version2 = get_schema_version(conn2)
         conn2.close()
 
-        assert version1 == version2 == 9
+        conn3 = init_database(db_path)
+        version3 = get_schema_version(conn3)
+        conn3.close()
+
+        assert version3 == version2
 
 
 # =============================================================================

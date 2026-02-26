@@ -146,6 +146,85 @@ def unregister(
         conn.close()
 
 
+@app.command()
+def pause(
+    ctx: typer.Context,
+    project_id: Optional[str] = typer.Argument(None, help="Project ID (default: detect from current directory)"),
+):
+    """Pause a project (skip commit evaluation)."""
+    _set_paused(project_id, paused=True)
+
+
+@app.command()
+def unpause(
+    ctx: typer.Context,
+    project_id: Optional[str] = typer.Argument(None, help="Project ID (default: detect from current directory)"),
+):
+    """Unpause a project (resume commit evaluation)."""
+    _set_paused(project_id, paused=False)
+
+
+def _set_paused(project_id: Optional[str], paused: bool) -> None:
+    """Shared implementation for pause/unpause."""
+    import subprocess as sp
+
+    from social_hook.db import (
+        get_project,
+        get_project_by_origin,
+        get_project_by_path,
+        init_database,
+        set_project_paused,
+    )
+    from social_hook.db.operations import emit_data_event
+    from social_hook.filesystem import get_db_path
+
+    conn = init_database(get_db_path())
+    try:
+        project = None
+
+        if project_id:
+            project = get_project(conn, project_id)
+            if not project:
+                # Try prefix match
+                from social_hook.db import get_all_projects
+                for p in get_all_projects(conn):
+                    if p.id.startswith(project_id):
+                        project = p
+                        break
+
+        if not project:
+            # Auto-detect from current directory
+            cwd = str(Path.cwd().resolve())
+            project = get_project_by_path(conn, cwd)
+
+            if not project:
+                origin_result = sp.run(
+                    ["git", "-C", cwd, "remote", "get-url", "origin"],
+                    capture_output=True, text=True,
+                )
+                if origin_result.returncode == 0:
+                    matches = get_project_by_origin(conn, origin_result.stdout.strip())
+                    if matches:
+                        project = matches[0]
+
+        if not project:
+            typer.echo("No project found. Provide a project ID or run from a registered repo.")
+            raise typer.Exit(1)
+
+        if project.paused == paused:
+            state = "paused" if paused else "active"
+            typer.echo(f"Project '{project.name}' is already {state}.")
+            return
+
+        set_project_paused(conn, project.id, paused)
+        emit_data_event(conn, "project", "updated", project.id, project.id)
+
+        action = "Paused" if paused else "Unpaused"
+        typer.echo(f"{action} project '{project.name}'.")
+    finally:
+        conn.close()
+
+
 @app.command("list")
 def list_projects(ctx: typer.Context):
     """List all registered projects."""

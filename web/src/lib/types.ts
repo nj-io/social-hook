@@ -93,7 +93,10 @@ export interface Draft {
   suggested_time?: string;
   media_paths?: string;
   media_type?: string;
+  media_spec?: string;
   reasoning?: string;
+  last_error?: string;
+  retry_count?: number;
   created_at: string;
   updated_at?: string;
   tweets?: DraftTweet[];
