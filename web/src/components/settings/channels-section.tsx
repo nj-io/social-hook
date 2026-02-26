@@ -167,7 +167,17 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
 
           {telegramConfig.enabled && (
             <div>
-              <label className="mb-1 block text-sm font-medium">Allowed Chat IDs (comma-separated)</label>
+              <label className="mb-1 flex items-center gap-1.5 text-sm font-medium">
+                Allowed Chat IDs (comma-separated)
+                <span className="group relative cursor-help text-muted-foreground">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM8.94 6.94a.75.75 0 1 1-1.061-1.061 3 3 0 1 1 2.871 5.026v.345a.75.75 0 0 1-1.5 0v-.5c0-.72.57-1.172 1.081-1.287A1.5 1.5 0 1 0 8.94 6.94ZM10 15a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+                  </svg>
+                  <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 w-48 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md opacity-0 transition-opacity group-hover:opacity-100">
+                    Message <strong>@userinfobot</strong> on Telegram to get your chat ID.
+                  </span>
+                </span>
+              </label>
               <input
                 type="text"
                 value={chatIdsInput}
