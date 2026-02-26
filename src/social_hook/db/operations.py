@@ -142,8 +142,8 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
     """
     conn.execute(
         """
-        INSERT INTO decisions (id, project_id, commit_hash, commit_message, decision, reasoning, angle, episode_type, post_category, arc_id, media_tool, platforms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO decisions (id, project_id, commit_hash, commit_message, decision, reasoning, angle, episode_type, post_category, arc_id, media_tool, platforms, commit_summary)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )
@@ -193,6 +193,118 @@ def get_all_recent_decisions(
         (limit,),
     ).fetchall()
     return [Decision.from_dict(dict(row)) for row in rows]
+
+
+def get_unprocessed_consolidation_decisions(
+    conn: sqlite3.Connection, project_id: str, limit: int = 20
+) -> list[Decision]:
+    """Get unprocessed consolidate/deferred decisions for a project.
+
+    Uses partial index idx_decisions_unprocessed for efficient lookup.
+
+    Args:
+        conn: Database connection
+        project_id: Project ID to query
+        limit: Maximum decisions to return (batch_size)
+
+    Returns:
+        List of unprocessed Decision objects, oldest first
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM decisions
+        WHERE project_id = ?
+          AND decision IN ('consolidate', 'deferred')
+          AND processed = 0
+        ORDER BY created_at ASC
+        LIMIT ?
+        """,
+        (project_id, limit),
+    ).fetchall()
+    return [Decision.from_dict(dict(row)) for row in rows]
+
+
+def mark_decisions_processed(
+    conn: sqlite3.Connection, decision_ids: list[str], batch_id: str
+) -> int:
+    """Mark decisions as processed with a batch ID.
+
+    Args:
+        conn: Database connection
+        decision_ids: List of decision IDs to mark
+        batch_id: Batch identifier for this processing run
+
+    Returns:
+        Number of rows updated
+    """
+    if not decision_ids:
+        return 0
+
+    placeholders = ",".join("?" for _ in decision_ids)
+    cursor = conn.execute(
+        f"""
+        UPDATE decisions
+        SET processed = 1, processed_at = datetime('now'), batch_id = ?
+        WHERE id IN ({placeholders})
+        """,
+        [batch_id] + decision_ids,
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
+def update_decision(
+    conn: sqlite3.Connection,
+    decision_id: str,
+    decision: Optional[str] = None,
+    reasoning: Optional[str] = None,
+    angle: Optional[str] = None,
+    episode_type: Optional[str] = None,
+    post_category: Optional[str] = None,
+    media_tool: Optional[str] = None,
+    platforms: Optional[str] = None,
+) -> bool:
+    """Update a decision row.
+
+    Used by consolidation re-evaluate to upgrade a decision to post_worthy.
+
+    Returns True if a row was updated.
+    """
+    updates = []
+    params = []
+
+    if decision is not None:
+        updates.append("decision = ?")
+        params.append(decision)
+    if reasoning is not None:
+        updates.append("reasoning = ?")
+        params.append(reasoning)
+    if angle is not None:
+        updates.append("angle = ?")
+        params.append(angle)
+    if episode_type is not None:
+        updates.append("episode_type = ?")
+        params.append(episode_type)
+    if post_category is not None:
+        updates.append("post_category = ?")
+        params.append(post_category)
+    if media_tool is not None:
+        updates.append("media_tool = ?")
+        params.append(media_tool)
+    if platforms is not None:
+        updates.append("platforms = ?")
+        params.append(platforms)
+
+    if not updates:
+        return False
+
+    params.append(decision_id)
+    cursor = conn.execute(
+        f"UPDATE decisions SET {', '.join(updates)} WHERE id = ?",
+        params,
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 # =============================================================================

@@ -8,9 +8,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-import requests
-
 from social_hook.config.yaml import load_full_config
+from social_hook.notifications import send_notification
 from social_hook.db import operations as ops
 from social_hook.db.connection import get_connection, init_database
 from social_hook.errors import ConfigError, DatabaseError, ErrorType, classify_error, classify_x_error
@@ -113,27 +112,6 @@ def release_lock(lock_path: Optional[Path] = None) -> None:
 # =============================================================================
 
 
-def send_telegram_notification(
-    token: str,
-    chat_ids: list[str],
-    message: str,
-) -> None:
-    """Send notification to all allowed chat IDs."""
-    for chat_id in chat_ids:
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": message,
-                    "parse_mode": "Markdown",
-                },
-                timeout=10,
-            )
-        except requests.RequestException as e:
-            logger.warning(f"Telegram notification to {chat_id} failed: {e}")
-
-
 def scheduler_tick(
     dry_run: bool = False,
     config_path: Optional[str] = None,
@@ -171,9 +149,6 @@ def scheduler_tick(
             return 0
 
         processed = 0
-        telegram_token = config.env.get("TELEGRAM_BOT_TOKEN")
-        chat_ids_str = config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
-        chat_ids = [c.strip() for c in chat_ids_str.split(",") if c.strip()]
 
         for draft in due_drafts:
             try:
@@ -215,25 +190,24 @@ def scheduler_tick(
                     )
                     ops.insert_post(conn, post)
 
-                    if telegram_token and chat_ids and not dry_run:
-                        send_telegram_notification(
-                            telegram_token, chat_ids,
-                            f"*Posted successfully*\n\n"
-                            f"Project: {project.name}\n"
-                            f"Platform: {draft.platform}\n"
-                            f"URL: {result.external_url or 'N/A'}\n\n"
-                            f"```\n{draft.content[:300]}\n```",
-                        )
+                    send_notification(
+                        config,
+                        f"*Posted successfully*\n\n"
+                        f"Project: {project.name}\n"
+                        f"Platform: {draft.platform}\n"
+                        f"URL: {result.external_url or 'N/A'}\n\n"
+                        f"```\n{draft.content[:300]}\n```",
+                        dry_run=dry_run,
+                    )
                 else:
                     _handle_post_failure(conn, draft, result.error or "Unknown error",
-                                        telegram_token, chat_ids, dry_run)
+                                        config, dry_run)
 
                 processed += 1
 
             except Exception as e:
                 logger.error(f"Error processing draft {draft.id}: {e}")
-                _handle_post_failure(conn, draft, str(e),
-                                    telegram_token, chat_ids, dry_run)
+                _handle_post_failure(conn, draft, str(e), config, dry_run)
                 processed += 1
 
         conn.close()
@@ -326,7 +300,7 @@ def _post_draft(conn, draft, config):
         return PostResult(success=False, error=f"Unsupported platform: {draft.platform}")
 
 
-def _handle_post_failure(conn, draft, error_msg, telegram_token, chat_ids, dry_run):
+def _handle_post_failure(conn, draft, error_msg, config, dry_run):
     """Handle a failed post attempt with retry logic."""
     new_retry_count = draft.retry_count + 1
 
@@ -340,18 +314,18 @@ def _handle_post_failure(conn, draft, error_msg, telegram_token, chat_ids, dry_r
         )
         logger.error(f"Draft {draft.id} failed after {new_retry_count} attempts: {error_msg}")
 
-        if telegram_token and chat_ids and not dry_run:
-            project = ops.get_project(conn, draft.project_id)
-            project_name = project.name if project else "Unknown"
-            send_telegram_notification(
-                telegram_token, chat_ids,
-                f"*Post failed*\n\n"
-                f"Project: {project_name}\n"
-                f"Platform: {draft.platform}\n"
-                f"Error: {error_msg}\n"
-                f"Attempts: {new_retry_count}/3\n\n"
-                f"Draft {draft.id} marked as failed.",
-            )
+        project = ops.get_project(conn, draft.project_id)
+        project_name = project.name if project else "Unknown"
+        send_notification(
+            config,
+            f"*Post failed*\n\n"
+            f"Project: {project_name}\n"
+            f"Platform: {draft.platform}\n"
+            f"Error: {error_msg}\n"
+            f"Attempts: {new_retry_count}/3\n\n"
+            f"Draft {draft.id} marked as failed.",
+            dry_run=dry_run,
+        )
     else:
         # Schedule retry with backoff
         from datetime import datetime, timedelta, timezone

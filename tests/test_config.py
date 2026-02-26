@@ -734,3 +734,79 @@ summary:
         config = load_project_config(project_dir, global_base=global_base)
         assert config.summary.refresh_after_commits == 20
         assert config.summary.refresh_after_days == 14
+
+
+# =============================================================================
+# ConsolidationConfig
+# =============================================================================
+
+
+class TestConsolidationConfig:
+    """Test ConsolidationConfig parsing and validation."""
+
+    def test_default_config_has_consolidation_disabled(self):
+        """Default config has consolidation disabled."""
+        config = load_config(None)
+        assert config.consolidation.enabled is False
+        assert config.consolidation.mode == "notify_only"
+        assert config.consolidation.batch_size == 20
+
+    def test_parse_consolidation_config(self, temp_dir):
+        """Parse consolidation from YAML."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+consolidation:
+  enabled: true
+  mode: re_evaluate
+  batch_size: 50
+"""
+        )
+
+        config = load_config(config_path)
+        assert config.consolidation.enabled is True
+        assert config.consolidation.mode == "re_evaluate"
+        assert config.consolidation.batch_size == 50
+
+    def test_invalid_consolidation_mode(self, temp_dir):
+        """Invalid consolidation mode raises ConfigError."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+consolidation:
+  mode: invalid_mode
+"""
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(config_path)
+        assert "Invalid consolidation mode" in str(exc_info.value)
+
+    def test_invalid_consolidation_batch_size(self, temp_dir):
+        """Invalid batch_size raises ConfigError."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+consolidation:
+  batch_size: 0
+"""
+        )
+
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(config_path)
+        assert "Invalid consolidation batch_size" in str(exc_info.value)
+
+    def test_missing_consolidation_uses_defaults(self, temp_dir):
+        """Config without consolidation section uses defaults."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+models:
+  evaluator: anthropic/claude-opus-4-5
+"""
+        )
+
+        config = load_config(config_path)
+        assert config.consolidation.enabled is False
+        assert config.consolidation.mode == "notify_only"
+        assert config.consolidation.batch_size == 20

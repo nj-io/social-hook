@@ -51,6 +51,11 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "port": 3000,
     },
+    "consolidation": {
+        "enabled": False,
+        "mode": "notify_only",
+        "batch_size": 20,
+    },
 }
 
 
@@ -110,6 +115,15 @@ class WebConfig:
 
 
 @dataclass
+class ConsolidationConfig:
+    """Consolidation processing configuration."""
+
+    enabled: bool = False
+    mode: str = "notify_only"  # "notify_only" or "re_evaluate"
+    batch_size: int = 20
+
+
+@dataclass
 class Config:
     """Main configuration object."""
 
@@ -121,6 +135,7 @@ class Config:
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
     journey_capture: JourneyCaptureConfig = field(default_factory=JourneyCaptureConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
 
     # Environment variables (populated by load_full_config)
     env: dict[str, str] = field(default_factory=dict)
@@ -285,6 +300,24 @@ def _parse_config(data: dict[str, Any]) -> Config:
         raise ConfigError(f"Invalid web port '{web_port}': must be integer 1-65535")
     web = WebConfig(enabled=web_data.get("enabled", False), port=web_port)
 
+    # Consolidation
+    cons_data = data.get("consolidation", {})
+    cons_mode = cons_data.get("mode", "notify_only")
+    if cons_mode not in ("notify_only", "re_evaluate"):
+        raise ConfigError(
+            f"Invalid consolidation mode '{cons_mode}': must be 'notify_only' or 're_evaluate'"
+        )
+    cons_batch = cons_data.get("batch_size", 20)
+    if not isinstance(cons_batch, int) or cons_batch < 1:
+        raise ConfigError(
+            f"Invalid consolidation batch_size '{cons_batch}': must be positive integer"
+        )
+    consolidation = ConsolidationConfig(
+        enabled=cons_data.get("enabled", False),
+        mode=cons_mode,
+        batch_size=cons_batch,
+    )
+
     return Config(
         models=models,
         platforms=platforms,
@@ -292,6 +325,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
         scheduling=scheduling,
         journey_capture=journey_capture,
         web=web,
+        consolidation=consolidation,
     )
 
 

@@ -56,6 +56,12 @@ export interface WebDashboardConfig {
   port: number;
 }
 
+export interface ConsolidationConfig {
+  enabled: boolean;
+  mode: string;
+  batch_size: number;
+}
+
 export interface Config {
   models: ModelsConfig;
   platforms: Record<string, PlatformConfig>;
@@ -63,6 +69,7 @@ export interface Config {
   media_generation: MediaGenerationConfig;
   journey_capture: JourneyCaptureConfig;
   web: WebDashboardConfig;
+  consolidation?: ConsolidationConfig;
 }
 
 export interface DraftTweet {
@@ -96,6 +103,8 @@ export interface Draft {
   updated_at?: string;
   tweets?: DraftTweet[];
   changes?: DraftChange[];
+  decision_id?: string;
+  decision?: Decision;
 }
 
 export interface Project {
@@ -104,6 +113,9 @@ export interface Project {
   name: string;
   created_at: string;
   paused: number;
+  summary?: string;
+  phase?: string;
+  confidence?: number;
 }
 
 export interface WebEvent {
@@ -117,4 +129,82 @@ export interface EnvVars {
   env: Record<string, string>;
   known_keys: string[];
   key_groups: Record<string, string[]>;
+}
+
+export interface Decision {
+  id: string;
+  project_id: string;
+  commit_hash: string;
+  commit_message: string;
+  decision: string;
+  reasoning: string;
+  angle: string;
+  episode_type: string;
+  post_category: string;
+  arc_id?: string;
+  media_tool?: string;
+  platforms: string;
+  created_at: string;
+}
+
+export interface PostRecord {
+  id: string;
+  draft_id: string;
+  project_id: string;
+  platform: string;
+  external_id?: string;
+  external_url?: string;
+  content: string;
+  posted_at: string;
+}
+
+export interface Lifecycle {
+  project_id: string;
+  phase: string;
+  confidence: number;
+  evidence: string;
+  updated_at: string;
+}
+
+export interface Arc {
+  id: string;
+  project_id: string;
+  theme: string;
+  status: string;
+  post_count: number;
+  started_at: string;
+  ended_at?: string;
+}
+
+export interface NarrativeDebt {
+  project_id: string;
+  debt_counter: number;
+  last_synthesis_at?: string;
+}
+
+export interface UsageEntry {
+  id: string;
+  operation_type: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_cents: number;
+  created_at: string;
+}
+
+export interface UsageSummary {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_cents: number;
+  entries: UsageEntry[];
+}
+
+export interface ProjectDetail extends Project {
+  lifecycle?: Lifecycle;
+  arcs: Arc[];
+  narrative_debt?: NarrativeDebt;
+  decision_counts: Record<string, number>;
+  draft_count: number;
+  post_count: number;
+  narrative_count: number;
 }

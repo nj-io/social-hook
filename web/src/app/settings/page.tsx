@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { fetchConfig, fetchContentConfig, fetchEnv, fetchProjects, fetchSocialContext, updateConfig, updateContentConfig, updateSocialContext } from "@/lib/api";
-import type { Config, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig, WebDashboardConfig } from "@/lib/types";
+import type { Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig, WebDashboardConfig } from "@/lib/types";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
 import { ModelsSection } from "@/components/settings/models-section";
 import { ApiKeysSection } from "@/components/settings/api-keys-section";
@@ -10,6 +10,7 @@ import { PlatformsSection } from "@/components/settings/platforms-section";
 import { SchedulingSection } from "@/components/settings/scheduling-section";
 import { TextEditorSection } from "@/components/settings/text-editor-section";
 import { MediaGenerationSection } from "@/components/settings/media-generation-section";
+import { ConsolidationSection } from "@/components/settings/consolidation-section";
 import { NotificationsSection } from "@/components/settings/notifications-section";
 import { ProjectsSection } from "@/components/settings/projects-section";
 
@@ -134,6 +135,7 @@ export default function SettingsPage() {
   const mediaGen: MediaGenerationConfig = (config?.media_generation as MediaGenerationConfig) ?? { enabled: true, tools: {} };
   const journeyCapture: JourneyCaptureConfig = (config?.journey_capture as JourneyCaptureConfig) ?? { enabled: false };
   const webCfg: WebDashboardConfig = (config?.web as WebDashboardConfig) ?? { enabled: false, port: 3000 };
+  const consolidation: ConsolidationConfig = (config?.consolidation as ConsolidationConfig) ?? { enabled: false, mode: "notify_only", batch_size: 20 };
 
   const telegramConfigured = !!(envData?.env?.TELEGRAM_BOT_TOKEN && envData?.env?.TELEGRAM_ALLOWED_CHAT_IDS);
 
@@ -197,6 +199,13 @@ export default function SettingsPage() {
               onConfigChange={(updates) => saveConfig(updates)}
               projects={projects}
               onGuidanceSave={refreshContentConfig}
+            />
+          </div>
+
+          <div className={section !== "consolidation" ? "hidden" : ""}>
+            <ConsolidationSection
+              consolidation={consolidation}
+              onChange={(c) => saveConfig({ consolidation: c })}
             />
           </div>
 

@@ -1,4 +1,4 @@
-import type { Config, Draft, EnvVars, Project, WebEvent } from "./types";
+import type { Config, Decision, Draft, EnvVars, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -48,6 +48,45 @@ export async function fetchDraft(id: string): Promise<Draft> {
 // Projects
 export async function fetchProjects(): Promise<{ projects: Project[] }> {
   return apiFetch("/api/projects");
+}
+
+// Project detail
+export async function fetchProjectDetail(id: string): Promise<ProjectDetail> {
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}`);
+}
+
+export async function fetchProjectDecisions(
+  id: string,
+  limit?: number,
+  offset?: number,
+): Promise<{ decisions: Decision[] }> {
+  const params = new URLSearchParams();
+  if (limit != null) params.set("limit", String(limit));
+  if (offset != null) params.set("offset", String(offset));
+  const qs = params.toString();
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/decisions${qs ? `?${qs}` : ""}`);
+}
+
+export async function fetchProjectPosts(
+  id: string,
+  limit?: number,
+): Promise<{ posts: PostRecord[] }> {
+  const params = limit != null ? `?limit=${limit}` : "";
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/posts${params}`);
+}
+
+export async function fetchProjectUsage(
+  id: string,
+  days?: number,
+): Promise<UsageSummary> {
+  const params = days != null ? `?days=${days}` : "";
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/usage${params}`);
+}
+
+export async function fetchProjectArcs(
+  id: string,
+): Promise<{ arcs: Arc[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/arcs`);
 }
 
 // Bot interaction

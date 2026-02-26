@@ -17,7 +17,7 @@ from social_hook.config.env import KEY_GROUPS, KNOWN_KEYS
 from social_hook.config.project import DEFAULT_MEDIA_GUIDANCE
 from social_hook.config.yaml import Config, validate_config
 from social_hook.errors import ConfigError
-from social_hook.filesystem import get_config_path, get_db_path, get_env_path
+from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 
 # ---------------------------------------------------------------------------
@@ -310,7 +310,7 @@ async def api_drafts(status: Optional[str] = None):
 
 @app.get("/api/drafts/{draft_id}")
 async def api_draft_detail(draft_id: str):
-    """Get draft detail including tweets and changes."""
+    """Get draft detail including tweets, changes, and evaluator decision."""
     conn = _get_conn()
     try:
         row = conn.execute("SELECT * FROM drafts WHERE id = ?", (draft_id,)).fetchone()
@@ -331,6 +331,15 @@ async def api_draft_detail(draft_id: str):
         ).fetchall()
         draft["changes"] = [dict(c) for c in changes]
 
+        # Embed evaluator decision data
+        if draft.get("decision_id"):
+            decision_row = conn.execute(
+                "SELECT * FROM decisions WHERE id = ?", (draft["decision_id"],)
+            ).fetchone()
+            draft["decision"] = dict(decision_row) if decision_row else None
+        else:
+            draft["decision"] = None
+
         return draft
     finally:
         conn.close()
@@ -338,11 +347,185 @@ async def api_draft_detail(draft_id: str):
 
 @app.get("/api/projects")
 async def api_projects():
-    """List all registered projects."""
+    """List all registered projects with lifecycle phase."""
     conn = _get_conn()
     try:
-        rows = conn.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+        rows = conn.execute("""
+            SELECT p.*, l.phase, l.confidence
+            FROM projects p
+            LEFT JOIN lifecycles l ON l.project_id = p.id
+            ORDER BY p.created_at DESC
+        """).fetchall()
         return {"projects": [dict(row) for row in rows]}
+    finally:
+        conn.close()
+
+
+def _get_project_or_404(conn: sqlite3.Connection, project_id: str) -> sqlite3.Row:
+    """Fetch a project row or raise 404."""
+    row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return row
+
+
+@app.get("/api/projects/{project_id}")
+async def api_project_detail(project_id: str):
+    """Get project detail with lifecycle, arcs, narrative debt, summary, and stats."""
+    conn = _get_conn()
+    try:
+        project_row = _get_project_or_404(conn, project_id)
+        project = dict(project_row)
+
+        # Lifecycle
+        lc_row = conn.execute(
+            "SELECT * FROM lifecycles WHERE project_id = ?", (project_id,)
+        ).fetchone()
+        project["lifecycle"] = dict(lc_row) if lc_row else None
+
+        # Arcs
+        arc_rows = conn.execute(
+            "SELECT * FROM arcs WHERE project_id = ? ORDER BY started_at DESC",
+            (project_id,),
+        ).fetchall()
+        project["arcs"] = [dict(a) for a in arc_rows]
+
+        # Narrative debt
+        nd_row = conn.execute(
+            "SELECT * FROM narrative_debt WHERE project_id = ?", (project_id,)
+        ).fetchone()
+        project["narrative_debt"] = dict(nd_row) if nd_row else None
+
+        # Stats: decision counts by type
+        decision_stats = conn.execute("""
+            SELECT decision, COUNT(*) as count
+            FROM decisions WHERE project_id = ?
+            GROUP BY decision
+        """, (project_id,)).fetchall()
+        project["decision_counts"] = {row["decision"]: row["count"] for row in decision_stats}
+
+        # Stats: draft and post counts
+        draft_count = conn.execute(
+            "SELECT COUNT(*) FROM drafts WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        post_count = conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        project["draft_count"] = draft_count
+        project["post_count"] = post_count
+
+        # Journey capture fire count from narratives JSONL file
+        narratives_file = get_narratives_path() / f"{project_id}.jsonl"
+        narrative_count = 0
+        if narratives_file.exists():
+            with open(narratives_file, "r") as f:
+                narrative_count = sum(1 for _ in f)
+        project["narrative_count"] = narrative_count
+
+        return project
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{project_id}/decisions")
+async def api_project_decisions(
+    project_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """Get decision history for a project with pagination."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        rows = conn.execute("""
+            SELECT * FROM decisions
+            WHERE project_id = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (project_id, limit, offset)).fetchall()
+
+        total = conn.execute(
+            "SELECT COUNT(*) FROM decisions WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+
+        return {"decisions": [dict(r) for r in rows], "total": total}
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{project_id}/posts")
+async def api_project_posts(
+    project_id: str,
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Get published posts for a project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        rows = conn.execute("""
+            SELECT * FROM posts
+            WHERE project_id = ?
+            ORDER BY posted_at DESC
+            LIMIT ?
+        """, (project_id, limit)).fetchall()
+        return {"posts": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{project_id}/usage")
+async def api_project_usage(
+    project_id: str,
+    days: int = Query(30, ge=1, le=365),
+):
+    """Get usage analytics for a project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        rows = conn.execute("""
+            SELECT
+                model,
+                operation_type,
+                SUM(input_tokens) as total_input,
+                SUM(output_tokens) as total_output,
+                SUM(cache_read_tokens) as total_cache_read,
+                SUM(cache_creation_tokens) as total_cache_creation,
+                SUM(cost_cents) as total_cost_cents,
+                COUNT(*) as call_count
+            FROM usage_log
+            WHERE project_id = ?
+              AND created_at >= datetime('now', '-' || ? || ' days')
+            GROUP BY model, operation_type
+            ORDER BY total_cost_cents DESC
+        """, (project_id, days)).fetchall()
+
+        rows_list = [dict(r) for r in rows]
+        return {
+            "total_input_tokens": sum(r["total_input"] for r in rows_list),
+            "total_output_tokens": sum(r["total_output"] for r in rows_list),
+            "total_cost_cents": sum(r["total_cost_cents"] for r in rows_list),
+            "entries": rows_list,
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{project_id}/arcs")
+async def api_project_arcs(project_id: str):
+    """Get all arcs for a project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        rows = conn.execute("""
+            SELECT * FROM arcs
+            WHERE project_id = ?
+            ORDER BY started_at DESC
+        """, (project_id,)).fetchall()
+        return {"arcs": [dict(r) for r in rows]}
     finally:
         conn.close()
 

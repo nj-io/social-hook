@@ -167,6 +167,10 @@ class Decision:
     arc_id: Optional[str] = None
     media_tool: Optional[str] = None
     platforms: dict[str, str] = field(default_factory=dict)
+    commit_summary: Optional[str] = None
+    processed: bool = False
+    processed_at: Optional[datetime] = None
+    batch_id: Optional[str] = None
     created_at: Optional[datetime] = None
 
     def __post_init__(self):
@@ -207,6 +211,10 @@ class Decision:
             "arc_id": self.arc_id,
             "media_tool": self.media_tool,
             "platforms": self.platforms,
+            "commit_summary": self.commit_summary,
+            "processed": self.processed,
+            "processed_at": _to_iso(self.processed_at),
+            "batch_id": self.batch_id,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -230,6 +238,10 @@ class Decision:
             arc_id=d.get("arc_id"),
             media_tool=d.get("media_tool"),
             platforms=platforms,
+            commit_summary=d.get("commit_summary"),
+            processed=bool(d.get("processed", False)),
+            processed_at=_from_iso(d.get("processed_at")),
+            batch_id=d.get("batch_id"),
             created_at=_from_iso(d.get("created_at")),
         )
 
@@ -250,6 +262,7 @@ class Decision:
             self.arc_id,
             self.media_tool,
             json.dumps(self.platforms),
+            self.commit_summary,
         )
 
 

@@ -94,6 +94,7 @@ class LogDecisionInput(BaseModel):
     arc_id: Optional[str] = None
     media_tool: Optional[MediaTool] = None
     include_project_docs: Optional[bool] = None
+    commit_summary: Optional[str] = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -135,6 +136,10 @@ class LogDecisionInput(BaseModel):
                     "media_tool": {
                         "type": "string",
                         "enum": [e.value for e in MediaTool],
+                    },
+                    "commit_summary": {
+                        "type": "string",
+                        "description": "Brief 1-2 sentence summary of what this commit does, for consolidation batching.",
                     },
                 },
                 "required": ["decision", "reasoning"],

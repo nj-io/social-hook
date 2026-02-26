@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchDraft, sendCallback } from "@/lib/api";
-import type { Draft } from "@/lib/types";
+import type { Decision, Draft } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
+import { DecisionBadge } from "@/components/decision-badge";
 import { MediaPreview } from "@/components/media-preview";
 
 export default function DraftDetailPage() {
@@ -126,6 +127,9 @@ export default function DraftDetailPage() {
         </div>
       )}
 
+      {/* Evaluator Analysis */}
+      {draft.decision && <EvaluatorAnalysis decision={draft.decision} />}
+
       {/* Action buttons */}
       {draft.status === "draft" && (
         <div className="flex gap-2">
@@ -170,6 +174,65 @@ export default function DraftDetailPage() {
                 <span className="text-muted-foreground">by {change.changed_by}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EvaluatorAnalysis({ decision }: { decision: Decision }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-border">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between p-4 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Evaluator Analysis</h2>
+          <DecisionBadge decision={decision.decision} />
+        </div>
+        <span className="text-xs text-muted-foreground">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
+          {decision.reasoning && (
+            <div>
+              <span className="text-xs font-medium text-muted-foreground">Reasoning</span>
+              <p className="mt-0.5 whitespace-pre-wrap text-sm">{decision.reasoning}</p>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {decision.angle && (
+              <div>
+                <span className="text-xs font-medium text-muted-foreground">Angle</span>
+                <p className="text-sm">{decision.angle}</p>
+              </div>
+            )}
+            {decision.episode_type && (
+              <div>
+                <span className="text-xs font-medium text-muted-foreground">Episode Type</span>
+                <p className="text-sm">{decision.episode_type}</p>
+              </div>
+            )}
+            {decision.post_category && (
+              <div>
+                <span className="text-xs font-medium text-muted-foreground">Post Category</span>
+                <p className="text-sm">{decision.post_category}</p>
+              </div>
+            )}
+            {decision.media_tool && (
+              <div>
+                <span className="text-xs font-medium text-muted-foreground">Media Tool</span>
+                <p className="text-sm">{decision.media_tool}</p>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span>Commit: <code>{decision.commit_hash.slice(0, 7)}</code></span>
+            <span>{new Date(decision.created_at).toLocaleString()}</span>
           </div>
         </div>
       )}

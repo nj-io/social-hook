@@ -74,12 +74,21 @@ export default function DashboardPage() {
               }, {});
 
               return (
-                <div
+                <Link
                   key={project.id}
-                  className="rounded-lg border border-border p-4"
+                  href={`/projects/${project.id}`}
+                  className="block rounded-lg border border-border p-4 transition-colors hover:bg-muted"
                 >
-                  <h3 className="font-medium">{project.name}</h3>
-                  <p className="mb-2 truncate text-xs text-muted-foreground">{project.repo_path}</p>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium">{project.name}</h3>
+                    {project.phase && <LifecycleBadge phase={project.phase} />}
+                  </div>
+                  <p className="mb-1 truncate text-xs text-muted-foreground">{project.repo_path}</p>
+                  {project.summary && (
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      {project.summary.length > 100 ? project.summary.slice(0, 100) + "..." : project.summary}
+                    </p>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(projectStatusCounts).map(([status, count]) => (
                       <div key={status} className="flex items-center gap-1">
@@ -91,7 +100,7 @@ export default function DashboardPage() {
                       <span className="text-xs text-muted-foreground">No drafts</span>
                     )}
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
@@ -141,5 +150,22 @@ function StatCard({ label, value }: { label: string; value: number }) {
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
     </div>
+  );
+}
+
+const phaseStyles: Record<string, string> = {
+  research: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
+  build: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  demo: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+  launch: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
+  post_launch: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+};
+
+function LifecycleBadge({ phase }: { phase: string }) {
+  const style = phaseStyles[phase] ?? "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300";
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${style}`}>
+      {phase}
+    </span>
   );
 }

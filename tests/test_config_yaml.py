@@ -332,3 +332,45 @@ class TestValidateConfig:
         """validate_config raises ConfigError on invalid data."""
         with pytest.raises(ConfigError):
             validate_config({"platforms": {"x": {"priority": "bad"}}})
+
+
+class TestConsolidationConfigParsing:
+    """Test consolidation config parsing and validation."""
+
+    def test_consolidation_defaults(self, temp_dir):
+        """Default config has consolidation disabled with notify_only mode."""
+        config = load_config(None)
+        assert config.consolidation.enabled is False
+        assert config.consolidation.mode == "notify_only"
+        assert config.consolidation.batch_size == 20
+
+    def test_consolidation_from_yaml(self, temp_dir):
+        """Consolidation config round-trips through YAML."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            "consolidation:\n  enabled: true\n  mode: re_evaluate\n  batch_size: 10\n"
+        )
+        config = load_config(config_path)
+        assert config.consolidation.enabled is True
+        assert config.consolidation.mode == "re_evaluate"
+        assert config.consolidation.batch_size == 10
+
+    def test_consolidation_invalid_mode(self):
+        """Invalid mode raises ConfigError."""
+        with pytest.raises(ConfigError, match="Invalid consolidation mode"):
+            validate_config({"consolidation": {"mode": "bad_mode"}})
+
+    def test_consolidation_invalid_batch_size_zero(self):
+        """Zero batch_size raises ConfigError."""
+        with pytest.raises(ConfigError, match="must be positive integer"):
+            validate_config({"consolidation": {"batch_size": 0}})
+
+    def test_consolidation_invalid_batch_size_negative(self):
+        """Negative batch_size raises ConfigError."""
+        with pytest.raises(ConfigError, match="must be positive integer"):
+            validate_config({"consolidation": {"batch_size": -5}})
+
+    def test_consolidation_invalid_batch_size_string(self):
+        """String batch_size raises ConfigError."""
+        with pytest.raises(ConfigError, match="must be positive integer"):
+            validate_config({"consolidation": {"batch_size": "twenty"}})

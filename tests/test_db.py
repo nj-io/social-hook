@@ -128,9 +128,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 7."""
+        """Check schema version returns 9."""
         version = get_schema_version(temp_db)
-        assert version == 8
+        assert version == 9
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent."""
@@ -143,7 +143,7 @@ class TestDatabaseInitialization:
         version2 = get_schema_version(conn2)
         conn2.close()
 
-        assert version1 == version2 == 8
+        assert version1 == version2 == 9
 
 
 # =============================================================================

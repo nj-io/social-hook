@@ -257,7 +257,7 @@ class TestDecisionModel:
             reasoning="Test",
             commit_message="Add auth module",
         )
-        assert len(decision.to_row()) == 12
+        assert len(decision.to_row()) == 13
 
     def test_decision_to_dict_includes_commit_message(self):
         """Decision.to_dict() includes commit_message."""

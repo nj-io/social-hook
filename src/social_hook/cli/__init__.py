@@ -124,6 +124,24 @@ def scheduler_tick(
         typer.echo(f"Processed {processed} draft(s)")
 
 
+@app.command("consolidation-tick")
+def consolidation_tick_cmd(
+    ctx: typer.Context,
+):
+    """Run one consolidation tick: process batched decisions."""
+    from social_hook.consolidation import consolidation_tick as do_tick
+
+    dry_run = ctx.obj.get("dry_run", False)
+    config_path = ctx.obj.get("config")
+
+    processed = do_tick(
+        dry_run=dry_run,
+        config_path=str(config_path) if config_path else None,
+    )
+    if processed > 0:
+        typer.echo(f"Processed {processed} consolidation decision(s)")
+
+
 @app.command()
 def web(
     ctx: typer.Context,

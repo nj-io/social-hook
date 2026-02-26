@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS decisions (
     arc_id        TEXT REFERENCES arcs(id),
     media_tool    TEXT,
     platforms     TEXT NOT NULL DEFAULT '{}',
+    commit_summary TEXT,
+    processed     INTEGER NOT NULL DEFAULT 0,
+    processed_at  TEXT,
+    batch_id      TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
 
     UNIQUE(project_id, commit_hash)
@@ -51,6 +55,8 @@ CREATE TABLE IF NOT EXISTS decisions (
 CREATE INDEX IF NOT EXISTS idx_decisions_project_time ON decisions(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_decisions_commit ON decisions(project_id, commit_hash);
 CREATE INDEX IF NOT EXISTS idx_decisions_arc ON decisions(arc_id) WHERE arc_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_decisions_unprocessed ON decisions(project_id, created_at)
+    WHERE decision IN ('consolidate', 'deferred') AND processed = 0;
 
 -- Drafts
 CREATE TABLE IF NOT EXISTS drafts (

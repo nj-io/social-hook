@@ -272,6 +272,7 @@ def run_trigger(
         arc_id=getattr(evaluation, "arc_id", None),
         media_tool=getattr(evaluation, "media_tool", None),
         platforms=getattr(evaluation, "platforms", {}),
+        commit_summary=getattr(evaluation, "commit_summary", None),
     )
     db.insert_decision(decision)
 

@@ -83,6 +83,73 @@ def tmp_env(tmp_path):
             paused INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS decisions (
+            id TEXT PRIMARY KEY,
+            project_id TEXT,
+            commit_hash TEXT,
+            commit_message TEXT,
+            decision TEXT,
+            reasoning TEXT,
+            angle TEXT,
+            episode_type TEXT,
+            post_category TEXT,
+            arc_id TEXT,
+            media_tool TEXT,
+            platforms TEXT DEFAULT '{}',
+            commit_summary TEXT,
+            processed INTEGER NOT NULL DEFAULT 0,
+            processed_at TEXT,
+            batch_id TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS lifecycles (
+            project_id TEXT PRIMARY KEY,
+            phase TEXT DEFAULT 'research',
+            confidence REAL DEFAULT 0.5,
+            evidence TEXT DEFAULT '[]',
+            last_strategy_moment TEXT,
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS arcs (
+            id TEXT PRIMARY KEY,
+            project_id TEXT,
+            theme TEXT,
+            status TEXT DEFAULT 'active',
+            post_count INTEGER DEFAULT 0,
+            last_post_at TEXT,
+            notes TEXT,
+            started_at TEXT DEFAULT (datetime('now')),
+            ended_at TEXT,
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS narrative_debt (
+            project_id TEXT PRIMARY KEY,
+            debt_counter INTEGER DEFAULT 0,
+            last_synthesis_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS posts (
+            id TEXT PRIMARY KEY,
+            draft_id TEXT,
+            project_id TEXT,
+            platform TEXT,
+            external_id TEXT,
+            external_url TEXT,
+            content TEXT,
+            posted_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS usage_log (
+            id TEXT PRIMARY KEY,
+            project_id TEXT,
+            operation_type TEXT,
+            model TEXT,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_creation_tokens INTEGER DEFAULT 0,
+            cost_cents REAL DEFAULT 0.0,
+            commit_hash TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
         CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,
             applied_at TEXT,

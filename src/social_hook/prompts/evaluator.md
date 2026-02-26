@@ -32,6 +32,7 @@ For post-worthy commits, also provide:
 **Consolidate** — wait and batch with related commits:
 - Part of a larger change in progress
 - Would be better told alongside upcoming commits
+- When choosing consolidate or deferred, always provide a `commit_summary` (1-2 sentences) describing what this commit does, so the consolidation processor can batch related work later
 
 **Deferred** — could be post-worthy but not right now:
 - Too similar to a recent post
