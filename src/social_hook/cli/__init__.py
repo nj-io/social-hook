@@ -332,6 +332,44 @@ def bot_status():
 # =============================================================================
 
 
+@app.command("commit-hook", hidden=True)
+def commit_hook():
+    """Internal: called by PostToolUse hook. Reads JSON from stdin, filters for git commits."""
+    import json
+    import re
+    import sys
+
+    try:
+        data = json.loads(sys.stdin.read())
+    except (json.JSONDecodeError, EOFError):
+        return  # Silently exit — not our concern
+
+    command = data.get("tool_input", {}).get("command", "")
+    if not re.match(r"^git\s+(commit|merge|rebase|cherry-pick)", command):
+        return  # Not a git commit command, nothing to do
+
+    cwd = data.get("cwd", "")
+    if not cwd:
+        return
+
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        if result.returncode != 0:
+            return
+        commit_hash = result.stdout.strip()
+    except Exception:
+        return
+
+    from social_hook.trigger import run_trigger
+
+    run_trigger(commit_hash=commit_hash, repo_path=cwd)
+
+
 @app.command("narrative-capture", hidden=True)
 def narrative_capture():
     """Internal: called by PreCompact hook. Reads JSON from stdin."""

@@ -110,7 +110,7 @@ class TestUninstallHook:
                 "PostToolUse": [
                     {"hooks": [{"type": "command", "command": "other-tool"}]},
                     {
-                        "matcher": {"tool": "Bash", "command_pattern": r"^git\s+(commit|merge|rebase|cherry-pick)"},
+                        "matcher": "Bash",
                         "hooks": [{"type": "command", "command": COMMIT_HOOK_COMMAND}],
                     },
                 ]

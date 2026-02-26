@@ -13,15 +13,9 @@ logger = logging.getLogger(__name__)
 
 # --- Commit hook constants ---
 COMMIT_HOOK_EVENT = "PostToolUse"
-COMMIT_HOOK_MATCHER = {
-    "tool": "Bash",
-    "command_pattern": r"^git\s+(commit|merge|rebase|cherry-pick)",
-}
-COMMIT_HOOK_COMMAND = (
-    "social-hook trigger --commit $(git rev-parse HEAD) --repo $(pwd)"
-)
+COMMIT_HOOK_MATCHER = "Bash"
+COMMIT_HOOK_COMMAND = "social-hook commit-hook"
 
-# Backward-compat: OUR_HOOK kept for existing test imports
 OUR_HOOK = {
     "type": "command",
     "event": COMMIT_HOOK_EVENT,
@@ -81,18 +75,11 @@ def _write_settings_atomic(settings_file: Path, data: dict) -> None:
 def _find_our_rule_group(
     rule_groups: list, command_str: str
 ) -> Optional[int]:
-    """Find the index of our rule group by scanning nested hooks for command_str.
-
-    Handles both the correct nested format and the old flat format.
-    """
+    """Find the index of our rule group by scanning nested hooks for command_str."""
     for i, group in enumerate(rule_groups):
-        # New nested format: group has "hooks" list of hook dicts
         for hook in group.get("hooks", []):
             if hook.get("command") == command_str:
                 return i
-        # Old flat format: group itself has "command" key
-        if group.get("command") == command_str:
-            return i
     return None
 
 
@@ -133,7 +120,7 @@ def install_hook(
     if _find_our_rule_group(post_tool_use, COMMIT_HOOK_COMMAND) is not None:
         return True, "Hook already installed"
 
-    # Build rule group in correct nested format
+    # Build rule group
     rule_group = {
         "matcher": COMMIT_HOOK_MATCHER,
         "hooks": [

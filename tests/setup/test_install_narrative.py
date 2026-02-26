@@ -58,7 +58,7 @@ class TestCommitHookInstall:
             "hooks": {
                 "PostToolUse": [
                     {
-                        "matcher": {"tool": "Bash", "command_pattern": "other"},
+                        "matcher": "Bash",
                         "hooks": [{"type": "command", "command": "other-tool run"}],
                     }
                 ]
@@ -131,7 +131,7 @@ class TestCommitHookUninstall:
             "hooks": {
                 "PostToolUse": [
                     {
-                        "matcher": {"tool": "Bash", "command_pattern": "other"},
+                        "matcher": "Bash",
                         "hooks": [{"type": "command", "command": "other-tool"}],
                     },
                 ]
@@ -162,24 +162,6 @@ class TestCommitHookCheckInstalled:
     def test_no_file(self, temp_dir):
         sf = temp_dir / "nonexistent.json"
         assert check_hook_installed(sf) is False
-
-    def test_detects_old_flat_format(self, temp_dir):
-        """check_hook_installed recognizes legacy flat format."""
-        sf = temp_dir / "settings.json"
-        old_format = {
-            "hooks": {
-                "PostToolUse": [
-                    {
-                        "type": "command",
-                        "event": "PostToolUse",
-                        "matcher": COMMIT_HOOK_MATCHER,
-                        "command": COMMIT_HOOK_COMMAND,
-                    }
-                ]
-            }
-        }
-        sf.write_text(json.dumps(old_format))
-        assert check_hook_installed(sf) is True
 
 
 class TestNarrativeHookInstall:
