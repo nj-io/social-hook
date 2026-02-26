@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.config.project import (
     StrategyConfig,
     load_context_notes,
@@ -415,7 +416,7 @@ class TestMemories:
 
         save_memory(project_dir, "Technical post", '"Too formal"', "draft_001")
 
-        memories_path = project_dir / ".social-hook" / "memories.md"
+        memories_path = project_dir / CONFIG_DIR_NAME / "memories.md"
         assert memories_path.exists()
         content = memories_path.read_text()
         assert "Technical post" in content
@@ -424,7 +425,7 @@ class TestMemories:
 
     def test_save_memory_appends(self, temp_dir):
         project_dir = temp_dir / "my-project"
-        config_dir = project_dir / ".social-hook"
+        config_dir = project_dir / CONFIG_DIR_NAME
         config_dir.mkdir(parents=True)
 
         save_memory(project_dir, "First", '"feedback1"', "draft_001")
@@ -437,7 +438,7 @@ class TestMemories:
 
     def test_save_memory_caps_at_100(self, temp_dir):
         project_dir = temp_dir / "my-project"
-        config_dir = project_dir / ".social-hook"
+        config_dir = project_dir / CONFIG_DIR_NAME
         config_dir.mkdir(parents=True)
 
         for i in range(105):
@@ -453,7 +454,7 @@ class TestMemories:
 
     def test_parse_memories_from_existing(self, temp_project_dir):
         """Verify parsing existing memories.md."""
-        memories_path = temp_project_dir / ".social-hook" / "memories.md"
+        memories_path = temp_project_dir / CONFIG_DIR_NAME / "memories.md"
         content = memories_path.read_text()
         memories = _parse_memories(content)
         assert len(memories) == 1
@@ -465,7 +466,7 @@ class TestMemories:
         """New memory added to existing memories.md preserves old entries."""
         save_memory(temp_project_dir, "New post", '"Great job"', "draft_002")
 
-        memories_path = temp_project_dir / ".social-hook" / "memories.md"
+        memories_path = temp_project_dir / CONFIG_DIR_NAME / "memories.md"
         content = memories_path.read_text()
         memories = _parse_memories(content)
         assert len(memories) == 2
@@ -598,7 +599,7 @@ class TestMemoriesWrapper:
 
         add_memory(project_dir, "Technical post", '"Too formal"', "draft_001")
 
-        memories_path = project_dir / ".social-hook" / "memories.md"
+        memories_path = project_dir / CONFIG_DIR_NAME / "memories.md"
         assert memories_path.exists()
         content = memories_path.read_text()
         assert "Technical post" in content
@@ -647,7 +648,7 @@ class TestContextNotes:
 
         save_context_note(project_dir, "User prefers casual tone", "expert:draft_001")
 
-        notes_path = project_dir / ".social-hook" / "context-notes.md"
+        notes_path = project_dir / CONFIG_DIR_NAME / "context-notes.md"
         assert notes_path.exists()
         content = notes_path.read_text()
         assert "User prefers casual tone" in content

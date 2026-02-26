@@ -14,6 +14,7 @@ from social_hook.config.project import (
     SummaryConfig,
 )
 from social_hook.config.yaml import MediaGenerationConfig
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import PromptNotFoundError
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import (
@@ -134,7 +135,7 @@ class TestLoadPrompt:
                 load_prompt("evaluator")
 
     def test_load_prompt_reads_file(self, temp_dir):
-        prompts_dir = temp_dir / ".social-hook" / "prompts"
+        prompts_dir = temp_dir / CONFIG_DIR_NAME / "prompts"
         prompts_dir.mkdir(parents=True)
         (prompts_dir / "evaluator.md").write_text("# Test Evaluator\nTest content.")
 

@@ -7,6 +7,7 @@ from typing import Any, Optional
 import yaml
 
 from social_hook.config.platforms import OutputPlatformConfig
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
 
 # Valid X account tiers and their character limits
@@ -354,9 +355,9 @@ def load_full_config(
 
     # Set default paths
     if env_path is None:
-        env_path = Path.home() / ".social-hook" / ".env"
+        env_path = Path.home() / CONFIG_DIR_NAME / ".env"
     if yaml_path is None:
-        yaml_path = Path.home() / ".social-hook" / "config.yaml"
+        yaml_path = Path.home() / CONFIG_DIR_NAME / "config.yaml"
 
     # Load environment variables
     env_vars = load_env(env_path)

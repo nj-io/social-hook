@@ -5,6 +5,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from social_hook.constants import CONFIG_DIR_NAME, DB_FILENAME, PROJECT_NAME
+
 
 def generate_id(prefix: str) -> str:
     """Generate a unique ID with a prefix.
@@ -43,7 +45,7 @@ def init_filesystem(base: Optional[str | Path] = None) -> Path:
         Path to base directory
     """
     if base is None:
-        base = Path.home() / ".social-hook"
+        base = Path.home() / CONFIG_DIR_NAME
     else:
         base = Path(base)
 
@@ -78,8 +80,8 @@ def init_filesystem(base: Optional[str | Path] = None) -> Path:
     return base
 
 
-ENV_EXAMPLE_CONTENT = """\
-# Social Hook Configuration
+ENV_EXAMPLE_CONTENT = f"""\
+# {PROJECT_NAME} Configuration
 # Copy this file to .env and fill in your values
 
 # Claude API (required for anthropic/ provider)
@@ -114,8 +116,8 @@ OLLAMA_BASE_URL=http://localhost:11434/v1
 """
 
 
-CONFIG_EXAMPLE_CONTENT = """\
-# Social Hook Configuration
+CONFIG_EXAMPLE_CONTENT = f"""\
+# {PROJECT_NAME} Configuration
 # Copy this file to config.yaml and customize
 
 models:
@@ -158,7 +160,7 @@ def get_base_path() -> Path:
     Returns:
         Path to ~/.social-hook/
     """
-    return Path.home() / ".social-hook"
+    return Path.home() / CONFIG_DIR_NAME
 
 
 def get_db_path() -> Path:
@@ -167,7 +169,7 @@ def get_db_path() -> Path:
     Returns:
         Path to ~/.social-hook/social-hook.db
     """
-    return get_base_path() / "social-hook.db"
+    return get_base_path() / DB_FILENAME
 
 
 def get_env_path() -> Path:

@@ -32,6 +32,7 @@ from social_hook.bot.commands import (
 from social_hook.db import get_connection, init_database, insert_draft, insert_project
 from social_hook.filesystem import generate_id
 from social_hook.messaging.base import InboundMessage, MessagingAdapter, SendResult
+from social_hook.constants import PROJECT_NAME, PROJECT_SLUG
 from social_hook.models import Draft, Project
 
 
@@ -128,7 +129,7 @@ class TestCmdHelp:
         cmd_help(mock_adapter, "123", "", None)
         mock_send.assert_called_once()
         text = mock_send.call_args[0][2]
-        assert "Social Hook Bot" in text
+        assert f"{PROJECT_NAME} Bot" in text
         assert "/status" in text
         assert "/approve" in text
         assert "/help" in text
@@ -695,7 +696,7 @@ class TestCmdRegister:
         cmd_register(mock_adapter, "123", "", None)
         text = mock_send.call_args[0][2]
         assert "terminal" in text.lower()
-        assert "social-hook register" in text
+        assert f"{PROJECT_SLUG} register" in text
 
 
 class TestCmdUsageDays:
@@ -782,7 +783,7 @@ class TestCmdHelpDetailed:
     def test_help_no_args_shows_all(self, mock_send, mock_adapter):
         cmd_help(mock_adapter, "123", "", None)
         text = mock_send.call_args[0][2]
-        assert "Social Hook Bot" in text
+        assert f"{PROJECT_NAME} Bot" in text
 
 
 class TestHandleMessage:

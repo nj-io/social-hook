@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 import yaml
 
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
 
 
@@ -121,9 +122,9 @@ def load_project_config(
     """
     repo_path = Path(repo_path)
     if global_base is None:
-        global_base = Path.home() / ".social-hook"
+        global_base = Path.home() / CONFIG_DIR_NAME
 
-    project_config_dir = repo_path / ".social-hook"
+    project_config_dir = repo_path / CONFIG_DIR_NAME
     config = ProjectConfig(repo_path=str(repo_path))
 
     # Load social-context.md (project → global → None)
@@ -272,7 +273,7 @@ def save_memory(
     from datetime import date
 
     repo_path = Path(repo_path)
-    config_dir = repo_path / ".social-hook"
+    config_dir = repo_path / CONFIG_DIR_NAME
     config_dir.mkdir(parents=True, exist_ok=True)
     memories_path = config_dir / "memories.md"
 
@@ -361,7 +362,7 @@ def save_context_note(
     from datetime import date
 
     repo_path = Path(repo_path)
-    config_dir = repo_path / ".social-hook"
+    config_dir = repo_path / CONFIG_DIR_NAME
     config_dir.mkdir(parents=True, exist_ok=True)
     notes_path = config_dir / "context-notes.md"
 
@@ -393,7 +394,7 @@ def load_context_notes(repo_path: str | Path) -> list[dict]:
         List of note dicts with date, note, source keys.
         Empty list if file doesn't exist.
     """
-    notes_path = Path(repo_path) / ".social-hook" / "context-notes.md"
+    notes_path = Path(repo_path) / CONFIG_DIR_NAME / "context-notes.md"
     if not notes_path.exists():
         return []
     content = notes_path.read_text(encoding="utf-8")

@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from social_hook.constants import CONFIG_DIR_NAME
+
 
 class JsonFormatter(logging.Formatter):
     """Format log records as JSON."""
@@ -67,7 +69,7 @@ def setup_logging(
         Logger configured for JSON output to component-specific file
     """
     if log_dir is None:
-        log_dir = Path.home() / ".social-hook" / "logs"
+        log_dir = Path.home() / CONFIG_DIR_NAME / "logs"
     else:
         log_dir = Path(log_dir)
 

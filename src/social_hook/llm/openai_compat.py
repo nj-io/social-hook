@@ -41,8 +41,7 @@ class OpenAICompatClient(LLMClient):
     ):
         if OpenAI is None:
             raise ConfigError(
-                "openai package required for OpenAI/OpenRouter/Ollama providers. "
-                "Install with: pip install social-hook[multi-provider]"
+                "openai package required for OpenAI/OpenRouter/Ollama providers."
             )
         self.model = model
         self.provider = provider_name

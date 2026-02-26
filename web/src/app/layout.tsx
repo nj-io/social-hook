@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Social Hook Dashboard",
+  title: `${process.env.NEXT_PUBLIC_PROJECT_NAME || "Social Hook"} Dashboard`,
   description: "Manage your automated social media content pipeline",
 };
 

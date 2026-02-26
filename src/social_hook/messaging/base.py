@@ -3,7 +3,7 @@
 Mirrors the LLM layer pattern: ABC with normalized types,
 provider-specific implementations in separate modules.
 
-REUSABILITY: This file has zero social-hook imports.
+REUSABILITY: This file has zero project-specific imports.
 Only stdlib (abc, dataclasses, typing). Copy-paste safe.
 """
 

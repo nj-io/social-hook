@@ -4,7 +4,7 @@ Writes all outbound messages to a `web_events` table.
 Auto-creates the table on first use. Takes `db_path` as constructor param.
 
 REUSABILITY: This file imports only from messaging.base (stdlib types)
-and stdlib (sqlite3, json, threading). No social-hook domain concepts.
+and stdlib (sqlite3, json, threading). No project-specific domain concepts.
 """
 
 import json

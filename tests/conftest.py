@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from social_hook.db import get_connection, init_database
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.filesystem import init_filesystem
 
 
@@ -30,7 +31,7 @@ def temp_db(temp_dir):
 @pytest.fixture
 def temp_base(temp_dir):
     """Initialize social-hook filesystem in a temp directory."""
-    base = init_filesystem(temp_dir / ".social-hook")
+    base = init_filesystem(temp_dir / CONFIG_DIR_NAME)
     yield base
 
 
@@ -91,7 +92,7 @@ def temp_project_dir(temp_dir):
     project_dir.mkdir()
 
     # Create .social-hook subdirectory
-    config_dir = project_dir / ".social-hook"
+    config_dir = project_dir / CONFIG_DIR_NAME
     config_dir.mkdir()
 
     # Create social-context.md

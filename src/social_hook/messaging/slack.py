@@ -1,10 +1,10 @@
 """Slack Bot adapter (stub).
 
-Install social-hook[slack] for full support.
+Install slack-bolt for full support.
 Uses slack-bolt for event handling and Web API for messaging.
 
 REUSABILITY: Imports only from messaging.base (stdlib) and ConfigError.
-No social-hook domain concepts.
+No project-specific domain concepts.
 """
 
 from social_hook.errors import ConfigError
@@ -17,7 +17,7 @@ from social_hook.messaging.base import (
 
 
 class SlackAdapter(MessagingAdapter):
-    """Slack Bot adapter (stub -- install social-hook[slack] for full support).
+    """Slack Bot adapter (stub -- install slack-bolt for full support).
 
     Uses slack-bolt for event handling and Web API for messaging.
     """
@@ -29,8 +29,7 @@ class SlackAdapter(MessagingAdapter):
             from slack_bolt import App  # noqa: F401
         except ImportError:
             raise ConfigError(
-                "slack-bolt package required for Slack integration. "
-                "Install with: pip install social-hook[slack]"
+                "slack-bolt package required for Slack integration."
             )
         self.token = token
 

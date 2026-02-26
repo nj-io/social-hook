@@ -140,9 +140,9 @@ export function ProjectsSection() {
           To register or unregister projects, use the CLI:
         </p>
         <pre className="mt-1 text-xs text-muted-foreground">
-{`  social-hook project register /path/to/repo
-  social-hook project unregister <project-id>
-  social-hook project list`}
+{`  ${process.env.NEXT_PUBLIC_PROJECT_SLUG || "social-hook"} project register /path/to/repo
+  ${process.env.NEXT_PUBLIC_PROJECT_SLUG || "social-hook"} project unregister <project-id>
+  ${process.env.NEXT_PUBLIC_PROJECT_SLUG || "social-hook"} project list`}
         </pre>
       </div>
     </div>

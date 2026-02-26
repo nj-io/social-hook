@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from social_hook.config.env import KEY_GROUPS, KNOWN_KEYS
+from social_hook.constants import PROJECT_NAME, PROJECT_SLUG, PROJECT_DESCRIPTION, CONFIG_DIR_NAME
 from social_hook.config.project import DEFAULT_MEDIA_GUIDANCE
 from social_hook.config.yaml import Config, validate_config
 from social_hook.errors import ConfigError
@@ -51,7 +52,7 @@ async def lifespan(app_instance: FastAPI):
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Social Hook Dashboard API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title=f"{PROJECT_NAME} Dashboard API", version="0.1.0", lifespan=lifespan)
 
 # CORS: localhost only
 app.add_middleware(
@@ -61,6 +62,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/api/branding")
+def get_branding():
+    return {"name": PROJECT_NAME, "slug": PROJECT_SLUG, "description": PROJECT_DESCRIPTION}
+
 
 # ---------------------------------------------------------------------------
 # Module-level state
@@ -797,7 +803,7 @@ async def api_update_env(body: EnvUpdate):
 async def api_get_social_context(project_path: Optional[str] = None):
     """Read social-context.md content."""
     if project_path:
-        sc_path = Path(project_path) / ".social-hook" / "social-context.md"
+        sc_path = Path(project_path) / CONFIG_DIR_NAME / "social-context.md"
         if not sc_path.exists():
             # Fallback to global
             sc_path = get_db_path().parent / "social-context.md"
@@ -817,7 +823,7 @@ async def api_update_social_context(body: SocialContextUpdate):
         project_dir = Path(body.project_path)
         if not project_dir.is_dir():
             raise HTTPException(status_code=400, detail=f"Project path not found: {body.project_path}")
-        sc_path = project_dir / ".social-hook" / "social-context.md"
+        sc_path = project_dir / CONFIG_DIR_NAME / "social-context.md"
     else:
         sc_path = get_db_path().parent / "social-context.md"
 
@@ -830,7 +836,7 @@ async def api_update_social_context(body: SocialContextUpdate):
 async def api_get_content_config(project_path: Optional[str] = None):
     """Read content-config.yaml content."""
     if project_path:
-        cc_path = Path(project_path) / ".social-hook" / "content-config.yaml"
+        cc_path = Path(project_path) / CONFIG_DIR_NAME / "content-config.yaml"
         if not cc_path.exists():
             cc_path = get_db_path().parent / "content-config.yaml"
     else:
@@ -855,7 +861,7 @@ async def api_update_content_config(body: ContentConfigUpdate):
         project_dir = Path(body.project_path)
         if not project_dir.is_dir():
             raise HTTPException(status_code=400, detail=f"Project path not found: {body.project_path}")
-        cc_path = project_dir / ".social-hook" / "content-config.yaml"
+        cc_path = project_dir / CONFIG_DIR_NAME / "content-config.yaml"
     else:
         cc_path = get_db_path().parent / "content-config.yaml"
 
@@ -868,7 +874,7 @@ async def api_update_content_config(body: ContentConfigUpdate):
 async def api_get_content_config_parsed(project_path: Optional[str] = None):
     """Return parsed content-config sections as structured JSON."""
     if project_path:
-        cc_path = Path(project_path) / ".social-hook" / "content-config.yaml"
+        cc_path = Path(project_path) / CONFIG_DIR_NAME / "content-config.yaml"
         if not cc_path.exists():
             cc_path = get_db_path().parent / "content-config.yaml"
     else:
@@ -903,7 +909,7 @@ async def api_update_content_config_parsed(body: dict[str, Any] = Body(...), pro
         project_dir = Path(project_path)
         if not project_dir.is_dir():
             raise HTTPException(status_code=400, detail=f"Project path not found: {project_path}")
-        cc_path = project_dir / ".social-hook" / "content-config.yaml"
+        cc_path = project_dir / CONFIG_DIR_NAME / "content-config.yaml"
     else:
         cc_path = get_db_path().parent / "content-config.yaml"
 
@@ -1031,7 +1037,7 @@ async def api_start_bot_daemon():
     if is_running():
         return {"success": True, "message": "Bot daemon is already running"}
     try:
-        sp.Popen(["social-hook", "bot", "start", "--daemon"])
+        sp.Popen([PROJECT_SLUG, "bot", "start", "--daemon"])
         return {"success": True, "message": "Bot daemon starting"}
     except Exception as e:
         return {"success": False, "message": str(e)}

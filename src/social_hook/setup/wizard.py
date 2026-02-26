@@ -8,6 +8,8 @@ from typing import Any, Callable, Optional
 
 import typer
 
+from social_hook.constants import PROJECT_NAME, PROJECT_SLUG
+
 logger = logging.getLogger(__name__)
 
 # Common timezones for selector
@@ -507,8 +509,8 @@ def run_wizard(
         console = Console()
         console.print()
         console.print(Panel(
-            "[bold]Social Hook Setup[/bold]\n\n"
-            "Social Hook automatically turns your git commits into social media posts.\n"
+            f"[bold]{PROJECT_NAME} Setup[/bold]\n\n"
+            f"{PROJECT_NAME} automatically turns your git commits into social media posts.\n"
             "It watches your repos, uses AI to decide what's worth posting about,\n"
             "drafts content in your voice, and sends it for your approval via Telegram.\n\n"
             "This wizard will configure:\n"
@@ -527,8 +529,8 @@ def run_wizard(
         ))
         console.print()
     except Exception:
-        typer.echo("\n=== Social Hook Setup ===\n")
-        typer.echo("Social Hook automatically turns your git commits into social media posts.")
+        typer.echo(f"\n=== {PROJECT_NAME} Setup ===\n")
+        typer.echo(f"{PROJECT_NAME} automatically turns your git commits into social media posts.")
         typer.echo("This wizard will configure:")
         typer.echo("  1. AI model selection (provider & model for each role)")
         typer.echo("  2. API credentials (only what's needed for your chosen providers)")
@@ -641,11 +643,11 @@ def run_wizard(
             if not has_telegram:
                 warnings.append("Telegram bot not configured — no draft notifications")
             if not has_voice:
-                warnings.append("Voice & style not configured — run `social-hook setup --only voice`")
+                warnings.append(f"Voice & style not configured — run `{PROJECT_SLUG} setup --only voice`")
             if not has_x:
                 warnings.append("X (Twitter) not configured — no auto-posting")
             if not installed:
-                warnings.append("Installations skipped — run `social-hook setup` to install hook, cron, and bot")
+                warnings.append(f"Installations skipped — run `{PROJECT_SLUG} setup` to install hook, cron, and bot")
 
         if warnings:
             typer.echo("")
@@ -653,7 +655,7 @@ def run_wizard(
             for w in warnings:
                 _warn(f"  • {w}")
             typer.echo("")
-            _warn("Run `social-hook setup` to reconfigure.")
+            _warn(f"Run `{PROJECT_SLUG} setup` to reconfigure.")
         else:
             _success("Setup complete!")
 
@@ -1731,7 +1733,7 @@ def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[
         Console().print(Panel(
             "The following components will be installed:\n\n"
             "  • Claude Code hook → ~/.claude/settings.json\n"
-            "    Triggers social-hook on git commit\n\n"
+            f"    Triggers {PROJECT_SLUG} on git commit\n\n"
             "  • Scheduler cron job → runs every minute\n"
             "    Posts approved drafts at scheduled times\n\n"
             "  • Telegram bot → background daemon\n"
@@ -1798,7 +1800,7 @@ def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[
     else:
         try:
             result = subprocess.run(
-                ["social-hook", "bot", "start", "--daemon"],
+                [PROJECT_SLUG, "bot", "start", "--daemon"],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -1808,7 +1810,7 @@ def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[
             else:
                 _error(f"Bot start failed: {result.stderr.strip() or result.stdout.strip()}")
         except FileNotFoundError:
-            _warn("social-hook command not found — start bot manually: social-hook bot start --daemon")
+            _warn(f"{PROJECT_SLUG} command not found — start bot manually: {PROJECT_SLUG} bot start --daemon")
         except Exception as e:
             _error(f"Bot start failed: {e}")
     if progress:

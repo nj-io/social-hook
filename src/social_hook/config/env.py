@@ -6,6 +6,7 @@ from typing import Optional
 
 from dotenv import dotenv_values
 
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
 
 # Required keys that must be present
@@ -59,7 +60,7 @@ def load_env(env_path: Optional[str | Path] = None) -> dict[str, str]:
         ConfigError: If required keys are missing
     """
     if env_path is None:
-        env_path = Path.home() / ".social-hook" / ".env"
+        env_path = Path.home() / CONFIG_DIR_NAME / ".env"
     else:
         env_path = Path(env_path)
 

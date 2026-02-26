@@ -103,7 +103,7 @@ export function ApiKeysSection({ env, knownKeys, keyGroups, onRefresh }: ApiKeys
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">API Keys</h2>
       <p className="text-sm text-muted-foreground">
-        Manage API keys for LLM providers. Keys are stored in ~/.social-hook/.env.
+        Manage API keys for LLM providers. Keys are stored in {`~/.${process.env.NEXT_PUBLIC_PROJECT_SLUG || "social-hook"}/.env`}.
       </p>
       {groups ? (
         Object.entries(groups).map(([groupName, groupKeys]) => (

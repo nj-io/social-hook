@@ -6,11 +6,12 @@ from typing import Optional
 import typer
 
 from social_hook import __version__
+from social_hook.constants import PROJECT_NAME, PROJECT_SLUG, PROJECT_DESCRIPTION
 
 # Create main Typer app
 app = typer.Typer(
-    name="social-hook",
-    help="Automated social media content from development activity.",
+    name=PROJECT_SLUG,
+    help=f"{PROJECT_DESCRIPTION}.",
     no_args_is_help=True,
 )
 
@@ -55,7 +56,7 @@ def main(
 @app.command()
 def version():
     """Show version information."""
-    typer.echo(f"social-hook {__version__}")
+    typer.echo(f"{PROJECT_SLUG} {__version__}")
 
 
 @app.command()
@@ -80,7 +81,7 @@ def init():
     typer.echo("\nNext steps:")
     typer.echo(f"  1. Copy {base}/.env.example to {base}/.env and add your API keys")
     typer.echo(f"  2. Copy {base}/config.yaml.example to {base}/config.yaml and customize")
-    typer.echo("  3. Run: social-hook register /path/to/your/repo")
+    typer.echo(f"  3. Run: {PROJECT_SLUG} register /path/to/your/repo")
 
 
 @app.command()
@@ -215,6 +216,8 @@ def web(
         next_env = os.environ.copy()
         next_env["NEXT_PUBLIC_API_URL"] = f"http://{host}:{api_port}"
         next_env["NEXT_PUBLIC_API_PORT"] = str(api_port)
+        next_env["NEXT_PUBLIC_PROJECT_NAME"] = PROJECT_NAME
+        next_env["NEXT_PUBLIC_PROJECT_SLUG"] = PROJECT_SLUG
         sp.run(
             ["npx", "next", "dev", "--port", str(port)],
             cwd=str(web_dir),
@@ -281,7 +284,7 @@ def bot_start(
         log_fd = open(log_path, "a")
 
         # Re-invoke in foreground mode as a detached subprocess
-        binary = shutil.which("social-hook") or "social-hook"
+        binary = shutil.which(PROJECT_SLUG) or PROJECT_SLUG
         cmd = [binary, "bot", "start"]
         if config_path:
             cmd.extend(["--config", str(config_path)])
@@ -545,7 +548,7 @@ app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
 app.add_typer(manual_app, name="manual", help="Manual operations.")
 
 # Setup wizard
-app.add_typer(setup_app, name="setup", help="Configure social-hook.")
+app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
 
 # Test command
 app.add_typer(test_app, name="test", help="Test commit evaluation.")

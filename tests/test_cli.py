@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 import pytest
 
 from social_hook.cli import app
+from social_hook.constants import PROJECT_SLUG, PROJECT_NAME
 
 
 runner = CliRunner()
@@ -21,12 +22,12 @@ class TestVersion:
     def test_version_output(self):
         result = runner.invoke(app, ["version"])
         assert result.exit_code == 0
-        assert "social-hook" in result.output
+        assert PROJECT_SLUG in result.output
 
     def test_help(self):
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "social-hook" in result.output.lower() or "Social Hook" in result.output
+        assert PROJECT_SLUG in result.output.lower() or PROJECT_NAME in result.output
 
 
 class TestInit:

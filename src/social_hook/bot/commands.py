@@ -5,6 +5,7 @@ import time
 from typing import Any, Optional
 
 from social_hook.bot.notifications import format_draft_review, get_review_buttons_normalized
+from social_hook.constants import PROJECT_NAME, PROJECT_SLUG
 from social_hook.messaging.base import (
     Button,
     ButtonRow,
@@ -284,7 +285,7 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
         from social_hook.errors import ConfigError
 
         if not config:
-            _send(adapter, chat_id, "Not configured. Run social-hook setup first.")
+            _send(adapter, chat_id, f"Not configured. Run {PROJECT_SLUG} setup first.")
             return
 
         try:
@@ -641,7 +642,7 @@ HELP_DETAILS = {
     "projects": "List all registered projects with active/paused status.",
     "usage": "Show token usage summary. Optional: /usage <days> (default 30).",
     "review": "Show full draft details with action buttons. Usage: /review <draft\\_id>",
-    "register": "Register a new project. Must be done from terminal: `social-hook register /path/to/repo`",
+    "register": f"Register a new project. Must be done from terminal: `{PROJECT_SLUG} register /path/to/repo`",
     "approve": "Approve a draft for posting. Usage: /approve <draft\\_id>",
     "reject": "Reject a draft. Optional reason: /reject <draft\\_id> [reason]",
     "schedule": "Schedule a draft. Without time: optimal scheduling. /schedule <draft\\_id> [datetime]",
@@ -665,7 +666,7 @@ def cmd_help(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) ->
         return
 
     text = (
-        "*Social Hook Bot*\n\n"
+        f"*{PROJECT_NAME} Bot*\n\n"
         "Commands:\n"
         "/status - System status\n"
         "/pending - View pending drafts\n"
@@ -908,7 +909,7 @@ def cmd_register(adapter: MessagingAdapter, chat_id: str, args: str, config: Any
         chat_id,
         "Registration requires filesystem access.\n\n"
         "Use from terminal:\n"
-        "`social-hook register /path/to/repo`",
+        f"`{PROJECT_SLUG} register /path/to/repo`",
     )
 
 

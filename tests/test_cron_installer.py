@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from social_hook.constants import PROJECT_SLUG
 from social_hook.setup.install import (
     CRON_MARKER,
     check_cron_installed,
@@ -80,7 +81,7 @@ class TestUninstallCron:
 
     @patch("social_hook.setup.install.subprocess.run")
     def test_uninstall(self, mock_run):
-        entry = f"*/1 * * * * social-hook scheduler-tick {CRON_MARKER}"
+        entry = f"*/1 * * * * {PROJECT_SLUG} scheduler-tick {CRON_MARKER}"
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout=entry),
             MagicMock(returncode=0),
@@ -113,7 +114,7 @@ class TestCheckCronInstalled:
     def test_installed(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout=f"*/1 * * * * social-hook {CRON_MARKER}",
+            stdout=f"*/1 * * * * {PROJECT_SLUG} {CRON_MARKER}",
         )
         assert check_cron_installed() is True
 

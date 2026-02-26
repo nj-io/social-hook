@@ -184,6 +184,11 @@ export async function validateApiKey(provider: string, key: string): Promise<{ v
   });
 }
 
+// Branding
+export async function fetchBranding(): Promise<{ name: string; slug: string; description: string }> {
+  return apiFetch("/api/branding");
+}
+
 // Installations
 export async function fetchInstallationsStatus(): Promise<InstallationsStatus> {
   return apiFetch("/api/installations/status");

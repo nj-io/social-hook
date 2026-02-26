@@ -1,6 +1,6 @@
 """Reusable WebSocket gateway: hub, envelope, and transport protocol.
 
-Zero social-hook imports — only stdlib + typing. Copy-paste safe.
+Zero project-specific imports — only stdlib + typing. Copy-paste safe.
 """
 
 import asyncio

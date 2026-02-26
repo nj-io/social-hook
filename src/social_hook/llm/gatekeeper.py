@@ -3,6 +3,7 @@
 import logging
 from typing import Any, Optional
 
+from social_hook.constants import PROJECT_SLUG
 from social_hook.errors import MalformedResponseError
 from social_hook.llm.base import LLMClient
 from social_hook.llm.prompts import assemble_gatekeeper_prompt, load_prompt
@@ -93,5 +94,5 @@ class Gatekeeper:
             return RouteActionInput(
                 action=RouteAction.handle_directly,
                 operation=GatekeeperOperation.query,
-                params={"answer": text or "I'm your social-hook assistant. Try sending a draft or ask me a question!"},
+                params={"answer": text or f"I'm your {PROJECT_SLUG} assistant. Try sending a draft or ask me a question!"},
             )

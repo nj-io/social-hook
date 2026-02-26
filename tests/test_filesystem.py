@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from social_hook.filesystem import generate_id, init_filesystem, get_base_path
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.logging import setup_logging
 
 
@@ -21,13 +22,13 @@ class TestFilesystemSetup:
 
     def test_create_structure(self, temp_dir):
         """init_filesystem creates ~/.social-hook/ structure."""
-        base = init_filesystem(temp_dir / ".social-hook")
+        base = init_filesystem(temp_dir / CONFIG_DIR_NAME)
         assert base.exists()
         assert base.is_dir()
 
     def test_directory_contents(self, temp_dir):
         """init_filesystem creates required subdirectories."""
-        base = init_filesystem(temp_dir / ".social-hook")
+        base = init_filesystem(temp_dir / CONFIG_DIR_NAME)
 
         assert (base / "migrations").exists()
         assert (base / "logs").exists()
@@ -36,7 +37,7 @@ class TestFilesystemSetup:
 
     def test_example_files_created(self, temp_dir):
         """init_filesystem creates .env.example and config.yaml.example."""
-        base = init_filesystem(temp_dir / ".social-hook")
+        base = init_filesystem(temp_dir / CONFIG_DIR_NAME)
 
         assert (base / ".env.example").exists()
         assert (base / "config.yaml.example").exists()
@@ -50,7 +51,7 @@ class TestFilesystemSetup:
 
     def test_env_permissions(self, temp_dir):
         """Existing .env file has mode 0o600."""
-        base = temp_dir / ".social-hook"
+        base = temp_dir / CONFIG_DIR_NAME
         base.mkdir(parents=True)
 
         env_file = base / ".env"
@@ -66,7 +67,7 @@ class TestFilesystemSetup:
 
     def test_idempotent(self, temp_dir):
         """Running init_filesystem twice causes no error."""
-        base = temp_dir / ".social-hook"
+        base = temp_dir / CONFIG_DIR_NAME
 
         init_filesystem(base)
         init_filesystem(base)  # Second call

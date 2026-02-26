@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from social_hook.constants import DB_FILENAME
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -18,7 +20,7 @@ import yaml
 @pytest.fixture()
 def tmp_env(tmp_path):
     """Set up isolated filesystem for tests."""
-    db_path = tmp_path / "social-hook.db"
+    db_path = tmp_path / DB_FILENAME
     config_path = tmp_path / "config.yaml"
     env_path = tmp_path / ".env"
     media_dir = tmp_path / "media-cache"

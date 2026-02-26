@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+from social_hook.constants import CONFIG_DIR_NAME, PROJECT_SLUG
 from social_hook.config.project import (
     ContextConfig,
     ProjectConfig,
@@ -51,11 +52,11 @@ def load_prompt(role: str) -> str:
     Raises:
         PromptNotFoundError: If prompt file does not exist
     """
-    prompt_path = Path.home() / ".social-hook" / "prompts" / f"{role}.md"
+    prompt_path = Path.home() / CONFIG_DIR_NAME / "prompts" / f"{role}.md"
     if not prompt_path.exists():
         raise PromptNotFoundError(
             f"Prompt file not found: {prompt_path}. "
-            f"Run 'social-hook setup' to create default prompts."
+            f"Run '{PROJECT_SLUG} setup' to create default prompts."
         )
     return prompt_path.read_text(encoding="utf-8")
 

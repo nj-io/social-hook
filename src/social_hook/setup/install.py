@@ -9,12 +9,14 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from social_hook.constants import PROJECT_SLUG
+
 logger = logging.getLogger(__name__)
 
 # --- Commit hook constants ---
 COMMIT_HOOK_EVENT = "PostToolUse"
 COMMIT_HOOK_MATCHER = "Bash"
-COMMIT_HOOK_COMMAND = "social-hook commit-hook"
+COMMIT_HOOK_COMMAND = f"{PROJECT_SLUG} commit-hook"
 
 OUR_HOOK = {
     "type": "command",
@@ -25,11 +27,11 @@ OUR_HOOK = {
 
 # --- Narrative hook constants ---
 NARRATIVE_HOOK_EVENT = "PreCompact"
-NARRATIVE_HOOK_COMMAND = "social-hook narrative-capture"
+NARRATIVE_HOOK_COMMAND = f"{PROJECT_SLUG} narrative-capture"
 NARRATIVE_HOOK_TIMEOUT = 120
 
 # Marker to identify our hook in crontab
-CRON_MARKER = "# social-hook scheduler"
+CRON_MARKER = f"# {PROJECT_SLUG} scheduler"
 
 
 def get_hooks_path() -> Path:
@@ -293,7 +295,7 @@ def get_cron_entry() -> str:
     Returns:
         Crontab line string
     """
-    binary = shutil.which("social-hook") or "social-hook"
+    binary = shutil.which(PROJECT_SLUG) or PROJECT_SLUG
     from social_hook.filesystem import get_base_path
 
     log_dir = get_base_path() / "logs"

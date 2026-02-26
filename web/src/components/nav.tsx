@@ -18,7 +18,7 @@ export function Nav() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-14 items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-lg font-semibold tracking-tight">Social Hook</span>
+            <span className="text-lg font-semibold tracking-tight">{process.env.NEXT_PUBLIC_PROJECT_NAME || "Social Hook"}</span>
           </div>
           <div className="flex items-center gap-1">
             {links.map((link) => {

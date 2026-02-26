@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from social_hook.constants import CONFIG_DIR_NAME, PROJECT_SLUG
 from social_hook.errors import MalformedResponseError
 from social_hook.llm.base import LLMClient
 from social_hook.llm.drafter import Drafter
@@ -125,7 +126,7 @@ def sample_context():
 @pytest.fixture
 def prompts_dir(temp_dir):
     """Create temp prompts directory with all prompt files."""
-    prompts = temp_dir / ".social-hook" / "prompts"
+    prompts = temp_dir / CONFIG_DIR_NAME / "prompts"
     prompts.mkdir(parents=True)
     (prompts / "evaluator.md").write_text("# Evaluator\nEvaluate commits.")
     (prompts / "drafter.md").write_text("# Drafter\nCreate content.")
@@ -623,7 +624,7 @@ class TestGatekeeper:
 
         assert result.action == RouteAction.handle_directly
         assert result.operation == GatekeeperOperation.query
-        assert "social-hook assistant" in result.params["answer"]
+        assert f"{PROJECT_SLUG} assistant" in result.params["answer"]
 
 
 # =============================================================================

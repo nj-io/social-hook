@@ -16,6 +16,7 @@ from social_hook.config.project import (
     _parse_summary_config,
     save_memory,
 )
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
 
 
@@ -218,7 +219,7 @@ class TestProjectConfig:
         project_dir.mkdir()
 
         # Create .social-hook subdirectory
-        config_dir = project_dir / ".social-hook"
+        config_dir = project_dir / CONFIG_DIR_NAME
         config_dir.mkdir()
 
         (config_dir / "content-config.yaml").write_text(
@@ -240,7 +241,7 @@ platforms:
         project_dir = temp_dir / "new-project"
         project_dir.mkdir()
 
-        config_dir = project_dir / ".social-hook"
+        config_dir = project_dir / CONFIG_DIR_NAME
         assert not config_dir.exists(), "Directory should not exist yet"
 
         save_memory(project_dir, "test context", "test feedback", "draft-001")
@@ -295,7 +296,7 @@ class TestConfigFallback:
 
         # Setup project config (project uses .social-hook subdirectory)
         project_dir = temp_dir / "project"
-        project_config_dir = project_dir / ".social-hook"
+        project_config_dir = project_dir / CONFIG_DIR_NAME
         project_config_dir.mkdir(parents=True)
         (project_config_dir / "social-context.md").write_text("Project voice")
 
@@ -364,7 +365,7 @@ platforms:
 
         # Setup project with only content-config.yaml (not social-context.md)
         project_dir = temp_dir / "project"
-        project_config_dir = project_dir / ".social-hook"
+        project_config_dir = project_dir / CONFIG_DIR_NAME
         project_config_dir.mkdir(parents=True)
         (project_config_dir / "content-config.yaml").write_text("platforms:\n  x:\n    enabled: true")
 
@@ -446,7 +447,7 @@ class TestContextConfig:
     def test_load_project_config_parses_typed_sections(self, temp_dir):
         """load_project_config parses context and strategy from content-config."""
         project_dir = temp_dir / "project"
-        config_dir = project_dir / ".social-hook"
+        config_dir = project_dir / CONFIG_DIR_NAME
         config_dir.mkdir(parents=True)
         (config_dir / "content-config.yaml").write_text(
             """\
@@ -566,7 +567,7 @@ class TestMediaToolGuidance:
     def test_load_project_config_parses_media_guidance(self, temp_dir):
         """load_project_config parses media_tools from content-config."""
         project_dir = temp_dir / "project"
-        config_dir = project_dir / ".social-hook"
+        config_dir = project_dir / CONFIG_DIR_NAME
         config_dir.mkdir(parents=True)
         (config_dir / "content-config.yaml").write_text(
             """\
@@ -648,7 +649,7 @@ class TestStrategyConfigExtended:
     def test_load_project_config_parses_strategy_extensions(self, temp_dir):
         """load_project_config parses extended strategy fields."""
         project_dir = temp_dir / "project"
-        config_dir = project_dir / ".social-hook"
+        config_dir = project_dir / CONFIG_DIR_NAME
         config_dir.mkdir(parents=True)
         (config_dir / "content-config.yaml").write_text(
             """\
@@ -707,7 +708,7 @@ class TestSummaryConfig:
     def test_load_project_config_parses_summary(self, temp_dir):
         """load_project_config parses summary from content-config."""
         project_dir = temp_dir / "project"
-        config_dir = project_dir / ".social-hook"
+        config_dir = project_dir / CONFIG_DIR_NAME
         config_dir.mkdir(parents=True)
         (config_dir / "content-config.yaml").write_text(
             """\

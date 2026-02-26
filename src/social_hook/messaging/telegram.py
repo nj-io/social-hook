@@ -4,7 +4,7 @@ Wraps direct HTTP calls to api.telegram.org.
 No framework dependency (no python-telegram-bot).
 
 REUSABILITY: This file imports only from messaging.base (stdlib)
-and requests (common dependency). No social-hook domain concepts.
+and requests (common dependency). No project-specific domain concepts.
 """
 
 import logging

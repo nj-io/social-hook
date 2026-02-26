@@ -6,6 +6,8 @@ from typing import Optional
 
 import typer
 
+from social_hook.constants import PROJECT_SLUG
+
 app = typer.Typer()
 
 
@@ -106,7 +108,7 @@ def register(
         if not check_hook_installed():
             typer.echo()
             typer.echo("Warning: Claude Code commit hook is not installed.")
-            typer.echo("  Run 'social-hook setup' or install from the web dashboard.")
+            typer.echo(f"  Run '{PROJECT_SLUG} setup' or install from the web dashboard.")
     finally:
         conn.close()
 
@@ -165,6 +167,6 @@ def list_projects(ctx: typer.Context):
         if projects and not check_hook_installed():
             typer.echo()
             typer.echo("Warning: Claude Code commit hook is not installed.")
-            typer.echo("  Run 'social-hook setup' or install from the web dashboard.")
+            typer.echo(f"  Run '{PROJECT_SLUG} setup' or install from the web dashboard.")
     finally:
         conn.close()

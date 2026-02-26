@@ -3,6 +3,7 @@
 import pytest
 
 from social_hook.config.yaml import JourneyCaptureConfig, load_config
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
 from social_hook.filesystem import get_narratives_path, init_filesystem
 
@@ -112,18 +113,18 @@ class TestNarrativesFilesystem:
         path = get_narratives_path()
 
         assert path.name == "narratives"
-        assert path.parent.name == ".social-hook"
+        assert path.parent.name == CONFIG_DIR_NAME
 
     def test_init_filesystem_creates_narratives_dir(self, temp_dir):
         """init_filesystem creates narratives directory."""
-        base = init_filesystem(temp_dir / ".social-hook")
+        base = init_filesystem(temp_dir / CONFIG_DIR_NAME)
 
         assert (base / "narratives").exists()
         assert (base / "narratives").is_dir()
 
     def test_init_filesystem_narratives_idempotent(self, temp_dir):
         """Running init_filesystem twice does not error on narratives dir."""
-        base = temp_dir / ".social-hook"
+        base = temp_dir / CONFIG_DIR_NAME
 
         init_filesystem(base)
         init_filesystem(base)
@@ -132,7 +133,7 @@ class TestNarrativesFilesystem:
 
     def test_config_example_includes_journey_capture(self, temp_dir):
         """config.yaml.example includes journey_capture section."""
-        base = init_filesystem(temp_dir / ".social-hook")
+        base = init_filesystem(temp_dir / CONFIG_DIR_NAME)
 
         config_example = (base / "config.yaml.example").read_text()
 
