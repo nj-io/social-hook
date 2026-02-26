@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { fetchConfig, fetchContentConfig, fetchEnv, fetchProjects, fetchSocialContext, updateConfig, updateContentConfig, updateSocialContext } from "@/lib/api";
-import type { ChannelConfig, Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig, WebDashboardConfig } from "@/lib/types";
+import type { ChannelConfig, Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig } from "@/lib/types";
 import { SettingsSidebar, sections } from "@/components/settings/settings-sidebar";
 import { ModelsSection } from "@/components/settings/models-section";
 import { ApiKeysSection } from "@/components/settings/api-keys-section";
@@ -12,7 +12,6 @@ import { SchedulingSection } from "@/components/settings/scheduling-section";
 import { TextEditorSection } from "@/components/settings/text-editor-section";
 import { MediaGenerationSection } from "@/components/settings/media-generation-section";
 import { ConsolidationSection } from "@/components/settings/consolidation-section";
-import { NotificationsSection } from "@/components/settings/notifications-section";
 import { ProjectsSection } from "@/components/settings/projects-section";
 import { InstallationsSection } from "@/components/settings/installations-section";
 import { ChannelsSection } from "@/components/settings/channels-section";
@@ -85,17 +84,6 @@ function SettingsContent() {
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
   }, [loading]);
-
-  // Listen for navigation events from child components (e.g. Notifications → API Keys link)
-  useEffect(() => {
-    function handleNavigate(e: Event) {
-      const detail = (e as CustomEvent<string>).detail;
-      if (detail) scrollToSection(detail);
-    }
-    window.addEventListener("settings-navigate", handleNavigate);
-    return () => window.removeEventListener("settings-navigate", handleNavigate);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Scroll-spy: update active section based on scroll position within the content panel
   useEffect(() => {
@@ -209,11 +197,8 @@ function SettingsContent() {
   const scheduling: SchedulingConfig = (config?.scheduling as SchedulingConfig) ?? DEFAULT_SCHEDULING;
   const mediaGen: MediaGenerationConfig = (config?.media_generation as MediaGenerationConfig) ?? { enabled: true, tools: {} };
   const journeyCapture: JourneyCaptureConfig = (config?.journey_capture as JourneyCaptureConfig) ?? { enabled: false };
-  const webCfg: WebDashboardConfig = (config?.web as WebDashboardConfig) ?? { enabled: false, port: 3000 };
   const consolidation: ConsolidationConfig = (config?.consolidation as ConsolidationConfig) ?? { enabled: false, mode: "notify_only", batch_size: 20 };
   const channels: Record<string, ChannelConfig> = (config?.channels as Record<string, ChannelConfig>) ?? {};
-
-  const telegramConfigured = !!(envData?.env?.TELEGRAM_BOT_TOKEN && envData?.env?.TELEGRAM_ALLOWED_CHAT_IDS);
 
   return (
     <div>
@@ -272,6 +257,8 @@ function SettingsContent() {
             <PlatformsSection
               platforms={platforms}
               onChange={(p) => saveConfig({ platforms: p } as Partial<Config>)}
+              env={envData?.env ?? {}}
+              onEnvRefresh={loadAll}
             />
           </section>
 
@@ -284,10 +271,12 @@ function SettingsContent() {
 
           <section id="media-generation" className="pt-1">
             <MediaGenerationSection
-              config={{ models, platforms, scheduling, media_generation: mediaGen, journey_capture: journeyCapture, web: webCfg }}
+              config={{ models, platforms, scheduling, media_generation: mediaGen, journey_capture: journeyCapture }}
               onConfigChange={(updates) => saveConfig(updates)}
               projects={projects}
               onGuidanceSave={refreshContentConfig}
+              env={envData?.env ?? {}}
+              onEnvRefresh={loadAll}
             />
           </section>
 
@@ -332,14 +321,6 @@ function SettingsContent() {
                 />
               </div>
             </div>
-          </section>
-
-          <section id="notifications" className="pt-1">
-            <NotificationsSection
-              webCfg={webCfg}
-              onChange={(web) => saveConfig({ web })}
-              telegramConfigured={telegramConfigured}
-            />
           </section>
 
           <section id="voice-style" className="pt-1">

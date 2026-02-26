@@ -573,7 +573,9 @@ class TestSettingsEndpoints:
         assert "Core" in data["key_groups"]
         assert "ANTHROPIC_API_KEY" in data["key_groups"]["Core"]
         assert "Telegram" not in data["key_groups"]  # Managed in Channels section
-        assert "Media Generation" in data["key_groups"]
+        assert "X / Twitter" not in data["key_groups"]  # Managed in Platforms section
+        assert "LinkedIn" not in data["key_groups"]  # Managed in Platforms section
+        assert "Media Generation" not in data["key_groups"]  # Managed in Media Generation section
         assert "LLM Providers" in data["key_groups"]
 
     def test_get_content_config_parsed_empty(self, client, tmp_env):
@@ -853,9 +855,24 @@ class TestChannelsEndpoints:
             assert "telegram" in data["channels"]
             assert "slack" in data["channels"]
             assert "web" in data["channels"]
-            # Web is always enabled
+            # Web defaults to enabled
             assert data["channels"]["web"]["enabled"] is True
             assert data["channels"]["web"]["credentials_configured"] is True
+
+    def test_channels_status_web_disabled(self, client, tmp_env):
+        """Web channel respects channels config when explicitly disabled."""
+        config = {
+            "channels": {"web": {"enabled": False}},
+        }
+        tmp_env["config_path"].write_text(yaml.dump(config))
+        import social_hook.web.server as srv
+        srv._config = None
+
+        with patch("social_hook.bot.process.is_running", return_value=False):
+            resp = client.get("/api/channels/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["channels"]["web"]["enabled"] is False
 
     def test_channels_status_with_config(self, client, tmp_env):
         """Channels status reflects config.yaml settings."""

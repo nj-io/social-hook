@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from social_hook.config.yaml import ChannelConfig
 from social_hook.db import init_database, insert_project
 from social_hook.filesystem import generate_id
 from social_hook.models import Project
@@ -290,7 +291,7 @@ class TestTriggerUsesAdapter:
         cfg.scheduling.optimal_hours = [9, 12, 17]
         cfg.scheduling.max_per_week = 10
         cfg.scheduling.thread_min_tweets = 4
-        cfg.web.enabled = False
+        cfg.channels = {"web": ChannelConfig(enabled=False)}
         cfg.env.get = lambda key, default="": {
             "TELEGRAM_BOT_TOKEN": "test-token",
             "TELEGRAM_ALLOWED_CHAT_IDS": "111,222",
@@ -388,7 +389,7 @@ def _make_trigger_mocks(
     cfg.scheduling.optimal_hours = [9, 12, 17]
     cfg.scheduling.max_per_week = 10
     cfg.scheduling.thread_min_tweets = 4
-    cfg.web.enabled = False
+    cfg.channels = {"web": ChannelConfig(enabled=False)}
 
     env_map = {}
     if gemini_key:
@@ -849,7 +850,7 @@ class TestPerPlatformPipeline:
         cfg.scheduling.optimal_hours = [9, 12, 17]
         cfg.scheduling.max_per_week = 10
         cfg.scheduling.thread_min_tweets = 4
-        cfg.web.enabled = web_enabled
+        cfg.channels = {"web": ChannelConfig(enabled=web_enabled)}
         cfg.env.get = lambda key, default="": {}.get(key, default)
 
         commit = MagicMock()

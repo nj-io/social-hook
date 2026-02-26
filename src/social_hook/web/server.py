@@ -1078,7 +1078,12 @@ async def api_channels_status():
     channels_status = {}
     for name in sorted(KNOWN_CHANNELS):
         if name == "web":
-            channels_status[name] = {"enabled": True, "credentials_configured": True, "allowed_chat_ids": []}
+            web_ch = config.channels.get("web")
+            channels_status[name] = {
+                "enabled": web_ch.enabled if web_ch else True,
+                "credentials_configured": True,
+                "allowed_chat_ids": [],
+            }
             continue
         ch_cfg = config.channels.get(name)
         cred_key = _CHANNEL_CREDENTIALS.get(name)

@@ -217,17 +217,41 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
         </div>
 
         {/* Web card */}
-        <div className="rounded-lg border border-border p-4">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">Web</span>
-            <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
-              Built-in
-            </span>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Active when the dashboard is running. No configuration needed.
-          </p>
-        </div>
+        {(() => {
+          const webConfig = channels?.web ?? { enabled: true, allowed_chat_ids: [] };
+          return (
+            <div className="rounded-lg border border-border p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Web</span>
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                    Built-in
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() =>
+                      onChange({ ...channels, web: { ...webConfig, enabled: !webConfig.enabled } })
+                    }
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                      webConfig.enabled ? "bg-accent" : "bg-border"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                        webConfig.enabled ? "left-[22px]" : "left-0.5"
+                      }`}
+                    />
+                  </button>
+                  <span className="text-sm">{webConfig.enabled ? "Enabled" : "Disabled"}</span>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Receive draft notifications in the web dashboard. Active when the dashboard is running.
+              </p>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Daemon controls */}

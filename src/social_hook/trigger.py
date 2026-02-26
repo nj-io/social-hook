@@ -541,8 +541,11 @@ def _send_notifications(config, project, commit, created_drafts):
         buttons = get_review_buttons_normalized(draft.id)
         msg = OutboundMessage(text=msg_text, buttons=buttons)
 
-        # Web dashboard (when enabled)
-        if getattr(config, 'web', None) and config.web.enabled:
+        channels = getattr(config, 'channels', None) or {}
+
+        # Web dashboard (enabled by default via DEFAULT_CONFIG)
+        web_ch = channels.get("web")
+        if not web_ch or web_ch.enabled:
             try:
                 from social_hook.messaging.web import WebAdapter
                 from social_hook.filesystem import get_db_path as _get_db_path
@@ -554,13 +557,18 @@ def _send_notifications(config, project, commit, created_drafts):
             except Exception as e:
                 logger.warning(f"Web notification failed: {e}")
 
-        # Telegram (when configured)
-        telegram_token = config.env.get("TELEGRAM_BOT_TOKEN")
-        chat_ids_str = config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
-        if telegram_token and chat_ids_str:
+        # Telegram
+        token = config.env.get("TELEGRAM_BOT_TOKEN")
+        telegram_ch = channels.get("telegram")
+        telegram_enabled = telegram_ch.enabled if telegram_ch else bool(token)
+        chat_ids = (
+            telegram_ch.allowed_chat_ids if telegram_ch
+            else [c.strip() for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if c.strip()]
+        )
+
+        if telegram_enabled and token and chat_ids:
             from social_hook.messaging.telegram import TelegramAdapter
-            adapter = TelegramAdapter(token=telegram_token)
-            chat_ids = [c.strip() for c in chat_ids_str.split(",") if c.strip()]
+            adapter = TelegramAdapter(token=token)
             for chat_id in chat_ids:
                 result = adapter.send_message(chat_id, msg)
                 if not result.success:

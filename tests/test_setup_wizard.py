@@ -1672,7 +1672,7 @@ class TestWebDashboardSetup:
         yaml_config: dict = {}
         _setup_web_dashboard(yaml_config)
 
-        assert yaml_config["web"]["enabled"] is True
+        assert yaml_config["channels"]["web"]["enabled"] is True
 
     @patch("social_hook.setup.wizard._info")
     @patch("social_hook.setup.wizard._confirm")
@@ -1684,7 +1684,7 @@ class TestWebDashboardSetup:
         yaml_config: dict = {}
         _setup_web_dashboard(yaml_config)
 
-        assert yaml_config["web"]["enabled"] is False
+        assert yaml_config["channels"]["web"]["enabled"] is False
 
     @patch("social_hook.setup.wizard._info")
     @patch("social_hook.setup.wizard._confirm")

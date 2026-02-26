@@ -51,16 +51,14 @@ DEFAULT_CONFIG = {
     "journey_capture": {
         "enabled": False,
     },
-    "web": {
-        "enabled": False,
-        "port": 3000,
-    },
     "consolidation": {
         "enabled": False,
         "mode": "notify_only",
         "batch_size": 20,
     },
-    "channels": {},
+    "channels": {
+        "web": {"enabled": True},
+    },
 }
 
 
@@ -112,14 +110,6 @@ class JourneyCaptureConfig:
 
 
 @dataclass
-class WebConfig:
-    """Web dashboard configuration."""
-
-    enabled: bool = False
-    port: int = 3000
-
-
-@dataclass
 class ConsolidationConfig:
     """Consolidation processing configuration."""
 
@@ -146,7 +136,6 @@ class Config:
     media_generation: MediaGenerationConfig = field(default_factory=MediaGenerationConfig)
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
     journey_capture: JourneyCaptureConfig = field(default_factory=JourneyCaptureConfig)
-    web: WebConfig = field(default_factory=WebConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
     channels: dict[str, ChannelConfig] = field(default_factory=dict)
 
@@ -306,13 +295,6 @@ def _parse_config(data: dict[str, Any]) -> Config:
         model=jc_model,
     )
 
-    # Web dashboard
-    web_data = data.get("web", {})
-    web_port = web_data.get("port", 3000)
-    if not isinstance(web_port, int) or web_port < 1 or web_port > 65535:
-        raise ConfigError(f"Invalid web port '{web_port}': must be integer 1-65535")
-    web = WebConfig(enabled=web_data.get("enabled", False), port=web_port)
-
     # Consolidation
     cons_data = data.get("consolidation", {})
     cons_mode = cons_data.get("mode", "notify_only")
@@ -353,7 +335,6 @@ def _parse_config(data: dict[str, Any]) -> Config:
         media_generation=media_generation,
         scheduling=scheduling,
         journey_capture=journey_capture,
-        web=web,
         consolidation=consolidation,
         channels=channels,
     )

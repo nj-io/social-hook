@@ -13,7 +13,6 @@ const sections = [
   { id: "media-generation", label: "Media Generation" },
   { id: "consolidation", label: "Consolidation" },
   { id: "journey-capture", label: "Journey Capture" },
-  { id: "notifications", label: "Notifications" },
   { id: "voice-style", label: "Voice & Style" },
   { id: "content-config", label: "Content Config" },
 ];

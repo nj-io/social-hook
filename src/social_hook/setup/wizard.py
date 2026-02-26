@@ -1267,13 +1267,13 @@ def _setup_web_dashboard(yaml_config: dict, progress: Optional[WizardProgress] =
           "  - Bot interaction testing\n\n"
           "Runs locally, no API keys required.")
 
-    if not _confirm("Enable web dashboard?", default=True):
-        yaml_config.setdefault("web", {})["enabled"] = False
+    if not _confirm("Enable web dashboard notifications?", default=True):
+        yaml_config.setdefault("channels", {}).setdefault("web", {})["enabled"] = False
         if progress:
             progress.advance()
         return
 
-    yaml_config.setdefault("web", {})["enabled"] = True
+    yaml_config.setdefault("channels", {}).setdefault("web", {})["enabled"] = True
     if progress:
         progress.advance()
 

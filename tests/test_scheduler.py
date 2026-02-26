@@ -121,7 +121,7 @@ class TestSchedulerTick:
         conn = init_database(db_path)
         project, draft = self._setup_due_draft(conn)
 
-        mock_config.return_value = MagicMock(env={}, web=MagicMock(enabled=False))
+        mock_config.return_value = MagicMock(env={}, channels={})
         mock_db_path.return_value = db_path
         mock_init_db.return_value = conn
 
@@ -144,7 +144,7 @@ class TestSchedulerTick:
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
 
-        mock_config.return_value = MagicMock(env={}, web=MagicMock(enabled=False))
+        mock_config.return_value = MagicMock(env={}, channels={})
         mock_db_path.return_value = db_path
         mock_init_db.return_value = conn
 
@@ -200,7 +200,7 @@ class TestSchedulerTick:
         )
         conn.commit()
 
-        mock_config.return_value = MagicMock(env={}, web=MagicMock(enabled=False))
+        mock_config.return_value = MagicMock(env={}, channels={})
         mock_db_path.return_value = db_path
         mock_init_db.return_value = conn
 
@@ -221,7 +221,7 @@ class TestSchedulerTick:
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
 
-        mock_config.return_value = MagicMock(env={}, web=MagicMock(enabled=False))
+        mock_config.return_value = MagicMock(env={}, channels={})
         mock_db_path.return_value = db_path
         mock_init_db.return_value = conn
 
@@ -243,7 +243,7 @@ class TestSchedulerTick:
         conn = init_database(db_path)
         project, draft = self._setup_due_draft(conn)
 
-        mock_config.return_value = MagicMock(env={}, web=MagicMock(enabled=False))
+        mock_config.return_value = MagicMock(env={}, channels={})
         mock_db_path.return_value = db_path
         mock_init_db.return_value = conn
         mock_post.return_value = PostResult(success=False, error="Rate limited")
@@ -276,7 +276,7 @@ class TestSchedulerTick:
         # Set retry_count to 2 (next failure = 3rd attempt)
         update_draft(conn, draft.id, retry_count=2)
 
-        mock_config.return_value = MagicMock(env={}, web=MagicMock(enabled=False))
+        mock_config.return_value = MagicMock(env={}, channels={})
         mock_db_path.return_value = db_path
         mock_init_db.return_value = conn
         mock_post.return_value = PostResult(success=False, error="Persistent error")
@@ -297,10 +297,10 @@ class TestNotifications:
 
     def test_send_notification_web_and_telegram(self):
         """Notification sends to both web and telegram when configured."""
-        from social_hook.config.yaml import Config, WebConfig
+        from social_hook.config.yaml import ChannelConfig, Config
 
         config = Config(
-            web=WebConfig(enabled=True),
+            channels={"web": ChannelConfig(enabled=True)},
             env={
                 "TELEGRAM_BOT_TOKEN": "fake-token",
                 "TELEGRAM_ALLOWED_CHAT_IDS": "123,456",
@@ -357,7 +357,7 @@ class TestNotifications:
         )
         conn.commit()
 
-        mock_config.return_value = MagicMock(env={}, web=MagicMock(enabled=False))
+        mock_config.return_value = MagicMock(env={}, channels={})
         mock_db_path.return_value = db_path
         mock_init_db.return_value = conn
 
@@ -409,7 +409,7 @@ class TestNotifications:
         )
         conn.commit()
 
-        mock_config.return_value = MagicMock(env={}, web=MagicMock(enabled=False))
+        mock_config.return_value = MagicMock(env={}, channels={})
         mock_db_path.return_value = db_path
         mock_init_db.return_value = conn
         mock_post.return_value = PostResult(success=False, error="API down")

@@ -51,11 +51,6 @@ export interface JourneyCaptureConfig {
   model?: string;
 }
 
-export interface WebDashboardConfig {
-  enabled: boolean;
-  port: number;
-}
-
 export interface ConsolidationConfig {
   enabled: boolean;
   mode: string;
@@ -68,7 +63,6 @@ export interface Config {
   scheduling: SchedulingConfig;
   media_generation: MediaGenerationConfig;
   journey_capture: JourneyCaptureConfig;
-  web: WebDashboardConfig;
   consolidation?: ConsolidationConfig;
   channels?: Record<string, ChannelConfig>;
 }

@@ -8,7 +8,6 @@ from social_hook.config.yaml import (
     KNOWN_CHANNELS,
     MediaGenerationConfig,
     SchedulingConfig,
-    WebConfig,
     load_config,
     validate_config,
 )
@@ -177,53 +176,6 @@ platforms:
             "platforms:\n  x:\n    enabled: true\n    account_tier: ultra_premium\n"
         )
         with pytest.raises(ConfigError, match="Invalid account_tier"):
-            load_config(config_path)
-
-
-class TestWebConfig:
-    """Test WebConfig parsing."""
-
-    def test_web_config_defaults(self):
-        """Default web config: disabled, port 3000."""
-        config = Config()
-        assert config.web.enabled is False
-        assert config.web.port == 3000
-
-    def test_web_config_parsing(self, temp_dir):
-        """Parse web config from YAML."""
-        config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "web:\n  enabled: true\n  port: 8080\n"
-        )
-        config = load_config(config_path)
-        assert config.web.enabled is True
-        assert config.web.port == 8080
-
-    def test_web_port_validation_string(self, temp_dir):
-        """Non-integer port raises ConfigError."""
-        config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "web:\n  port: not_a_number\n"
-        )
-        with pytest.raises(ConfigError, match="Invalid web port"):
-            load_config(config_path)
-
-    def test_web_port_validation_zero(self, temp_dir):
-        """Port 0 raises ConfigError."""
-        config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "web:\n  port: 0\n"
-        )
-        with pytest.raises(ConfigError, match="Invalid web port"):
-            load_config(config_path)
-
-    def test_web_port_validation_too_high(self, temp_dir):
-        """Port > 65535 raises ConfigError."""
-        config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "web:\n  port: 70000\n"
-        )
-        with pytest.raises(ConfigError, match="Invalid web port"):
             load_config(config_path)
 
 
