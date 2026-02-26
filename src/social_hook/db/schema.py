@@ -249,6 +249,13 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path) -> No
     if not migrations_dir.exists():
         return
 
+    # Fresh DB: schema_version table doesn't exist yet — nothing to migrate.
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    if "schema_version" not in tables:
+        return
+
     # Get current version
     current = conn.execute(
         "SELECT COALESCE(MAX(version), 0) FROM schema_version"

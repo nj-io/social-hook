@@ -56,10 +56,15 @@ def init_database(db_path: str | Path, conn: Optional[sqlite3.Connection] = None
     if conn is None:
         conn = get_connection(db_path)
 
-    create_schema(conn)
-
-    # Apply migrations from bundled migrations directory
+    # Apply migrations first to add any new columns to existing databases,
+    # then run create_schema() which creates tables (IF NOT EXISTS) and indexes.
+    # On fresh DBs: migrations are no-ops (no schema_version table yet),
+    # create_schema() builds everything from scratch.
+    # On existing DBs: migrations add missing columns, then create_schema()
+    # adds any new indexes that reference those columns.
     migrations_dir = Path(__file__).parent / "migrations"
     apply_migrations(conn, migrations_dir)
+
+    create_schema(conn)
 
     return conn
