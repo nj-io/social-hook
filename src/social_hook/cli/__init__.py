@@ -214,6 +214,7 @@ def web(
 
         next_env = os.environ.copy()
         next_env["NEXT_PUBLIC_API_URL"] = f"http://{host}:{api_port}"
+        next_env["NEXT_PUBLIC_API_PORT"] = str(api_port)
         sp.run(
             ["npx", "next", "dev", "--port", str(port)],
             cwd=str(web_dir),
@@ -234,7 +235,7 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Telegram bot management.", no_args_is_help=True)
+bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
 app.add_typer(bot_app, name="bot")
 
 
@@ -243,7 +244,7 @@ def bot_start(
     ctx: typer.Context,
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run as background daemon"),
 ):
-    """Start the Telegram bot."""
+    """Start the bot daemon."""
     from social_hook.bot.process import is_running
 
     if is_running():
@@ -269,28 +270,31 @@ def bot_start(
     bot = create_bot(token=token, allowed_chat_ids=allowed, config=config)
 
     if daemon:
-        import os
+        import shutil
+        import subprocess as sp
         import sys
 
-        pid = os.fork()
-        if pid > 0:
-            typer.echo(f"Bot started (PID {pid})")
-            return
-
-        # Child process
-        os.setsid()
-        sys.stdin.close()
-
-        # Redirect stdout/stderr to log file
         from social_hook.filesystem import get_base_path
 
         log_path = get_base_path() / "logs" / "bot.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_fd = open(log_path, "a")
-        os.dup2(log_fd.fileno(), sys.stdout.fileno())
-        os.dup2(log_fd.fileno(), sys.stderr.fileno())
 
-        bot.run(pid_file=get_pid_file())
+        # Re-invoke in foreground mode as a detached subprocess
+        binary = shutil.which("social-hook") or "social-hook"
+        cmd = [binary, "bot", "start"]
+        if config_path:
+            cmd.extend(["--config", str(config_path)])
+
+        kwargs: dict = {"stdout": log_fd, "stderr": log_fd, "stdin": sp.DEVNULL}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = sp.DETACHED_PROCESS | sp.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+
+        proc = sp.Popen(cmd, **kwargs)
+        typer.echo(f"Bot started (PID {proc.pid})")
+        return
     else:
         typer.echo("Bot starting (foreground mode, Ctrl+C to stop)...")
         bot.run(pid_file=get_pid_file())
@@ -298,7 +302,7 @@ def bot_start(
 
 @bot_app.command("stop")
 def bot_stop():
-    """Stop the Telegram bot."""
+    """Stop the bot daemon."""
     from social_hook.bot.process import is_running, stop_bot
 
     if not is_running():
@@ -313,7 +317,7 @@ def bot_stop():
 
 @bot_app.command("status")
 def bot_status():
-    """Check if the Telegram bot is running."""
+    """Check if the bot daemon is running."""
     from social_hook.bot.process import is_running, read_pid
 
     if is_running():

@@ -2,17 +2,23 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Project } from "@/lib/types";
-import { fetchProjects, toggleProjectPause } from "@/lib/api";
+import { fetchInstallationsStatus, fetchProjects, installComponent, toggleProjectPause } from "@/lib/api";
 
 export function ProjectsSection() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [hookInstalled, setHookInstalled] = useState<boolean | null>(null);
+  const [installing, setInstalling] = useState(false);
 
   const loadProjects = useCallback(async () => {
     try {
-      const res = await fetchProjects();
+      const [res, status] = await Promise.all([
+        fetchProjects(),
+        fetchInstallationsStatus(),
+      ]);
       setProjects(res.projects);
+      setHookInstalled(status.commit_hook);
     } catch {
       // Silently handle - empty list shown
     } finally {
@@ -38,12 +44,43 @@ export function ProjectsSection() {
     }
   }
 
+  async function handleInstallHook() {
+    setInstalling(true);
+    try {
+      await installComponent("commit_hook");
+      setHookInstalled(true);
+    } catch {
+      // Silently handle
+    } finally {
+      setInstalling(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Projects</h2>
       <p className="text-sm text-muted-foreground">
         Registered projects that feed the content pipeline. Pause a project to temporarily stop processing its commits.
       </p>
+
+      {/* Hook status banner */}
+      {hookInstalled === false && (
+        <div className="flex items-center justify-between rounded-lg border border-yellow-300 bg-yellow-50 p-3 dark:border-yellow-700 dark:bg-yellow-900/20">
+          <p className="text-sm text-yellow-800 dark:text-yellow-300">
+            Commit hook not installed — commits won&apos;t trigger evaluations.
+          </p>
+          <button
+            onClick={handleInstallHook}
+            disabled={installing}
+            className="ml-4 shrink-0 rounded-md bg-yellow-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-yellow-700 disabled:opacity-50"
+          >
+            {installing ? "Installing..." : "Install"}
+          </button>
+        </div>
+      )}
+      {hookInstalled === true && (
+        <p className="text-xs text-green-600 dark:text-green-400">Commit hook active</p>
+      )}
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading projects...</p>
@@ -66,15 +103,19 @@ export function ProjectsSection() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{project.name}</span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        isPaused
-                          ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"
-                          : "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                      }`}
-                    >
-                      {isPaused ? "Paused" : "Active"}
-                    </span>
+                    {isPaused ? (
+                      <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+                        Paused
+                      </span>
+                    ) : hookInstalled === false ? (
+                      <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+                        Active (no hook)
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                        Active
+                      </span>
+                    )}
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {project.repo_path}

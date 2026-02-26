@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { fetchConfig, fetchContentConfig, fetchEnv, fetchProjects, fetchSocialContext, updateConfig, updateContentConfig, updateSocialContext } from "@/lib/api";
 import type { Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig, WebDashboardConfig } from "@/lib/types";
 import { SettingsSidebar } from "@/components/settings/settings-sidebar";
@@ -13,6 +14,7 @@ import { MediaGenerationSection } from "@/components/settings/media-generation-s
 import { ConsolidationSection } from "@/components/settings/consolidation-section";
 import { NotificationsSection } from "@/components/settings/notifications-section";
 import { ProjectsSection } from "@/components/settings/projects-section";
+import { InstallationsSection } from "@/components/settings/installations-section";
 
 const DEFAULT_MODELS: ModelsConfig = {
   evaluator: "anthropic/claude-opus-4-5",
@@ -28,8 +30,9 @@ const DEFAULT_SCHEDULING: SchedulingConfig = {
   optimal_hours: [9, 12, 17],
 };
 
-export default function SettingsPage() {
-  const [section, setSection] = useState("models");
+function SettingsContent() {
+  const searchParams = useSearchParams();
+  const [section, setSection] = useState(searchParams.get("section") || "models");
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [envData, setEnvData] = useState<{ env: Record<string, string>; known_keys: string[]; key_groups: Record<string, string[]> } | null>(null);
   const [socialCtx, setSocialCtx] = useState<{ content: string; path: string } | null>(null);
@@ -90,9 +93,13 @@ export default function SettingsPage() {
     setSaving(true);
     setSaveStatus("");
     try {
-      await updateConfig(updates);
-      setSaveStatus("Saved");
-      setTimeout(() => setSaveStatus(""), 2000);
+      const result = await updateConfig(updates);
+      if (result.hook_warning) {
+        setSaveStatus(`Saved — ${result.hook_warning}`);
+      } else {
+        setSaveStatus("Saved");
+      }
+      setTimeout(() => setSaveStatus(""), 3000);
       const cfgRes = await fetchConfig();
       setConfig(cfgRes.config);
     } catch (e) {
@@ -177,6 +184,10 @@ export default function SettingsPage() {
 
           <div className={section !== "projects" ? "hidden" : ""}>
             <ProjectsSection />
+          </div>
+
+          <div className={section !== "installations" ? "hidden" : ""}>
+            <InstallationsSection />
           </div>
 
           <div className={section !== "platforms" ? "hidden" : ""}>
@@ -401,5 +412,13 @@ export default function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<p className="text-center text-muted-foreground">Loading settings...</p>}>
+      <SettingsContent />
+    </Suspense>
   );
 }

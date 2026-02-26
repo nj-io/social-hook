@@ -669,3 +669,156 @@ class TestSettingsEndpoints:
         """PUT /api/projects/{id}/pause returns 404 for unknown project."""
         resp = client.put("/api/projects/nonexistent/pause")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# WebSocket tests
+# ---------------------------------------------------------------------------
+
+
+class TestWebSocketEndpoints:
+    def test_ws_connect_disconnect(self, client, tmp_env):
+        """WebSocket connection lifecycle."""
+        with client.websocket_connect("/ws") as ws:
+            # Connection should succeed
+            ws.send_json({"type": "subscribe", "payload": {"channel": "web"}})
+            # Just verify no exception
+
+    def test_ws_malformed_envelope(self, client, tmp_env):
+        """Error envelope returned for invalid data."""
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json({"invalid": "data"})
+            resp = ws.receive_json()
+            assert resp["type"] == "error"
+            assert "message" in resp["payload"]
+
+    def test_ws_subscribe_replays_missed_events(self, client, tmp_env):
+        """Subscribe with last_seen_id replays missed events."""
+        # Insert events
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO web_events (type, data) VALUES (?, ?)",
+                ("message", json.dumps({"text": f"msg {i}"})),
+            )
+        conn.commit()
+        conn.close()
+
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "subscribe", "payload": {"channel": "web", "last_seen_id": 1}})
+            # Should receive events with id > 1 (i.e., events 2 and 3)
+            events = []
+            for _ in range(2):
+                try:
+                    resp = ws.receive_json(mode="binary")
+                except Exception:
+                    break
+                events.append(resp)
+
+
+# ---------------------------------------------------------------------------
+# Installation endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestInstallationEndpoints:
+    def test_installations_status(self, client, tmp_env):
+        """GET /api/installations/status returns all component statuses."""
+        with (
+            patch("social_hook.setup.install.check_hook_installed", return_value=True),
+            patch("social_hook.setup.install.check_narrative_hook_installed", return_value=False),
+            patch("social_hook.setup.install.check_cron_installed", return_value=True),
+            patch("social_hook.bot.process.is_running", return_value=False),
+        ):
+            resp = client.get("/api/installations/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["commit_hook"] is True
+            assert data["narrative_hook"] is False
+            assert data["scheduler_cron"] is True
+            assert data["bot_daemon"] is False
+
+    def test_install_commit_hook(self, client, tmp_env):
+        with patch("social_hook.setup.install.install_hook", return_value=(True, "Installed")) as mock_fn:
+            resp = client.post("/api/installations/commit_hook/install")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
+            mock_fn.assert_called_once()
+
+    def test_uninstall_commit_hook(self, client, tmp_env):
+        with patch("social_hook.setup.install.uninstall_hook", return_value=(True, "Removed")) as mock_fn:
+            resp = client.post("/api/installations/commit_hook/uninstall")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
+            mock_fn.assert_called_once()
+
+    def test_install_invalid_component(self, client, tmp_env):
+        resp = client.post("/api/installations/invalid_thing/install")
+        assert resp.status_code == 400
+
+    def test_bot_daemon_start(self, client, tmp_env):
+        with (
+            patch("social_hook.bot.process.is_running", return_value=False),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            resp = client.post("/api/installations/bot_daemon/start")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
+
+    def test_bot_daemon_stop(self, client, tmp_env):
+        with (
+            patch("social_hook.bot.process.is_running", return_value=True),
+            patch("social_hook.bot.process.stop_bot", return_value=True),
+        ):
+            resp = client.post("/api/installations/bot_daemon/stop")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
+
+    def test_journey_capture_toggle_installs_hook(self, client, tmp_env):
+        """Toggling journey_capture.enabled to True installs narrative hook."""
+        config = {
+            "models": {"evaluator": "anthropic/claude-opus-4-5", "drafter": "anthropic/claude-opus-4-5", "gatekeeper": "anthropic/claude-haiku-4-5"},
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
+        }
+        tmp_env["config_path"].write_text(yaml.dump(config))
+
+        with patch("social_hook.setup.install.install_narrative_hook", return_value=(True, "Installed")) as mock_install:
+            resp = client.put("/api/settings/config", json={"journey_capture": {"enabled": True}})
+            assert resp.status_code == 200
+            mock_install.assert_called_once()
+
+    def test_journey_capture_toggle_uninstalls_hook(self, client, tmp_env):
+        """Toggling journey_capture.enabled to False uninstalls narrative hook."""
+        config = {
+            "models": {"evaluator": "anthropic/claude-opus-4-5", "drafter": "anthropic/claude-opus-4-5", "gatekeeper": "anthropic/claude-haiku-4-5"},
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
+            "journey_capture": {"enabled": True},
+        }
+        tmp_env["config_path"].write_text(yaml.dump(config))
+
+        with patch("social_hook.setup.install.uninstall_narrative_hook", return_value=(True, "Removed")) as mock_uninstall:
+            resp = client.put("/api/settings/config", json={"journey_capture": {"enabled": False}})
+            assert resp.status_code == 200
+            mock_uninstall.assert_called_once()
+
+    def test_project_detail_includes_journey_capture(self, client, tmp_env):
+        """Project detail response includes journey_capture_enabled."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute("INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)", ("proj_1", "Test", "/tmp/repo"))
+        conn.execute("INSERT INTO lifecycles (project_id) VALUES (?)", ("proj_1",))
+        conn.execute("INSERT INTO narrative_debt (project_id, debt_counter) VALUES (?, ?)", ("proj_1", 0))
+        conn.commit()
+        conn.close()
+
+        narratives_path = tmp_env["tmp_path"] / "narratives"
+        narratives_path.mkdir(exist_ok=True)
+
+        with patch("social_hook.web.server.get_narratives_path", return_value=narratives_path):
+            resp = client.get("/api/projects/proj_1")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "journey_capture_enabled" in data

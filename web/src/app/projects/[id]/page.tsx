@@ -124,10 +124,23 @@ export default function ProjectDetailPage() {
           <StatCard label="Decisions" value={Object.values(project.decision_counts || {}).reduce((a, b) => a + b, 0)} />
           <StatCard label="Drafts" value={project.draft_count ?? 0} />
           <StatCard label="Published" value={project.post_count ?? 0} />
-          <StatCard
-            label="Narrative Debt"
-            value={project.narrative_debt?.debt_counter ?? 0}
-          />
+          <Link href="/settings?section=journey-capture" className="block">
+            <StatCard
+              label="Narrative Debt"
+              value={project.narrative_debt?.debt_counter ?? 0}
+            />
+          </Link>
+        </div>
+
+        {/* Journey Capture status */}
+        <div className="mt-2">
+          {project.journey_capture_enabled ? (
+            <p className="text-xs text-green-600 dark:text-green-400">Journey Capture: On</p>
+          ) : (
+            <Link href="/settings?section=journey-capture" className="text-xs text-muted-foreground hover:text-foreground">
+              Journey Capture: Off — enable in settings
+            </Link>
+          )}
         </div>
       </div>
 

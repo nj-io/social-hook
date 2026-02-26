@@ -4,6 +4,7 @@ const sections = [
   { id: "models", label: "Models" },
   { id: "api-keys", label: "API Keys" },
   { id: "projects", label: "Projects" },
+  { id: "installations", label: "Installations" },
   { id: "platforms", label: "Platforms" },
   { id: "scheduling", label: "Scheduling" },
   { id: "media-generation", label: "Media Generation" },

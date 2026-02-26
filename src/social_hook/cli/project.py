@@ -101,6 +101,12 @@ def register(
         typer.echo(f"  Path: {path}")
         if repo_origin:
             typer.echo(f"  Origin: {repo_origin}")
+
+        from social_hook.setup.install import check_hook_installed
+        if not check_hook_installed():
+            typer.echo()
+            typer.echo("Warning: Claude Code commit hook is not installed.")
+            typer.echo("  Run 'social-hook setup' or install from the web dashboard.")
     finally:
         conn.close()
 
@@ -154,5 +160,11 @@ def list_projects(ctx: typer.Context):
         for p in projects:
             status = "paused" if p.paused else "active"
             typer.echo(f"  {p.id[:12]}  {p.name:20s}  [{status}]  {p.repo_path}")
+
+        from social_hook.setup.install import check_hook_installed
+        if projects and not check_hook_installed():
+            typer.echo()
+            typer.echo("Warning: Claude Code commit hook is not installed.")
+            typer.echo("  Run 'social-hook setup' or install from the web dashboard.")
     finally:
         conn.close()

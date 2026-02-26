@@ -1,9 +1,12 @@
 """FastAPI API server for the web dashboard."""
 
+import asyncio
 import json
 import re
 import sqlite3
 import time
+import uuid as _uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,6 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from social_hook.config.env import KEY_GROUPS, KNOWN_KEYS
 from social_hook.config.project import DEFAULT_MEDIA_GUIDANCE
@@ -19,12 +23,35 @@ from social_hook.config.yaml import Config, validate_config
 from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
+from social_hook.messaging.gateway import GatewayHub, GatewayEnvelope
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# WebSocket gateway
+# ---------------------------------------------------------------------------
+
+_hub = GatewayHub()
+
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    task = asyncio.create_task(_event_bridge_loop())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Social Hook Dashboard API", version="0.1.0")
+app = FastAPI(title="Social Hook Dashboard API", version="0.1.0", lifespan=lifespan)
 
 # CORS: localhost only
 app.add_middleware(
@@ -285,6 +312,99 @@ async def api_events(lastId: int = Query(0)):
 
 
 # ---------------------------------------------------------------------------
+# WebSocket endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    origin = ws.headers.get("origin", "")
+    if origin and not re.match(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$", origin):
+        await ws.close(code=4003)
+        return
+    await ws.accept()
+    client_id = str(_uuid.uuid4())
+    conn = await _hub.connect(ws, client_id, channels=["web"])
+    try:
+        while True:
+            data = await ws.receive_json()
+            try:
+                envelope = GatewayEnvelope.from_dict(data)
+            except (TypeError, KeyError):
+                await _hub.send(client_id, GatewayEnvelope(type="error", payload={"message": "Invalid envelope"}))
+                continue
+            await _handle_ws_envelope(envelope, client_id)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await _hub.disconnect(client_id)
+
+
+async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None:
+    if envelope.type == "command":
+        command_type = envelope.payload.get("command")
+        text = envelope.payload.get("text", "")
+        adapter = _get_adapter()
+        adapter._insert_event("user", {"text": text})
+        await _hub.send(client_id, GatewayEnvelope(type="ack", reply_to=envelope.id, payload={}))
+        try:
+            if command_type == "send_command":
+                from social_hook.bot.commands import handle_command
+                msg = InboundMessage(chat_id="web", text=text, message_id="web_0")
+                await asyncio.to_thread(handle_command, msg, adapter, _get_config())
+            elif command_type == "send_callback":
+                from social_hook.bot.buttons import handle_callback
+                event = CallbackEvent(chat_id="web", callback_id="ws", action=envelope.payload.get("action", ""), payload=envelope.payload.get("payload", ""))
+                await asyncio.to_thread(handle_callback, event, adapter, _get_config())
+            elif command_type == "send_message":
+                from social_hook.bot.commands import handle_message
+                msg = InboundMessage(chat_id="web", text=text, message_id="web_0")
+                await asyncio.to_thread(handle_message, msg, adapter, _get_config())
+        except Exception as e:
+            await _hub.send(client_id, GatewayEnvelope(type="error", reply_to=envelope.id, payload={"message": str(e)}))
+    elif envelope.type == "subscribe":
+        last_seen_id = envelope.payload.get("last_seen_id", 0)
+        # 0 means no replay needed (client loads history via REST on init)
+        if last_seen_id:
+            missed = _get_events_since(last_seen_id)
+            for ev in missed:
+                await _hub.send(client_id, GatewayEnvelope(type="event", channel="web", payload=ev))
+        channel = envelope.payload.get("channel", "web")
+        _hub.subscribe(client_id, channel)
+    elif envelope.type == "unsubscribe":
+        channel = envelope.payload.get("channel", "web")
+        _hub.unsubscribe(client_id, channel)
+
+
+async def _event_bridge_loop():
+    """Poll web_events and broadcast new entries to WS clients."""
+    bridge_conn = sqlite3.connect(str(get_db_path()))
+    bridge_conn.row_factory = sqlite3.Row
+    try:
+        row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
+        last_id = row[0] if row else 0
+        while True:
+            await asyncio.sleep(0.5)
+            if _hub.connection_count == 0:
+                row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
+                last_id = row[0] if row else 0
+                continue
+            rows = bridge_conn.execute(
+                "SELECT id, type, data, created_at FROM web_events WHERE id > ? ORDER BY id ASC",
+                (last_id,),
+            ).fetchall()
+            for r in rows:
+                ev = {"id": r["id"], "type": r["type"], "data": json.loads(r["data"]), "created_at": r["created_at"]}
+                envelope = GatewayEnvelope(type="event", channel="web", payload=ev)
+                await _hub.broadcast(envelope, channel="web")
+                last_id = r["id"]
+    except asyncio.CancelledError:
+        pass
+    finally:
+        bridge_conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Data query endpoints
 # ---------------------------------------------------------------------------
 
@@ -421,6 +541,13 @@ async def api_project_detail(project_id: str):
             with open(narratives_file, "r") as f:
                 narrative_count = sum(1 for _ in f)
         project["narrative_count"] = narrative_count
+
+        # Journey capture enabled flag
+        try:
+            config = _get_config()
+            project["journey_capture_enabled"] = config.journey_capture.enabled
+        except Exception:
+            project["journey_capture_enabled"] = False
 
         return project
     finally:
@@ -600,8 +727,24 @@ async def api_update_config(body: dict[str, Any]):
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
     yaml_path.write_text(yaml.dump(current, default_flow_style=False, sort_keys=False))
 
+    hook_warning = None
+    if "journey_capture" in body:
+        jc_enabled = body["journey_capture"].get("enabled")
+        if jc_enabled is True:
+            from social_hook.setup.install import install_narrative_hook
+            success, msg = install_narrative_hook()
+            if not success:
+                logger.warning(f"Failed to install narrative hook: {msg}")
+                hook_warning = msg
+        elif jc_enabled is False:
+            from social_hook.setup.install import uninstall_narrative_hook
+            success, msg = uninstall_narrative_hook()
+            if not success:
+                logger.warning(f"Failed to uninstall narrative hook: {msg}")
+                hook_warning = msg
+
     _invalidate_config()
-    return {"status": "ok"}
+    return {"status": "ok", **({"hook_warning": hook_warning} if hook_warning else {})}
 
 
 @app.get("/api/settings/env")
@@ -832,3 +975,73 @@ async def api_validate_key(body: ValidateKeyRequest):
 
     else:
         return {"valid": False, "provider": provider, "error": f"Unknown provider: {provider}"}
+
+
+# ---------------------------------------------------------------------------
+# Installation endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/installations/status")
+async def api_installations_status():
+    from social_hook.setup.install import check_hook_installed, check_narrative_hook_installed, check_cron_installed
+    from social_hook.bot.process import is_running
+    return {
+        "commit_hook": check_hook_installed(),
+        "narrative_hook": check_narrative_hook_installed(),
+        "scheduler_cron": check_cron_installed(),
+        "bot_daemon": is_running(),
+    }
+
+
+@app.post("/api/installations/{component}/install")
+async def api_install_component(component: str):
+    from social_hook.setup.install import install_hook, install_narrative_hook, install_cron
+    install_fns = {
+        "commit_hook": install_hook,
+        "narrative_hook": install_narrative_hook,
+        "scheduler_cron": install_cron,
+    }
+    fn = install_fns.get(component)
+    if not fn:
+        raise HTTPException(status_code=400, detail=f"Unknown component: {component}")
+    success, message = fn()
+    return {"success": success, "message": message}
+
+
+@app.post("/api/installations/{component}/uninstall")
+async def api_uninstall_component(component: str):
+    from social_hook.setup.install import uninstall_hook, uninstall_narrative_hook, uninstall_cron
+    uninstall_fns = {
+        "commit_hook": uninstall_hook,
+        "narrative_hook": uninstall_narrative_hook,
+        "scheduler_cron": uninstall_cron,
+    }
+    fn = uninstall_fns.get(component)
+    if not fn:
+        raise HTTPException(status_code=400, detail=f"Unknown component: {component}")
+    success, message = fn()
+    return {"success": success, "message": message}
+
+
+@app.post("/api/installations/bot_daemon/start")
+async def api_start_bot_daemon():
+    import subprocess as sp
+    from social_hook.bot.process import is_running
+    if is_running():
+        return {"success": True, "message": "Bot daemon is already running"}
+    try:
+        sp.Popen(["social-hook", "bot", "start", "--daemon"])
+        return {"success": True, "message": "Bot daemon starting"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.post("/api/installations/bot_daemon/stop")
+async def api_stop_bot_daemon():
+    from social_hook.bot.process import is_running, stop_bot
+    if not is_running():
+        return {"success": True, "message": "Bot daemon is not running"}
+    if stop_bot():
+        return {"success": True, "message": "Bot daemon stopped"}
+    return {"success": False, "message": "Failed to stop bot daemon"}

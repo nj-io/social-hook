@@ -1,4 +1,4 @@
-import type { Config, Decision, Draft, EnvVars, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
+import type { Config, Decision, Draft, EnvVars, InstallationsStatus, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -14,7 +14,7 @@ export async function fetchConfig(): Promise<{ config: Record<string, unknown> }
   return apiFetch("/api/settings/config");
 }
 
-export async function updateConfig(data: Partial<Config>): Promise<{ status: string }> {
+export async function updateConfig(data: Partial<Config>): Promise<{ status: string; hook_warning?: string }> {
   return apiFetch("/api/settings/config", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -182,4 +182,25 @@ export async function validateApiKey(provider: string, key: string): Promise<{ v
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider, key }),
   });
+}
+
+// Installations
+export async function fetchInstallationsStatus(): Promise<InstallationsStatus> {
+  return apiFetch("/api/installations/status");
+}
+
+export async function installComponent(component: string): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/api/installations/${encodeURIComponent(component)}/install`, { method: "POST" });
+}
+
+export async function uninstallComponent(component: string): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/api/installations/${encodeURIComponent(component)}/uninstall`, { method: "POST" });
+}
+
+export async function startBotDaemon(): Promise<{ success: boolean; message: string }> {
+  return apiFetch("/api/installations/bot_daemon/start", { method: "POST" });
+}
+
+export async function stopBotDaemon(): Promise<{ success: boolean; message: string }> {
+  return apiFetch("/api/installations/bot_daemon/stop", { method: "POST" });
 }

@@ -2,16 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebEvent } from "@/lib/types";
-import { clearChatHistory, fetchChatHistory, sendCommand, sendMessage } from "@/lib/api";
+import { clearChatHistory, fetchChatHistory } from "@/lib/api";
+import { GatewayClient, type GatewayEnvelope } from "@/lib/websocket";
 import { ButtonRow } from "./button-row";
 
 export function ChatPanel() {
   const [events, setEvents] = useState<WebEvent[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [connected, setConnected] = useState(false);
   const lastIdRef = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const gatewayRef = useRef<GatewayClient | null>(null);
 
   const addEvents = useCallback((newEvents: WebEvent[]) => {
     setEvents((prev) => {
@@ -24,9 +26,28 @@ export function ChatPanel() {
     });
   }, []);
 
-  // Load history on mount, then start SSE for live updates
   useEffect(() => {
     let cancelled = false;
+
+    const gateway = new GatewayClient(
+      (envelope: GatewayEnvelope) => {
+        if (envelope.type === "event" && envelope.payload) {
+          const ev = envelope.payload as unknown as WebEvent;
+          if (ev.id) {
+            if (ev.id > lastIdRef.current) lastIdRef.current = ev.id;
+            addEvents([ev]);
+          }
+        }
+      },
+      (isConnected: boolean) => {
+        setConnected(isConnected);
+        if (isConnected && gatewayRef.current) {
+          // Subscribe with last seen ID for gap-free delivery
+          gatewayRef.current.subscribe("web", lastIdRef.current || undefined);
+        }
+      },
+    );
+    gatewayRef.current = gateway;
 
     async function init() {
       try {
@@ -37,43 +58,22 @@ export function ChatPanel() {
           lastIdRef.current = history[history.length - 1].id;
         }
       } catch {
-        // History unavailable — SSE will catch up
+        // History unavailable — WS will catch up
       }
-      if (!cancelled) connect();
-    }
-
-    function connect() {
-      const eventSource = new EventSource(`/api/events?lastId=${lastIdRef.current}`);
-
-      eventSource.onmessage = (e) => {
-        try {
-          const event: WebEvent = JSON.parse(e.data);
-          lastIdRef.current = event.id;
-          addEvents([event]);
-        } catch {
-          // Ignore parse errors from keepalive
-        }
-      };
-
-      eventSource.onerror = () => {
-        eventSource.close();
-        if (!cancelled) {
-          reconnectTimeoutRef.current = setTimeout(connect, 3000);
-        }
-      };
+      if (!cancelled) {
+        gateway.connect();
+      }
     }
 
     init();
 
     return () => {
       cancelled = true;
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
+      gateway.disconnect();
     };
   }, [addEvents]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll
   useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -87,7 +87,7 @@ export function ChatPanel() {
     setInput("");
     setSending(true);
 
-    // Show user message instantly while POST blocks for LLM response
+    // Optimistic user message
     const tempId = -(Date.now());
     setEvents((prev) => [
       ...prev,
@@ -95,22 +95,9 @@ export function ChatPanel() {
     ]);
 
     try {
-      const result = text.startsWith("/")
-        ? await sendCommand(text)
-        : await sendMessage(text);
-      // Replace optimistic event with real persisted events
-      setEvents((prev) => {
-        const withoutTemp = prev.filter((e) => e.id !== tempId);
-        const existing = new Set(withoutTemp.map((e) => e.id));
-        const unique = result.events.filter((e) => !existing.has(e.id));
-        const merged = [...withoutTemp, ...unique];
-        merged.sort((a, b) => a.id - b.id);
-        // Update lastIdRef so SSE doesn't re-fetch these
-        for (const ev of unique) {
-          if (ev.id > lastIdRef.current) lastIdRef.current = ev.id;
-        }
-        return merged;
-      });
+      const command = text.startsWith("/") ? "send_command" : "send_message";
+      gatewayRef.current?.sendCommand(command, text);
+      // WS events will arrive via onEvent callback and replace/supplement the optimistic message
     } catch {
       // Error will appear in chat if server responds
     } finally {
@@ -161,7 +148,11 @@ export function ChatPanel() {
   return (
     <div className="flex h-full flex-col">
       {events.length > 0 && (
-        <div className="flex justify-end border-b border-border px-4 py-2">
+        <div className="flex items-center justify-end gap-2 border-b border-border px-4 py-2">
+          <span
+            className={`h-2 w-2 rounded-full ${connected ? "bg-green-500" : "bg-red-500"}`}
+            title={connected ? "Connected" : "Disconnected"}
+          />
           <button
             onClick={handleClear}
             className="text-xs text-muted-foreground hover:text-foreground"

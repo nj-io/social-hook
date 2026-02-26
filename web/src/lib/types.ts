@@ -199,6 +199,13 @@ export interface UsageSummary {
   entries: UsageEntry[];
 }
 
+export interface InstallationsStatus {
+  commit_hook: boolean;
+  narrative_hook: boolean;
+  scheduler_cron: boolean;
+  bot_daemon: boolean;
+}
+
 export interface ProjectDetail extends Project {
   lifecycle?: Lifecycle;
   arcs: Arc[];
@@ -207,4 +214,5 @@ export interface ProjectDetail extends Project {
   draft_count: number;
   post_count: number;
   narrative_count: number;
+  journey_capture_enabled?: boolean;
 }
