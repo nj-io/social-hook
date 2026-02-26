@@ -15,6 +15,7 @@ import {
 import type { Decision, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 import { DecisionBadge } from "@/components/decision-badge";
+import { SimpleMarkdown } from "@/components/simple-markdown";
 import { useDataEvents } from "@/lib/use-data-events";
 
 const DECISIONS_PER_PAGE = 10;
@@ -196,8 +197,10 @@ export default function ProjectDetailPage() {
                 </button>
               </div>
             </div>
+          ) : project.summary ? (
+            <SimpleMarkdown content={project.summary} />
           ) : (
-            <p className="text-sm">{project.summary || "No summary yet. Click Regenerate to create one."}</p>
+            <p className="text-sm text-muted-foreground">No summary yet. Click Regenerate to create one.</p>
           )}
 
           <p className="mt-2 text-xs text-muted-foreground">
