@@ -3,8 +3,13 @@
 from pathlib import Path
 from typing import Union
 
-from social_hook.config.project import _parse_memories, save_memory as _save_memory
-from social_hook.constants import CONFIG_DIR_NAME
+from social_hook.config.project import (
+    _parse_memories,
+    save_memory as _save_memory,
+    list_memories,
+    delete_memory,
+    clear_memories,
+)
 
 
 def add_memory(
@@ -34,8 +39,13 @@ def parse_memories_file(repo_path: Union[str, Path]) -> list[dict]:
         List of memory dicts with date, context, feedback, draft_id keys.
         Empty list if file doesn't exist.
     """
-    memories_path = Path(repo_path) / CONFIG_DIR_NAME / "memories.md"
-    if not memories_path.exists():
-        return []
-    content = memories_path.read_text(encoding="utf-8")
-    return _parse_memories(content)
+    return list_memories(repo_path)
+
+
+__all__ = [
+    "add_memory",
+    "parse_memories_file",
+    "list_memories",
+    "delete_memory",
+    "clear_memories",
+]

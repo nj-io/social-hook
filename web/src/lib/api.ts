@@ -1,4 +1,4 @@
-import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
+import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
 import { getSessionId } from "./session";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -275,5 +275,30 @@ export async function createDraftFromDecision(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ platform }),
+  });
+}
+
+// Memories
+export async function fetchMemories(projectPath: string): Promise<{ memories: Memory[]; count: number }> {
+  return apiFetch(`/api/settings/memories?project_path=${encodeURIComponent(projectPath)}`);
+}
+
+export async function addMemory(projectPath: string, context: string, feedback: string, draftId?: string): Promise<{ status: string }> {
+  return apiFetch("/api/settings/memories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_path: projectPath, context, feedback, draft_id: draftId ?? "" }),
+  });
+}
+
+export async function deleteMemory(projectPath: string, index: number): Promise<{ status: string }> {
+  return apiFetch(`/api/settings/memories/${index}?project_path=${encodeURIComponent(projectPath)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function clearMemories(projectPath: string): Promise<{ status: string; count: number }> {
+  return apiFetch(`/api/settings/memories/clear?project_path=${encodeURIComponent(projectPath)}`, {
+    method: "POST",
   });
 }

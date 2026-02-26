@@ -227,6 +227,13 @@ export interface DataChangeEvent {
   project_id: string;
 }
 
+export interface Memory {
+  date: string;
+  context: string;
+  feedback: string;
+  draft_id: string;
+}
+
 export interface ProjectDetail extends Project {
   lifecycle?: Lifecycle;
   arcs: Arc[];

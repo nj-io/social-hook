@@ -11,11 +11,13 @@ import {
   updateProjectSummary,
   regenerateProjectSummary,
   createDraftFromDecision,
+  fetchMemories,
 } from "@/lib/api";
-import type { Decision, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
+import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 import { DecisionBadge } from "@/components/decision-badge";
 import { SimpleMarkdown } from "@/components/simple-markdown";
+import { MemoriesSection } from "@/components/memories-section";
 import { useDataEvents } from "@/lib/use-data-events";
 
 const DECISIONS_PER_PAGE = 10;
@@ -27,6 +29,7 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [posts, setPosts] = useState<PostRecord[]>([]);
+  const [memories, setMemories] = useState<Memory[]>([]);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -37,6 +40,15 @@ export default function ProjectDetailPage() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [expandedDecisions, setExpandedDecisions] = useState<Set<string>>(new Set());
   const [creatingDraft, setCreatingDraft] = useState<string | null>(null);
+
+  const loadMemories = useCallback(async (repoPath: string) => {
+    try {
+      const mem = await fetchMemories(repoPath);
+      setMemories(mem.memories);
+    } catch {
+      // Non-critical
+    }
+  }, []);
 
   const reload = useCallback(async () => {
     try {
@@ -51,10 +63,11 @@ export default function ProjectDetailPage() {
       setHasMoreDecisions(dec.decisions.length === DECISIONS_PER_PAGE);
       setPosts(po.posts);
       setUsage(us);
+      loadMemories(detail.repo_path);
     } catch {
       // Silent refresh failure
     }
-  }, [id, decisionOffset]);
+  }, [id, decisionOffset, loadMemories]);
 
   useDataEvents(["decision", "draft", "post", "project"], reload, id);
 
@@ -72,6 +85,7 @@ export default function ProjectDetailPage() {
         setHasMoreDecisions(dec.decisions.length === DECISIONS_PER_PAGE);
         setPosts(po.posts);
         setUsage(us);
+        loadMemories(detail.repo_path);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load project");
       } finally {
@@ -79,7 +93,7 @@ export default function ProjectDetailPage() {
       }
     }
     load();
-  }, [id]);
+  }, [id, loadMemories]);
 
   async function loadMoreDecisions(offset: number) {
     try {
@@ -427,6 +441,13 @@ export default function ProjectDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Voice Memories */}
+      <MemoriesSection
+        memories={memories}
+        projectPath={project.repo_path}
+        onRefresh={() => loadMemories(project.repo_path)}
+      />
 
       {/* Usage */}
       {usage && (

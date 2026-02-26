@@ -12,7 +12,13 @@ from social_hook.narrative.lifecycle import (
     detect_lifecycle_phase,
     record_strategy_moment,
 )
-from social_hook.narrative.memories import add_memory, parse_memories_file
+from social_hook.narrative.memories import (
+    add_memory,
+    clear_memories,
+    delete_memory,
+    list_memories,
+    parse_memories_file,
+)
 from social_hook.narrative.transcript import (
     discover_transcript_path,
     filter_for_extraction,
@@ -24,6 +30,9 @@ from social_hook.narrative.transcript import (
 __all__ = [
     # Memories
     "add_memory",
+    "clear_memories",
+    "delete_memory",
+    "list_memories",
     "parse_memories_file",
     # Transcript
     "read_transcript",

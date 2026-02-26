@@ -8,7 +8,9 @@ from social_hook.config.yaml import (
     KNOWN_CHANNELS,
     MediaGenerationConfig,
     SchedulingConfig,
+    _deep_merge,
     load_config,
+    save_config,
     validate_config,
 )
 from social_hook.config.platforms import OutputPlatformConfig
@@ -442,3 +444,115 @@ class TestNotificationLevelConfig:
         """validate_config accepts valid notification_level."""
         result = validate_config({"notification_level": "drafts_only"})
         assert result.notification_level == "drafts_only"
+
+
+class TestDeepMerge:
+    """Tests for _deep_merge helper."""
+
+    def test_deep_merge_nested(self):
+        """Nested dicts merge without clobbering siblings."""
+        base = {"a": {"x": 1, "y": 2}, "b": 3}
+        overlay = {"a": {"y": 99}}
+        result = _deep_merge(base, overlay)
+        assert result["a"]["x"] == 1
+        assert result["a"]["y"] == 99
+        assert result["b"] == 3
+
+    def test_deep_merge_new_key(self):
+        """New keys are added at nested level."""
+        base = {"a": {"x": 1}}
+        overlay = {"a": {"z": 3}}
+        _deep_merge(base, overlay)
+        assert base["a"]["z"] == 3
+        assert base["a"]["x"] == 1
+
+    def test_deep_merge_replace_dict_with_scalar(self):
+        """Overlay scalar replaces base dict."""
+        base = {"a": {"x": 1}}
+        overlay = {"a": "flat"}
+        _deep_merge(base, overlay)
+        assert base["a"] == "flat"
+
+    def test_deep_merge_empty_overlay(self):
+        """Empty overlay leaves base unchanged."""
+        base = {"a": 1, "b": 2}
+        _deep_merge(base, {})
+        assert base == {"a": 1, "b": 2}
+
+
+class TestSaveConfig:
+    """Tests for save_config utility."""
+
+    @pytest.fixture()
+    def temp_dir(self, tmp_path):
+        return tmp_path
+
+    def test_save_config_creates_file(self, temp_dir):
+        """save_config creates file at nonexistent path."""
+        config_path = temp_dir / "subdir" / "config.yaml"
+        updates = {
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
+        }
+        merged, warning = save_config(updates, config_path=config_path)
+        assert config_path.exists()
+        assert merged["platforms"]["x"]["enabled"] is True
+        assert warning is None
+
+    def test_save_config_shallow_merge(self, temp_dir):
+        """Shallow merge preserves existing platforms when adding scheduling."""
+        import yaml
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(yaml.dump({
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
+        }))
+        merged, _ = save_config(
+            {"scheduling": {"timezone": "US/Eastern"}},
+            config_path=config_path,
+        )
+        assert merged["platforms"]["x"]["enabled"] is True
+        assert merged["scheduling"]["timezone"] == "US/Eastern"
+
+    def test_save_config_deep_merge(self, temp_dir):
+        """Deep merge updates nested key without clobbering siblings."""
+        import yaml
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(yaml.dump({
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
+        }))
+        merged, _ = save_config(
+            {"platforms": {"x": {"account_tier": "premium"}}},
+            config_path=config_path,
+            deep_merge=True,
+        )
+        assert merged["platforms"]["x"]["account_tier"] == "premium"
+        assert merged["platforms"]["x"]["enabled"] is True
+
+    def test_save_config_validation_error(self, temp_dir):
+        """Invalid config raises ConfigError and file is not changed."""
+        import yaml
+        config_path = temp_dir / "config.yaml"
+        original = {"platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}}}
+        config_path.write_text(yaml.dump(original))
+        with pytest.raises(ConfigError):
+            save_config(
+                {"models": {"evaluator": "invalid_no_slash"}},
+                config_path=config_path,
+            )
+        # File should still have original content
+        current = yaml.safe_load(config_path.read_text())
+        assert "models" not in current or current.get("models", {}).get("evaluator") != "invalid_no_slash"
+
+    def test_save_config_journey_hook(self, temp_dir):
+        """Journey capture hook is triggered when journey_capture is in updates."""
+        import yaml
+        from unittest.mock import patch
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(yaml.dump({
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
+        }))
+        with patch("social_hook.setup.install.install_narrative_hook", return_value=(True, "ok")) as mock_install:
+            save_config(
+                {"journey_capture": {"enabled": True}},
+                config_path=config_path,
+            )
+            mock_install.assert_called_once()

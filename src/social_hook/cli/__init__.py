@@ -602,7 +602,9 @@ from social_hook.cli.inspect import app as inspect_app
 from social_hook.cli.manual import app as manual_app
 from social_hook.cli.setup import app as setup_app
 from social_hook.cli.test_cmd import app as test_app
+from social_hook.cli.config import app as config_app
 from social_hook.cli.journey import app as journey_app
+from social_hook.cli.memory import app as memory_app
 
 # Project commands: register, unregister, list
 app.add_typer(project_app, name="project", help="Project management.")
@@ -621,3 +623,9 @@ app.add_typer(test_app, name="test", help="Test commit evaluation.")
 
 # Journey capture commands: on, off, status
 app.add_typer(journey_app, name="journey", help="Development Journey capture.")
+
+# Config commands: show, get, set
+app.add_typer(config_app, name="config", help="View and modify configuration.")
+
+# Memory commands: list, add, delete, clear
+app.add_typer(memory_app, name="memory", help="Manage voice memories.")

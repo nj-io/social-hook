@@ -1183,3 +1183,92 @@ class TestSessionIsolation:
             call_args = mock_cmd.call_args
             msg_arg = call_args[0][0]
             assert msg_arg.chat_id == "web:web"
+
+
+class TestMemoryAPI:
+    """Tests for /api/settings/memories endpoints."""
+
+    def test_get_memories(self, client, tmp_env):
+        """GET /api/settings/memories returns entries."""
+        # Create a project dir with a memory
+        project_dir = tmp_env["tmp_path"] / "myproject"
+        project_dir.mkdir()
+        config_dir = project_dir / ".social-hook"
+        config_dir.mkdir()
+
+        from social_hook.config.project import save_memory
+        save_memory(str(project_dir), "ctx", "fb", "d1")
+
+        resp = client.get(f"/api/settings/memories?project_path={project_dir}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["memories"][0]["context"] == "ctx"
+
+    def test_add_memory(self, client, tmp_env):
+        """POST /api/settings/memories adds entry, roundtrip with GET."""
+        project_dir = tmp_env["tmp_path"] / "myproject"
+        project_dir.mkdir()
+        config_dir = project_dir / ".social-hook"
+        config_dir.mkdir()
+
+        resp = client.post("/api/settings/memories", json={
+            "project_path": str(project_dir),
+            "context": "test context",
+            "feedback": "test feedback",
+            "draft_id": "d42",
+        })
+        assert resp.status_code == 200
+
+        resp2 = client.get(f"/api/settings/memories?project_path={project_dir}")
+        data = resp2.json()
+        assert data["count"] == 1
+        assert data["memories"][0]["feedback"] == "test feedback"
+
+    def test_delete_memory(self, client, tmp_env):
+        """DELETE /api/settings/memories/{index} removes entry."""
+        project_dir = tmp_env["tmp_path"] / "myproject"
+        project_dir.mkdir()
+        config_dir = project_dir / ".social-hook"
+        config_dir.mkdir()
+
+        from social_hook.config.project import save_memory
+        save_memory(str(project_dir), "ctx1", "fb1", "d1")
+        save_memory(str(project_dir), "ctx2", "fb2", "d2")
+
+        resp = client.delete(f"/api/settings/memories/0?project_path={project_dir}")
+        assert resp.status_code == 200
+
+        resp2 = client.get(f"/api/settings/memories?project_path={project_dir}")
+        data = resp2.json()
+        assert data["count"] == 1
+        assert data["memories"][0]["context"] == "ctx2"
+
+    def test_delete_memory_404(self, client, tmp_env):
+        """DELETE /api/settings/memories/{index} with invalid index returns 404."""
+        project_dir = tmp_env["tmp_path"] / "myproject"
+        project_dir.mkdir()
+        config_dir = project_dir / ".social-hook"
+        config_dir.mkdir()
+
+        resp = client.delete(f"/api/settings/memories/99?project_path={project_dir}")
+        assert resp.status_code == 404
+
+    def test_clear_memories(self, client, tmp_env):
+        """POST /api/settings/memories/clear returns count, empties list."""
+        project_dir = tmp_env["tmp_path"] / "myproject"
+        project_dir.mkdir()
+        config_dir = project_dir / ".social-hook"
+        config_dir.mkdir()
+
+        from social_hook.config.project import save_memory
+        save_memory(str(project_dir), "ctx1", "fb1", "d1")
+        save_memory(str(project_dir), "ctx2", "fb2", "d2")
+
+        resp = client.post(f"/api/settings/memories/clear?project_path={project_dir}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 2
+
+        resp2 = client.get(f"/api/settings/memories?project_path={project_dir}")
+        assert resp2.json()["count"] == 0

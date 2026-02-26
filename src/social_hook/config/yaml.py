@@ -144,6 +144,79 @@ class Config:
     env: dict[str, str] = field(default_factory=dict)
 
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge overlay into base, modifying base in-place."""
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def save_config(
+    updates: dict[str, Any],
+    config_path: str | Path,
+    deep_merge: bool = False,
+) -> tuple[dict[str, Any], Optional[str]]:
+    """Merge updates into existing config, validate, and write.
+
+    config_path is required (no default) to prevent accidental writes to the
+    real config file in tests. Both callers (server.py, CLI) know their path.
+
+    Returns (merged_dict, hook_warning_or_None). Raises ConfigError on failure.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    config_path = Path(config_path)
+
+    # Read existing
+    if config_path.exists():
+        try:
+            current = yaml.safe_load(config_path.read_text()) or {}
+        except yaml.YAMLError:
+            current = {}
+    else:
+        current = {}
+
+    # Merge
+    if deep_merge:
+        _deep_merge(current, updates)
+    else:
+        for key, value in updates.items():
+            if isinstance(value, dict) and isinstance(current.get(key), dict):
+                current[key].update(value)
+            else:
+                current[key] = value
+
+    # Validate before writing
+    validate_config(current)
+
+    # Write
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.dump(current, default_flow_style=False, sort_keys=False))
+
+    # Journey capture hooks
+    hook_warning = None
+    if "journey_capture" in updates:
+        jc_enabled = updates["journey_capture"].get("enabled")
+        if jc_enabled is True:
+            from social_hook.setup.install import install_narrative_hook
+            success, msg = install_narrative_hook()
+            if not success:
+                logger.warning("Failed to install narrative hook: %s", msg)
+                hook_warning = msg
+        elif jc_enabled is False:
+            from social_hook.setup.install import uninstall_narrative_hook
+            success, msg = uninstall_narrative_hook()
+            if not success:
+                logger.warning("Failed to uninstall narrative hook: %s", msg)
+                hook_warning = msg
+
+    return (current, hook_warning)
+
+
 def load_config(config_path: Optional[str | Path] = None) -> Config:
     """Load configuration from YAML file.
 

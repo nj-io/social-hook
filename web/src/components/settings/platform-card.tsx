@@ -103,8 +103,6 @@ export function PlatformCard({ name, config, onChange, onRemove, env, onEnvRefre
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            {config.account_tier ? `${config.account_tier} tier` : ""}
-            {config.account_tier && (effectiveFilter !== "smart default" || effectiveFrequency !== "smart default") ? " · " : ""}
             {effectiveFilter !== "smart default" ? effectiveFilter : ""}
             {effectiveFilter !== "smart default" && effectiveFrequency !== "smart default" ? " · " : ""}
             {effectiveFrequency !== "smart default" ? `${effectiveFrequency} frequency` : ""}

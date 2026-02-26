@@ -301,6 +301,14 @@ def save_memory(
     _write_memories(memories_path, memories)
 
 
+_PIPE_REPLACEMENT = "\u2502"  # Unicode box-drawing vertical — visually similar, never in user input
+
+
+def _sanitize_field(value: str) -> str:
+    """Sanitize a memory field for markdown table storage."""
+    return value.replace("\n", " ").replace("\r", "").replace("|", _PIPE_REPLACEMENT)
+
+
 def _parse_memories(content: str) -> list[dict]:
     """Parse memories.md markdown table into list of dicts."""
     memories = []
@@ -321,9 +329,9 @@ def _parse_memories(content: str) -> list[dict]:
             if len(parts) >= 5:
                 memories.append({
                     "date": parts[1],
-                    "context": parts[2],
-                    "feedback": parts[3],
-                    "draft_id": parts[4],
+                    "context": parts[2].replace(_PIPE_REPLACEMENT, "|"),
+                    "feedback": parts[3].replace(_PIPE_REPLACEMENT, "|"),
+                    "draft_id": parts[4].replace(_PIPE_REPLACEMENT, "|"),
                 })
 
     return memories
@@ -339,9 +347,47 @@ def _write_memories(path: Path, memories: list[dict]) -> None:
     ]
 
     for m in memories:
-        lines.append(f"| {m['date']} | {m['context']} | {m['feedback']} | {m['draft_id']} |")
+        ctx = _sanitize_field(m["context"])
+        fb = _sanitize_field(m["feedback"])
+        did = _sanitize_field(m["draft_id"])
+        lines.append(f"| {m['date']} | {ctx} | {fb} | {did} |")
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def list_memories(repo_path: str | Path) -> list[dict]:
+    """List all memories for a project. Returns [] if no file."""
+    memories_path = Path(repo_path) / CONFIG_DIR_NAME / "memories.md"
+    if not memories_path.exists():
+        return []
+    content = memories_path.read_text(encoding="utf-8")
+    return _parse_memories(content)
+
+
+def delete_memory(repo_path: str | Path, index: int) -> None:
+    """Delete memory by 0-based index. Raises IndexError/FileNotFoundError."""
+    repo_path = Path(repo_path)
+    memories_path = repo_path / CONFIG_DIR_NAME / "memories.md"
+    if not memories_path.exists():
+        raise FileNotFoundError(f"No memories file at {memories_path}")
+    content = memories_path.read_text(encoding="utf-8")
+    memories = _parse_memories(content)
+    if index < 0 or index >= len(memories):
+        raise IndexError(f"Memory index {index} out of range (0-{len(memories) - 1})")
+    memories.pop(index)
+    _write_memories(memories_path, memories)
+
+
+def clear_memories(repo_path: str | Path) -> int:
+    """Clear all memories. Returns count cleared."""
+    memories_path = Path(repo_path) / CONFIG_DIR_NAME / "memories.md"
+    if not memories_path.exists():
+        return 0
+    content = memories_path.read_text(encoding="utf-8")
+    memories = _parse_memories(content)
+    count = len(memories)
+    _write_memories(memories_path, [])
+    return count
 
 
 # =============================================================================

@@ -261,3 +261,71 @@ class TestTestCmdCompare:
         from social_hook.cli.test_cmd import _compare_results
 
         _compare_results([], temp_dir / "nonexistent.json")
+
+
+class TestConfigCLI:
+    """Tests for social-hook config commands."""
+
+    def test_config_show(self, tmp_path):
+        """config show outputs YAML."""
+        import yaml
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.dump({
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
+        }))
+        with patch("social_hook.filesystem.get_config_path", return_value=config_path):
+            result = runner.invoke(app, ["config", "show"])
+        assert result.exit_code == 0
+        assert "platforms" in result.output
+
+    def test_config_get(self, tmp_path):
+        """config get returns a specific value."""
+        import yaml
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.dump({
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
+        }))
+        with patch("social_hook.filesystem.get_config_path", return_value=config_path):
+            result = runner.invoke(app, ["config", "get", "platforms.x.account_tier"])
+        assert result.exit_code == 0
+        assert "free" in result.output
+
+    def test_config_set(self, tmp_path):
+        """config set modifies file correctly."""
+        import yaml
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.dump({
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
+        }))
+        with patch("social_hook.filesystem.get_config_path", return_value=config_path):
+            result = runner.invoke(app, ["config", "set", "platforms.x.account_tier", "premium"])
+        assert result.exit_code == 0
+        updated = yaml.safe_load(config_path.read_text())
+        assert updated["platforms"]["x"]["account_tier"] == "premium"
+
+
+class TestMemoryCLI:
+    """Tests for social-hook memory commands."""
+
+    def test_memory_list_empty(self, tmp_path):
+        """memory list shows empty message."""
+        result = runner.invoke(app, ["memory", "list", "--project", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No memories found" in result.output
+
+    def test_memory_add_and_list(self, tmp_path):
+        """memory add then list shows entry."""
+        config_dir = tmp_path / ".social-hook"
+        config_dir.mkdir()
+        result = runner.invoke(app, [
+            "memory", "add",
+            "--context", "test ctx",
+            "--feedback", "test fb",
+            "--project", str(tmp_path),
+        ])
+        assert result.exit_code == 0
+        assert "Memory added" in result.output
+
+        result2 = runner.invoke(app, ["memory", "list", "--project", str(tmp_path)])
+        assert result2.exit_code == 0
+        assert "test ctx" in result2.output

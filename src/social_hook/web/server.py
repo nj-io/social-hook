@@ -173,6 +173,13 @@ class ContentConfigUpdate(BaseModel):
     content: str
 
 
+class MemoryCreate(BaseModel):
+    project_path: str
+    context: str
+    feedback: str
+    draft_id: str = ""
+
+
 class ValidateKeyRequest(BaseModel):
     provider: str
     key: str
@@ -826,50 +833,11 @@ async def api_get_config():
 @app.put("/api/settings/config")
 async def api_update_config(body: dict[str, Any]):
     """Update config sections (merge + validate before writing)."""
-    yaml_path = get_config_path()
-
-    # Read existing
-    if yaml_path.exists():
-        try:
-            current = yaml.safe_load(yaml_path.read_text()) or {}
-        except yaml.YAMLError:
-            current = {}
-    else:
-        current = {}
-
-    # Merge updates
-    for key, value in body.items():
-        if isinstance(value, dict) and isinstance(current.get(key), dict):
-            current[key].update(value)
-        else:
-            current[key] = value
-
-    # Validate before writing
+    from social_hook.config.yaml import save_config
     try:
-        validate_config(current)
+        _merged, hook_warning = save_config(body, config_path=get_config_path())
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-    # Write back
-    yaml_path.parent.mkdir(parents=True, exist_ok=True)
-    yaml_path.write_text(yaml.dump(current, default_flow_style=False, sort_keys=False))
-
-    hook_warning = None
-    if "journey_capture" in body:
-        jc_enabled = body["journey_capture"].get("enabled")
-        if jc_enabled is True:
-            from social_hook.setup.install import install_narrative_hook
-            success, msg = install_narrative_hook()
-            if not success:
-                logger.warning(f"Failed to install narrative hook: {msg}")
-                hook_warning = msg
-        elif jc_enabled is False:
-            from social_hook.setup.install import uninstall_narrative_hook
-            success, msg = uninstall_narrative_hook()
-            if not success:
-                logger.warning(f"Failed to uninstall narrative hook: {msg}")
-                hook_warning = msg
-
     _invalidate_config()
     return {"status": "ok", **({"hook_warning": hook_warning} if hook_warning else {})}
 
@@ -1056,6 +1024,58 @@ async def api_update_content_config_parsed(body: dict[str, Any] = Body(...), pro
     cc_path.write_text(yaml.dump(current, default_flow_style=False, sort_keys=False))
 
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Memory endpoints (per-project voice memories)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/settings/memories")
+async def api_get_memories(project_path: str):
+    """List all memories for a project."""
+    from social_hook.config.project import list_memories
+
+    if not Path(project_path).is_dir():
+        raise HTTPException(status_code=400, detail=f"Project path not found: {project_path}")
+    memories = list_memories(project_path)
+    return {"memories": memories, "count": len(memories)}
+
+
+@app.post("/api/settings/memories")
+async def api_add_memory(body: MemoryCreate):
+    """Add a new memory entry."""
+    from social_hook.config.project import save_memory
+
+    if not Path(body.project_path).is_dir():
+        raise HTTPException(status_code=400, detail=f"Project path not found: {body.project_path}")
+    save_memory(body.project_path, body.context, body.feedback, body.draft_id)
+    return {"status": "ok"}
+
+
+@app.delete("/api/settings/memories/{index}")
+async def api_delete_memory(index: int, project_path: str):
+    """Delete a memory by 0-based index."""
+    from social_hook.config.project import delete_memory
+
+    if not Path(project_path).is_dir():
+        raise HTTPException(status_code=400, detail=f"Project path not found: {project_path}")
+    try:
+        delete_memory(project_path, index)
+    except (IndexError, FileNotFoundError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"status": "ok"}
+
+
+@app.post("/api/settings/memories/clear")
+async def api_clear_memories(project_path: str):
+    """Clear all memories for a project."""
+    from social_hook.config.project import clear_memories
+
+    if not Path(project_path).is_dir():
+        raise HTTPException(status_code=400, detail=f"Project path not found: {project_path}")
+    count = clear_memories(project_path)
+    return {"status": "ok", "count": count}
 
 
 @app.put("/api/projects/{project_id}/pause")
