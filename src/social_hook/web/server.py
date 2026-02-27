@@ -791,6 +791,72 @@ async def api_project_arcs(project_id: str):
         conn.close()
 
 
+class ArcCreate(BaseModel):
+    theme: str
+    notes: Optional[str] = None
+
+
+class ArcUpdate(BaseModel):
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@app.post("/api/projects/{project_id}/arcs")
+async def api_create_arc(project_id: str, body: ArcCreate):
+    """Create a narrative arc for a project."""
+    from social_hook.errors import MaxArcsError
+    from social_hook.narrative.arcs import create_arc, update_arc
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        try:
+            arc_id = create_arc(conn, project_id, body.theme)
+        except MaxArcsError:
+            raise HTTPException(
+                status_code=409,
+                detail="Maximum 3 active arcs. Complete or abandon one first.",
+            )
+
+        if body.notes:
+            update_arc(conn, arc_id, notes=body.notes)
+
+        ops.emit_data_event(conn, "arc", "created", arc_id, project_id)
+        return {"arc_id": arc_id, "status": "created"}
+    finally:
+        conn.close()
+
+
+@app.put("/api/projects/{project_id}/arcs/{arc_id}")
+async def api_update_arc(project_id: str, arc_id: str, body: ArcUpdate):
+    """Update a narrative arc (status, notes)."""
+    from social_hook.models import ArcStatus
+    from social_hook.narrative.arcs import update_arc
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        arc = ops.get_arc(conn, arc_id)
+        if not arc or arc.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Arc not found")
+
+        if body.status is not None:
+            valid = [s.value for s in ArcStatus]
+            if body.status not in valid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status '{body.status}'. Must be one of: {valid}",
+                )
+
+        update_arc(conn, arc_id, status=body.status, notes=body.notes)
+        ops.emit_data_event(conn, "arc", "updated", arc_id, project_id)
+        return {"status": "ok"}
+    finally:
+        conn.close()
+
+
 @app.get("/api/media/{file_path:path}")
 async def api_media(file_path: str):
     """Serve a media file from the media cache directory."""

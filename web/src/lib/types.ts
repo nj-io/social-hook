@@ -171,8 +171,11 @@ export interface Arc {
   theme: string;
   status: string;
   post_count: number;
+  notes?: string;
+  last_post_at?: string;
   started_at: string;
   ended_at?: string;
+  updated_at?: string;
 }
 
 export interface NarrativeDebt {

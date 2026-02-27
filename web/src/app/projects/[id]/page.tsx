@@ -18,6 +18,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { DecisionBadge } from "@/components/decision-badge";
 import { SimpleMarkdown } from "@/components/simple-markdown";
 import { MemoriesSection } from "@/components/memories-section";
+import { ArcsSection } from "@/components/arcs-section";
 import { useDataEvents } from "@/lib/use-data-events";
 
 const DECISIONS_PER_PAGE = 10;
@@ -73,7 +74,7 @@ export default function ProjectDetailPage() {
     }
   }, [id, decisionOffset, loadMemories]);
 
-  useDataEvents(["decision", "draft", "post", "project"], reload, id);
+  useDataEvents(["decision", "draft", "post", "project", "arc"], reload, id);
 
   useEffect(() => {
     async function load() {
@@ -416,22 +417,11 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* Arcs */}
-      {project.arcs.length > 0 && (
-        <div>
-          <h2 className="mb-3 text-lg font-semibold">Narrative Arcs</h2>
-          <div className="space-y-2">
-            {project.arcs.map((arc) => (
-              <div key={arc.id} className="flex items-center justify-between rounded-lg border border-border p-3">
-                <div>
-                  <span className="text-sm font-medium">{arc.theme}</span>
-                  <span className="ml-2 text-xs text-muted-foreground">{arc.post_count} posts</span>
-                </div>
-                <ArcStatusBadge status={arc.status} />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <ArcsSection
+        arcs={project.arcs}
+        projectId={project.id}
+        onRefresh={reload}
+      />
 
       {/* Published Posts */}
       <div>
@@ -498,20 +488,6 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
     </div>
-  );
-}
-
-function ArcStatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    active: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
-    completed: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
-    abandoned: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
-  };
-  const style = styles[status] ?? "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300";
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${style}`}>
-      {status}
-    </span>
   );
 }
 

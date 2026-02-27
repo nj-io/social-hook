@@ -605,6 +605,7 @@ from social_hook.cli.test_cmd import app as test_app
 from social_hook.cli.config import app as config_app
 from social_hook.cli.journey import app as journey_app
 from social_hook.cli.memory import app as memory_app
+from social_hook.cli.arc import app as arc_app
 
 # Project commands: register, unregister, list
 app.add_typer(project_app, name="project", help="Project management.")
@@ -629,3 +630,6 @@ app.add_typer(config_app, name="config", help="View and modify configuration.")
 
 # Memory commands: list, add, delete, clear
 app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+
+# Arc commands: list, create, complete, abandon
+app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")

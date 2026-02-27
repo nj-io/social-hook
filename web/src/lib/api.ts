@@ -92,6 +92,30 @@ export async function fetchProjectArcs(
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/arcs`);
 }
 
+export async function createProjectArc(
+  projectId: string,
+  theme: string,
+  notes?: string,
+): Promise<{ arc_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/arcs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ theme, notes: notes || undefined }),
+  });
+}
+
+export async function updateProjectArc(
+  projectId: string,
+  arcId: string,
+  updates: { status?: string; notes?: string },
+): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/arcs/${encodeURIComponent(arcId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+}
+
 // Project summary
 export async function updateProjectSummary(
   projectId: string,

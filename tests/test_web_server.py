@@ -1344,3 +1344,121 @@ class TestMemoryAPI:
 
         resp2 = client.get(f"/api/settings/memories?project_path={project_dir}")
         assert resp2.json()["count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Arc endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestArcEndpoints:
+    """Tests for POST/PUT /api/projects/{id}/arcs endpoints."""
+
+    def _insert_project(self, db_path, project_id="proj_1", name="test"):
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            (project_id, name, "/tmp/test"),
+        )
+        conn.commit()
+        conn.close()
+
+    def _insert_arc(self, db_path, arc_id, project_id="proj_1", theme="Test", status="active"):
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO arcs (id, project_id, theme, status) VALUES (?, ?, ?, ?)",
+            (arc_id, project_id, theme, status),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_create_arc(self, client, tmp_env):
+        """POST /api/projects/{id}/arcs creates a new arc."""
+        self._insert_project(tmp_env["db_path"])
+        resp = client.post("/api/projects/proj_1/arcs", json={"theme": "Auth system"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "created"
+        assert data["arc_id"].startswith("arc_")
+
+    def test_create_arc_with_notes(self, client, tmp_env):
+        """POST /api/projects/{id}/arcs with notes saves them."""
+        self._insert_project(tmp_env["db_path"])
+        resp = client.post("/api/projects/proj_1/arcs", json={"theme": "Auth", "notes": "Focus on JWT"})
+        assert resp.status_code == 200
+        arc_id = resp.json()["arc_id"]
+
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT notes FROM arcs WHERE id = ?", (arc_id,)).fetchone()
+        conn.close()
+        assert row["notes"] == "Focus on JWT"
+
+    def test_create_arc_max_limit(self, client, tmp_env):
+        """POST /api/projects/{id}/arcs returns 409 when 3 active arcs exist."""
+        self._insert_project(tmp_env["db_path"])
+        for i in range(3):
+            self._insert_arc(tmp_env["db_path"], f"arc_{i}", theme=f"Arc {i}")
+
+        resp = client.post("/api/projects/proj_1/arcs", json={"theme": "Fourth arc"})
+        assert resp.status_code == 409
+        assert "Maximum 3" in resp.json()["detail"]
+
+    def test_create_arc_project_not_found(self, client, tmp_env):
+        """POST /api/projects/{id}/arcs returns 404 for unknown project."""
+        resp = client.post("/api/projects/nonexistent/arcs", json={"theme": "Test"})
+        assert resp.status_code == 404
+
+    def test_update_arc_status(self, client, tmp_env):
+        """PUT /api/projects/{id}/arcs/{arc_id} updates status."""
+        self._insert_project(tmp_env["db_path"])
+        self._insert_arc(tmp_env["db_path"], "arc_upd")
+
+        resp = client.put("/api/projects/proj_1/arcs/arc_upd", json={"status": "completed"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT status FROM arcs WHERE id = ?", ("arc_upd",)).fetchone()
+        conn.close()
+        assert row["status"] == "completed"
+
+    def test_update_arc_notes(self, client, tmp_env):
+        """PUT /api/projects/{id}/arcs/{arc_id} updates notes."""
+        self._insert_project(tmp_env["db_path"])
+        self._insert_arc(tmp_env["db_path"], "arc_notes")
+
+        resp = client.put("/api/projects/proj_1/arcs/arc_notes", json={"notes": "Updated notes"})
+        assert resp.status_code == 200
+
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT notes FROM arcs WHERE id = ?", ("arc_notes",)).fetchone()
+        conn.close()
+        assert row["notes"] == "Updated notes"
+
+    def test_update_arc_invalid_status(self, client, tmp_env):
+        """PUT /api/projects/{id}/arcs/{arc_id} rejects invalid status."""
+        self._insert_project(tmp_env["db_path"])
+        self._insert_arc(tmp_env["db_path"], "arc_inv")
+
+        resp = client.put("/api/projects/proj_1/arcs/arc_inv", json={"status": "invalid"})
+        assert resp.status_code == 400
+        assert "Invalid status" in resp.json()["detail"]
+
+    def test_update_arc_not_found(self, client, tmp_env):
+        """PUT /api/projects/{id}/arcs/{arc_id} returns 404 for missing arc."""
+        self._insert_project(tmp_env["db_path"])
+
+        resp = client.put("/api/projects/proj_1/arcs/arc_missing", json={"status": "completed"})
+        assert resp.status_code == 404
+
+    def test_update_arc_wrong_project(self, client, tmp_env):
+        """PUT /api/projects/{id}/arcs/{arc_id} returns 404 if arc belongs to another project."""
+        self._insert_project(tmp_env["db_path"], "proj_1")
+        self._insert_project(tmp_env["db_path"], "proj_2", "other")
+        self._insert_arc(tmp_env["db_path"], "arc_other", project_id="proj_2")
+
+        resp = client.put("/api/projects/proj_1/arcs/arc_other", json={"status": "completed"})
+        assert resp.status_code == 404

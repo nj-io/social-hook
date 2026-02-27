@@ -869,6 +869,31 @@ def get_arc(conn: sqlite3.Connection, arc_id: str) -> Optional[Arc]:
     return None
 
 
+def get_arcs_by_project(
+    conn: sqlite3.Connection, project_id: str, status: Optional[str] = None
+) -> list[Arc]:
+    """Get arcs for a project, optionally filtered by status.
+
+    Unlike get_active_arcs(), this returns all arcs without a LIMIT.
+
+    Args:
+        conn: Database connection
+        project_id: Project to query
+        status: Filter by status ('active', 'completed', 'abandoned'), or None for all
+    """
+    if status:
+        rows = conn.execute(
+            "SELECT * FROM arcs WHERE project_id = ? AND status = ? ORDER BY started_at DESC",
+            (project_id, status),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM arcs WHERE project_id = ? ORDER BY started_at DESC",
+            (project_id,),
+        ).fetchall()
+    return [Arc.from_dict(dict(row)) for row in rows]
+
+
 def get_arc_posts(conn: sqlite3.Connection, arc_id: str) -> list[Post]:
     """Get published posts belonging to a specific arc.
 
