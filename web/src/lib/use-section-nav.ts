@@ -71,14 +71,39 @@ export function useSectionNav({
     [paramName, doScroll],
   );
 
-  // On mount: if URL has a section param, scroll to it
+  // On mount: if URL has a section param, scroll to it once the element exists
+  const pendingScrollRef = useRef<string | null>(null);
+
   useEffect(() => {
     const initial = getSectionFromUrl();
     if (initial !== defaultSection) {
-      // Small delay to ensure DOM is ready
-      requestAnimationFrame(() => doScroll(initial));
+      pendingScrollRef.current = initial;
     }
-  }, [getSectionFromUrl, defaultSection, doScroll]);
+  }, [getSectionFromUrl, defaultSection]);
+
+  // Retry pending scroll until the target element is in the DOM
+  useEffect(() => {
+    const target = pendingScrollRef.current;
+    if (!target) return;
+    const el = document.getElementById(target);
+    if (el && scrollContainerRef.current) {
+      pendingScrollRef.current = null;
+      doScroll(target);
+      return;
+    }
+    // Element not yet rendered — poll briefly
+    const interval = setInterval(() => {
+      const el = document.getElementById(pendingScrollRef.current ?? "");
+      if (el && scrollContainerRef.current) {
+        const id = pendingScrollRef.current!;
+        pendingScrollRef.current = null;
+        clearInterval(interval);
+        doScroll(id);
+      }
+    }, 50);
+    const timeout = setTimeout(() => clearInterval(interval), 3000);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
+  }, [doScroll, scrollContainerRef]);
 
   // Back/forward support
   useEffect(() => {
