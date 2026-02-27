@@ -160,6 +160,44 @@ def usage(
         conn.close()
 
 
+@app.command()
+def platforms(
+    ctx: typer.Context,
+):
+    """List configured platforms with enabled/disabled status."""
+    from social_hook.config import load_full_config
+
+    config_path = ctx.obj.get("config") if ctx.obj else None
+    config = load_full_config(str(config_path) if config_path else None)
+
+    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+
+    platform_list = []
+    for pname, pcfg in config.platforms.items():
+        platform_list.append({
+            "name": pname,
+            "enabled": pcfg.enabled,
+            "priority": pcfg.priority,
+            "type": pcfg.type,
+            "account_tier": getattr(pcfg, "account_tier", None),
+            "description": getattr(pcfg, "description", None),
+        })
+
+    if json_mode:
+        import json
+        typer.echo(json.dumps(platform_list, indent=2))
+    else:
+        if not platform_list:
+            typer.echo("No platforms configured.")
+            return
+        for p in platform_list:
+            status = "enabled" if p["enabled"] else "disabled"
+            line = f"  {p['name']:12s}  [{status:8s}]  {p['priority']:10s}  {p['type']}"
+            if p.get("description"):
+                line += f"  -- {p['description']}"
+            typer.echo(line)
+
+
 VALID_LOG_COMPONENTS = ("trigger", "scheduler", "bot")
 
 

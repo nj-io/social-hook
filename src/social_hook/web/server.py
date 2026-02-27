@@ -650,9 +650,12 @@ async def api_project_decisions(
         _get_project_or_404(conn, project_id)
 
         rows = conn.execute("""
-            SELECT * FROM decisions
-            WHERE project_id = ?
-            ORDER BY created_at DESC
+            SELECT d.*, COUNT(dr.id) as draft_count
+            FROM decisions d
+            LEFT JOIN drafts dr ON dr.decision_id = d.id
+            WHERE d.project_id = ?
+            GROUP BY d.id
+            ORDER BY d.created_at DESC
             LIMIT ? OFFSET ?
         """, (project_id, limit, offset)).fetchall()
 
@@ -730,48 +733,192 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
 
     Allows manually triggering draft creation for a decision that was
     originally marked as not_post_worthy, consolidated, or deferred.
+    Uses the shared drafting pipeline for real LLM-generated content.
 
     Body:
-        platform: Target platform name (required)
+        platform: Target platform name (optional — omit to draft for all enabled)
     """
     platform = body.get("platform")
-    if not platform:
-        raise HTTPException(status_code=400, detail="platform is required")
 
     conn = _get_conn()
     try:
-        decision_row = conn.execute(
-            "SELECT * FROM decisions WHERE id = ?", (decision_id,)
-        ).fetchone()
-        if not decision_row:
+        decision = ops.get_decision(conn, decision_id)
+        if not decision:
             raise HTTPException(status_code=404, detail="Decision not found")
 
-        decision = dict(decision_row)
-        project_id = decision["project_id"]
-
-        from social_hook.filesystem import generate_id
-        draft_id = generate_id("draft")
-
-        conn.execute(
-            """
-            INSERT INTO drafts (id, project_id, decision_id, platform, status, content, reasoning)
-            VALUES (?, ?, ?, ?, 'draft', ?, ?)
-            """,
-            (
-                draft_id,
-                project_id,
-                decision_id,
-                platform,
-                f"[Override] {decision.get('commit_message', 'No commit message')}",
-                f"Manual draft from decision {decision_id[:12]}",
-            ),
-        )
-        conn.commit()
-        ops.emit_data_event(conn, "draft", "created", draft_id, project_id)
-
-        return {"draft_id": draft_id, "status": "created"}
+        project = ops.get_project(conn, decision.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
     finally:
         conn.close()
+
+    config = _get_config()
+
+    from social_hook.config.project import ProjectConfig, load_project_config
+
+    try:
+        project_config = load_project_config(project.repo_path)
+    except ConfigError:
+        project_config = ProjectConfig(repo_path=project.repo_path)
+
+    from social_hook.trigger import parse_commit_info
+
+    commit = parse_commit_info(decision.commit_hash, project.repo_path)
+
+    from social_hook.llm.schemas import LogDecisionInput
+
+    evaluation = LogDecisionInput(
+        decision="post_worthy",
+        reasoning=decision.reasoning,
+        angle=decision.angle,
+        episode_type=decision.episode_type,
+        post_category=decision.post_category,
+        arc_id=decision.arc_id,
+        media_tool=decision.media_tool,
+        include_project_docs=True,
+        commit_summary=decision.commit_summary,
+    )
+
+    def _blocking_create_draft():
+        import sqlite3 as _sqlite3
+
+        from social_hook.drafting import draft_for_platforms
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.prompts import assemble_evaluator_context
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+        try:
+            context = assemble_evaluator_context(
+                db, project.id, project_config,
+                commit_timestamp=commit.timestamp,
+                parent_timestamp=commit.parent_timestamp,
+            )
+            results = draft_for_platforms(
+                config, conn2, db, project,
+                decision_id=decision_id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+                target_platform_names=[platform] if platform else None,
+            )
+            return [r.draft.id for r in results]
+        finally:
+            conn2.close()
+
+    draft_ids = await asyncio.to_thread(_blocking_create_draft)
+
+    return {"draft_ids": draft_ids, "count": len(draft_ids), "status": "created"}
+
+
+@app.get("/api/platforms/enabled")
+async def api_enabled_platforms():
+    """Return all enabled platforms with their config."""
+    config = _get_config()
+    enabled = {}
+    for name, pcfg in config.platforms.items():
+        if pcfg.enabled:
+            enabled[name] = {"priority": pcfg.priority, "type": pcfg.type}
+    return {"platforms": enabled, "count": len(enabled)}
+
+
+@app.post("/api/decisions/consolidate")
+async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
+    """Manually consolidate multiple decisions into a single draft.
+
+    Body:
+        decision_ids: List of decision IDs (at least 2)
+    """
+    decision_ids = body.get("decision_ids", [])
+    if len(decision_ids) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 decisions required")
+
+    conn = _get_conn()
+    try:
+        decisions = []
+        for did in decision_ids:
+            d = ops.get_decision(conn, did)
+            if not d:
+                raise HTTPException(status_code=404, detail=f"Decision not found: {did}")
+            decisions.append(d)
+
+        project_ids = {d.project_id for d in decisions}
+        if len(project_ids) > 1:
+            raise HTTPException(status_code=400, detail="All decisions must belong to the same project")
+
+        project = ops.get_project(conn, decisions[0].project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    finally:
+        conn.close()
+
+    config = _get_config()
+
+    from social_hook.config.project import ProjectConfig, load_project_config
+
+    try:
+        project_config = load_project_config(project.repo_path)
+    except ConfigError:
+        project_config = ProjectConfig(repo_path=project.repo_path)
+
+    from social_hook.models import CommitInfo
+
+    combined_summary = "\n".join(
+        f"- {d.commit_message or d.commit_hash[:8]}" for d in decisions
+    )
+    commit = CommitInfo(
+        hash=f"batch-{decisions[-1].id[:8]}",
+        message=f"Combined {len(decisions)} commits:\n{combined_summary}",
+        diff="",
+        files_changed=[],
+    )
+
+    from social_hook.llm.schemas import LogDecisionInput
+
+    anchor = decisions[-1]
+    evaluation = LogDecisionInput(
+        decision="post_worthy",
+        reasoning=anchor.reasoning,
+        angle=anchor.angle,
+        episode_type=anchor.episode_type,
+        post_category=anchor.post_category,
+        arc_id=anchor.arc_id,
+        media_tool=anchor.media_tool,
+        include_project_docs=True,
+        commit_summary=anchor.commit_summary,
+    )
+
+    def _blocking_consolidate():
+        import sqlite3 as _sqlite3
+
+        from social_hook.drafting import draft_for_platforms
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.prompts import assemble_evaluator_context
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+        try:
+            context = assemble_evaluator_context(
+                db, project.id, project_config,
+            )
+            results = draft_for_platforms(
+                config, conn2, db, project,
+                decision_id=anchor.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+            )
+            return [r.draft.id for r in results]
+        finally:
+            conn2.close()
+
+    draft_ids = await asyncio.to_thread(_blocking_consolidate)
+
+    return {"draft_ids": draft_ids, "count": len(draft_ids)}
 
 
 @app.get("/api/projects/{project_id}/arcs")

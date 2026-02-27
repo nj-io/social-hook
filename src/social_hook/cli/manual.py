@@ -1,4 +1,4 @@
-"""CLI commands for manual operations (evaluate, draft, post)."""
+"""CLI commands for manual operations (evaluate, draft, consolidate, post)."""
 
 from typing import Optional
 
@@ -39,16 +39,24 @@ def evaluate(
 def draft(
     ctx: typer.Context,
     decision_id: str = typer.Argument(..., help="Decision ID to create draft for"),
+    platform: Optional[str] = typer.Option(None, "--platform", help="Target platform (default: all enabled)"),
 ):
-    """Manually create a draft from an existing decision."""
+    """Manually create drafts from an existing decision."""
     from social_hook.config import load_full_config
-    from social_hook.db import get_decision, get_project, init_database, insert_draft
-    from social_hook.filesystem import generate_id, get_db_path
-    from social_hook.models import Draft
+    from social_hook.db import get_decision, get_project, init_database
+    from social_hook.filesystem import get_db_path
 
     config_path = ctx.obj.get("config") if ctx.obj else None
     dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
+    verbose = ctx.obj.get("verbose", False) if ctx.obj else False
     config = load_full_config(str(config_path) if config_path else None)
+
+    # Validate platform is enabled if specified
+    if platform:
+        pcfg = config.platforms.get(platform)
+        if not pcfg or not pcfg.enabled:
+            typer.echo(f"Platform '{platform}' is not enabled.")
+            raise typer.Exit(1)
 
     conn = init_database(get_db_path())
     try:
@@ -60,10 +68,6 @@ def draft(
         typer.echo(f"Decision: {decision.decision}")
         typer.echo(f"Reasoning: {decision.reasoning}")
 
-        if decision.decision != "post_worthy":
-            typer.echo("Decision is not post_worthy. Cannot create draft.")
-            raise typer.Exit(1)
-
         project = get_project(conn, decision.project_id)
         if not project:
             typer.echo(f"Project not found: {decision.project_id}")
@@ -72,76 +76,165 @@ def draft(
         # Parse commit info
         from social_hook.trigger import parse_commit_info
 
-        commit = parse_commit_info(decision.commit_hash, project.repo_path)
+        commit_info = parse_commit_info(decision.commit_hash, project.repo_path)
 
         # Assemble context
-        from social_hook.config.project import load_project_config
+        from social_hook.config.project import ProjectConfig, load_project_config
+        from social_hook.errors import ConfigError
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
-
-        db = DryRunContext(conn, dry_run=dry_run)
-        project_config = load_project_config(project.repo_path)
-        context = assemble_evaluator_context(
-            db, project.id, project_config,
-            commit_timestamp=commit.timestamp,
-            parent_timestamp=commit.parent_timestamp,
-        )
-
-        # Create draft via LLM
-        from social_hook.llm.factory import create_client
-        from social_hook.llm.drafter import Drafter
         from social_hook.llm.schemas import LogDecisionInput
 
-        client = create_client(config.models.drafter, config)
-        drafter = Drafter(client)
+        db = DryRunContext(conn, dry_run=dry_run)
+        try:
+            project_config = load_project_config(project.repo_path)
+        except ConfigError:
+            project_config = ProjectConfig(repo_path=project.repo_path)
 
-        # Build a minimal evaluation result from the stored decision
+        context = assemble_evaluator_context(
+            db, project.id, project_config,
+            commit_timestamp=commit_info.timestamp,
+            parent_timestamp=commit_info.parent_timestamp,
+        )
+
+        # Build evaluation from stored decision, forcing post_worthy for override
         evaluation = LogDecisionInput(
-            decision=decision.decision,
+            decision="post_worthy",
             reasoning=decision.reasoning,
             angle=decision.angle,
             episode_type=decision.episode_type,
             post_category=decision.post_category,
             arc_id=decision.arc_id,
             media_tool=decision.media_tool,
+            include_project_docs=True,
+            commit_summary=decision.commit_summary,
         )
 
-        # Pick first enabled platform (prefer X, then LinkedIn, then first custom)
-        platform = "x"
-        tier = "free"
-        x_config = config.platforms.get("x")
-        linkedin_config = config.platforms.get("linkedin")
-        if x_config and x_config.enabled:
-            tier = x_config.account_tier or "free"
-        elif linkedin_config and linkedin_config.enabled:
-            platform = "linkedin"
+        # Draft for platforms
+        from social_hook.drafting import draft_for_platforms
+
+        target_platform_names = [platform] if platform else None
+        results = draft_for_platforms(
+            config, conn, db, project, decision_id=decision.id,
+            evaluation=evaluation, context=context, commit=commit_info,
+            project_config=project_config,
+            target_platform_names=target_platform_names,
+            dry_run=dry_run, verbose=verbose,
+        )
+
+        if not results:
+            typer.echo("\nNo drafts created (platforms may have been filtered or deferred).")
         else:
-            for pname, pcfg in config.platforms.items():
-                if pcfg.enabled:
-                    platform = pname
-                    tier = getattr(pcfg, "account_tier", None) or "free"
-                    break
+            typer.echo(f"\n{len(results)} draft(s) created:")
+            for r in results:
+                typer.echo(f"  {r.draft.platform}: {r.draft.id}")
+                typer.echo(f"    Content: {r.draft.content[:100]}...")
+    finally:
+        conn.close()
 
-        draft_result = drafter.create_draft(
-            evaluation, context, commit, db,
-            platform=platform, tier=tier,
+
+@app.command()
+def consolidate(
+    ctx: typer.Context,
+    decision_ids: list[str] = typer.Argument(..., help="Decision IDs to consolidate (at least 2)"),
+):
+    """Consolidate multiple decisions into a single draft."""
+    if len(decision_ids) < 2:
+        typer.echo("At least 2 decision IDs are required for consolidation.")
+        raise typer.Exit(1)
+
+    from social_hook.config import load_full_config
+    from social_hook.db import get_decision, get_project, init_database
+    from social_hook.filesystem import get_db_path
+
+    config_path = ctx.obj.get("config") if ctx.obj else None
+    dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
+    verbose = ctx.obj.get("verbose", False) if ctx.obj else False
+    config = load_full_config(str(config_path) if config_path else None)
+
+    conn = init_database(get_db_path())
+    try:
+        # Fetch and validate all decisions
+        decisions = []
+        for did in decision_ids:
+            decision = get_decision(conn, did)
+            if not decision:
+                typer.echo(f"Decision not found: {did}")
+                raise typer.Exit(1)
+            decisions.append(decision)
+
+        # Verify all belong to same project
+        project_ids = {d.project_id for d in decisions}
+        if len(project_ids) > 1:
+            typer.echo("All decisions must belong to the same project.")
+            raise typer.Exit(1)
+
+        project_id = decisions[0].project_id
+        project = get_project(conn, project_id)
+        if not project:
+            typer.echo(f"Project not found: {project_id}")
+            raise typer.Exit(1)
+
+        # Build synthetic CommitInfo combining commit messages
+        from social_hook.models import CommitInfo
+
+        combined_summary = "\n".join(
+            f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}"
+            for d in decisions
+        )
+        commit = CommitInfo(
+            hash=f"consolidate-{decisions[-1].commit_hash[:8]}",
+            message=f"Consolidation of {len(decisions)} commits:\n{combined_summary}",
+            diff="",
+            files_changed=[],
         )
 
-        draft_obj = Draft(
-            id=generate_id("draft"),
-            project_id=project.id,
-            decision_id=decision.id,
-            platform=platform,
-            content=draft_result.content,
-            reasoning=draft_result.reasoning,
+        # Assemble context
+        from social_hook.config.project import ProjectConfig, load_project_config
+        from social_hook.errors import ConfigError
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.prompts import assemble_evaluator_context
+        from social_hook.llm.schemas import LogDecisionInput
+
+        db = DryRunContext(conn, dry_run=dry_run)
+        try:
+            project_config = load_project_config(project.repo_path)
+        except ConfigError:
+            project_config = ProjectConfig(repo_path=project.repo_path)
+
+        context = assemble_evaluator_context(
+            db, project.id, project_config,
         )
 
-        if not dry_run:
-            insert_draft(conn, draft_obj)
+        # Use most recent decision as anchor
+        anchor = decisions[-1]
+        evaluation = LogDecisionInput(
+            decision="post_worthy",
+            reasoning=anchor.reasoning,
+            angle=anchor.angle,
+            episode_type=anchor.episode_type,
+            post_category=anchor.post_category,
+            arc_id=anchor.arc_id,
+            media_tool=anchor.media_tool,
+            include_project_docs=True,
+        )
 
-        typer.echo(f"\nDraft created: {draft_obj.id}")
-        typer.echo(f"Platform: {platform}")
-        typer.echo(f"Content:\n{draft_result.content}")
+        # Draft for platforms
+        from social_hook.drafting import draft_for_platforms
+
+        results = draft_for_platforms(
+            config, conn, db, project, decision_id=anchor.id,
+            evaluation=evaluation, context=context, commit=commit,
+            project_config=project_config,
+            dry_run=dry_run, verbose=verbose,
+        )
+
+        if not results:
+            typer.echo("\nNo drafts created (platforms may have been filtered or deferred).")
+        else:
+            typer.echo(f"\n{len(results)} draft(s) created from {len(decisions)} consolidated decisions:")
+            for r in results:
+                typer.echo(f"  {r.draft.platform}: {r.draft.id}")
     finally:
         conn.close()
 

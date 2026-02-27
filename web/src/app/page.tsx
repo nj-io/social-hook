@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { fetchDrafts, fetchProjects } from "@/lib/api";
+import { fetchDrafts, fetchEnabledPlatforms, fetchProjects } from "@/lib/api";
 import type { Draft, Project } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 import { useDataEvents } from "@/lib/use-data-events";
@@ -10,6 +10,7 @@ import { useDataEvents } from "@/lib/use-data-events";
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [platformCount, setPlatformCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -21,6 +22,13 @@ export default function DashboardPage() {
     } catch {
       // Silent refresh failure
     }
+  }, []);
+
+  // Fetch platform count separately (not on reload — only on mount)
+  useEffect(() => {
+    fetchEnabledPlatforms()
+      .then((res) => setPlatformCount(res.count))
+      .catch(() => setPlatformCount(null));
   }, []);
 
   useDataEvents(["decision", "draft", "post", "project"], reload);
@@ -63,6 +71,17 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <p className="text-muted-foreground">Overview of your social media content pipeline.</p>
       </div>
+
+      {platformCount === 0 && (
+        <div className="rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300">
+          No platforms are enabled — drafts won&apos;t be generated from commits.
+          Enable a platform in{" "}
+          <Link href="/settings?section=platforms" className="font-medium underline hover:no-underline">
+            Settings &rarr; Platforms
+          </Link>
+          , or add a Preview platform to test draft generation.
+        </div>
+      )}
 
       {/* Summary stats */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">

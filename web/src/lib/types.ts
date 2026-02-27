@@ -143,6 +143,7 @@ export interface Decision {
   arc_id?: string;
   media_tool?: string;
   platforms: string;
+  draft_count: number;
   created_at: string;
 }
 

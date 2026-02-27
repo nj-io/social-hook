@@ -216,29 +216,85 @@ def _seed_project_and_decision(db_path, decision="post_worthy"):
 # ---------------------------------------------------------------------------
 
 
+def _make_draft_result(draft_id="draft_test_1", decision_id="dec_1", project_id="proj_1", platform="x"):
+    """Build a mock DraftResult for testing."""
+    from datetime import datetime, timezone
+
+    from social_hook.drafting import DraftResult
+    from social_hook.models import Draft
+    from social_hook.scheduling import ScheduleResult
+
+    draft = Draft(
+        id=draft_id,
+        project_id=project_id,
+        decision_id=decision_id,
+        platform=platform,
+        content="Test draft content",
+    )
+    schedule = ScheduleResult(
+        datetime=datetime.now(timezone.utc),
+        is_optimal_day=True,
+        deferred=False,
+        day_reason="test",
+        time_reason="test",
+    )
+    return DraftResult(draft=draft, schedule=schedule, thread_tweets=[])
+
+
+def _mock_create_draft_patches():
+    """Return context managers for mocking the create-draft pipeline."""
+    from social_hook.config.project import ProjectConfig
+    from social_hook.models import CommitInfo, ProjectContext
+
+    mock_commit = CommitInfo(hash="abc123", message="feat: test", diff="", files_changed=[])
+    mock_project_config = ProjectConfig(repo_path="/tmp/test")
+    mock_context = MagicMock(spec=ProjectContext)
+
+    return (
+        patch("social_hook.trigger.parse_commit_info", return_value=mock_commit),
+        patch("social_hook.config.project.load_project_config", return_value=mock_project_config),
+        patch("social_hook.llm.prompts.assemble_evaluator_context", return_value=mock_context),
+    )
+
+
 class TestCreateDraftFromDecision:
     def test_creates_draft_from_decision(self, client, tmp_env):
-        """POST /api/decisions/{id}/create-draft creates a draft linked to the decision."""
+        """POST /api/decisions/{id}/create-draft creates drafts via the pipeline."""
         _seed_project_and_decision(tmp_env["db_path"])
 
-        resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
+        mock_result = _make_draft_result()
+        p1, p2, p3 = _mock_create_draft_patches()
+        with p1, p2, p3, patch(
+            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+        ):
+            resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
+
         assert resp.status_code == 200
         data = resp.json()
-        assert "draft_id" in data
+        assert "draft_ids" in data
+        assert data["count"] == 1
         assert data["status"] == "created"
 
-        # Verify draft was created in DB
-        conn = sqlite3.connect(str(tmp_env["db_path"]))
-        row = conn.execute("SELECT * FROM drafts WHERE id = ?", (data["draft_id"],)).fetchone()
-        conn.close()
-        assert row is not None
-
-    def test_create_draft_missing_platform(self, client, tmp_env):
-        """POST /api/decisions/{id}/create-draft rejects missing platform."""
+    def test_create_draft_no_platform_drafts_all(self, client, tmp_env):
+        """POST /api/decisions/{id}/create-draft with no platform drafts for all enabled."""
         _seed_project_and_decision(tmp_env["db_path"])
 
-        resp = client.post("/api/decisions/dec_1/create-draft", json={})
-        assert resp.status_code == 400
+        mock_results = [
+            _make_draft_result(draft_id="d1", platform="x"),
+            _make_draft_result(draft_id="d2", platform="linkedin"),
+        ]
+        p1, p2, p3 = _mock_create_draft_patches()
+        with p1, p2, p3, patch(
+            "social_hook.drafting.draft_for_platforms", return_value=mock_results
+        ) as mock_dfp:
+            resp = client.post("/api/decisions/dec_1/create-draft", json={})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 2
+        # Verify target_platform_names was None (all platforms)
+        call_kwargs = mock_dfp.call_args[1]
+        assert call_kwargs.get("target_platform_names") is None
 
     def test_create_draft_decision_not_found(self, client, tmp_env):
         """POST /api/decisions/{id}/create-draft returns 404 for unknown decision."""
@@ -246,21 +302,19 @@ class TestCreateDraftFromDecision:
         assert resp.status_code == 404
 
     def test_create_draft_links_to_decision(self, client, tmp_env):
-        """Created draft has correct decision_id and project_id."""
+        """Created draft IDs are returned with correct response shape."""
         _seed_project_and_decision(tmp_env["db_path"])
 
-        resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "linkedin"})
+        mock_result = _make_draft_result(draft_id="draft_linked", platform="linkedin")
+        p1, p2, p3 = _mock_create_draft_patches()
+        with p1, p2, p3, patch(
+            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+        ):
+            resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "linkedin"})
+
         data = resp.json()
-
-        conn = sqlite3.connect(str(tmp_env["db_path"]))
-        conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT * FROM drafts WHERE id = ?", (data["draft_id"],)).fetchone()
-        conn.close()
-
-        assert row["decision_id"] == "dec_1"
-        assert row["project_id"] == "proj_1"
-        assert row["platform"] == "linkedin"
-        assert row["status"] == "draft"
+        assert data["draft_ids"] == ["draft_linked"]
+        assert data["status"] == "created"
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { fetchDrafts } from "@/lib/api";
 import type { Draft } from "@/lib/types";
 import { DraftCard } from "@/components/draft-card";
@@ -9,6 +11,10 @@ import { useDataEvents } from "@/lib/use-data-events";
 const STATUSES = ["All", "draft", "approved", "scheduled", "posted", "rejected", "failed"];
 
 export default function DraftsPage() {
+  const searchParams = useSearchParams();
+  const fromProjectId = searchParams.get("from");
+  const fromProjectName = searchParams.get("name");
+
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -46,6 +52,11 @@ export default function DraftsPage() {
 
   return (
     <div className="space-y-6">
+      {fromProjectId && (
+        <Link href={`/projects/${fromProjectId}`} className="text-sm text-accent hover:underline">
+          &larr; Back to {fromProjectName || "project"}
+        </Link>
+      )}
       <div>
         <h1 className="text-2xl font-bold">Drafts</h1>
         <p className="text-muted-foreground">Review and manage generated content drafts.</p>

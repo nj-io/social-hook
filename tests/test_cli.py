@@ -174,11 +174,12 @@ class TestDraftCommand:
     @patch("social_hook.config.load_full_config")
     def test_draft_decision_not_found(self, mock_config, mock_db_path, temp_dir):
         from social_hook.cli.manual import app as manual_app
+        from social_hook.config.yaml import Config
         from social_hook.db import init_database
 
         db_path = temp_dir / "test.db"
         mock_db_path.return_value = db_path
-        mock_config.return_value = MagicMock()
+        mock_config.return_value = Config()
         init_database(db_path)
 
         manual_runner = CliRunner()
@@ -187,15 +188,18 @@ class TestDraftCommand:
 
     @patch("social_hook.filesystem.get_db_path")
     @patch("social_hook.config.load_full_config")
-    def test_draft_not_post_worthy(self, mock_config, mock_db_path, temp_dir):
+    def test_draft_not_post_worthy_allowed(self, mock_config, mock_db_path, temp_dir):
+        """Manual draft overrides not_post_worthy decisions (no rejection)."""
         from social_hook.cli.manual import app as manual_app
+        from social_hook.config.platforms import OutputPlatformConfig
+        from social_hook.config.yaml import Config
         from social_hook.db import init_database, insert_decision, insert_project
         from social_hook.filesystem import generate_id
         from social_hook.models import Decision, Project
 
         db_path = temp_dir / "test.db"
         mock_db_path.return_value = db_path
-        mock_config.return_value = MagicMock()
+        mock_config.return_value = Config()
         conn = init_database(db_path)
 
         project = Project(id=generate_id("project"), name="t", repo_path="/tmp/t")
@@ -207,9 +211,21 @@ class TestDraftCommand:
         insert_decision(conn, decision)
         conn.close()
 
-        manual_runner = CliRunner()
-        result = manual_runner.invoke(manual_app, ["draft", decision.id])
-        assert result.exit_code == 1 or "not post_worthy" in result.output
+        # Mock the drafting pipeline (patch at source modules, not cli.manual)
+        with patch("social_hook.trigger.parse_commit_info") as mock_parse, \
+             patch("social_hook.config.project.load_project_config") as mock_proj, \
+             patch("social_hook.llm.prompts.assemble_evaluator_context") as mock_ctx, \
+             patch("social_hook.drafting.draft_for_platforms") as mock_draft:
+            mock_parse.return_value = MagicMock(timestamp=None, parent_timestamp=None)
+            mock_proj.return_value = MagicMock()
+            mock_ctx.return_value = MagicMock()
+            mock_draft.return_value = []
+
+            manual_runner = CliRunner()
+            result = manual_runner.invoke(manual_app, ["draft", decision.id])
+            # Should succeed (override drafting, not reject)
+            assert result.exit_code == 0
+            mock_draft.assert_called_once()
 
 
 class TestTestCmdRange:
@@ -329,3 +345,46 @@ class TestMemoryCLI:
         result2 = runner.invoke(app, ["memory", "list", "--project", str(tmp_path)])
         assert result2.exit_code == 0
         assert "test ctx" in result2.output
+
+
+class TestInspectPlatforms:
+    """Tests for inspect platforms command."""
+
+    @patch("social_hook.config.load_full_config")
+    def test_platforms_lists_all(self, mock_config):
+        from social_hook.cli.inspect import app as inspect_app
+        from social_hook.config.platforms import OutputPlatformConfig
+        from social_hook.config.yaml import Config
+
+        mock_config.return_value = Config(platforms={
+            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin"),
+            "linkedin": OutputPlatformConfig(enabled=False, priority="secondary", type="builtin"),
+        })
+
+        inspect_runner = CliRunner()
+        result = inspect_runner.invoke(inspect_app, ["platforms"])
+        assert result.exit_code == 0
+        assert "x" in result.output
+        assert "enabled" in result.output
+        assert "linkedin" in result.output
+        assert "disabled" in result.output
+
+    @patch("social_hook.config.load_full_config")
+    def test_platforms_json_output(self, mock_config):
+        from social_hook.cli.inspect import app as inspect_app
+        from social_hook.config.platforms import OutputPlatformConfig
+        from social_hook.config.yaml import Config
+
+        mock_config.return_value = Config(platforms={
+            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin"),
+        })
+
+        inspect_runner = CliRunner()
+        result = inspect_runner.invoke(inspect_app, ["platforms"], obj={"json": True})
+        assert result.exit_code == 0
+        import json
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["name"] == "x"
+        assert data[0]["enabled"] is True

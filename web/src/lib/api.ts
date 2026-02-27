@@ -306,12 +306,28 @@ export async function updateDraftMediaSpec(
 // Decisions
 export async function createDraftFromDecision(
   decisionId: string,
-  platform: string,
-): Promise<{ draft_id: string; status: string }> {
+  platform?: string,
+): Promise<{ draft_ids: string[]; count: number; status: string }> {
   return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}/create-draft`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ platform }),
+    body: JSON.stringify(platform ? { platform } : {}),
+  });
+}
+
+// Platforms
+export async function fetchEnabledPlatforms(): Promise<{ platforms: Record<string, { priority: string; type: string }>; count: number }> {
+  return apiFetch("/api/platforms/enabled");
+}
+
+// Consolidation
+export async function consolidateDecisions(
+  decisionIds: string[],
+): Promise<{ draft_ids: string[]; count: number }> {
+  return apiFetch("/api/decisions/consolidate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision_ids: decisionIds }),
   });
 }
 

@@ -11,6 +11,8 @@ import {
   updateProjectSummary,
   regenerateProjectSummary,
   createDraftFromDecision,
+  fetchEnabledPlatforms,
+  consolidateDecisions,
   fetchMemories,
 } from "@/lib/api";
 import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
@@ -44,7 +46,13 @@ export default function ProjectDetailPage() {
     return localStorage.getItem("project-summary-expanded") !== "false";
   });
   const [expandedDecisions, setExpandedDecisions] = useState<Set<string>>(new Set());
-  const [creatingDraft, setCreatingDraft] = useState<string | null>(null);
+  const [creatingDraftFor, setCreatingDraftFor] = useState<Set<string>>(new Set());
+  const [draftResult, setDraftResult] = useState<Record<string, { count?: number; error?: string }>>({});
+  const [platformCount, setPlatformCount] = useState<number>(0);
+  const [selectedDecisions, setSelectedDecisions] = useState<Set<string>>(new Set());
+  const [consolidating, setConsolidating] = useState(false);
+  const [consolidateResult, setConsolidateResult] = useState<{ count?: number; error?: string } | null>(null);
+  const [confirmRedraft, setConfirmRedraft] = useState<string | null>(null);
 
   const loadMemories = useCallback(async (repoPath: string) => {
     try {
@@ -79,17 +87,19 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [detail, dec, po, us] = await Promise.all([
+        const [detail, dec, po, us, plat] = await Promise.all([
           fetchProjectDetail(id),
           fetchProjectDecisions(id, DECISIONS_PER_PAGE, 0),
           fetchProjectPosts(id, 20),
           fetchProjectUsage(id),
+          fetchEnabledPlatforms(),
         ]);
         setProject(detail);
         setDecisions(dec.decisions);
         setHasMoreDecisions(dec.decisions.length === DECISIONS_PER_PAGE);
         setPosts(po.posts);
         setUsage(us);
+        setPlatformCount(plat.count);
         loadMemories(detail.repo_path);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load project");
@@ -106,9 +116,67 @@ export default function ProjectDetailPage() {
       setDecisions(res.decisions);
       setDecisionOffset(offset);
       setHasMoreDecisions(res.decisions.length === DECISIONS_PER_PAGE);
+      setSelectedDecisions(new Set());
     } catch {
       // Keep existing data
     }
+  }
+
+  function onCreateDraftClick(decisionId: string, hasDrafts: boolean) {
+    if (hasDrafts) {
+      setConfirmRedraft(decisionId);
+    } else {
+      handleCreateDraft(decisionId);
+    }
+  }
+
+  async function handleCreateDraft(decisionId: string) {
+    setConfirmRedraft(null);
+    setCreatingDraftFor((prev) => new Set(prev).add(decisionId));
+    setDraftResult((prev) => { const next = { ...prev }; delete next[decisionId]; return next; });
+    try {
+      const res = await createDraftFromDecision(decisionId);
+      setDraftResult((prev) => ({ ...prev, [decisionId]: { count: res.count } }));
+      setDecisions((prev) =>
+        prev.map((d) =>
+          d.id === decisionId ? { ...d, draft_count: d.draft_count + res.count } : d,
+        ),
+      );
+    } catch (e) {
+      setDraftResult((prev) => ({
+        ...prev,
+        [decisionId]: { error: e instanceof Error ? e.message : "Failed" },
+      }));
+    } finally {
+      setCreatingDraftFor((prev) => {
+        const next = new Set(prev);
+        next.delete(decisionId);
+        return next;
+      });
+    }
+  }
+
+  async function handleConsolidate() {
+    setConsolidating(true);
+    setConsolidateResult(null);
+    try {
+      const res = await consolidateDecisions(Array.from(selectedDecisions));
+      setConsolidateResult({ count: res.count });
+      setSelectedDecisions(new Set());
+    } catch (e) {
+      setConsolidateResult({ error: e instanceof Error ? e.message : "Failed" });
+    } finally {
+      setConsolidating(false);
+    }
+  }
+
+  function toggleSelected(decisionId: string) {
+    setSelectedDecisions((prev) => {
+      const next = new Set(prev);
+      if (next.has(decisionId)) next.delete(decisionId);
+      else next.add(decisionId);
+      return next;
+    });
   }
 
   if (loading) {
@@ -275,7 +343,9 @@ export default function ProjectDetailPage() {
         {/* Stats */}
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard label="Decisions" value={Object.values(project.decision_counts || {}).reduce((a, b) => a + b, 0)} />
-          <StatCard label="Drafts" value={project.draft_count ?? 0} />
+          <Link href={`/drafts?from=${id}&name=${encodeURIComponent(project.name)}`} className="block">
+            <StatCard label="Drafts" value={project.draft_count ?? 0} />
+          </Link>
           <StatCard label="Published" value={project.post_count ?? 0} />
           <Link href="/settings?section=journey-capture" className="block">
             <StatCard
@@ -299,7 +369,14 @@ export default function ProjectDetailPage() {
 
       {/* Evaluator Decisions */}
       <div>
-        <h2 className="mb-3 text-lg font-semibold">Evaluator Decisions</h2>
+        <div className="mb-3 flex items-center gap-3">
+          <h2 className="text-lg font-semibold">Evaluator Decisions</h2>
+          <span className="text-xs text-muted-foreground">
+            {platformCount === 0
+              ? "No platforms configured — drafts use preview mode"
+              : `${platformCount} platform${platformCount !== 1 ? "s" : ""} enabled`}
+          </span>
+        </div>
         {decisions.length === 0 ? (
           <p className="text-sm text-muted-foreground">No decisions yet.</p>
         ) : (
@@ -308,17 +385,22 @@ export default function ProjectDetailPage() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
+                    <th className="pb-2 pr-2 font-medium w-8"></th>
                     <th className="pb-2 pr-4 font-medium">Decision</th>
                     <th className="pb-2 pr-4 font-medium">Commit</th>
                     <th className="pb-2 pr-4 font-medium">Angle</th>
                     <th className="hidden pb-2 pr-4 font-medium sm:table-cell">Episode</th>
                     <th className="hidden pb-2 pr-4 font-medium md:table-cell">Category</th>
-                    <th className="pb-2 font-medium">Date</th>
+                    <th className="pb-2 pr-4 font-medium">Date</th>
+                    <th className="pb-2 pr-4 font-medium">Drafts</th>
+                    <th className="pb-2 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {decisions.map((d) => {
                     const isExpanded = expandedDecisions.has(d.id);
+                    const isCreating = creatingDraftFor.has(d.id);
+                    const result = draftResult[d.id];
                     return (
                       <tr
                         key={d.id}
@@ -332,17 +414,31 @@ export default function ProjectDetailPage() {
                           });
                         }}
                       >
+                        <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedDecisions.has(d.id)}
+                            onChange={() => toggleSelected(d.id)}
+                            className="h-4 w-4 rounded border-border accent-accent"
+                          />
+                        </td>
                         <td className="py-2 pr-4">
                           <DecisionBadge decision={d.decision} />
                         </td>
                         <td className="py-2 pr-4">
                           <div>
                             <code className="text-xs">{d.commit_hash.slice(0, 7)}</code>
-                            <p className="truncate text-xs text-muted-foreground" style={{ maxWidth: "200px" }}>
-                              {d.commit_message}
+                            <p className="text-xs text-muted-foreground">
+                              {d.commit_message?.split("\n")[0]}
                             </p>
                             {isExpanded && (
                               <div className="mt-2 space-y-2">
+                                {d.commit_message?.includes("\n") && (
+                                  <div className="rounded border border-border bg-muted/50 p-2">
+                                    <p className="text-xs font-medium text-muted-foreground">Commit Message</p>
+                                    <p className="mt-1 whitespace-pre-wrap text-xs">{d.commit_message}</p>
+                                  </div>
+                                )}
                                 <div className="rounded border border-border bg-muted/50 p-2">
                                   <p className="text-xs font-medium text-muted-foreground">Reasoning</p>
                                   <p className="mt-1 whitespace-pre-wrap text-xs">{d.reasoning || "No reasoning recorded."}</p>
@@ -357,25 +453,6 @@ export default function ProjectDetailPage() {
                                     Arc: <span className="font-mono text-foreground">{d.arc_id.slice(0, 12)}</span>
                                   </p>
                                 )}
-                                {d.decision === "post_worthy" && (
-                                  <button
-                                    onClick={async (e) => {
-                                      e.stopPropagation();
-                                      setCreatingDraft(d.id);
-                                      try {
-                                        await createDraftFromDecision(d.id, "x");
-                                      } catch {
-                                        // Silent — draft list will update via data events
-                                      } finally {
-                                        setCreatingDraft(null);
-                                      }
-                                    }}
-                                    disabled={creatingDraft === d.id}
-                                    className="rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
-                                  >
-                                    {creatingDraft === d.id ? "Creating..." : "Create Draft"}
-                                  </button>
-                                )}
                               </div>
                             )}
                           </div>
@@ -383,8 +460,54 @@ export default function ProjectDetailPage() {
                         <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
                         <td className="hidden py-2 pr-4 text-xs sm:table-cell">{d.episode_type || "-"}</td>
                         <td className="hidden py-2 pr-4 text-xs md:table-cell">{d.post_category || "-"}</td>
-                        <td className="py-2 text-xs text-muted-foreground">
+                        <td className="py-2 pr-4 text-xs text-muted-foreground">
                           {new Date(d.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
+                          {d.draft_count > 0 ? (
+                            <Link
+                              href={`/drafts?from=${id}&name=${encodeURIComponent(project.name)}`}
+                              className="text-xs text-accent hover:underline"
+                            >
+                              {d.draft_count} draft{d.draft_count !== 1 ? "s" : ""}
+                            </Link>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">-</span>
+                          )}
+                        </td>
+                        <td className="py-2" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => onCreateDraftClick(d.id, d.draft_count > 0)}
+                              disabled={isCreating}
+                              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-70 ${
+                                d.draft_count > 0 && !isCreating
+                                  ? "border border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
+                                  : "bg-accent text-accent-foreground hover:bg-accent/80"
+                              }`}
+                              title={platformCount === 0 ? "Uses preview mode" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
+                            >
+                              {isCreating && (
+                                <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                </svg>
+                              )}
+                              {isCreating
+                                ? "Creating..."
+                                : d.draft_count > 0
+                                  ? "Draft Created"
+                                  : "Create Draft"}
+                            </button>
+                            {result?.count != null && (
+                              <span className="text-xs text-green-600 dark:text-green-400">
+                                +{result.count}
+                              </span>
+                            )}
+                            {result?.error && (
+                              <span className="text-xs text-destructive">{result.error}</span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -475,6 +598,68 @@ export default function ProjectDetailPage() {
               label="Cost"
               value={`$${(usage.total_cost_cents / 100).toFixed(2)}`}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Re-draft confirmation modal */}
+      {confirmRedraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setConfirmRedraft(null)}>
+          <div className="mx-4 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold">Create another draft?</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This decision already has drafts. Creating a new one will call the LLM again and add another draft.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmRedraft(null)}
+                className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleCreateDraft(confirmRedraft)}
+                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80"
+              >
+                Create Draft
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating consolidation bar */}
+      {selectedDecisions.size >= 2 && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border bg-background p-3 shadow-lg">
+          <div className="mx-auto flex max-w-5xl items-center justify-between">
+            <span className="text-sm text-muted-foreground">
+              {selectedDecisions.size} decisions selected
+            </span>
+            <div className="flex items-center gap-3">
+              {consolidateResult?.count != null && (
+                <span className="text-xs text-green-600 dark:text-green-400">
+                  {consolidateResult.count} draft{consolidateResult.count !== 1 ? "s" : ""} created
+                </span>
+              )}
+              {consolidateResult?.error && (
+                <span className="text-xs text-destructive">{consolidateResult.error}</span>
+              )}
+              <button
+                onClick={() => setSelectedDecisions(new Set())}
+                className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+              >
+                Clear
+              </button>
+              <button
+                onClick={handleConsolidate}
+                disabled={consolidating}
+                className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+              >
+                {consolidating
+                  ? "Consolidating..."
+                  : `Consolidate ${selectedDecisions.size} decisions → Create Draft`}
+              </button>
+            </div>
           </div>
         </div>
       )}

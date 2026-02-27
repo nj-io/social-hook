@@ -1462,3 +1462,242 @@ class TestArcEndpoints:
 
         resp = client.put("/api/projects/proj_1/arcs/arc_other", json={"status": "completed"})
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Create-draft endpoint tests
+# ---------------------------------------------------------------------------
+
+
+def _make_draft_result(draft_id="draft_test_1", decision_id="dec_1", project_id="proj_1", platform="x"):
+    """Build a mock DraftResult for testing."""
+    from datetime import datetime as dt
+    from datetime import timezone
+
+    from social_hook.drafting import DraftResult
+    from social_hook.models import Draft
+    from social_hook.scheduling import ScheduleResult
+
+    draft = Draft(
+        id=draft_id,
+        project_id=project_id,
+        decision_id=decision_id,
+        platform=platform,
+        content="Test draft content",
+    )
+    schedule = ScheduleResult(
+        datetime=dt.now(timezone.utc),
+        is_optimal_day=True,
+        deferred=False,
+        day_reason="test",
+        time_reason="test",
+    )
+    return DraftResult(draft=draft, schedule=schedule, thread_tweets=[])
+
+
+def _mock_create_draft_patches():
+    """Return context managers for mocking the create-draft pipeline."""
+    from social_hook.config.project import ProjectConfig
+    from social_hook.models import CommitInfo, ProjectContext
+
+    mock_commit = CommitInfo(hash="abc123", message="feat: test", diff="", files_changed=[])
+    mock_project_config = ProjectConfig(repo_path="/tmp/test")
+    mock_context = MagicMock(spec=ProjectContext)
+
+    return (
+        patch("social_hook.trigger.parse_commit_info", return_value=mock_commit),
+        patch("social_hook.config.project.load_project_config", return_value=mock_project_config),
+        patch("social_hook.llm.prompts.assemble_evaluator_context", return_value=mock_context),
+    )
+
+
+def _seed_project_and_decision(db_path, decision_id="dec_1", project_id="proj_1",
+                                decision="post_worthy"):
+    """Seed a project and a decision."""
+    conn = sqlite3.connect(str(db_path))
+    # Only insert project if not exists
+    existing = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not existing:
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            (project_id, "Test Project", "/tmp/test"),
+        )
+    conn.execute(
+        "INSERT INTO decisions (id, project_id, commit_hash, commit_message, decision, reasoning) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (decision_id, project_id, "abc123", "feat: add new feature", decision, "This is a cool feature"),
+    )
+    conn.commit()
+    conn.close()
+
+
+class TestCreateDraftEndpoint:
+    def test_create_draft_with_platform(self, client, tmp_env):
+        """POST /api/decisions/{id}/create-draft with specific platform."""
+        _seed_project_and_decision(tmp_env["db_path"])
+
+        mock_result = _make_draft_result()
+        p1, p2, p3 = _mock_create_draft_patches()
+        with p1, p2, p3, patch(
+            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+        ) as mock_dfp:
+            resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["draft_ids"] == ["draft_test_1"]
+        assert data["count"] == 1
+        assert data["status"] == "created"
+        # Verify platform was passed
+        call_kwargs = mock_dfp.call_args[1]
+        assert call_kwargs["target_platform_names"] == ["x"]
+
+    def test_create_draft_no_platform(self, client, tmp_env):
+        """POST /api/decisions/{id}/create-draft with no platform drafts all enabled."""
+        _seed_project_and_decision(tmp_env["db_path"])
+
+        mock_results = [
+            _make_draft_result(draft_id="d1", platform="x"),
+            _make_draft_result(draft_id="d2", platform="linkedin"),
+        ]
+        p1, p2, p3 = _mock_create_draft_patches()
+        with p1, p2, p3, patch(
+            "social_hook.drafting.draft_for_platforms", return_value=mock_results
+        ) as mock_dfp:
+            resp = client.post("/api/decisions/dec_1/create-draft", json={})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 2
+        assert data["draft_ids"] == ["d1", "d2"]
+        # target_platform_names should be None for all-enabled
+        call_kwargs = mock_dfp.call_args[1]
+        assert call_kwargs["target_platform_names"] is None
+
+    def test_create_draft_not_post_worthy_override(self, client, tmp_env):
+        """POST /api/decisions/{id}/create-draft works for not_post_worthy decisions."""
+        _seed_project_and_decision(tmp_env["db_path"], decision="not_post_worthy")
+
+        mock_result = _make_draft_result()
+        p1, p2, p3 = _mock_create_draft_patches()
+        with p1, p2, p3, patch(
+            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+        ):
+            resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
+
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+
+    def test_create_draft_decision_not_found(self, client, tmp_env):
+        """POST /api/decisions/{id}/create-draft returns 404 for unknown decision."""
+        resp = client.post("/api/decisions/nonexistent/create-draft", json={"platform": "x"})
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Consolidate endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestConsolidateEndpoint:
+    def test_consolidate_two_decisions(self, client, tmp_env):
+        """POST /api/decisions/consolidate with 2+ decisions works."""
+        _seed_project_and_decision(tmp_env["db_path"], decision_id="dec_1")
+        _seed_project_and_decision(tmp_env["db_path"], decision_id="dec_2")
+
+        mock_result = _make_draft_result(draft_id="d_con")
+        p1, p2, p3 = _mock_create_draft_patches()
+        with p1, p2, p3, patch(
+            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+        ):
+            resp = client.post(
+                "/api/decisions/consolidate",
+                json={"decision_ids": ["dec_1", "dec_2"]},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["draft_ids"] == ["d_con"]
+        assert data["count"] == 1
+
+    def test_consolidate_less_than_2(self, client, tmp_env):
+        """POST /api/decisions/consolidate with < 2 decisions returns 400."""
+        resp = client.post(
+            "/api/decisions/consolidate",
+            json={"decision_ids": ["dec_1"]},
+        )
+        assert resp.status_code == 400
+        assert "At least 2" in resp.json()["detail"]
+
+    def test_consolidate_different_projects(self, client, tmp_env):
+        """POST /api/decisions/consolidate with decisions from different projects returns 400."""
+        # Seed two decisions from different projects
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_1", "Project 1", "/tmp/test1"),
+        )
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_2", "Project 2", "/tmp/test2"),
+        )
+        conn.execute(
+            "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("dec_a", "proj_1", "aaa", "post_worthy", "reason"),
+        )
+        conn.execute(
+            "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("dec_b", "proj_2", "bbb", "post_worthy", "reason"),
+        )
+        conn.commit()
+        conn.close()
+
+        resp = client.post(
+            "/api/decisions/consolidate",
+            json={"decision_ids": ["dec_a", "dec_b"]},
+        )
+        assert resp.status_code == 400
+        assert "same project" in resp.json()["detail"]
+
+    def test_consolidate_invalid_decision_id(self, client, tmp_env):
+        """POST /api/decisions/consolidate with invalid decision ID returns 404."""
+        _seed_project_and_decision(tmp_env["db_path"], decision_id="dec_1")
+
+        resp = client.post(
+            "/api/decisions/consolidate",
+            json={"decision_ids": ["dec_1", "nonexistent"]},
+        )
+        assert resp.status_code == 404
+        assert "nonexistent" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Enabled platforms endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestEnabledPlatforms:
+    def test_enabled_platforms(self, client, tmp_env):
+        """GET /api/platforms/enabled returns enabled platforms from config."""
+        # Write a config with platforms
+        config_yaml = {
+            "platforms": {
+                "x": {"enabled": True, "priority": "primary", "type": "x"},
+                "linkedin": {"enabled": False, "priority": "secondary", "type": "linkedin"},
+            }
+        }
+        config_path = tmp_env["config_path"]
+        config_path.write_text(yaml.dump(config_yaml))
+
+        import social_hook.web.server as srv
+        srv._config = None  # Force reload
+
+        resp = client.get("/api/platforms/enabled")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "x" in data["platforms"]
+        assert "linkedin" not in data["platforms"]
+        assert data["count"] == 1
+        assert data["platforms"]["x"]["priority"] == "primary"

@@ -37,7 +37,23 @@ export function PlatformsSection({ platforms, onChange, env, onEnvRefresh }: Pla
     });
   }
 
+  function handleAddPreview() {
+    if (platforms["preview"]) return;
+    onChange({
+      ...platforms,
+      preview: {
+        enabled: true,
+        priority: "secondary",
+        type: "custom",
+        description: "Generic preview for reviewing what the system would generate, without publishing",
+        format: "post",
+        max_length: 2000,
+      },
+    });
+  }
+
   const entries = Object.entries(platforms);
+  const hasPreview = "preview" in platforms;
 
   return (
     <div className="space-y-4">
@@ -60,12 +76,22 @@ export function PlatformsSection({ platforms, onChange, env, onEnvRefresh }: Pla
         ))}
       </div>
 
-      <button
-        onClick={() => setModalOpen(true)}
-        className="w-full rounded-lg border-2 border-dashed border-border p-3 text-sm text-muted-foreground transition-colors hover:border-accent hover:text-foreground"
-      >
-        + Add Custom Platform
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={() => setModalOpen(true)}
+          className="flex-1 rounded-lg border-2 border-dashed border-border p-3 text-sm text-muted-foreground transition-colors hover:border-accent hover:text-foreground"
+        >
+          + Add Custom Platform
+        </button>
+        {!hasPreview && (
+          <button
+            onClick={handleAddPreview}
+            className="rounded-lg border-2 border-dashed border-blue-300 p-3 text-sm text-blue-600 transition-colors hover:border-blue-500 hover:text-blue-800 dark:border-blue-700 dark:text-blue-400 dark:hover:border-blue-500 dark:hover:text-blue-300"
+          >
+            + Preview
+          </button>
+        )}
+      </div>
 
       <AddPlatformModal
         open={modalOpen}

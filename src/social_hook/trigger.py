@@ -31,9 +31,9 @@ def parse_commit_info(commit_hash: str, repo_path: str) -> CommitInfo:
         CommitInfo with parsed data
     """
     try:
-        # Get commit message
+        # Get full commit message (subject + body)
         message = subprocess.run(
-            ["git", "-C", repo_path, "log", "-1", "--format=%s", commit_hash],
+            ["git", "-C", repo_path, "log", "-1", "--format=%B", commit_hash],
             capture_output=True, text=True, check=True,
         ).stdout.strip()
 
@@ -360,154 +360,16 @@ def run_trigger(
 
     # 9. If post-worthy, create drafts per platform
     if evaluation.decision == "post_worthy":
-        from social_hook.config.platforms import (
-            passes_content_filter, resolve_platform,
+        from social_hook.drafting import draft_for_platforms
+
+        draft_results = draft_for_platforms(
+            config, conn, db, project, decision_id=decision.id,
+            evaluation=evaluation, context=context, commit=commit,
+            project_config=project_config, dry_run=dry_run, verbose=verbose,
         )
-
-        # Resolve all enabled platforms
-        resolved_platforms = {}
-        for pname, pcfg in config.platforms.items():
-            if pcfg.enabled:
-                resolved_platforms[pname] = resolve_platform(
-                    pname, pcfg, config.scheduling,
-                )
-
-        if not resolved_platforms:
-            if verbose:
-                print("No enabled platforms. Skipping draft creation.")
-            conn.close()
-            return 0
-
-        # Apply content filter per platform
-        ep_type = getattr(evaluation, "episode_type", None)
-        # episode_type may be an enum — normalize to string
-        if ep_type is not None and hasattr(ep_type, "value"):
-            ep_type = ep_type.value
-        target_platforms = {}
-        for pname, rpcfg in resolved_platforms.items():
-            if passes_content_filter(rpcfg.filter, ep_type):
-                target_platforms[pname] = rpcfg
-            elif verbose:
-                print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
-
-        if not target_platforms:
-            if verbose:
-                print("All platforms filtered this commit.")
-            conn.close()
-            return 0
-
-        try:
-            drafter_client = create_client(config.models.drafter, config, verbose=verbose)
-        except ConfigError as e:
-            logger.error(f"Config error: {e}")
-            if verbose:
-                print(f"Config error: {e}", file=sys.stderr)
-            conn.close()
-            return 1
-
-        from social_hook.llm.drafter import Drafter
-
-        drafter = Drafter(drafter_client)
-
-        # Media generation (once, shared across platforms)
-        media_paths, media_type_str, media_spec_dict = _generate_media(
-            config, evaluation, dry_run=dry_run, verbose=verbose,
-            project_config=project_config,
-        )
-
-        # Draft for each target platform
-        created_drafts = []
-        for pname, rpcfg in target_platforms.items():
-            try:
-                draft_result = drafter.create_draft(
-                    evaluation, context, commit, db,
-                    platform=pname,
-                    platform_config=rpcfg,
-                    config=project_config.context,
-                    media_config=config.media_generation,
-                    media_guidance=project_config.media_guidance if project_config else None,
-                )
-
-                # Override platform: LLM may return any string for unconstrained field
-                draft_result.platform = pname
-
-                use_thread = _needs_thread(
-                    draft_result, pname, rpcfg.account_tier or "free",
-                    thread_min=config.scheduling.thread_min_tweets,
-                )
-                thread_tweets = []
-                if use_thread:
-                    thread_result = drafter.create_thread(
-                        evaluation, context, commit, db, platform=pname,
-                        media_config=config.media_generation,
-                        media_guidance=project_config.media_guidance if project_config else None,
-                    )
-                    thread_tweets = _parse_thread_tweets(
-                        thread_result.content,
-                        thread_min=config.scheduling.thread_min_tweets,
-                    )
-                    draft_content = thread_result.content
-                    draft_reasoning = thread_result.reasoning
-                else:
-                    draft_content = draft_result.content
-                    draft_reasoning = draft_result.reasoning
-
-                # Per-platform scheduling
-                schedule = calculate_optimal_time(
-                    conn, project.id,
-                    platform=pname,
-                    tz=config.scheduling.timezone,
-                    max_posts_per_day=rpcfg.max_posts_per_day,
-                    min_gap_minutes=rpcfg.min_gap_minutes,
-                    optimal_days=rpcfg.optimal_days,
-                    optimal_hours=rpcfg.optimal_hours,
-                    max_per_week=config.scheduling.max_per_week,
-                )
-
-                if schedule.deferred:
-                    if verbose:
-                        print(f"Platform {pname}: deferred ({schedule.day_reason})")
-                    continue
-
-                draft = Draft(
-                    id=generate_id("draft"),
-                    project_id=project.id,
-                    decision_id=decision.id,
-                    platform=pname,
-                    content=draft_content,
-                    media_paths=media_paths,
-                    media_type=media_type_str,
-                    media_spec=media_spec_dict,
-                    suggested_time=schedule.datetime,
-                    reasoning=draft_reasoning,
-                )
-                db.insert_draft(draft)
-                db.emit_data_event("draft", "created", draft.id, project.id)
-
-                if thread_tweets:
-                    for pos, tc in enumerate(thread_tweets):
-                        db.insert_draft_tweet(DraftTweet(
-                            id=generate_id("tweet"), draft_id=draft.id,
-                            position=pos, content=tc,
-                        ))
-
-                created_drafts.append((draft, schedule, thread_tweets))
-
-                if verbose:
-                    print(f"Draft created for {pname}: {draft.id}")
-                    if thread_tweets:
-                        print(f"  Format: thread ({len(thread_tweets)} tweets)")
-                    print(f"  Content: {draft_content[:100]}...")
-                    print(f"  Suggested time: {schedule.datetime} ({schedule.time_reason})")
-
-            except Exception as e:
-                logger.error(f"LLM API error during drafting for {pname}: {e}")
-                if verbose:
-                    print(f"LLM API error during drafting for {pname}: {e}", file=sys.stderr)
-                # Continue with other platforms
 
         # Increment arc post count if drafts were created for an arc
-        if created_drafts and decision.arc_id:
+        if draft_results and decision.arc_id:
             try:
                 from social_hook.narrative.arcs import increment_arc_post_count
                 increment_arc_post_count(db.conn, decision.arc_id)
@@ -516,98 +378,32 @@ def run_trigger(
             except Exception as e:
                 logger.warning(f"Arc post count increment failed (non-fatal): {e}")
 
-        # Send notifications
-        if created_drafts and not dry_run:
-            _send_notifications(config, project, commit, created_drafts)
+        # Notifications
+        if not dry_run:
+            if draft_results:
+                _send_notifications(config, project, commit, draft_results)
+            elif config.notification_level != "drafts_only":
+                # Post-worthy but no drafts (no enabled platforms) -- still notify
+                _send_decision_notification(config, project, commit, decision)
 
     conn.close()
     return 0
 
 
-def _generate_media(config, evaluation, dry_run=False, verbose=False,
-                    project_config=None):
-    """Generate media based on evaluator's recommendation.
-
-    Called ONCE before the per-platform drafting loop.
-    Uses only evaluation.media_tool (not draft_result).
+def _send_notifications(config, project, commit, draft_results):
+    """Send notifications for created drafts to all configured channels.
 
     Args:
         config: Global Config object.
-        evaluation: Evaluator result.
-        dry_run: If True, skip real generation.
-        verbose: If True, print details.
-        project_config: Optional ProjectConfig for per-tool overrides.
-
-    Returns:
-        Tuple of (media_paths, media_type_str, media_spec_dict)
+        project: Project model instance.
+        commit: CommitInfo for this commit.
+        draft_results: List of DraftResult from draft_for_platforms().
     """
-    media_paths = []
-    media_type_str = None
-    media_spec_dict = None
-
-    _evaluator_media = (
-        getattr(evaluation, 'media_tool', None)
-        and evaluation.media_tool != "none"
-    )
-
-    if config.media_generation.enabled and _evaluator_media:
-        media_type_str = evaluation.media_tool
-        # Handle enum values
-        if hasattr(media_type_str, 'value'):
-            media_type_str = media_type_str.value
-
-        # Per-tool check: global toggle (config.yaml)
-        tool_enabled = config.media_generation.tools.get(media_type_str, True)
-        # Project-level override (content-config.yaml) — can only DISABLE, not re-enable
-        if tool_enabled:
-            guidance = project_config.media_guidance.get(media_type_str) if project_config else None
-            if guidance and guidance.enabled is not None:
-                tool_enabled = guidance.enabled
-        if not tool_enabled:
-            if verbose:
-                print(f"Media tool {media_type_str} is disabled, skipping")
-            return [], None, None
-
-        media_spec_dict = {}
-
-        try:
-            from social_hook.adapters.registry import get_media_adapter
-
-            api_key = None
-            if media_type_str == "nano_banana_pro":
-                api_key = config.env.get("GEMINI_API_KEY")
-                if not api_key:
-                    logger.warning("nano_banana_pro requested but GEMINI_API_KEY not set")
-                    media_type_str = None
-
-            if media_type_str:
-                media_adapter = get_media_adapter(media_type_str, api_key=api_key)
-                if media_adapter:
-                    draft_id = generate_id("draft")
-                    output_dir = str(get_base_path() / "media-cache" / draft_id)
-                    result = media_adapter.generate(
-                        spec=media_spec_dict,
-                        output_dir=output_dir,
-                        dry_run=dry_run,
-                    )
-                    if result.success and result.file_path:
-                        media_paths = [result.file_path]
-                        if verbose:
-                            print(f"Media generated: {result.file_path}")
-                    else:
-                        logger.warning(f"Media generation failed: {result.error}")
-        except Exception as e:
-            logger.warning(f"Media generation error (non-fatal): {e}")
-
-    return media_paths, media_type_str, media_spec_dict
-
-
-def _send_notifications(config, project, commit, created_drafts):
-    """Send notifications for created drafts to all configured channels."""
     from social_hook.bot.notifications import format_draft_review, get_review_buttons_normalized
     from social_hook.messaging.base import OutboundMessage
 
-    for draft, schedule, thread_tweets in created_drafts:
+    for result in draft_results:
+        draft, schedule, thread_tweets = result.draft, result.schedule, result.thread_tweets
         is_thread = bool(thread_tweets)
         tweet_count = len(thread_tweets) if is_thread else None
         suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
@@ -673,7 +469,11 @@ def _send_notifications(config, project, commit, created_drafts):
 
 
 def _send_decision_notification(config, project, commit, decision):
-    """Send a notification for a non-post_worthy decision to all configured channels."""
+    """Send a notification for an evaluated decision to all configured channels.
+
+    Used for non-post_worthy decisions (when notification_level == all_decisions)
+    and for post_worthy decisions where no platforms produced drafts.
+    """
     from social_hook.messaging.base import OutboundMessage
 
     reasoning_preview = (decision.reasoning[:200] + "...") if len(decision.reasoning) > 200 else decision.reasoning
@@ -718,64 +518,9 @@ def _send_decision_notification(config, project, commit, decision):
                 logger.warning(f"Failed to send Telegram decision notification to {chat_id}")
 
 
-def _needs_thread(draft_result, platform: str, tier: str,
-                  thread_min: int = 4) -> bool:
-    """Determine if content should be posted as a thread.
-
-    LLM-driven format decision with platform constraint enforcement.
-    """
-    if platform != "x":
-        return False
-
-    format_hint = getattr(draft_result, "format_hint", None)
-    beat_count = getattr(draft_result, "beat_count", None)
-    content_len = len(draft_result.content)
-    char_limit = TIER_CHAR_LIMITS.get(tier, 280)
-
-    # Free tier overflow: MUST thread (platform constraint)
-    if tier == "free" and content_len > char_limit:
-        return True
-
-    # Drafter explicitly chose single → respect it (unless free tier overflow above)
-    if format_hint == "single":
-        return False
-
-    # Drafter explicitly recommends thread
-    if format_hint == "thread":
-        return True
-
-    # Content has thread_min+ narrative beats → thread candidate
-    if beat_count is not None and beat_count >= thread_min:
-        return True
-
-    return False
-
-
-def _parse_thread_tweets(thread_content: str, thread_min: int = 4) -> list[str]:
-    """Parse thread content into individual tweet texts.
-
-    Handles numbered format (1/, 2/) and --- separators.
-    """
-    import re
-
-    # Try numbered format first: "1/ ...\n\n2/ ..."
-    numbered = re.split(r'(?:^|\n+)\d+/\s*', thread_content)
-    # First element may be empty if content starts with "1/"
-    numbered = [t.strip() for t in numbered if t.strip()]
-    if len(numbered) >= thread_min:
-        return numbered
-
-    # Try --- separator
-    separated = thread_content.split("---")
-    separated = [t.strip() for t in separated if t.strip()]
-    if len(separated) >= thread_min:
-        return separated
-
-    # Try double-newline separation
-    paragraphs = thread_content.split("\n\n")
-    paragraphs = [p.strip() for p in paragraphs if p.strip()]
-    if len(paragraphs) >= thread_min:
-        return paragraphs
-
-    # Fallback: return as single tweet list (shouldn't normally happen for threads)
-    return [thread_content.strip()] if thread_content.strip() else []
+# Backward-compatible re-exports — tests import these from trigger.py
+from social_hook.drafting import (  # noqa: E402, F401
+    _generate_media,
+    _needs_thread,
+    _parse_thread_tweets,
+)

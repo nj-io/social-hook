@@ -359,7 +359,7 @@ class TestTriggerUsesAdapter:
 
     @patch("social_hook.messaging.telegram.TelegramAdapter.send_message")
     @patch("social_hook.bot.commands.set_chat_draft_context")
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -556,7 +556,7 @@ def _make_trigger_mocks(
 class TestTriggerMedia:
     """Tests for media generation in the trigger pipeline."""
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -608,7 +608,7 @@ class TestTriggerMedia:
             or (len(call_kwargs.args) >= 3 and call_kwargs.args[2] is False) \
             or "dry_run" in str(call_kwargs)
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -650,7 +650,7 @@ class TestTriggerMedia:
         assert exit_code == 0
         mock_get.assert_not_called()
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -690,7 +690,7 @@ class TestTriggerMedia:
         assert exit_code == 0
         mock_get.assert_not_called()
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -738,7 +738,7 @@ class TestTriggerMedia:
         assert exit_code == 0
         mock_adapter.generate.assert_called_once()
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -782,7 +782,7 @@ class TestTriggerMedia:
         # Adapter should not be fetched because key is missing and media_type_str was set to None
         mock_get.assert_not_called()
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -826,12 +826,11 @@ class TestTriggerMedia:
 
         # Capture what gets passed to insert_draft
         saved_drafts = []
-        original_db = mock_init_db.return_value
 
         class CaptureDryRun:
             """Captures insert_draft calls while acting as DryRunContext."""
-            def __init__(self, conn):
-                self._conn = conn
+            def __init__(self, conn, dry_run=False):
+                self.conn = conn
 
             def insert_decision(self, decision):
                 pass
@@ -845,9 +844,12 @@ class TestTriggerMedia:
             def emit_data_event(self, *args, **kwargs):
                 pass
 
+            def update_decision(self, *args, **kwargs):
+                pass
+
         # We need to patch DryRunContext to capture the draft
         with patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter), \
-             patch("social_hook.trigger.DryRunContext", side_effect=lambda conn, dry_run: CaptureDryRun(conn)):
+             patch("social_hook.trigger.DryRunContext", side_effect=lambda conn, dry_run: CaptureDryRun(conn, dry_run)):
             exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
 
         assert exit_code == 0
@@ -864,7 +866,7 @@ class TestTriggerSendsMediaNotification:
     @patch("social_hook.messaging.telegram.TelegramAdapter.send_media")
     @patch("social_hook.messaging.telegram.TelegramAdapter.send_message")
     @patch("social_hook.bot.commands.set_chat_draft_context")
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -999,7 +1001,7 @@ class TestPerPlatformPipeline:
             "schedule": schedule,
         }
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -1038,8 +1040,8 @@ class TestPerPlatformPipeline:
         saved_drafts = []
 
         class CaptureDryRun:
-            def __init__(self, conn, dry_run):
-                pass
+            def __init__(self, conn, dry_run=False):
+                self.conn = conn
             def insert_decision(self, decision):
                 pass
             def insert_draft(self, draft):
@@ -1047,6 +1049,8 @@ class TestPerPlatformPipeline:
             def insert_draft_tweet(self, tweet):
                 pass
             def emit_data_event(self, *args, **kwargs):
+                pass
+            def update_decision(self, *args, **kwargs):
                 pass
 
         with patch("social_hook.trigger.DryRunContext", side_effect=CaptureDryRun):
@@ -1057,7 +1061,7 @@ class TestPerPlatformPipeline:
         platforms = {d.platform for d in saved_drafts}
         assert platforms == {"x", "linkedin"}
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -1098,8 +1102,8 @@ class TestPerPlatformPipeline:
         saved_drafts = []
 
         class CaptureDryRun:
-            def __init__(self, conn, dry_run):
-                pass
+            def __init__(self, conn, dry_run=False):
+                self.conn = conn
             def insert_decision(self, decision):
                 pass
             def insert_draft(self, draft):
@@ -1107,6 +1111,8 @@ class TestPerPlatformPipeline:
             def insert_draft_tweet(self, tweet):
                 pass
             def emit_data_event(self, *args, **kwargs):
+                pass
+            def update_decision(self, *args, **kwargs):
                 pass
 
         with patch("social_hook.trigger.DryRunContext", side_effect=CaptureDryRun):
@@ -1117,7 +1123,7 @@ class TestPerPlatformPipeline:
         assert len(saved_drafts) == 1
         assert saved_drafts[0].platform == "x"
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -1133,12 +1139,29 @@ class TestPerPlatformPipeline:
         mock_parse, mock_context, mock_proj_config, mock_create_client,
         mock_evaluator_cls, mock_drafter_cls, mock_schedule,
     ):
-        """No enabled platforms exits with 0, no drafts."""
+        """No enabled platforms falls back to preview platform and drafts."""
         from social_hook.config.platforms import OutputPlatformConfig
 
         mocks = self._make_per_platform_mocks({
             "x": OutputPlatformConfig(enabled=False, priority="primary", type="builtin", account_tier="free"),
         })
+
+        saved_drafts = []
+
+        class CaptureDryRun:
+            def __init__(self, conn, dry_run=False):
+                self.conn = conn
+            def insert_decision(self, decision):
+                return decision
+            def update_decision(self, *args, **kwargs):
+                return None
+            def insert_draft(self, draft):
+                saved_drafts.append(draft)
+                return draft
+            def insert_draft_tweet(self, tweet):
+                pass
+            def emit_data_event(self, *args, **kwargs):
+                pass
 
         mock_config.return_value = mocks["cfg"]
         mock_init_db.return_value = MagicMock()
@@ -1151,12 +1174,15 @@ class TestPerPlatformPipeline:
         mock_drafter_cls.return_value = mocks["drafter_instance"]
         mock_schedule.return_value = mocks["schedule"]
 
-        exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
+        with patch("social_hook.trigger.DryRunContext", side_effect=CaptureDryRun):
+            exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
         assert exit_code == 0
-        # drafter should never be called
-        mock_drafter_cls.return_value.create_draft.assert_not_called()
+        # Preview fallback: drafter is called for the auto-injected preview platform
+        mock_drafter_cls.return_value.create_draft.assert_called_once()
+        assert len(saved_drafts) == 1
+        assert saved_drafts[0].platform == "preview"
 
-    @patch("social_hook.trigger.calculate_optimal_time")
+    @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -1395,6 +1421,8 @@ class TestDecisionNotification:
         assert args[1].name == "test-proj"  # project
 
     @patch("social_hook.trigger._send_decision_notification")
+    @patch("social_hook.trigger._send_notifications")
+    @patch("social_hook.drafting.draft_for_platforms")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.config.project.load_project_config")
@@ -1407,11 +1435,13 @@ class TestDecisionNotification:
     def test_notification_skipped_for_post_worthy(
         self, mock_config, mock_init_db, mock_db_path, mock_by_path,
         mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_send_notif,
+        mock_evaluator_cls, mock_draft_for_platforms, mock_send_notifs,
+        mock_send_notif,
     ):
-        """Decision notification NOT sent for post_worthy (draft notification handles it)."""
+        """Decision notification NOT sent for post_worthy when drafts are created."""
         from social_hook.config.platforms import OutputPlatformConfig
         from social_hook.config.yaml import ChannelConfig
+        from social_hook.drafting import DraftResult
 
         cfg = MagicMock()
         cfg.platforms = {
@@ -1457,9 +1487,15 @@ class TestDecisionNotification:
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
+        # draft_for_platforms returns a result, so decision notification should be skipped
+        mock_draft_for_platforms.return_value = [MagicMock(spec=DraftResult)]
+
         exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
         assert exit_code == 0
+        # Decision notification NOT called because draft notification handles it
         mock_send_notif.assert_not_called()
+        # Draft notification IS called
+        mock_send_notifs.assert_called_once()
 
     @patch("social_hook.trigger._send_decision_notification")
     @patch("social_hook.llm.evaluator.Evaluator")
