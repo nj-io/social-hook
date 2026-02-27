@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS projects (
     audience_introduced   INTEGER NOT NULL DEFAULT 0,
     paused                INTEGER NOT NULL DEFAULT 0,
     discovery_files       TEXT DEFAULT NULL,
+    trigger_branch        TEXT DEFAULT NULL,
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -87,6 +88,7 @@ def tmp_env(tmp_path):
             audience_introduced INTEGER DEFAULT 0,
             paused INTEGER DEFAULT 0,
             discovery_files TEXT DEFAULT NULL,
+            trigger_branch TEXT DEFAULT NULL,
             created_at TEXT DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS decisions (
@@ -677,6 +679,76 @@ class TestSettingsEndpoints:
         """PUT /api/projects/{id}/pause returns 404 for unknown project."""
         resp = client.put("/api/projects/nonexistent/pause")
         assert resp.status_code == 404
+
+    def test_get_project_branches(self, client, tmp_env):
+        """GET /api/projects/{id}/branches returns branches."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_br", "Branch Project", "/tmp/repo"),
+        )
+        conn.commit()
+        conn.close()
+
+        def run_side_effect(cmd, **kwargs):
+            result = MagicMock()
+            if "branch" in cmd:
+                result.stdout = "main\ndevelop\nfeature/x\n"
+                result.returncode = 0
+            elif "rev-parse" in cmd:
+                result.stdout = "main\n"
+                result.returncode = 0
+            return result
+
+        with patch("subprocess.run", side_effect=run_side_effect):
+            resp = client.get("/api/projects/proj_br/branches")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "branches" in data
+            assert "current" in data
+
+    def test_get_project_branches_not_found(self, client, tmp_env):
+        """GET /api/projects/{id}/branches returns 404 for unknown project."""
+        resp = client.get("/api/projects/nonexistent/branches")
+        assert resp.status_code == 404
+
+    def test_set_trigger_branch(self, client, tmp_env):
+        """PUT /api/projects/{id}/trigger-branch sets branch."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_tb", "TB Project", "/tmp/repo"),
+        )
+        conn.commit()
+        conn.close()
+
+        resp = client.put(
+            "/api/projects/proj_tb/trigger-branch",
+            json={"branch": "main"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["trigger_branch"] == "main"
+
+    def test_clear_trigger_branch(self, client, tmp_env):
+        """PUT /api/projects/{id}/trigger-branch clears with null."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path, trigger_branch) VALUES (?, ?, ?, ?)",
+            ("proj_cl", "CL Project", "/tmp/repo", "main"),
+        )
+        conn.commit()
+        conn.close()
+
+        resp = client.put(
+            "/api/projects/proj_cl/trigger-branch",
+            json={"branch": None},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["trigger_branch"] is None
 
 
 # ---------------------------------------------------------------------------

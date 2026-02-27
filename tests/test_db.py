@@ -47,6 +47,7 @@ from social_hook.db import (
     insert_project,
     insert_usage,
     reset_narrative_debt,
+    set_project_trigger_branch,
     supersede_draft,
     update_arc,
     update_draft,
@@ -128,9 +129,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 11."""
+        """Check schema version returns 12."""
         version = get_schema_version(temp_db)
-        assert version == 11
+        assert version == 12
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent.
@@ -1337,3 +1338,29 @@ class TestDraftMediaFields:
         loaded = get_draft(temp_db, draft.id)
         assert loaded.media_type is None
         assert loaded.media_spec is None
+
+
+class TestTriggerBranch:
+    """Tests for trigger branch operations."""
+
+    def test_set_and_get_trigger_branch(self, temp_db):
+        """Set and retrieve trigger branch."""
+        project = Project(
+            id=generate_id("project"), name="Branch Test",
+            repo_path="/tmp/branch-test",
+        )
+        insert_project(temp_db, project)
+
+        # Default is None
+        p = get_project(temp_db, project.id)
+        assert p.trigger_branch is None
+
+        # Set to "main"
+        set_project_trigger_branch(temp_db, project.id, "main")
+        p = get_project(temp_db, project.id)
+        assert p.trigger_branch == "main"
+
+        # Clear (set to None)
+        set_project_trigger_branch(temp_db, project.id, None)
+        p = get_project(temp_db, project.id)
+        assert p.trigger_branch is None

@@ -1094,6 +1094,59 @@ async def api_toggle_pause(project_id: str):
         conn.close()
 
 
+@app.get("/api/projects/{project_id}/branches")
+async def api_get_branches(project_id: str):
+    """List available local git branches for a project."""
+    conn = _get_conn()
+    try:
+        project = ops.get_project(conn, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    finally:
+        conn.close()
+
+    import subprocess
+    repo_path = project.repo_path
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "branch", "--format=%(refname:short)"],
+            capture_output=True, text=True, check=True,
+        )
+        branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+    except (subprocess.CalledProcessError, OSError):
+        return {"branches": [], "current": None, "error": "Repository not accessible"}
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        current = result.stdout.strip()
+        if current == "HEAD":
+            current = None
+    except (subprocess.CalledProcessError, OSError):
+        current = None
+
+    return {"branches": branches, "current": current}
+
+
+@app.put("/api/projects/{project_id}/trigger-branch")
+async def api_set_trigger_branch(project_id: str, body: dict = Body(...)):
+    """Set the trigger branch filter for a project."""
+    conn = _get_conn()
+    try:
+        project = ops.get_project(conn, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        branch = body.get("branch")
+        ops.set_project_trigger_branch(conn, project_id, branch)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"status": "ok", "trigger_branch": branch}
+    finally:
+        conn.close()
+
+
 class SummaryUpdate(BaseModel):
     summary: str
 

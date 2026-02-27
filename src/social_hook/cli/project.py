@@ -225,6 +225,85 @@ def _set_paused(project_id: Optional[str], paused: bool) -> None:
         conn.close()
 
 
+@app.command("set-branch")
+def set_branch(
+    ctx: typer.Context,
+    branch: Optional[str] = typer.Argument(None, help="Branch name to filter on"),
+    project_id: Optional[str] = typer.Option(None, "--id", "-p", help="Project ID"),
+    all_branches: bool = typer.Option(False, "--all", help="Clear filter (trigger on all branches)"),
+):
+    """Set which branch triggers the pipeline for a project."""
+    import subprocess as sp
+
+    from social_hook.db import (
+        get_project,
+        get_project_by_origin,
+        get_project_by_path,
+        init_database,
+        set_project_trigger_branch,
+    )
+    from social_hook.db.operations import emit_data_event
+    from social_hook.filesystem import get_db_path
+
+    if branch is None and not all_branches:
+        typer.echo("Error: provide a branch name or use --all to clear the filter.")
+        raise typer.Exit(1)
+
+    target_branch = None if all_branches else branch
+
+    conn = init_database(get_db_path())
+    try:
+        project = None
+
+        if project_id:
+            project = get_project(conn, project_id)
+            if not project:
+                from social_hook.db import get_all_projects
+                for p in get_all_projects(conn):
+                    if p.id.startswith(project_id):
+                        project = p
+                        break
+
+        if not project:
+            cwd = str(Path.cwd().resolve())
+            project = get_project_by_path(conn, cwd)
+
+            if not project:
+                origin_result = sp.run(
+                    ["git", "-C", cwd, "remote", "get-url", "origin"],
+                    capture_output=True, text=True,
+                )
+                if origin_result.returncode == 0:
+                    matches = get_project_by_origin(conn, origin_result.stdout.strip())
+                    if matches:
+                        project = matches[0]
+
+        if not project:
+            typer.echo("No project found. Provide a project ID or run from a registered repo.")
+            raise typer.Exit(1)
+
+        # Warn if branch doesn't exist locally
+        if target_branch:
+            try:
+                sp.run(
+                    ["git", "-C", project.repo_path, "rev-parse", "--verify",
+                     f"refs/heads/{target_branch}"],
+                    capture_output=True, text=True, check=True,
+                )
+            except (sp.CalledProcessError, OSError):
+                typer.echo(f"Warning: branch '{target_branch}' not found in {project.repo_path}")
+
+        set_project_trigger_branch(conn, project.id, target_branch)
+        emit_data_event(conn, "project", "updated", project.id, project.id)
+
+        if target_branch:
+            typer.echo(f"Set trigger branch to '{target_branch}' for project '{project.name}'.")
+        else:
+            typer.echo(f"Cleared trigger branch filter for project '{project.name}' (all branches).")
+    finally:
+        conn.close()
+
+
 @app.command("list")
 def list_projects(ctx: typer.Context):
     """List all registered projects."""
@@ -240,7 +319,8 @@ def list_projects(ctx: typer.Context):
 
         for p in projects:
             status = "paused" if p.paused else "active"
-            typer.echo(f"  {p.id[:12]}  {p.name:20s}  [{status}]  {p.repo_path}")
+            branch_info = f"  [{p.trigger_branch} only]" if p.trigger_branch else ""
+            typer.echo(f"  {p.id[:12]}  {p.name:20s}  [{status}]{branch_info}  {p.repo_path}")
 
         from social_hook.setup.install import check_hook_installed
         if projects and not check_hook_installed():

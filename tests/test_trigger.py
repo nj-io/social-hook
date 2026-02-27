@@ -13,6 +13,7 @@ from social_hook.db import init_database, insert_project
 from social_hook.filesystem import generate_id
 from social_hook.models import Project
 from social_hook.trigger import (
+    _get_current_branch,
     git_remote_origin,
     parse_commit_info,
     run_trigger,
@@ -248,6 +249,109 @@ class TestRunTrigger:
 
         exit_code = run_trigger("abc123", "/tmp")
         assert exit_code == 0
+
+
+class TestTriggerBranchFilter:
+    """Tests for trigger branch filter."""
+
+    @patch("social_hook.trigger._get_current_branch")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_branch_filter_skips_non_matching(
+        self, mock_config, mock_db, mock_db_path, mock_by_path, mock_branch
+    ):
+        """Non-matching branch skips pipeline."""
+        mock_config.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_db.return_value = mock_conn
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(
+            id="p1", name="test", repo_path="/tmp",
+            trigger_branch="main",
+        )
+        mock_branch.return_value = "feature/x"
+
+        exit_code = run_trigger("abc123", "/tmp")
+        assert exit_code == 0
+        mock_conn.close.assert_called()
+
+    @patch("social_hook.trigger._get_current_branch")
+    @patch("social_hook.trigger.load_project_config", create=True)
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_branch_filter_allows_matching(
+        self, mock_config, mock_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context, mock_proj_config, mock_branch,
+    ):
+        """Matching branch proceeds past filter (will fail later but that's fine)."""
+        mock_config.return_value = MagicMock()
+        mock_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(
+            id="p1", name="test", repo_path="/tmp",
+            trigger_branch="main",
+        )
+        mock_branch.return_value = "main"
+        mock_parse.return_value = MagicMock(hash="abc123", message="test", timestamp=None, parent_timestamp=None)
+        mock_context.return_value = MagicMock(project_summary="test")
+
+        # Proceeds past branch check; fails at evaluator (exit 3) — not 0
+        exit_code = run_trigger("abc123", "/tmp")
+        assert exit_code != 0  # Didn't skip due to branch filter
+
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_branch_filter_null_allows_all(
+        self, mock_config, mock_db, mock_db_path, mock_by_path,
+        mock_parse, mock_context,
+    ):
+        """No trigger_branch set proceeds past filter (will fail later)."""
+        mock_config.return_value = MagicMock()
+        mock_db.return_value = MagicMock()
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(
+            id="p1", name="test", repo_path="/tmp",
+            trigger_branch=None,
+        )
+        mock_parse.return_value = MagicMock(hash="abc123", message="test", timestamp=None, parent_timestamp=None)
+        mock_context.return_value = MagicMock(project_summary="test")
+
+        # Proceeds past branch check (no filter); fails at evaluator — not 0
+        exit_code = run_trigger("abc123", "/tmp")
+        assert exit_code != 0  # Didn't skip due to branch filter
+
+    @patch("social_hook.trigger._get_current_branch")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_trigger_branch_filter_detached_head(
+        self, mock_config, mock_db, mock_db_path, mock_by_path, mock_branch
+    ):
+        """Detached HEAD skips when branch filter is set."""
+        mock_config.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_db.return_value = mock_conn
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(
+            id="p1", name="test", repo_path="/tmp",
+            trigger_branch="main",
+        )
+        mock_branch.return_value = None  # Detached HEAD
+
+        exit_code = run_trigger("abc123", "/tmp")
+        assert exit_code == 0
+        mock_conn.close.assert_called()
 
 
 class TestTriggerUsesAdapter:

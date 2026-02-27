@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Project } from "@/lib/types";
-import { fetchInstallationsStatus, fetchProjects, installComponent, toggleProjectPause } from "@/lib/api";
+import { fetchInstallationsStatus, fetchProjectBranches, fetchProjects, installComponent, toggleProjectPause, updateProjectTriggerBranch } from "@/lib/api";
 
 export function ProjectsSection() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -10,6 +10,8 @@ export function ProjectsSection() {
   const [toggling, setToggling] = useState<string | null>(null);
   const [hookInstalled, setHookInstalled] = useState<boolean | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [branchesMap, setBranchesMap] = useState<Record<string, { branches: string[]; current: string | null; loaded: boolean }>>({});
+  const [branchLoading, setBranchLoading] = useState<string | null>(null);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -41,6 +43,39 @@ export function ProjectsSection() {
       // Silently handle
     } finally {
       setToggling(null);
+    }
+  }
+
+  async function loadBranches(projectId: string, repoPath: string) {
+    if (branchesMap[projectId]?.loaded) return;
+    setBranchLoading(projectId);
+    try {
+      const res = await fetchProjectBranches(projectId);
+      setBranchesMap((prev) => ({
+        ...prev,
+        [projectId]: { branches: res.branches, current: res.current, loaded: true },
+      }));
+    } catch {
+      setBranchesMap((prev) => ({
+        ...prev,
+        [projectId]: { branches: [], current: null, loaded: true },
+      }));
+    } finally {
+      setBranchLoading(null);
+    }
+  }
+
+  async function handleBranchChange(projectId: string, value: string) {
+    const branch = value === "" ? null : value;
+    try {
+      const res = await updateProjectTriggerBranch(projectId, branch);
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === projectId ? { ...p, trigger_branch: res.trigger_branch } : p,
+        ),
+      );
+    } catch {
+      // Silently handle
     }
   }
 
@@ -120,6 +155,41 @@ export function ProjectsSection() {
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {project.repo_path}
                   </p>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <select
+                      className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                      value={project.trigger_branch || ""}
+                      onFocus={() => loadBranches(project.id, project.repo_path)}
+                      onChange={(e) => handleBranchChange(project.id, e.target.value)}
+                    >
+                      <option value="">All branches</option>
+                      {(() => {
+                        const data = branchesMap[project.id];
+                        const options: string[] = data?.branches || [];
+                        const hasCurrent = project.trigger_branch && options.includes(project.trigger_branch);
+                        return (
+                          <>
+                            {!hasCurrent && project.trigger_branch && (
+                              <option value={project.trigger_branch}>
+                                {project.trigger_branch} (not found)
+                              </option>
+                            )}
+                            {options.map((b) => (
+                              <option key={b} value={b}>{b}</option>
+                            ))}
+                          </>
+                        );
+                      })()}
+                    </select>
+                    {branchLoading === project.id && (
+                      <span className="text-xs text-muted-foreground">Loading...</span>
+                    )}
+                    {project.trigger_branch && (
+                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                        {project.trigger_branch} only
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <button
                   onClick={() => handleTogglePause(project.id)}

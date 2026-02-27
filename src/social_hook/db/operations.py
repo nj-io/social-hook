@@ -102,6 +102,15 @@ def set_project_paused(conn: sqlite3.Connection, project_id: str, paused: bool) 
     conn.commit()
 
 
+def set_project_trigger_branch(conn: sqlite3.Connection, project_id: str, branch: Optional[str]) -> None:
+    """Set trigger branch filter. None = all branches."""
+    conn.execute(
+        "UPDATE projects SET trigger_branch = ? WHERE id = ?",
+        (branch, project_id),
+    )
+    conn.commit()
+
+
 def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     """Delete a project and all associated data.
 

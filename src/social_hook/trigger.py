@@ -128,6 +128,19 @@ def git_remote_origin(repo_path: str) -> Optional[str]:
         return None
 
 
+def _get_current_branch(repo_path: str) -> Optional[str]:
+    """Get the current git branch name. Returns None for detached HEAD."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        branch = result.stdout.strip()
+        return None if branch == "HEAD" else branch
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
 def run_trigger(
     commit_hash: str,
     repo_path: str,
@@ -200,6 +213,16 @@ def run_trigger(
             print(f"Project {project.name} is paused. Skipping.")
         conn.close()
         return 0
+
+    if project.trigger_branch:
+        current_branch = _get_current_branch(repo_path)
+        if current_branch != project.trigger_branch:
+            branch_desc = current_branch or "(detached HEAD)"
+            if verbose:
+                print(f"Branch '{branch_desc}' doesn't match trigger branch "
+                      f"'{project.trigger_branch}'. Skipping.")
+            conn.close()
+            return 0
 
     # 4. Load project config
     from social_hook.config.project import load_project_config

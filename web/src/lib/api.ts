@@ -210,6 +210,19 @@ export async function toggleProjectPause(projectId: string): Promise<{ status: s
   });
 }
 
+// Project branches
+export async function fetchProjectBranches(id: string): Promise<{ branches: string[]; current: string | null; error?: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/branches`);
+}
+
+export async function updateProjectTriggerBranch(id: string, branch: string | null): Promise<{ status: string; trigger_branch: string | null }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/trigger-branch`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ branch }),
+  });
+}
+
 // Validate API key
 export async function validateApiKey(provider: string, key: string): Promise<{ valid: boolean; provider: string; error?: string }> {
   return apiFetch("/api/settings/validate-key", {

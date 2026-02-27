@@ -113,6 +113,7 @@ export interface Project {
   paused: number;
   summary?: string;
   phase?: string;
+  trigger_branch?: string | null;
   confidence?: number;
 }
 
