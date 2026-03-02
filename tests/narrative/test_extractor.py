@@ -241,7 +241,7 @@ class TestNarrativeExtractor:
         result = extractor.extract(
             transcript_text="[USER] Let's build caching\n\n[ASSISTANT] Sure.",
             project_name="my-project",
-            cwd="/Users/neil/dev/my-project",
+            cwd="/home/user/dev/my-project",
             db=None,
             project_id="proj_123",
         )
@@ -313,13 +313,13 @@ class TestNarrativeExtractor:
         extractor.extract(
             transcript_text="transcript",
             project_name="proj",
-            cwd="/Users/neil/dev/my-project",
+            cwd="/home/user/dev/my-project",
             db=None,
             project_id="proj_1",
         )
 
         user_msg = client.last_call["messages"][0]["content"]
-        assert "/Users/neil/dev/my-project" in user_msg
+        assert "/home/user/dev/my-project" in user_msg
 
     def test_extract_passes_operation_type(self):
         data = _valid_extract_data()

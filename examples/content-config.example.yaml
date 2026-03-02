@@ -1,0 +1,157 @@
+# Content Configuration
+#
+# This file controls CONTENT GUIDANCE: how to use tools, narrative strategy,
+# and context assembly for LLM prompts.
+#
+# For INFRASTRUCTURE settings (which platforms/models are enabled, scheduling,
+# posting cadence, account tiers), see config.yaml.
+#
+# Place a customized version as `.social-hook/content-config.yaml` in your project.
+
+# Changelog
+# | Date       | Change                                                       |
+# |------------|--------------------------------------------------------------|
+# | 2026-02-24 | This file is now the source of truth for media tool          |
+# |            | guidance defaults (use_when, constraints, prompt_example).   |
+# |            | Python DEFAULT_MEDIA_GUIDANCE is structural-only.            |
+# | 2026-02-24 | Remove dead sections (account, models, platforms,            |
+# |            | content_outputs, posting_rules, brand_assets,                |
+# |            | media_selection_criteria). Keep live sections only.           |
+
+# =============================================================================
+# MEDIA TOOLS
+# =============================================================================
+# Per-tool content guidance for the Drafter agent.
+# Tool availability and enablement is controlled by config.yaml (media_generation).
+# These entries tell the agent WHEN and HOW to use each tool.
+
+media_tools:
+  mermaid:
+    description: "Text-based diagram generation"
+    use_when:
+      - "Technical architecture explanations"
+      - "Flow diagrams and processes"
+      - "Blog post visuals"
+    constraints:
+      - "Don't overuse - can feel dry/boring"
+      - "Best for technical audience"
+    prompt_example: |
+      Create a Mermaid diagram showing the flow from git commit to social post.
+      Keep it clean and minimal. Use graph LR (left-to-right) orientation.
+      Maximum 8-10 nodes for readability.
+
+  nano_banana_pro:
+    description: "AI image generation (Google)"
+    use_when:
+      - "Marketing/announcement visuals"
+      - "Polished graphics for launches"
+      - "When Mermaid would be too dry"
+    constraints:
+      - "Always specify 'no text' unless text is essential"
+      - "Request specific dimensions for platform"
+    prompt_example: |
+      Create a clean, modern illustration representing [concept].
+      Style: Minimal, developer-focused, no text overlays.
+      Colors: Use a limited palette, prefer blues and purples.
+      Avoid: Stock photo feel, corporate clipart, busy backgrounds.
+
+  playwright:
+    description: "Browser screenshot capture"
+    use_when:
+      - "Demonstrating actual UI/product"
+      - "Showing working features"
+      - "Proof that something works"
+    constraints:
+      - "Only use when there's actual UI to show"
+      - "Ensure no sensitive data visible"
+      - "Consider annotating key areas"
+    prompt_example: |
+      Take a screenshot of the application showing [feature].
+      Ensure the relevant UI element is visible and highlighted.
+      Use a clean browser window (no bookmarks bar, minimal chrome).
+      Capture at 1920x1080 for quality, will crop for platform.
+
+  ray_so:
+    description: "Code screenshot generation"
+    use_when:
+      - "Highlighting interesting code snippets"
+      - "Showing clever solutions"
+      - "Code-focused posts"
+    constraints:
+      - "Best for short, focused snippets (< 30 lines)"
+      - "Include filename if relevant"
+    prompt_example: |
+      Create a code screenshot of the following snippet.
+      Highlight lines 5-10 which show the key logic.
+      Use dark theme, include filename if relevant.
+
+  # Selection heuristics (agent uses these as soft rules):
+  # - Technical/architectural post → prefer mermaid (unless used in last 2 posts)
+  # - Announcement/milestone post → prefer nano_banana_pro
+  # - Working feature demo → prefer playwright
+  # - Code-focused post → prefer ray_so
+  # - Fallback: nano_banana_pro
+  # - Variety: avoid using the same tool for 3+ consecutive posts
+
+# =============================================================================
+# NARRATIVE STRATEGY
+# =============================================================================
+# Controls how the Evaluator balances narrative arcs, episode variety,
+# and posting rhythm. These are soft thresholds — the agent uses judgment.
+
+strategy:
+  # Narrative debt: forces synthesis post after N reactive/opportunistic posts
+  narrative_debt_threshold: 3
+
+  # Portfolio balance window: how many recent posts to consider for variety
+  portfolio_window: 10
+
+  # Arc stagnation: flag arc if no posts for N days
+  arc_stagnation_days: 14
+
+  # Strategy moment: force review after N days of inactivity
+  strategy_moment_max_gap_days: 7
+
+  # Episode type preferences (optional - agent will infer if not specified)
+  episode_preferences:
+    favor: ["demo_proof", "before_after"]  # Prefer these when applicable
+    avoid: []  # Avoid these unless necessary
+
+# =============================================================================
+# CONTEXT CONFIGURATION
+# =============================================================================
+# Controls how much historical context is included in LLM prompts.
+# Larger values = better context awareness but higher token costs.
+
+context:
+  # Recent history limits for prompt assembly
+  recent_decisions: 30        # How many past decisions to include (default: 30)
+  recent_posts: 15            # How many past posts to include (default: 15)
+
+  # Compaction threshold - compact context when exceeding this token count
+  max_tokens: 150000          # Default: 150K (triggers compaction at ~75% of 200K window)
+
+  # Project documentation inclusion (for Evaluator context)
+  include_readme: true        # Include README.md
+  include_claude_md: true     # Include CLAUDE.md if present
+  max_doc_tokens: 10000       # Max tokens allocated to project docs
+
+  # Project discovery: glob patterns for priority files to always include
+  # during two-pass project discovery. These files get loaded first within
+  # the token budget. Supports standard glob patterns.
+  project_docs:
+    # - "docs/REQUIREMENTS.md"
+    # - "docs/*.md"
+    # - "src/core/**/*.py"
+
+# =============================================================================
+# PROJECT SUMMARY CONFIGURATION
+# =============================================================================
+# Controls how project summaries are refreshed for Gatekeeper context.
+# Evaluator uses judgment but can reference these thresholds.
+
+summary:
+  # Suggested refresh indicators (Evaluator uses judgment)
+  # These are hints, not hard triggers - Evaluator decides when to refresh
+  refresh_after_commits: 20     # Suggest refresh after N commits
+  refresh_after_days: 14        # Suggest refresh after N days

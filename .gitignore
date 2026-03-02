@@ -8,6 +8,7 @@ __pycache__/
 # Environment
 .env
 .env.local
+.env.*
 *.local
 
 # IDE
@@ -34,8 +35,17 @@ logs/
 *.sqlite
 *.sqlite3
 
-# Strategy (private, not committed)
-docs/strategy/
+# Internal development docs (kept locally, scrubbed from history)
+CLAUDE.md
+TODO.md
+archive/
+docs/
+
+# Claude Code internals
+.claude/
+
+# Local project config
+.social-hook/
 
 # Credentials
 credentials.json

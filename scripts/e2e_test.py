@@ -206,7 +206,7 @@ class E2EHarness:
         config_dir.mkdir(exist_ok=True)
 
         # social-context.md — use the example template
-        template = Path(__file__).resolve().parent.parent / "docs" / "templates" / "social-context.example.md"
+        template = Path(__file__).resolve().parent.parent / "examples" / "social-context.example.md"
         if template.exists():
             shutil.copy(template, config_dir / "social-context.md")
         else:

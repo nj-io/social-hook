@@ -41,7 +41,7 @@ def discover_transcript_path(session_id: str, cwd: str) -> Optional[Path]:
     """Construct transcript path from session_id + cwd.
 
     Handles the empty transcript_path bug (anthropics/claude-code#13668).
-    Encodes cwd as path-component: /Users/neil/dev/project -> -Users-neil-dev-project
+    Encodes cwd as path-component: /home/user/dev/project -> -home-user-dev-project
 
     Args:
         session_id: The Claude Code session identifier.

@@ -1,8 +1,6 @@
 """Central branding and naming constants.
 
 Zero internal dependencies — importable anywhere without circular risk.
-To rename the project, update values here, then follow the rename
-procedure in docs/RENAMING.md.
 """
 
 # Display name (UI headers, bot text, welcome messages)
@@ -24,4 +22,4 @@ DB_FILENAME = "social-hook.db"
 MODULE_NAME = "social_hook"
 
 # GitHub repository (owner/repo)
-GITHUB_REPO = "neil/social-media-auto-hook"
+GITHUB_REPO = "nj-io/social-hook"

@@ -7,8 +7,6 @@ X API v2's actual format ({"type": "...", "title": "...", "detail": "..."}).
 WS3 must implement platform-specific classifiers:
 - classify_x_error() for X API v2 format
 - classify_linkedin_error() for LinkedIn format
-
-See docs/research/WS1_ASSUMPTIONS.md (A1) for details.
 """
 
 from dataclasses import dataclass

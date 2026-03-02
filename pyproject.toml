@@ -9,7 +9,7 @@ description = "Automated social media content from development activity"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Neil", email = "neil@example.com" }
+    { name = "Neil", email = "26359601+nj-io@users.noreply.github.com" }
 ]
 keywords = ["social-media", "automation", "cli", "git"]
 classifiers = [
@@ -56,10 +56,10 @@ dev = [
 social-hook = "social_hook.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/neil/social-media-auto-hook"
-Documentation = "https://github.com/neil/social-media-auto-hook#readme"
-Repository = "https://github.com/neil/social-media-auto-hook"
-Issues = "https://github.com/neil/social-media-auto-hook/issues"
+Homepage = "https://github.com/nj-io/social-hook"
+Documentation = "https://github.com/nj-io/social-hook#readme"
+Repository = "https://github.com/nj-io/social-hook"
+Issues = "https://github.com/nj-io/social-hook/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/social_hook"]

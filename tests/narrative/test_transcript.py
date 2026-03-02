@@ -126,7 +126,7 @@ class TestDiscoverTranscriptPath:
 
     def test_constructs_correct_path(self, tmp_path, monkeypatch):
         # Simulate ~/.claude/projects/{encoded-cwd}/{session_id}.jsonl
-        encoded_cwd = "-Users-neil-dev-project"
+        encoded_cwd = "-home-user-dev-project"
         projects_dir = tmp_path / ".claude" / "projects" / encoded_cwd
         projects_dir.mkdir(parents=True)
         transcript_file = projects_dir / "session123.jsonl"
@@ -134,26 +134,26 @@ class TestDiscoverTranscriptPath:
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        result = discover_transcript_path("session123", "/Users/neil/dev/project")
+        result = discover_transcript_path("session123", "/home/user/dev/project")
         assert result is not None
         assert result == transcript_file
 
     def test_returns_none_when_file_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        result = discover_transcript_path("nonexistent", "/Users/neil/dev/project")
+        result = discover_transcript_path("nonexistent", "/home/user/dev/project")
         assert result is None
 
     def test_encodes_cwd_correctly(self, tmp_path, monkeypatch):
-        # Verify the encoding: /Users/neil/dev/my-project -> -Users-neil-dev-my-project
-        encoded = "-Users-neil-dev-my-project"
+        # Verify the encoding: /home/user/dev/my-project -> -home-user-dev-my-project
+        encoded = "-home-user-dev-my-project"
         projects_dir = tmp_path / ".claude" / "projects" / encoded
         projects_dir.mkdir(parents=True)
         (projects_dir / "sess.jsonl").write_text("{}")
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        result = discover_transcript_path("sess", "/Users/neil/dev/my-project")
+        result = discover_transcript_path("sess", "/home/user/dev/my-project")
         assert result is not None
         assert encoded in str(result)
 
