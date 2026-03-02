@@ -59,6 +59,118 @@ def version():
     typer.echo(f"{PROJECT_SLUG} {__version__}")
 
 
+@app.command("help")
+def help_cmd(
+    ctx: typer.Context,
+    command: Optional[str] = typer.Argument(None, help="Command or group to describe"),
+    json_output: bool = typer.Option(False, "--json", help="Output as structured JSON"),
+):
+    """Show command help. Use --json for machine-readable output."""
+    import json as json_mod
+    import click
+
+    click_app = typer.main.get_command(app)
+
+    if json_output:
+        def _cmd_to_dict(cmd, name=None):
+            result = {}
+            if name:
+                result["name"] = name
+            if cmd.help:
+                result["help"] = cmd.help.split("\n")[0]
+
+            if hasattr(cmd, "commands") and cmd.commands:
+                cmds = {}
+                for sub_name in sorted(cmd.commands):
+                    sub_cmd = cmd.commands[sub_name]
+                    if getattr(sub_cmd, "hidden", False):
+                        continue
+                    cmds[sub_name] = _cmd_to_dict(sub_cmd, sub_name)
+                if cmds:
+                    result["commands"] = cmds
+
+            args = []
+            for param in cmd.params:
+                if isinstance(param, click.Argument):
+                    args.append({
+                        "name": param.name,
+                        "required": param.required,
+                    })
+            if args:
+                result["arguments"] = args
+
+            opts = []
+            skip_names = {"install_completion", "show_completion", "help", "ctx"}
+            for param in cmd.params:
+                if isinstance(param, click.Option):
+                    if param.name in skip_names:
+                        continue
+                    opt_info = {
+                        "name": param.opts[0] if param.opts else f"--{param.name}",
+                    }
+                    if len(param.opts) > 1:
+                        opt_info["short"] = param.opts[1]
+                    if param.help:
+                        opt_info["help"] = param.help
+                    type_name = param.type.name if hasattr(param.type, "name") else str(param.type)
+                    opt_info["type"] = type_name.upper()
+                    if param.default is not None:
+                        opt_info["default"] = param.default
+                    opts.append(opt_info)
+            if opts:
+                result["options"] = opts
+
+            return result
+
+        global_options = []
+        skip_names = {"install_completion", "show_completion", "help", "ctx"}
+        for param in click_app.params:
+            if isinstance(param, click.Option) and param.name not in skip_names:
+                opt_info = {
+                    "name": param.opts[0] if param.opts else f"--{param.name}",
+                }
+                if len(param.opts) > 1:
+                    opt_info["short"] = param.opts[1]
+                if param.help:
+                    opt_info["help"] = param.help
+                type_name = param.type.name if hasattr(param.type, "name") else str(param.type)
+                opt_info["type"] = type_name.upper()
+                if param.default is not None:
+                    opt_info["default"] = param.default
+                global_options.append(opt_info)
+
+        output = {
+            "name": PROJECT_SLUG,
+            "global_options": global_options,
+            "commands": {},
+        }
+
+        for cmd_name in sorted(click_app.commands):
+            cmd = click_app.commands[cmd_name]
+            if getattr(cmd, "hidden", False):
+                continue
+            output["commands"][cmd_name] = _cmd_to_dict(cmd, cmd_name)
+
+        typer.echo(json_mod.dumps(output, indent=2, default=str))
+    elif command:
+        try:
+            sub = click_app.commands.get(command)
+            if sub:
+                help_ctx = click.Context(sub, info_name=f"{PROJECT_SLUG} {command}", parent=ctx)
+                typer.echo(sub.get_help(help_ctx))
+            else:
+                typer.echo(f"Unknown command: {command}")
+                raise typer.Exit(1)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            typer.echo(f"Error: {e}")
+            raise typer.Exit(1)
+    else:
+        help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)
+        typer.echo(click_app.get_help(help_ctx))
+
+
 @app.command()
 def init():
     """Initialize social-hook (create directories and database).
@@ -633,3 +745,8 @@ app.add_typer(memory_app, name="memory", help="Manage voice memories.")
 
 # Arc commands: list, create, complete, abandon
 app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+
+from social_hook.cli.draft import app as draft_app
+
+# Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
+app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")

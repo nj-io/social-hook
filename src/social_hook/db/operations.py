@@ -489,6 +489,26 @@ def get_all_pending_drafts(conn: sqlite3.Connection) -> list[Draft]:
     return [Draft.from_dict(dict(row)) for row in rows]
 
 
+def get_drafts_filtered(
+    conn: sqlite3.Connection,
+    status: Optional[str] = None,
+    project_id: Optional[str] = None,
+) -> list[Draft]:
+    """Get drafts with optional status and project filters."""
+    clauses, params = [], []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if project_id:
+        clauses.append("project_id = ?")
+        params.append(project_id)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM drafts{where} ORDER BY created_at DESC", params
+    ).fetchall()
+    return [Draft.from_dict(dict(row)) for row in rows]
+
+
 def get_due_drafts(conn: sqlite3.Connection) -> list[Draft]:
     """Get drafts that are scheduled and due for posting.
 
