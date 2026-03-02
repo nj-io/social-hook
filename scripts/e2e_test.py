@@ -33,14 +33,14 @@ from typing import Any, Optional
 
 # Test commits from this repo's git history
 COMMITS = {
-    "significant": "6788898",   # Implement WS1 Foundation
-    "major_feature": "8166c66", # Implement WS3 adapters
-    "large_feature": "38d2c9f", # WS4 gap fix
-    "bugfix": "9f210e4",        # Fix setup wizard UX
-    "docs_only": "a7832e6",     # docs: add WS3 integration notes
-    "docs_only_2": "b995b4b",   # Add git worktrees section to CLAUDE.md
-    "initial": "65fff50",       # Initial commit: Research documentation
-    "web_dashboard": "671c01d", # Add web dashboard + per-platform pipeline
+    "significant": "0d50ea7",   # Implement WS1 Foundation
+    "major_feature": "93fbd11", # Implement WS3 adapters
+    "large_feature": "d47c089", # WS4 gap fix
+    "bugfix": "409bf74",        # Fix setup wizard UX
+    "docs_only": "3b85806",     # Fix section nav scroll reliability and gitignore
+    "docs_only_2": "8c139a1",   # Fix E2E A10: pass repo root
+    "initial": "c085a12",       # Initial commit: Research documentation
+    "web_dashboard": "07c85d9", # Add web dashboard + per-platform pipeline
 }
 
 SECTION_MAP = {
