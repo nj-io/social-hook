@@ -59,73 +59,54 @@ def version():
     typer.echo(f"{PROJECT_SLUG} {__version__}")
 
 
-@app.command("help")
+@app.command("help", context_settings={"allow_extra_args": True, "allow_interspersed_args": False})
 def help_cmd(
     ctx: typer.Context,
-    command: Optional[str] = typer.Argument(None, help="Command or group to describe"),
     json_output: bool = typer.Option(False, "--json", help="Output as structured JSON"),
 ):
-    """Show command help. Use --json for machine-readable output."""
+    """Show command help. Use --json for machine-readable output.
+
+    Examples: social-hook help draft, social-hook help draft approve, social-hook help --json
+    """
     import json as json_mod
     import click
 
     click_app = typer.main.get_command(app)
+    command_parts = ctx.args  # e.g. ["draft", "approve"]
 
-    if json_output:
-        def _cmd_to_dict(cmd, name=None):
-            result = {}
-            if name:
-                result["name"] = name
-            if cmd.help:
-                result["help"] = cmd.help.split("\n")[0]
+    def _cmd_to_dict(cmd, name=None):
+        result = {}
+        if name:
+            result["name"] = name
+        if cmd.help:
+            result["help"] = cmd.help.split("\n")[0]
 
-            if hasattr(cmd, "commands") and cmd.commands:
-                cmds = {}
-                for sub_name in sorted(cmd.commands):
-                    sub_cmd = cmd.commands[sub_name]
-                    if getattr(sub_cmd, "hidden", False):
-                        continue
-                    cmds[sub_name] = _cmd_to_dict(sub_cmd, sub_name)
-                if cmds:
-                    result["commands"] = cmds
+        if hasattr(cmd, "commands") and cmd.commands:
+            cmds = {}
+            for sub_name in sorted(cmd.commands):
+                sub_cmd = cmd.commands[sub_name]
+                if getattr(sub_cmd, "hidden", False):
+                    continue
+                cmds[sub_name] = _cmd_to_dict(sub_cmd, sub_name)
+            if cmds:
+                result["commands"] = cmds
 
-            args = []
-            for param in cmd.params:
-                if isinstance(param, click.Argument):
-                    args.append({
-                        "name": param.name,
-                        "required": param.required,
-                    })
-            if args:
-                result["arguments"] = args
+        args = []
+        for param in cmd.params:
+            if isinstance(param, click.Argument):
+                args.append({
+                    "name": param.name,
+                    "required": param.required,
+                })
+        if args:
+            result["arguments"] = args
 
-            opts = []
-            skip_names = {"install_completion", "show_completion", "help", "ctx"}
-            for param in cmd.params:
-                if isinstance(param, click.Option):
-                    if param.name in skip_names:
-                        continue
-                    opt_info = {
-                        "name": param.opts[0] if param.opts else f"--{param.name}",
-                    }
-                    if len(param.opts) > 1:
-                        opt_info["short"] = param.opts[1]
-                    if param.help:
-                        opt_info["help"] = param.help
-                    type_name = param.type.name if hasattr(param.type, "name") else str(param.type)
-                    opt_info["type"] = type_name.upper()
-                    if param.default is not None:
-                        opt_info["default"] = param.default
-                    opts.append(opt_info)
-            if opts:
-                result["options"] = opts
-
-            return result
-
-        global_options = []
+        opts = []
         skip_names = {"install_completion", "show_completion", "help", "ctx"}
-        for param in click_app.params:
-            if isinstance(param, click.Option) and param.name not in skip_names:
+        for param in cmd.params:
+            if isinstance(param, click.Option):
+                if param.name in skip_names:
+                    continue
                 opt_info = {
                     "name": param.opts[0] if param.opts else f"--{param.name}",
                 }
@@ -137,30 +118,68 @@ def help_cmd(
                 opt_info["type"] = type_name.upper()
                 if param.default is not None:
                     opt_info["default"] = param.default
-                global_options.append(opt_info)
+                opts.append(opt_info)
+        if opts:
+            result["options"] = opts
 
-        output = {
-            "name": PROJECT_SLUG,
-            "global_options": global_options,
-            "commands": {},
-        }
+        return result
 
-        for cmd_name in sorted(click_app.commands):
-            cmd = click_app.commands[cmd_name]
-            if getattr(cmd, "hidden", False):
-                continue
-            output["commands"][cmd_name] = _cmd_to_dict(cmd, cmd_name)
-
-        typer.echo(json_mod.dumps(output, indent=2, default=str))
-    elif command:
-        try:
-            sub = click_app.commands.get(command)
-            if sub:
-                help_ctx = click.Context(sub, info_name=f"{PROJECT_SLUG} {command}", parent=ctx)
-                typer.echo(sub.get_help(help_ctx))
-            else:
-                typer.echo(f"Unknown command: {command}")
+    def _resolve_command(parts):
+        """Walk the Click command tree following the given path parts."""
+        current = click_app
+        info_parts = [PROJECT_SLUG]
+        for part in parts:
+            if not hasattr(current, "commands") or not current.commands:
+                typer.echo(f"Unknown command: {' '.join(parts)}")
                 raise typer.Exit(1)
+            sub = current.commands.get(part)
+            if not sub:
+                typer.echo(f"Unknown command: {' '.join(parts)}")
+                raise typer.Exit(1)
+            current = sub
+            info_parts.append(part)
+        return current, " ".join(info_parts)
+
+    if json_output:
+        if command_parts:
+            target, _ = _resolve_command(command_parts)
+            typer.echo(json_mod.dumps(_cmd_to_dict(target, command_parts[-1]), indent=2, default=str))
+        else:
+            global_options = []
+            skip_names = {"install_completion", "show_completion", "help", "ctx"}
+            for param in click_app.params:
+                if isinstance(param, click.Option) and param.name not in skip_names:
+                    opt_info = {
+                        "name": param.opts[0] if param.opts else f"--{param.name}",
+                    }
+                    if len(param.opts) > 1:
+                        opt_info["short"] = param.opts[1]
+                    if param.help:
+                        opt_info["help"] = param.help
+                    type_name = param.type.name if hasattr(param.type, "name") else str(param.type)
+                    opt_info["type"] = type_name.upper()
+                    if param.default is not None:
+                        opt_info["default"] = param.default
+                    global_options.append(opt_info)
+
+            output = {
+                "name": PROJECT_SLUG,
+                "global_options": global_options,
+                "commands": {},
+            }
+
+            for cmd_name in sorted(click_app.commands):
+                cmd = click_app.commands[cmd_name]
+                if getattr(cmd, "hidden", False):
+                    continue
+                output["commands"][cmd_name] = _cmd_to_dict(cmd, cmd_name)
+
+            typer.echo(json_mod.dumps(output, indent=2, default=str))
+    elif command_parts:
+        try:
+            target, info_name = _resolve_command(command_parts)
+            help_ctx = click.Context(target, info_name=info_name)
+            typer.echo(target.get_help(help_ctx))
         except typer.Exit:
             raise
         except Exception as e:

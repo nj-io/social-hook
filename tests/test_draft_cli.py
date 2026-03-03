@@ -411,7 +411,38 @@ class TestHelpJson:
         assert "approve" in result.output
         assert "reject" in result.output
 
+    def test_help_subcommand(self):
+        result = runner.invoke(app, ["help", "draft", "approve"])
+        assert result.exit_code == 0
+        assert "DRAFT_ID" in result.output
+
+    def test_help_subcommand_with_options(self):
+        result = runner.invoke(app, ["help", "draft", "schedule"])
+        assert result.exit_code == 0
+        assert "--time" in result.output
+
+    def test_help_json_group(self):
+        result = runner.invoke(app, ["help", "--json", "draft"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["name"] == "draft"
+        assert "commands" in data
+        assert "approve" in data["commands"]
+
+    def test_help_json_subcommand(self):
+        result = runner.invoke(app, ["help", "--json", "draft", "schedule"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["name"] == "schedule"
+        assert "options" in data
+        assert any(o["name"] == "--time" for o in data["options"])
+
     def test_help_unknown_command(self):
         result = runner.invoke(app, ["help", "nonexistent"])
+        assert result.exit_code == 1
+        assert "Unknown command" in result.output
+
+    def test_help_unknown_subcommand(self):
+        result = runner.invoke(app, ["help", "draft", "nonexistent"])
         assert result.exit_code == 1
         assert "Unknown command" in result.output
