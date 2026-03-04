@@ -16,6 +16,7 @@ Social Hook is a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) h
 Social Hook is built for both humans and AI agents:
 
 - `social-hook help --json` — full command tree as structured JSON for agent consumption
+- `social-hook help draft approve` — drill into any subcommand (human or `--json`)
 - Every CLI command has a corresponding web API endpoint (and vice versa)
 - All commands work non-interactively with `--json` output and `--yes`/`--force` flags
 
@@ -54,7 +55,7 @@ Add to your Claude Code hooks configuration (`.claude/hooks.json`):
 
 ## CLI
 
-The CLI is self-documenting — `social-hook help` for humans, `social-hook help --json` for agents.
+The CLI is self-documenting — `social-hook help` for humans, `social-hook help --json` for agents. Drill into any level: `social-hook help draft approve`.
 
 Core commands:
 
