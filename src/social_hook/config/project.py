@@ -174,7 +174,10 @@ def _load_yaml_with_fallback(project_path: Path, global_path: Path) -> dict:
         if path.exists():
             try:
                 content = path.read_text(encoding="utf-8")
-                return yaml.safe_load(content) or {}
+                parsed = yaml.safe_load(content) or {}
+                if not isinstance(parsed, dict):
+                    raise ConfigError(f"Expected mapping in {path}, got {type(parsed).__name__}")
+                return parsed
             except yaml.YAMLError as e:
                 raise ConfigError(f"Invalid YAML in {path}: {e}") from e
     return {}

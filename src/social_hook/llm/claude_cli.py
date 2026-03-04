@@ -16,12 +16,16 @@ def _extract_json(text: str) -> dict:
     """Extract a JSON object from model text output.
 
     Handles: raw JSON, markdown code-fenced JSON, or JSON embedded in text.
+    Always returns a dict — if the parsed result is a list or scalar, falls
+    through to brace-extraction to find the enclosing object.
     """
     text = text.strip()
 
-    # 1. Try direct parse
+    # 1. Try direct parse (must be a dict)
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
     except json.JSONDecodeError:
         pass
 
@@ -29,7 +33,9 @@ def _extract_json(text: str) -> dict:
     match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', text, re.DOTALL)
     if match:
         try:
-            return json.loads(match.group(1).strip())
+            parsed = json.loads(match.group(1).strip())
+            if isinstance(parsed, dict):
+                return parsed
         except json.JSONDecodeError:
             pass
 
@@ -97,8 +103,11 @@ class ClaudeCliClient(LLMClient):
         effective_system = (system or "") + json_instruction
 
         # 4. Build command — no --json-schema (avoids multi-turn loop)
+        #    Prompt is piped via stdin (not as a -p argument) to avoid
+        #    the CLI's arg parser misinterpreting content that starts
+        #    with dashes (e.g. "--- README.md ---") as flags.
         cmd = [
-            "claude", "-p", user_msg,
+            "claude", "-p",
             "--model", self.model,
             "--output-format", "json",
             "--tools", "",
@@ -126,12 +135,13 @@ class ClaudeCliClient(LLMClient):
             # (prevents notification sounds) and from temp dir so it
             # doesn't scan the project codebase.
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cmd, stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, env=env, cwd=tempfile.gettempdir(),
                 start_new_session=True,
             )
             try:
-                stdout, stderr = proc.communicate(timeout=300)
+                stdout, stderr = proc.communicate(input=user_msg, timeout=300)
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
                 proc.kill()
                 proc.wait()
@@ -153,10 +163,21 @@ class ClaudeCliClient(LLMClient):
             raise MalformedResponseError(f"Claude CLI error (exit {result.returncode}): {detail}")
 
         # 6. Parse response envelope
+        #    --output-format json returns a JSON array of event objects.
+        #    We need the element with "type": "result".
         try:
-            envelope = json.loads(result.stdout)
+            raw = json.loads(result.stdout)
         except json.JSONDecodeError:
             raise MalformedResponseError(f"Claude CLI returned invalid JSON: {result.stdout[:200]}")
+
+        if isinstance(raw, list):
+            envelope = next((el for el in raw if isinstance(el, dict) and el.get("type") == "result"), None)
+            if envelope is None:
+                raise MalformedResponseError(f"No result element in CLI JSON array ({len(raw)} elements)")
+        elif isinstance(raw, dict):
+            envelope = raw
+        else:
+            raise MalformedResponseError(f"Claude CLI returned {type(raw).__name__}, expected array or object")
 
         # Extract JSON from the model's text output (in "result" field)
         result_text = envelope.get("result")

@@ -5,6 +5,7 @@ Tests cover:
 - increment_arc_post_count() business logic
 - trigger.py arc creation and post count wiring
 - update_decision arc_id parameter
+- draft_for_platforms() arc_context wiring
 """
 
 from datetime import datetime, timezone
@@ -28,6 +29,24 @@ def _setup_project(conn, project_id="proj_test1"):
     project = Project(id=project_id, name="test", repo_path="/tmp/test")
     ops.insert_project(conn, project)
     return project
+
+
+def _make_evaluation(**overrides):
+    """Create a mock evaluation result."""
+    defaults = {
+        "decision": "post_worthy",
+        "reasoning": "Test post",
+        "episode_type": "milestone",
+        "post_category": "arc",
+        "arc_id": None,
+        "new_arc_theme": None,
+        "media_tool": "none",
+        "angle": "Test angle",
+        "include_project_docs": None,
+        "commit_summary": None,
+    }
+    defaults.update(overrides)
+    return LogDecisionInput.validate(defaults)
 
 
 # =============================================================================
@@ -198,23 +217,6 @@ class TestUpdateDecisionArcId:
 class TestTriggerArcCreation:
     """Tests for trigger.py arc creation logic."""
 
-    def _make_evaluation(self, **overrides):
-        """Create a mock evaluation result."""
-        defaults = {
-            "decision": "post_worthy",
-            "reasoning": "Test post",
-            "episode_type": "milestone",
-            "post_category": "arc",
-            "arc_id": None,
-            "new_arc_theme": None,
-            "media_tool": "none",
-            "angle": "Test angle",
-            "include_project_docs": None,
-            "commit_summary": None,
-        }
-        defaults.update(overrides)
-        return LogDecisionInput.validate(defaults)
-
     def test_new_arc_theme_triggers_create_arc(self, temp_db):
         """When new_arc_theme is set and arc_id is not, create_arc is called."""
         _setup_project(temp_db)
@@ -222,7 +224,7 @@ class TestTriggerArcCreation:
         from social_hook.llm.dry_run import DryRunContext
         db = DryRunContext(temp_db, dry_run=False)
 
-        evaluation = self._make_evaluation(new_arc_theme="Auth system build")
+        evaluation = _make_evaluation(new_arc_theme="Auth system build")
         project = ops.get_project(temp_db, "proj_test1")
 
         # Insert a decision to update
@@ -259,7 +261,7 @@ class TestTriggerArcCreation:
 
     def test_arc_id_set_skips_creation(self, temp_db):
         """When arc_id is already set, no new arc is created."""
-        evaluation = self._make_evaluation(
+        evaluation = _make_evaluation(
             arc_id="arc_existing",
             new_arc_theme="Should be ignored",
         )
@@ -273,7 +275,7 @@ class TestTriggerArcCreation:
 
     def test_no_arc_fields_skips_creation(self, temp_db):
         """When neither arc field is set, no arc is created."""
-        evaluation = self._make_evaluation(post_category="opportunistic")
+        evaluation = _make_evaluation(post_category="opportunistic")
 
         _arc_id = getattr(evaluation, "arc_id", None)
         _new_arc_theme = getattr(evaluation, "new_arc_theme", None)
@@ -292,7 +294,7 @@ class TestTriggerArcCreation:
         from social_hook.llm.dry_run import DryRunContext
         db = DryRunContext(temp_db, dry_run=False)
 
-        evaluation = self._make_evaluation(new_arc_theme="Fourth arc")
+        evaluation = _make_evaluation(new_arc_theme="Fourth arc")
         project = ops.get_project(temp_db, "proj_test1")
 
         decision = Decision(
@@ -437,3 +439,187 @@ class TestEvaluatorPromptArcInstructions:
     def test_prompt_mentions_max_3_arcs(self):
         prompt = self._read_source_prompt()
         assert "3 active arcs" in prompt or "max 3" in prompt.lower()
+
+
+# =============================================================================
+# Drafting: arc_context wiring
+# =============================================================================
+
+
+class TestDraftingArcContext:
+    """Tests that draft_for_platforms() passes arc_context to drafter."""
+
+    @patch("social_hook.drafting.calculate_optimal_time")
+    @patch("social_hook.drafting._generate_media", return_value=([], None, None))
+    def test_arc_context_passed_when_arc_id_set(
+        self, mock_media, mock_schedule, temp_db,
+    ):
+        """When evaluation has arc_id, arc_context kwarg is passed to drafter."""
+        from social_hook.config.yaml import Config
+        from social_hook.drafting import draft_for_platforms
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.schemas import CreateDraftInput
+        from social_hook.models import CommitInfo, ProjectContext
+        from social_hook.scheduling import ScheduleResult
+
+        # Set up project and arc
+        project = _setup_project(temp_db)
+        arc_id = create_arc(temp_db, project.id, "Auth system build")
+
+        # Create evaluation with arc_id
+        evaluation = _make_evaluation(arc_id=arc_id)
+
+        # Decision
+        decision = Decision(
+            id="dec_draft1",
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="post_worthy",
+            reasoning="Test",
+            arc_id=arc_id,
+        )
+        ops.insert_decision(temp_db, decision)
+
+        # Commit
+        commit = CommitInfo(
+            hash="abc123",
+            message="Add auth module",
+            diff="+ auth code",
+        )
+
+        # Project context
+        context = ProjectContext(
+            project=project,
+            social_context="Test context",
+            lifecycle=None,
+            active_arcs=[],
+            narrative_debt=0,
+            audience_introduced=True,
+            pending_drafts=[],
+            recent_decisions=[],
+            recent_posts=[],
+            project_summary=None,
+        )
+
+        # Mock schedule result (non-deferred)
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 3, 12, 0),
+            is_optimal_day=True,
+            day_reason="test",
+            time_reason="test",
+            deferred=False,
+        )
+
+        # Mock the drafter's create_draft to capture args
+        mock_draft_result = CreateDraftInput.validate({
+            "content": "Test draft content",
+            "platform": "preview",
+            "reasoning": "Test reasoning",
+        })
+
+        config = Config()
+        db = DryRunContext(temp_db, dry_run=False)
+
+        with patch("social_hook.llm.factory.create_client") as mock_create_client, \
+             patch("social_hook.llm.drafter.Drafter.create_draft", return_value=mock_draft_result) as mock_create_draft:
+            mock_create_client.return_value = MagicMock()
+
+            results = draft_for_platforms(
+                config, temp_db, db, project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+            )
+
+            # Verify create_draft was called with arc_context
+            mock_create_draft.assert_called_once()
+            call_kwargs = mock_create_draft.call_args
+            assert "arc_context" in call_kwargs.kwargs
+            arc_ctx = call_kwargs.kwargs["arc_context"]
+            assert arc_ctx is not None
+            assert "arc" in arc_ctx
+            assert arc_ctx["arc"].id == arc_id
+            assert arc_ctx["arc"].theme == "Auth system build"
+            assert "posts" in arc_ctx
+            assert isinstance(arc_ctx["posts"], list)
+
+    @patch("social_hook.drafting.calculate_optimal_time")
+    @patch("social_hook.drafting._generate_media", return_value=([], None, None))
+    def test_arc_context_none_when_no_arc_id(
+        self, mock_media, mock_schedule, temp_db,
+    ):
+        """When evaluation has no arc_id, arc_context is None."""
+        from social_hook.config.yaml import Config
+        from social_hook.drafting import draft_for_platforms
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.schemas import CreateDraftInput
+        from social_hook.models import CommitInfo, ProjectContext
+        from social_hook.scheduling import ScheduleResult
+
+        project = _setup_project(temp_db)
+        evaluation = _make_evaluation(
+            arc_id=None, post_category="opportunistic",
+        )
+
+        decision = Decision(
+            id="dec_draft2",
+            project_id=project.id,
+            commit_hash="def456",
+            decision="post_worthy",
+            reasoning="Test",
+        )
+        ops.insert_decision(temp_db, decision)
+
+        commit = CommitInfo(
+            hash="def456",
+            message="Fix typo",
+            diff="- old\n+ new",
+        )
+
+        context = ProjectContext(
+            project=project,
+            social_context="Test context",
+            lifecycle=None,
+            active_arcs=[],
+            narrative_debt=0,
+            audience_introduced=True,
+            pending_drafts=[],
+            recent_decisions=[],
+            recent_posts=[],
+            project_summary=None,
+        )
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 3, 12, 0),
+            is_optimal_day=True,
+            day_reason="test",
+            time_reason="test",
+            deferred=False,
+        )
+
+        mock_draft_result = CreateDraftInput.validate({
+            "content": "Test draft content",
+            "platform": "preview",
+            "reasoning": "Test reasoning",
+        })
+
+        config = Config()
+        db = DryRunContext(temp_db, dry_run=False)
+
+        with patch("social_hook.llm.factory.create_client") as mock_create_client, \
+             patch("social_hook.llm.drafter.Drafter.create_draft", return_value=mock_draft_result) as mock_create_draft:
+            mock_create_client.return_value = MagicMock()
+
+            results = draft_for_platforms(
+                config, temp_db, db, project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+            )
+
+            mock_create_draft.assert_called_once()
+            call_kwargs = mock_create_draft.call_args
+            assert "arc_context" in call_kwargs.kwargs
+            assert call_kwargs.kwargs["arc_context"] is None

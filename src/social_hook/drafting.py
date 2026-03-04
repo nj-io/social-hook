@@ -140,6 +140,21 @@ def draft_for_platforms(
         project_config=project_config,
     )
 
+    # 4b. Assemble arc context if this is an arc post
+    arc_context = None
+    _arc_id = getattr(evaluation, "arc_id", None)
+    if _arc_id:
+        try:
+            from social_hook.db import operations as _ops
+            arc_obj = _ops.get_arc(conn, _arc_id)
+            if arc_obj:
+                arc_context = {
+                    "arc": arc_obj,
+                    "posts": _ops.get_arc_posts(conn, _arc_id),
+                }
+        except Exception as e:
+            logger.warning(f"Arc context assembly failed (non-fatal): {e}")
+
     # 5. Draft for each target platform
     results = []
     for pname, rpcfg in target_platforms.items():
@@ -148,6 +163,7 @@ def draft_for_platforms(
                 evaluation, context, commit, db,
                 platform=pname,
                 platform_config=rpcfg,
+                arc_context=arc_context,
                 config=project_config.context if project_config else None,
                 media_config=config.media_generation,
                 media_guidance=project_config.media_guidance if project_config else None,

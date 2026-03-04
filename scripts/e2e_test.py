@@ -33,14 +33,18 @@ from typing import Any, Optional
 
 # Test commits from this repo's git history
 COMMITS = {
-    "significant": "0d50ea7",   # Implement WS1 Foundation
-    "major_feature": "93fbd11", # Implement WS3 adapters
-    "large_feature": "d47c089", # WS4 gap fix
-    "bugfix": "409bf74",        # Fix setup wizard UX
-    "docs_only": "3b85806",     # Fix section nav scroll reliability and gitignore
-    "docs_only_2": "8c139a1",   # Fix E2E A10: pass repo root
-    "initial": "c085a12",       # Initial commit: Research documentation
-    "web_dashboard": "07c85d9", # Add web dashboard + per-platform pipeline
+    "significant": "0d50ea7",       # Implement WS1 Foundation
+    "major_feature": "93fbd11",     # Implement WS3 adapters
+    "large_feature": "d47c089",     # WS4 gap fix
+    "bugfix": "409bf74",            # Fix setup wizard UX
+    "docs_only": "3b85806",         # Fix section nav scroll reliability and gitignore
+    "docs_only_2": "8c139a1",       # Fix E2E A10: pass repo root
+    "initial": "c085a12",           # Initial commit: Research documentation
+    "web_dashboard": "07c85d9",     # Add web dashboard + per-platform pipeline
+    "arc_llm_roles": "c180f7a",     # WS2: introduces entire LLM layer
+    "arc_journey": "0399e55",       # New subsystem: dev journey capture
+    "arc_multi_provider": "f9267e2", # New abstraction: provider layer
+    "arc_media_pipeline": "1ef0058", # New pipeline: media generation
 }
 
 SECTION_MAP = {
@@ -73,6 +77,14 @@ PROVIDER_PRESETS = {
         "cost": "~$3-9 (Anthropic API credits)",
     },
 }
+
+LLM_COOLDOWN_SECONDS = 20
+
+
+def rate_limit_cooldown():
+    """Wait between LLM calls to avoid rate limiting."""
+    print(f"       (waiting {LLM_COOLDOWN_SECONDS}s for rate limit cooldown)")
+    time.sleep(LLM_COOLDOWN_SECONDS)
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +325,7 @@ class E2EHarness:
         decision = Decision(
             id=generate_id("decision"),
             project_id=project_id,
-            commit_hash=COMMITS["significant"],
+            commit_hash=f"seed_{generate_id('commit')[:12]}",  # unique per call
             decision="post_worthy",
             reasoning="E2E test decision",
             episode_type="milestone",
@@ -356,6 +368,29 @@ class E2EHarness:
         """Load config using the patched paths."""
         from social_hook.config import load_full_config
         return load_full_config()
+
+    def clean_scenario_state(self):
+        """Delete all decisions, drafts, and arcs for the test project.
+
+        Preserves project registration, lifecycle, and narrative_debt so
+        each scenario starts from a 'project registered, nothing evaluated'
+        state. Works across connections because it operates on committed data.
+        """
+        if not self.project_id or not self.conn:
+            return
+        # Order matters: drafts reference decisions, decisions may reference arcs
+        for draft_row in self.conn.execute(
+            "SELECT id FROM drafts WHERE project_id = ?", (self.project_id,)
+        ).fetchall():
+            self.conn.execute("DELETE FROM draft_changes WHERE draft_id = ?", (draft_row[0],))
+            self.conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_row[0],))
+        self.conn.execute("DELETE FROM posts WHERE project_id = ?", (self.project_id,))
+        self.conn.execute("DELETE FROM drafts WHERE project_id = ?", (self.project_id,))
+        self.conn.execute("DELETE FROM decisions WHERE project_id = ?", (self.project_id,))
+        self.conn.execute("DELETE FROM arcs WHERE project_id = ?", (self.project_id,))
+        self.conn.execute("DELETE FROM usage_log WHERE project_id = ?", (self.project_id,))
+        self.conn.execute("DELETE FROM milestone_summaries WHERE project_id = ?", (self.project_id,))
+        self.conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -437,11 +472,18 @@ class E2ERunner:
         self.review_items: list[dict] = []  # For human review report
         self.total_cost = 0.0
         self.start_time = 0.0
+        self._harness = None
+        self._only_scenario: Optional[str] = None  # e.g. "C13" to run only that scenario
 
     def run_scenario(self, scenario_id: str, name: str, fn, *args,
-                     llm_call: bool = False, **kwargs):
+                     llm_call: bool = False, isolate: bool = False, **kwargs):
         """Run a single scenario, catching exceptions."""
+        if self._only_scenario and scenario_id.upper() != self._only_scenario.upper():
+            return
+        if isolate and self._harness:
+            self._harness.clean_scenario_state()
         print(f"\n  [{scenario_id}] {name}")
+        passed = True
         try:
             detail = fn(*args, **kwargs)
             if detail is None:
@@ -454,16 +496,16 @@ class E2ERunner:
             print(f"       FAIL  {detail}")
             if self.verbose:
                 traceback.print_exc()
+            passed = False
         except Exception as e:
             detail = f"{type(e).__name__}: {e}"
             self.results.append((scenario_id, name, False, detail))
             print(f"       FAIL  {detail}")
             if self.verbose:
                 traceback.print_exc()
-        if llm_call:
-            import time
-            print("       (waiting 65s for rate limit cooldown)")
-            time.sleep(65)
+            passed = False
+        if llm_call and passed:
+            rate_limit_cooldown()
 
     def add_review_item(self, scenario_id: str, **kwargs):
         """Add an item for human review."""
@@ -507,16 +549,25 @@ class E2ERunner:
             if "episode_type" in item:
                 print(f"       Episode: {item['episode_type']} | Category: {item.get('post_category', 'N/A')}")
             if "reasoning" in item:
-                print(f'       Reasoning: "{item["reasoning"][:100]}"')
+                print(f"       Reasoning:")
+                for line in item["reasoning"].split("\n"):
+                    print(f"         {line}")
             if "draft_content" in item:
                 content = item["draft_content"]
                 print("       Draft:")
                 print("       " + "-" * 40)
-                for line in content.split("\n")[:10]:
+                for line in content.split("\n"):
                     print(f"       {line}")
-                if content.count("\n") > 10:
-                    print("       [...]")
                 print("       " + "-" * 40)
+            if "decisions" in item:
+                for di, dec in enumerate(item["decisions"]):
+                    print(f"       Decision {di + 1}: {dec.get('decision', '?')} "
+                          f"(category={dec.get('post_category', 'N/A')}, "
+                          f"episode={dec.get('episode_type', 'N/A')})")
+                    if dec.get("reasoning"):
+                        print(f"         Reasoning:")
+                        for line in dec["reasoning"].split("\n"):
+                            print(f"           {line}")
             if "response" in item:
                 resp = item["response"]
                 if len(resp) > 200:
@@ -671,7 +722,7 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 
         return detail
 
-    runner.run_scenario("A7", "Project introduction (audience_introduced=False)", a7, llm_call=True)
+    runner.run_scenario("A7", "Project introduction (audience_introduced=False)", a7, llm_call=True, isolate=True)
 
     # A8: Verify audience_introduced flag operations
     def a8():
@@ -809,7 +860,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
 
         return detail
 
-    runner.run_scenario("B1", "Significant commit → evaluate → draft", b1, llm_call=True)
+    runner.run_scenario("B1", "Significant commit → evaluate → draft", b1, llm_call=True, isolate=True)
 
     # B2: Docs-only commit → not post worthy
     def b2():
@@ -835,7 +886,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         )
         return f"Decision: {d.decision}"
 
-    runner.run_scenario("B2", "Docs-only commit → likely not_post_worthy", b2, llm_call=True)
+    runner.run_scenario("B2", "Docs-only commit → likely not_post_worthy", b2, llm_call=True, isolate=True)
 
     # B3: Unregistered repo → silent exit
     def b3():
@@ -943,7 +994,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         # Thread not guaranteed — LLM may create a short post
         return "No thread (LLM chose single post)"
 
-    runner.run_scenario("B6", "Free tier + long content → thread check", b6, llm_call=True)
+    runner.run_scenario("B6", "Free tier + long content → thread check", b6, llm_call=True, isolate=True)
 
     # B8: Consolidation context visible
     def b8():
@@ -961,7 +1012,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         assert d.decision in valid, f"Invalid decision: {d.decision}"
         return f"Decision: {d.decision} (consolidate is valid outcome)"
 
-    runner.run_scenario("B8", "Consolidation context visible", b8, llm_call=True)
+    runner.run_scenario("B8", "Consolidation context visible", b8, llm_call=True, isolate=True)
 
     # B9: Deferred decision check
     def b9():
@@ -980,7 +1031,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         assert d.decision in valid
         return f"Decision: {d.decision} (deferred is valid)"
 
-    runner.run_scenario("B9", "Deferred/not_post_worthy for minor commit", b9, llm_call=True)
+    runner.run_scenario("B9", "Deferred/not_post_worthy for minor commit", b9, llm_call=True, isolate=True)
 
     # B10: Pipeline generates media when enabled
     def b10():
@@ -1012,7 +1063,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         harness.update_config({"media_generation": {"enabled": False}})
         return detail
 
-    runner.run_scenario("B10", "Pipeline generates media when enabled", b10, llm_call=True)
+    runner.run_scenario("B10", "Pipeline generates media when enabled", b10, llm_call=True, isolate=True)
 
     # B11: Per-tool media disable
     def b11():
@@ -1052,7 +1103,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         harness.update_config({"media_generation": {"enabled": False}})
         return detail
 
-    runner.run_scenario("B11", "Per-tool media disable", b11, llm_call=True)
+    runner.run_scenario("B11", "Per-tool media disable", b11, llm_call=True, isolate=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1211,11 +1262,16 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
             review_question="Did evaluator consider high debt? Lean toward synthesis?",
         )
 
+        from social_hook.db import get_pending_drafts
+        drafts = get_pending_drafts(harness.conn, harness.project_id)
+        if drafts:
+            runner.review_items[-1]["draft_content"] = drafts[0].content
+
         # Reset debt for remaining tests
         ops.reset_narrative_debt(harness.conn, harness.project_id)
         return f"Decision: {d.decision} (debt was {debt.debt_counter})"
 
-    runner.run_scenario("C8", "High debt signals synthesis needed", c8)
+    runner.run_scenario("C8", "High debt signals synthesis needed", c8, llm_call=True, isolate=True)
 
     # C9: Lifecycle phase in evaluator context
     def c9():
@@ -1224,7 +1280,7 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
 
         # Seed lifecycle at build phase
         harness.conn.execute(
-            "UPDATE lifecycle SET phase = ?, confidence = ? WHERE project_id = ?",
+            "UPDATE lifecycles SET phase = ?, confidence = ? WHERE project_id = ?",
             ("build", 0.6, harness.project_id),
         )
         harness.conn.commit()
@@ -1236,13 +1292,13 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
 
         # Reset to research
         harness.conn.execute(
-            "UPDATE lifecycle SET phase = ?, confidence = ? WHERE project_id = ?",
+            "UPDATE lifecycles SET phase = ?, confidence = ? WHERE project_id = ?",
             ("research", 0.3, harness.project_id),
         )
         harness.conn.commit()
         return "Lifecycle phase visible in context"
 
-    runner.run_scenario("C9", "Lifecycle phase in evaluator context", c9)
+    runner.run_scenario("C9", "Lifecycle phase in evaluator context", c9, llm_call=True, isolate=True)
 
     # C10: Lifecycle phase detection
     def c10():
@@ -1316,6 +1372,82 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
         return f"Triggers: {triggers}"
 
     runner.run_scenario("C12", "Strategy trigger: time-based", c12)
+
+    # C13: Arc creation probe — 3 diverse commits to see if evaluator creates arcs
+    def c13():
+        from social_hook.trigger import run_trigger
+
+        arc_commits = [
+            COMMITS["arc_llm_roles"],
+            COMMITS["arc_journey"],
+            COMMITS["arc_multi_provider"],
+        ]
+        created_arcs = []
+        all_decisions = []
+        for i, commit in enumerate(arc_commits):
+            arcs_before = ops.get_active_arcs(harness.conn, harness.project_id)
+            exit_code = run_trigger(commit, str(harness.repo_path),
+                                    verbose=runner.verbose)
+            assert exit_code == 0, f"Trigger failed for {commit}"
+            arcs_after = ops.get_active_arcs(harness.conn, harness.project_id)
+            new_arcs = [a for a in arcs_after if a not in arcs_before]
+            created_arcs.extend(new_arcs)
+
+            # Capture decision for review regardless of outcome
+            recent = ops.get_recent_decisions(harness.conn, harness.project_id, limit=1)
+            if recent:
+                d = recent[0]
+                all_decisions.append({
+                    "commit": commit,
+                    "decision": d.decision,
+                    "post_category": getattr(d, "post_category", None),
+                    "episode_type": getattr(d, "episode_type", None),
+                    "reasoning": d.reasoning or "",
+                })
+
+            if i < len(arc_commits) - 1:
+                rate_limit_cooldown()
+
+        runner.add_review_item(
+            "C13",
+            title="Arc creation probe",
+            arc_count=len(created_arcs),
+            arc_themes=[a.theme for a in created_arcs],
+            decisions=all_decisions,
+            review_question="Did the evaluator autonomously create arcs for diverse commits?",
+        )
+        return f"Arcs created: {len(created_arcs)}, decisions: {len(all_decisions)}"
+
+    runner.run_scenario("C13", "Arc creation probe (3 triggers)", c13, llm_call=True, isolate=True)
+
+    # C14: Arc continuation probe — reuses C13 state, triggers a 4th commit
+    def c14():
+        from social_hook.trigger import run_trigger
+
+        arcs_before = ops.get_active_arcs(harness.conn, harness.project_id)
+        if not arcs_before:
+            return "SKIP — C13 created no arcs"
+
+        exit_code = run_trigger(COMMITS["arc_media_pipeline"], str(harness.repo_path),
+                                verbose=runner.verbose)
+        assert exit_code == 0
+
+        arcs_after = ops.get_active_arcs(harness.conn, harness.project_id)
+        decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=1)
+        d = decisions[0] if decisions else None
+
+        runner.add_review_item(
+            "C14",
+            title="Arc continuation probe",
+            arcs_before=len(arcs_before),
+            arcs_after=len(arcs_after),
+            decision=d.decision if d else "none",
+            arc_id=d.arc_id if d and hasattr(d, "arc_id") else "none",
+            review_question="Did evaluator continue an existing arc or create a new one?",
+        )
+        return f"Arcs: {len(arcs_before)} → {len(arcs_after)}"
+
+    runner.run_scenario("C14", "Arc continuation probe", c14, llm_call=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2485,7 +2617,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
 
         return f"Chain completed with status: {updated.status}"
 
-    runner.run_scenario("K1", "Full chain: trigger → approve → post", k1)
+    runner.run_scenario("K1", "Full chain: trigger → approve → post", k1, llm_call=True, isolate=True)
 
     # K2: Full chain: trigger → reject → no post
     def k2():
@@ -2508,7 +2640,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
         assert updated.status == "rejected", f"Status: {updated.status}"
         return "Rejected, no post"
 
-    runner.run_scenario("K2", "Full chain: trigger → reject → no post", k2)
+    runner.run_scenario("K2", "Full chain: trigger → reject → no post", k2, llm_call=True, isolate=True)
 
     # K3: Dry-run end-to-end
     def k3():
@@ -2542,7 +2674,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
         arcs_after = ops.get_active_arcs(harness.conn, harness.project_id)
         return f"Arcs: {arc_count_before} → {len(arcs_after)}"
 
-    runner.run_scenario("K4", "Full chain: verify arc state", k4)
+    runner.run_scenario("K4", "Full chain: verify arc state", k4, llm_call=True, isolate=True)
 
     # K5: Debt accumulation → synthesis trigger
     def k5():
@@ -2574,10 +2706,16 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
                 reasoning=d.reasoning or "",
                 review_question="Did evaluator consider high debt? Synthesis?",
             )
+
+            from social_hook.db import get_pending_drafts
+            drafts = get_pending_drafts(harness.conn, harness.project_id)
+            if drafts:
+                runner.review_items[-1]["draft_content"] = drafts[0].content
+
             return f"Debt={debt.debt_counter}, Decision: {d.decision}"
         return f"Debt={debt.debt_counter}"
 
-    runner.run_scenario("K5", "Debt accumulation → synthesis trigger", k5)
+    runner.run_scenario("K5", "Debt accumulation → synthesis trigger", k5, llm_call=True, isolate=True)
 
     # K6: Supersede draft (DB operation)
     def k6():
@@ -2627,7 +2765,7 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
         finally:
             config_path.write_text(original_config)
 
-    runner.run_scenario("L1", "Claude CLI evaluator", l1, llm_call=True)
+    runner.run_scenario("L1", "Claude CLI evaluator", l1, llm_call=True, isolate=True)
 
     # L2: Claude CLI full pipeline
     def l2():
@@ -2647,7 +2785,7 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
         finally:
             config_path.write_text(original_config)
 
-    runner.run_scenario("L2", "Claude CLI full pipeline", l2, llm_call=True)
+    runner.run_scenario("L2", "Claude CLI full pipeline", l2, llm_call=True, isolate=True)
 
     # L3: Mixed providers
     def l3():
@@ -2667,7 +2805,7 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
         finally:
             config_path.write_text(original_config)
 
-    runner.run_scenario("L3", "Mixed providers", l3, llm_call=True)
+    runner.run_scenario("L3", "Mixed providers", l3, llm_call=True, isolate=True)
 
     # L4: Invalid provider -> graceful error
     def l4():
@@ -3495,7 +3633,7 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
         })
         return detail
 
-    runner.run_scenario("N3", "Trigger with 2 platforms", n3, llm_call=True)
+    runner.run_scenario("N3", "Trigger with 2 platforms", n3, llm_call=True, isolate=True)
 
     # N4: Content filter: notable skips decision episode
     def n4():
@@ -3679,13 +3817,16 @@ def main():
 
     # Determine which sections to run
     sections_to_run = set("ABCDEFGHIJKLMN")
+    only_scenario = None
     if args.only:
         only = args.only
         if only.lower() in SECTION_MAP:
             sections_to_run = set(SECTION_MAP[only.lower()])
         elif only.upper()[0] in "ABCDEFGHIJKLMN":
-            # Single scenario — run the whole section
+            # Single scenario (e.g. "C13") — run the section, skip non-matching scenarios
             sections_to_run = {only.upper()[0]}
+            if any(c.isdigit() for c in only):
+                only_scenario = only.upper()
         else:
             print(f"Unknown section: {args.only}")
             sys.exit(1)
@@ -3699,16 +3840,20 @@ def main():
     print("  Repo: social-media-auto-hook")
     print(f"  Provider: {provider} ({preset['cost']})")
     print(f"  Sections: {', '.join(sorted(sections_to_run))}")
+    if only_scenario:
+        print(f"  Scenario: {only_scenario}")
     print("=" * 60)
 
     runner = E2ERunner(verbose=args.verbose)
     runner.start_time = time.time()
+    runner._only_scenario = only_scenario
 
     # Resolve real base path before patching HOME
     real_home = os.environ.get("HOME", str(Path.home()))
     real_base = Path(real_home) / ".social-hook"
 
     harness = E2EHarness(real_base=real_base, provider=provider)
+    runner._harness = harness
     adapter = CaptureAdapter()
 
     try:

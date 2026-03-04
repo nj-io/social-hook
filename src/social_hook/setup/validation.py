@@ -185,8 +185,15 @@ def validate_claude_cli() -> tuple[bool, str]:
         if result.returncode != 0:
             return False, f"Claude CLI error: {result.stderr.strip()}"
         import json
-        envelope = json.loads(result.stdout)
-        if "structured_output" not in envelope:
+        raw = json.loads(result.stdout)
+        # --output-format json returns a JSON array; find the result element
+        if isinstance(raw, list):
+            envelope = next((el for el in raw if isinstance(el, dict) and el.get("type") == "result"), None)
+        elif isinstance(raw, dict):
+            envelope = raw
+        else:
+            envelope = None
+        if not envelope or "result" not in envelope:
             return False, "Claude CLI returned unexpected response format"
         return True, "Claude CLI working"
     except FileNotFoundError:
