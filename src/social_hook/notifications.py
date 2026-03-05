@@ -97,6 +97,53 @@ def broadcast_notification(
             logger.warning(f"Telegram notification failed: {e}")
 
 
+def notify_draft_review(
+    config: Config,
+    project_name: str,
+    project_id: str,
+    commit_hash: str,
+    commit_message: str,
+    draft_results: list,
+) -> None:
+    """Send draft review notifications for a list of DraftResult objects.
+
+    Shared by the trigger pipeline and the web API create-draft endpoint.
+    """
+    from social_hook.bot.notifications import format_draft_review, get_review_buttons_normalized
+
+    for result in draft_results:
+        draft = result.draft
+        schedule = result.schedule
+        thread_tweets = result.thread_tweets
+        is_thread = bool(thread_tweets)
+        tweet_count = len(thread_tweets) if is_thread else None
+        suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
+        media_info = (
+            f"{draft.media_type} ({len(draft.media_paths)} file)" if draft.media_paths else None
+        )
+
+        msg_text = format_draft_review(
+            project_name=project_name,
+            commit_hash=commit_hash[:8],
+            commit_message=commit_message,
+            platform=draft.platform,
+            content=draft.content,
+            suggested_time=suggested_time_str,
+            draft_id=draft.id,
+            is_thread=is_thread,
+            tweet_count=tweet_count,
+            media_info=media_info,
+        )
+        buttons = get_review_buttons_normalized(draft.id)
+        msg = OutboundMessage(text=msg_text, buttons=buttons)
+        broadcast_notification(
+            config,
+            msg,
+            media=draft.media_paths or None,
+            chat_context=(draft.id, project_id),
+        )
+
+
 def send_notification(
     config: Config,
     message: str,

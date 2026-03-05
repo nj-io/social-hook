@@ -490,46 +490,16 @@ def run_trigger(
         # Notifications
         if not dry_run:
             if draft_results:
-                from social_hook.bot.notifications import (
-                    format_draft_review,
-                    get_review_buttons_normalized,
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    commit_hash=commit.hash,
+                    commit_message=commit.message,
+                    draft_results=draft_results,
                 )
-                from social_hook.messaging.base import OutboundMessage as _OutboundMessage
-                from social_hook.notifications import broadcast_notification
-
-                for result in draft_results:
-                    draft = result.draft
-                    schedule = result.schedule
-                    thread_tweets = result.thread_tweets
-                    is_thread = bool(thread_tweets)
-                    tweet_count = len(thread_tweets) if is_thread else None
-                    suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
-                    media_info = (
-                        f"{draft.media_type} ({len(draft.media_paths)} file)"
-                        if draft.media_paths
-                        else None
-                    )
-
-                    msg_text = format_draft_review(
-                        project_name=project.name,
-                        commit_hash=commit.hash[:8],
-                        commit_message=commit.message,
-                        platform=draft.platform,
-                        content=draft.content,
-                        suggested_time=suggested_time_str,
-                        draft_id=draft.id,
-                        is_thread=is_thread,
-                        tweet_count=tweet_count,
-                        media_info=media_info,
-                    )
-                    buttons = get_review_buttons_normalized(draft.id)
-                    msg = _OutboundMessage(text=msg_text, buttons=buttons)
-                    broadcast_notification(
-                        config,
-                        msg,
-                        media=draft.media_paths or None,
-                        chat_context=(draft.id, project.id),
-                    )
             elif config.notification_level != "drafts_only":
                 _send_decision_notification(config, project, commit, decision)
 

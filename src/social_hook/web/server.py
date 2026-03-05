@@ -869,13 +869,24 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 project_config=project_config,
                 target_platform_names=[platform] if platform else None,
             )
-            return [r.draft.id for r in results]
+            return results
         finally:
             conn2.close()
 
-    draft_ids = await asyncio.to_thread(_blocking_create_draft)
+    results = await asyncio.to_thread(_blocking_create_draft)
 
-    return {"draft_ids": draft_ids, "count": len(draft_ids), "status": "created"}
+    from social_hook.notifications import notify_draft_review
+
+    notify_draft_review(
+        config,
+        project_name=project.name,
+        project_id=project.id,
+        commit_hash=commit.hash,
+        commit_message=commit.message,
+        draft_results=results,
+    )
+
+    return {"draft_ids": [r.draft.id for r in results], "count": len(results), "status": "created"}
 
 
 @app.get("/api/platforms/enabled")
@@ -982,13 +993,24 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 commit=commit,
                 project_config=project_config,
             )
-            return [r.draft.id for r in results]
+            return results
         finally:
             conn2.close()
 
-    draft_ids = await asyncio.to_thread(_blocking_consolidate)
+    results = await asyncio.to_thread(_blocking_consolidate)
 
-    return {"draft_ids": draft_ids, "count": len(draft_ids)}
+    from social_hook.notifications import notify_draft_review
+
+    notify_draft_review(
+        config,
+        project_name=project.name,
+        project_id=project.id,
+        commit_hash=commit.hash,
+        commit_message=commit.message,
+        draft_results=results,
+    )
+
+    return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
 
 
 @app.get("/api/projects/{project_id}/arcs")
