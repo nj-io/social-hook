@@ -156,50 +156,21 @@ class TestClaudeClient:
             )
 
     @patch("social_hook.llm.client.anthropic.Anthropic")
-    def test_usage_logging(self, mock_anthropic_cls, temp_db):
+    def test_cost_cents_in_usage(self, mock_anthropic_cls):
+        """ClaudeClient populates cost_cents on NormalizedUsage for known models."""
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
         mock_client.messages.create.return_value = self._make_mock_response(
             input_tokens=1000, output_tokens=500
         )
 
-        # Create project for usage tracking
-        project = Project(id="proj_test1", name="test", repo_path="/tmp/test")
-        ops.insert_project(temp_db, project)
-
-        db = DryRunContext(temp_db, dry_run=False)
         client = ClaudeClient(api_key="sk-test", model="claude-opus-4-5")
-        client.complete(
+        response = client.complete(
             messages=[{"role": "user", "content": "test"}],
             tools=[{"name": "test"}],
-            operation_type="evaluate",
-            db=db,
-            project_id="proj_test1",
         )
 
-        # Verify usage was logged
-        summary = ops.get_usage_summary(temp_db)
-        assert len(summary) == 1
-        assert summary[0]["model"] == "anthropic/claude-opus-4-5"
-
-    @patch("social_hook.llm.client.anthropic.Anthropic")
-    def test_usage_logging_skipped_dry_run(self, mock_anthropic_cls, temp_db):
-        mock_client = MagicMock()
-        mock_anthropic_cls.return_value = mock_client
-        mock_client.messages.create.return_value = self._make_mock_response()
-
-        db = DryRunContext(temp_db, dry_run=True)
-        client = ClaudeClient(api_key="sk-test", model="claude-opus-4-5")
-        client.complete(
-            messages=[{"role": "user", "content": "test"}],
-            tools=[{"name": "test"}],
-            operation_type="evaluate",
-            db=db,
-        )
-
-        # Usage should NOT be logged in dry-run
-        summary = ops.get_usage_summary(temp_db)
-        assert len(summary) == 0
+        assert response.usage.cost_cents > 0
 
 
 # =============================================================================

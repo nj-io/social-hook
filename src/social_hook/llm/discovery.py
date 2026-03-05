@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from social_hook.db import operations as ops
+from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.base import LLMClient, NormalizedResponse
 from social_hook.llm.prompts import count_tokens
 
@@ -209,10 +210,9 @@ def discover_project(
         tools=[SELECT_FILES_TOOL],
         system=system_prompt,
         max_tokens=2048,
-        operation_type="discovery_select",
-        db=db,
-        project_id=project_id,
     )
+    log_usage(db, "discovery_select", getattr(client, "full_id", "unknown"),
+              response.usage, project_id)
 
     tool_input = _extract_tool_input(response, "select_files")
     if not tool_input or "files" not in tool_input:
@@ -272,10 +272,9 @@ def discover_project(
         tools=[GENERATE_SUMMARY_TOOL],
         system=summary_system,
         max_tokens=2048,
-        operation_type="discovery_summarize",
-        db=db,
-        project_id=project_id,
     )
+    log_usage(db, "discovery_summarize", getattr(client, "full_id", "unknown"),
+              summary_response.usage, project_id)
 
     summary_input = _extract_tool_input(summary_response, "generate_summary")
     if not summary_input or "summary" not in summary_input:

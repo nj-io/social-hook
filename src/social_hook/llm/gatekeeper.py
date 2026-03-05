@@ -5,13 +5,13 @@ from typing import Any, Optional
 
 from social_hook.constants import PROJECT_SLUG
 from social_hook.errors import MalformedResponseError
-from social_hook.llm.base import LLMClient
+from social_hook.llm._usage_logger import log_usage
+from social_hook.llm.base import LLMClient, ToolExtractionError, extract_tool_call
 from social_hook.llm.prompts import assemble_gatekeeper_prompt, load_prompt
 from social_hook.llm.schemas import (
     GatekeeperOperation,
     RouteAction,
     RouteActionInput,
-    extract_tool_call,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,15 +99,14 @@ class Gatekeeper:
             messages=[{"role": "user", "content": user_message}],
             tools=[RouteActionInput.to_tool_schema()],
             system=system,
-            operation_type="gatekeeper",
-            db=db,
-            project_id=project_id,
         )
+        log_usage(db, "gatekeeper", getattr(self.client, "full_id", "unknown"),
+                  response.usage, project_id)
 
         try:
             tool_input = extract_tool_call(response, "route_action")
             return RouteActionInput.validate(tool_input)
-        except MalformedResponseError:
+        except (ToolExtractionError, MalformedResponseError):
             # LLM responded with text instead of using the tool — construct
             # a known-good RouteActionInput directly (not from LLM output).
             logger.warning("Gatekeeper LLM skipped route_action tool, using text fallback")

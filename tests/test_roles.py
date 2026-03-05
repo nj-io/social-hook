@@ -8,7 +8,7 @@ import pytest
 
 from social_hook.constants import CONFIG_DIR_NAME, PROJECT_SLUG
 from social_hook.errors import MalformedResponseError
-from social_hook.llm.base import LLMClient
+from social_hook.llm.base import LLMClient, ToolExtractionError
 from social_hook.llm.drafter import Drafter
 from social_hook.llm.evaluator import Evaluator
 from social_hook.llm.expert import Expert
@@ -219,7 +219,7 @@ class TestEvaluator:
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
             evaluator = Evaluator(mock_client)
-            with pytest.raises(MalformedResponseError):
+            with pytest.raises(ToolExtractionError):
                 evaluator.evaluate(sample_commit, sample_context, mock_db)
 
     def test_evaluate_invalid_response_raises(
@@ -241,8 +241,9 @@ class TestEvaluator:
             with pytest.raises(MalformedResponseError):
                 evaluator.evaluate(sample_commit, sample_context, mock_db)
 
+    @patch("social_hook.llm.evaluator.log_usage")
     def test_evaluate_passes_usage_tracking(
-        self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
+        self, mock_log_usage, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
         mock_client.complete.return_value = _mock_response("log_evaluation", {
             "commit_analysis": {"summary": "Test"},
@@ -256,9 +257,12 @@ class TestEvaluator:
             evaluator = Evaluator(mock_client)
             evaluator.evaluate(sample_commit, sample_context, mock_db)
 
-        call_kwargs = mock_client.complete.call_args[1]
-        assert call_kwargs["operation_type"] == "evaluate"
-        assert call_kwargs["project_id"] == "proj_test1"
+        mock_log_usage.assert_called_once()
+        call_args = mock_log_usage.call_args
+        assert call_args[0][0] is mock_db
+        assert call_args[0][1] == "evaluate"
+        assert call_args[0][3] is mock_client.complete.return_value.usage
+        assert call_args[0][4] == "proj_test1"
 
     def test_evaluate_includes_freshness_hint(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
@@ -481,7 +485,7 @@ class TestDrafter:
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
             drafter = Drafter(mock_client)
-            with pytest.raises(MalformedResponseError):
+            with pytest.raises(ToolExtractionError):
                 drafter.create_draft(
                     decision, sample_context, sample_commit, mock_db,
                 )
@@ -829,7 +833,7 @@ class TestExpert:
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
             expert = Expert(mock_client)
-            with pytest.raises(MalformedResponseError):
+            with pytest.raises(ToolExtractionError):
                 expert.handle(
                     draft, "test",
                     escalation_reason="Test",

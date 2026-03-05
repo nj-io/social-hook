@@ -501,25 +501,4 @@ class ExpertResponseInput(BaseModel):
             raise MalformedResponseError(f"Invalid expert_response input: {e}") from e
 
 
-# =============================================================================
-# Tool Call Extraction
-# =============================================================================
 
-
-def extract_tool_call(response: Any, expected_tool: str) -> dict[str, Any]:
-    """Extract and validate tool call from Claude response.
-
-    Args:
-        response: Claude API response object
-        expected_tool: Expected tool name (e.g., "log_evaluation")
-
-    Returns:
-        Tool call input dict
-
-    Raises:
-        MalformedResponseError: If no matching tool call found
-    """
-    for content in response.content:
-        if content.type == "tool_use" and content.name == expected_tool:
-            return content.input
-    raise MalformedResponseError(f"No {expected_tool} tool call in response")

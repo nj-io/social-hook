@@ -2,8 +2,9 @@
 
 from typing import Any
 
-from social_hook.llm.base import LLMClient
-from social_hook.llm.schemas import ExtractNarrativeInput, extract_tool_call
+from social_hook.llm._usage_logger import log_usage
+from social_hook.llm.base import LLMClient, extract_tool_call
+from social_hook.llm.schemas import ExtractNarrativeInput
 
 SYSTEM_PROMPT = """\
 You are a narrative analyst for a developer's social media content pipeline.
@@ -77,10 +78,9 @@ class NarrativeExtractor:
             messages=[{"role": "user", "content": user_message}],
             tools=[ExtractNarrativeInput.to_tool_schema()],
             system=SYSTEM_PROMPT,
-            operation_type="narrative_extract",
-            db=db,
-            project_id=project_id,
         )
+        log_usage(db, "narrative_extract", getattr(self.client, "full_id", "unknown"),
+                  response.usage, project_id)
 
         tool_input = extract_tool_call(response, "extract_narrative")
         return ExtractNarrativeInput.validate(tool_input)

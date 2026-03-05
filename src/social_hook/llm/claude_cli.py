@@ -69,10 +69,6 @@ class ClaudeCliClient(LLMClient):
         tools: list[dict[str, Any]],
         system: Optional[str] = None,
         max_tokens: int = 4096,
-        operation_type: Optional[str] = None,
-        db: Optional[Any] = None,
-        project_id: Optional[str] = None,
-        commit_hash: Optional[str] = None,
     ) -> NormalizedResponse:
         # 0. Guard: claude -p --json-schema only supports a single tool schema
         if len(tools) != 1:
@@ -208,29 +204,5 @@ class ClaudeCliClient(LLMClient):
             cache_read_input_tokens=usage_data.get("cache_read_input_tokens", 0),
             cache_creation_input_tokens=usage_data.get("cache_creation_input_tokens", 0),
         )
-
-        # 8. Log usage if db context provided
-        if db and operation_type:
-            import sqlite3
-            from social_hook.db import operations as ops
-            from social_hook.filesystem import generate_id
-            from social_hook.models import UsageLog
-
-            usage_log = UsageLog(
-                id=generate_id("usage"),
-                project_id=project_id,
-                operation_type=operation_type,
-                model=self.full_id,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                cache_read_tokens=usage.cache_read_input_tokens,
-                cache_creation_tokens=usage.cache_creation_input_tokens,
-                cost_cents=0.0,  # CLI uses subscription, no per-call cost
-                commit_hash=commit_hash,
-            )
-            if hasattr(db, "insert_usage"):
-                db.insert_usage(usage_log)
-            elif isinstance(db, sqlite3.Connection):
-                ops.insert_usage(db, usage_log)
 
         return NormalizedResponse(content=[tool_call], usage=usage, raw=envelope)

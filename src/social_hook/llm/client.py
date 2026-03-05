@@ -1,14 +1,11 @@
-"""Claude API client wrapper with usage tracking."""
+"""Claude API client wrapper with pricing calculation."""
 
-import sqlite3
 from typing import Any, Optional
 
 import anthropic
 
 from social_hook.errors import AuthError, MalformedResponseError
-from social_hook.filesystem import generate_id
 from social_hook.llm.base import LLMClient, NormalizedResponse, NormalizedToolCall, NormalizedUsage
-from social_hook.models import UsageLog
 
 
 # Pricing per million tokens (in cents) for cost estimation
@@ -88,10 +85,6 @@ class ClaudeClient(LLMClient):
         tools: list[dict[str, Any]],
         system: Optional[str] = None,
         max_tokens: int = 4096,
-        operation_type: Optional[str] = None,
-        db: Optional[Any] = None,
-        project_id: Optional[str] = None,
-        commit_hash: Optional[str] = None,
     ) -> NormalizedResponse:
         """Make a Claude API call with tool use.
 
@@ -100,13 +93,9 @@ class ClaudeClient(LLMClient):
             tools: Tool definitions for function calling
             system: System prompt
             max_tokens: Maximum output tokens
-            operation_type: Label for usage tracking (e.g., "evaluate", "draft")
-            db: Database context (DryRunContext or connection) for usage logging
-            project_id: Project ID for usage tracking
-            commit_hash: Git commit hash for usage tracking
 
         Returns:
-            Claude API response object
+            NormalizedResponse with tool calls and usage data
 
         Raises:
             AuthError: If API authentication fails
@@ -140,28 +129,6 @@ class ClaudeClient(LLMClient):
             cache_read_tokens, cache_creation_tokens,
         )
 
-        # Log usage if db context provided
-        if db and operation_type:
-            from social_hook.db import operations as ops
-
-            usage_log = UsageLog(
-                id=generate_id("usage"),
-                project_id=project_id,
-                operation_type=operation_type,
-                model=self.full_id,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_tokens=cache_read_tokens,
-                cache_creation_tokens=cache_creation_tokens,
-                cost_cents=cost_cents,
-                commit_hash=commit_hash,
-            )
-            # Use DryRunContext if available, otherwise direct ops
-            if hasattr(db, "insert_usage"):
-                db.insert_usage(usage_log)
-            elif isinstance(db, sqlite3.Connection):
-                ops.insert_usage(db, usage_log)
-
         # Wrap in NormalizedResponse
         normalized_content = []
         for block in response.content:
@@ -177,6 +144,7 @@ class ClaudeClient(LLMClient):
             output_tokens=output_tokens,
             cache_read_input_tokens=cache_read_tokens,
             cache_creation_input_tokens=cache_creation_tokens,
+            cost_cents=cost_cents,
         )
 
         return NormalizedResponse(

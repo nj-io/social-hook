@@ -121,7 +121,8 @@ def _make_response(tool_name, tool_input):
 
 
 class TestDiscoverProject:
-    def test_two_pass_flow(self, temp_repo):
+    @patch("social_hook.llm.discovery.log_usage")
+    def test_two_pass_flow(self, mock_log_usage, temp_repo):
         """Verify the two-pass flow: select files then generate summary."""
         mock_client = MagicMock()
 
@@ -149,12 +150,15 @@ class TestDiscoverProject:
         # Verify pass 1 used select_files tool
         call1 = mock_client.complete.call_args_list[0]
         assert call1.kwargs["tools"][0]["name"] == "select_files"
-        assert call1.kwargs["operation_type"] == "discovery_select"
 
         # Verify pass 2 used generate_summary tool
         call2 = mock_client.complete.call_args_list[1]
         assert call2.kwargs["tools"][0]["name"] == "generate_summary"
-        assert call2.kwargs["operation_type"] == "discovery_summarize"
+
+        # Verify log_usage called for both passes
+        assert mock_log_usage.call_count == 2
+        assert mock_log_usage.call_args_list[0][0][1] == "discovery_select"
+        assert mock_log_usage.call_args_list[1][0][1] == "discovery_summarize"
 
     def test_project_docs_priority(self, temp_repo):
         """Verify user-specified project_docs get priority loading."""
@@ -273,8 +277,9 @@ class TestDiscoverProject:
         # Should not have called the LLM at all
         mock_client.complete.assert_not_called()
 
-    def test_db_tracking_passed_through(self, temp_repo):
-        """Verify db and project_id are passed to LLM client."""
+    @patch("social_hook.llm.discovery.log_usage")
+    def test_db_tracking_passed_through(self, mock_log_usage, temp_repo):
+        """Verify db and project_id are passed to log_usage."""
         mock_client = MagicMock()
         mock_db = MagicMock()
 
@@ -294,10 +299,11 @@ class TestDiscoverProject:
             project_id="proj_123",
         )
 
-        # Both calls should pass db and project_id
-        for call in mock_client.complete.call_args_list:
-            assert call.kwargs["db"] is mock_db
-            assert call.kwargs["project_id"] == "proj_123"
+        # Both log_usage calls should receive db and project_id
+        assert mock_log_usage.call_count == 2
+        for call in mock_log_usage.call_args_list:
+            assert call[0][0] is mock_db
+            assert call[0][4] == "proj_123"
 
 
 class TestDiscoverySkippedWhenSummaryExists:

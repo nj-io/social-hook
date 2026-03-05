@@ -9,9 +9,10 @@ if TYPE_CHECKING:
     from social_hook.config.project import MediaToolGuidance
     from social_hook.config.yaml import MediaGenerationConfig
 from social_hook.db import operations as ops
-from social_hook.llm.base import LLMClient
+from social_hook.llm._usage_logger import log_usage
+from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
-from social_hook.llm.schemas import CreateDraftInput, extract_tool_call
+from social_hook.llm.schemas import CreateDraftInput
 from social_hook.models import CommitInfo, ProjectContext
 
 
@@ -175,11 +176,9 @@ class Drafter:
             messages=[{"role": "user", "content": user_content}],
             tools=[CreateDraftInput.to_tool_schema()],
             system=system,
-            operation_type="draft",
-            db=db,
-            project_id=project_context.project.id,
-            commit_hash=commit.hash,
         )
+        log_usage(db, "draft", getattr(self.client, "full_id", "unknown"),
+                  response.usage, project_context.project.id, commit.hash)
 
         tool_input = extract_tool_call(response, "create_draft")
         return CreateDraftInput.validate(tool_input)
@@ -229,11 +228,9 @@ class Drafter:
             messages=[{"role": "user", "content": user_content}],
             tools=[CreateDraftInput.to_tool_schema()],
             system=system,
-            operation_type="draft_thread",
-            db=db,
-            project_id=project_context.project.id,
-            commit_hash=commit.hash,
         )
+        log_usage(db, "draft_thread", getattr(self.client, "full_id", "unknown"),
+                  response.usage, project_context.project.id, commit.hash)
 
         tool_input = extract_tool_call(response, "create_draft")
         return CreateDraftInput.validate(tool_input)

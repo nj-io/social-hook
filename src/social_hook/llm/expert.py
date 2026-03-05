@@ -2,9 +2,10 @@
 
 from typing import Any, Optional
 
-from social_hook.llm.base import LLMClient
+from social_hook.llm._usage_logger import log_usage
+from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.prompts import assemble_expert_prompt, load_prompt
-from social_hook.llm.schemas import ExpertResponseInput, extract_tool_call
+from social_hook.llm.schemas import ExpertResponseInput
 
 
 class Expert:
@@ -56,10 +57,9 @@ class Expert:
             messages=[{"role": "user", "content": user_message}],
             tools=[ExpertResponseInput.to_tool_schema()],
             system=system,
-            operation_type="expert",
-            db=db,
-            project_id=project_id,
         )
+        log_usage(db, "expert", getattr(self.client, "full_id", "unknown"),
+                  response.usage, project_id)
 
         tool_input = extract_tool_call(response, "expert_response")
         return ExpertResponseInput.validate(tool_input)

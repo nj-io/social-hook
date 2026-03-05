@@ -3,6 +3,7 @@
 import pytest
 
 from social_hook.errors import MalformedResponseError
+from social_hook.llm.base import ToolExtractionError, extract_tool_call
 from social_hook.llm.schemas import (
     CreateDraftInput,
     EpisodeTypeSchema,
@@ -13,7 +14,6 @@ from social_hook.llm.schemas import (
     PostCategorySchema,
     RouteAction,
     RouteActionInput,
-    extract_tool_call,
 )
 
 
@@ -255,14 +255,14 @@ class TestExtractToolCall:
         response = _MockResponse([
             _MockContent("text"),
         ])
-        with pytest.raises(MalformedResponseError, match="log_decision"):
+        with pytest.raises(ToolExtractionError, match="log_decision"):
             extract_tool_call(response, "log_decision")
 
     def test_wrong_tool_name_raises(self):
         response = _MockResponse([
             _MockContent("tool_use", "create_draft", {"content": "test"}),
         ])
-        with pytest.raises(MalformedResponseError, match="log_decision"):
+        with pytest.raises(ToolExtractionError, match="log_decision"):
             extract_tool_call(response, "log_decision")
 
     def test_extracts_first_matching_tool(self):
