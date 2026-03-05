@@ -1,14 +1,12 @@
 """Pytest fixtures for social-hook tests."""
 
-import os
-import sqlite3
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from social_hook.db import get_connection, init_database
 from social_hook.constants import CONFIG_DIR_NAME
+from social_hook.db import init_database
 from social_hook.filesystem import init_filesystem
 
 

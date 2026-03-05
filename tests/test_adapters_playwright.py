@@ -7,11 +7,7 @@ Source: WS3_ASSUMPTIONS.md A9-A10
 import sys
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.adapters.media.playwright import PlaywrightAdapter
-from social_hook.adapters.models import MediaResult
-
 
 # =============================================================================
 # T9: PlaywrightAdapter
@@ -55,9 +51,7 @@ class TestPlaywrightAdapterGenerate:
     def test_dry_run(self):
         """dry_run=True returns placeholder path without launching browser."""
         adapter = PlaywrightAdapter()
-        result = adapter.generate(
-            {"url": "https://example.com"}, dry_run=True
-        )
+        result = adapter.generate({"url": "https://example.com"}, dry_run=True)
         assert result.success is True
         assert result.file_path is not None
 
@@ -81,9 +75,11 @@ class TestPlaywrightAdapterGenerate:
                 saved_modules[key] = sys.modules.pop(key)
 
         try:
-            with patch.dict(sys.modules, {"playwright.sync_api": None}):
-                with patch("builtins.__import__", side_effect=_block_playwright_import):
-                    result = adapter.generate({"url": "https://example.com"})
+            with (
+                patch.dict(sys.modules, {"playwright.sync_api": None}),
+                patch("builtins.__import__", side_effect=_block_playwright_import),
+            ):
+                result = adapter.generate({"url": "https://example.com"})
         finally:
             sys.modules.update(saved_modules)
 

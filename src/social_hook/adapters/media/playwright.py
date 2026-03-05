@@ -4,7 +4,6 @@ import logging
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from social_hook.adapters.dry_run import dry_run_media_result
 from social_hook.adapters.media.base import MediaAdapter
@@ -31,7 +30,7 @@ class PlaywrightAdapter(MediaAdapter):
     def generate(
         self,
         spec: dict,
-        output_dir: Optional[str] = None,
+        output_dir: str | None = None,
         dry_run: bool = False,
     ) -> MediaResult:
         """Take screenshot of webpage or element.
@@ -89,19 +88,14 @@ class PlaywrightAdapter(MediaAdapter):
                         )
                     raise
 
-                context = browser.new_context(
-                    viewport={"width": width, "height": height}
-                )
+                context = browser.new_context(viewport={"width": width, "height": height})
                 page = context.new_page()
 
                 # Navigate and wait for load
                 page.goto(url, timeout=self.timeout, wait_until="networkidle")
 
                 # Prepare output path
-                if output_dir:
-                    dir_path = Path(output_dir)
-                else:
-                    dir_path = Path(tempfile.gettempdir())
+                dir_path = Path(output_dir) if output_dir else Path(tempfile.gettempdir())
 
                 dir_path.mkdir(parents=True, exist_ok=True)
 

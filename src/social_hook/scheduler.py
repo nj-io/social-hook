@@ -1,20 +1,16 @@
 """Scheduler tick: posts due drafts and manages lock file."""
 
-import json
 import logging
 import os
-import signal
-import sys
 from pathlib import Path
-from typing import Optional
 
 from social_hook.config.yaml import load_full_config
-from social_hook.notifications import send_notification
 from social_hook.db import operations as ops
-from social_hook.db.connection import get_connection, init_database
-from social_hook.errors import ConfigError, DatabaseError, ErrorType, classify_error, classify_x_error
+from social_hook.db.connection import init_database
+from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id, get_base_path, get_db_path
 from social_hook.models import Post
+from social_hook.notifications import send_notification
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +25,7 @@ def get_lock_path() -> Path:
     return get_base_path() / "scheduler.lock"
 
 
-def get_lock_pid(lock_path: Path) -> Optional[int]:
+def get_lock_pid(lock_path: Path) -> int | None:
     """Read PID from lock file.
 
     Returns:
@@ -66,7 +62,7 @@ def is_lock_stale(lock_path: Path) -> bool:
         return False  # Process exists but we can't signal it
 
 
-def acquire_lock(lock_path: Optional[Path] = None) -> bool:
+def acquire_lock(lock_path: Path | None = None) -> bool:
     """Acquire the scheduler lock.
 
     Args:
@@ -91,7 +87,7 @@ def acquire_lock(lock_path: Optional[Path] = None) -> bool:
     return True
 
 
-def release_lock(lock_path: Optional[Path] = None) -> None:
+def release_lock(lock_path: Path | None = None) -> None:
     """Release the scheduler lock.
 
     Args:
@@ -114,8 +110,8 @@ def release_lock(lock_path: Optional[Path] = None) -> None:
 
 def scheduler_tick(
     dry_run: bool = False,
-    config_path: Optional[str] = None,
-    lock_path: Optional[Path] = None,
+    config_path: str | None = None,
+    lock_path: Path | None = None,
 ) -> int:
     """Run one scheduler tick: post all due drafts.
 
@@ -171,6 +167,7 @@ def scheduler_tick(
                 if dry_run:
                     # Simulate success
                     from social_hook.adapters.dry_run import dry_run_post_result
+
                     result = dry_run_post_result()
                 else:
                     # Post via adapter
@@ -202,8 +199,9 @@ def scheduler_tick(
                         dry_run=dry_run,
                     )
                 else:
-                    _handle_post_failure(conn, draft, result.error or "Unknown error",
-                                        config, dry_run)
+                    _handle_post_failure(
+                        conn, draft, result.error or "Unknown error", config, dry_run
+                    )
 
                 processed += 1
 
@@ -231,23 +229,61 @@ def _post_draft(conn, draft, config):
         PostResult or ThreadResult
     """
     from social_hook.adapters.models import PostResult
+    from social_hook.adapters.platform.factory import create_adapter
 
+    # Create adapter via factory
+    try:
+        adapter = create_adapter(draft.platform, config)
+    except ConfigError as e:
+        return PostResult(success=False, error=str(e))
+
+    # Post format assignment: determine quote/reply for arc continuations
+    decision = None
+    if draft.decision_id:
+        decision = ops.get_decision(conn, draft.decision_id)
+
+    if decision and decision.arc_id and not draft.post_format:
+        prior = ops.get_most_recent_posted_for_arc(conn, decision.arc_id, draft.platform)
+        if prior:
+            all_arc_posts = ops.get_arc_posts(conn, decision.arc_id)
+            platform_posts = [p for p in all_arc_posts if p.platform == draft.platform]
+            if len(platform_posts) <= 1:
+                draft.post_format = "quote"
+            else:
+                draft.post_format = "reply"
+            draft.reference_post_id = prior.id
+            ops.update_draft(
+                conn,
+                draft.id,
+                post_format=draft.post_format,
+                reference_post_id=draft.reference_post_id,
+            )
+
+    # Handle quote/reply posting for X platform
+    if (
+        draft.platform == "x"
+        and draft.post_format in ("quote", "reply")
+        and draft.reference_post_id
+    ):
+        ref_post = ops.get_post(conn, draft.reference_post_id)
+        if ref_post and ref_post.external_id:
+            from social_hook.adapters.platform.x import XAdapter
+
+            if isinstance(adapter, XAdapter):
+                if draft.post_format == "quote":
+                    return adapter.post_raw(
+                        {"text": draft.content, "quote_tweet_id": ref_post.external_id}
+                    )
+                else:  # reply
+                    return adapter.post_raw(
+                        {
+                            "text": draft.content,
+                            "reply": {"in_reply_to_tweet_id": ref_post.external_id},
+                        }
+                    )
+
+    # X-specific: check if this is a thread (has draft_tweets)
     if draft.platform == "x":
-        from social_hook.adapters.platform.x import XAdapter
-
-        api_key = config.env.get("X_API_KEY", "")
-        api_secret = config.env.get("X_API_SECRET", "")
-        access_token = config.env.get("X_ACCESS_TOKEN", "")
-        access_secret = config.env.get("X_ACCESS_TOKEN_SECRET", "")
-
-        if not all([api_key, api_secret, access_token, access_secret]):
-            return PostResult(success=False, error="Missing X API credentials")
-
-        x_config = config.platforms.get("x")
-        tier = (x_config.account_tier if x_config else None) or "free"
-        adapter = XAdapter(api_key, api_secret, access_token, access_secret, tier=tier)
-
-        # Check if this is a thread (has draft_tweets)
         tweets = ops.get_draft_tweets(conn, draft.id)
         if tweets:
             tweet_dicts = []
@@ -262,17 +298,20 @@ def _post_draft(conn, draft, config):
             # Update each draft_tweet with external_id and posted_at
             if thread_result.success:
                 from datetime import datetime, timezone
+
                 now_iso = datetime.now(timezone.utc).isoformat()
-                for tweet, tweet_result in zip(tweets, thread_result.tweet_results):
+                for tweet, tweet_result in zip(tweets, thread_result.tweet_results, strict=False):
                     if tweet_result.success:
                         ops.update_draft_tweet(
-                            conn, tweet.id,
+                            conn,
+                            tweet.id,
                             external_id=tweet_result.external_id,
                             posted_at=now_iso,
                         )
                     else:
                         ops.update_draft_tweet(
-                            conn, tweet.id,
+                            conn,
+                            tweet.id,
                             error=tweet_result.error,
                         )
 
@@ -285,21 +324,8 @@ def _post_draft(conn, draft, config):
                 error=thread_result.error,
             )
 
-        return adapter.post(draft.content, media_paths=draft.media_paths or None)
-
-    elif draft.platform == "linkedin":
-        from social_hook.adapters.platform.linkedin import LinkedInAdapter
-
-        access_token = config.env.get("LINKEDIN_ACCESS_TOKEN", "")
-        if not access_token:
-            return PostResult(success=False, error="Missing LinkedIn access token")
-
-        adapter = LinkedInAdapter(access_token)
-        # LinkedIn doesn't support threads — always post single content
-        return adapter.post(draft.content, media_paths=draft.media_paths or None)
-
-    else:
-        return PostResult(success=False, error=f"Unsupported platform: {draft.platform}")
+    # Standard single-post (X, LinkedIn, or other)
+    return adapter.post(draft.content, media_paths=draft.media_paths or None)
 
 
 def _handle_post_failure(conn, draft, error_msg, config, dry_run):
@@ -309,7 +335,8 @@ def _handle_post_failure(conn, draft, error_msg, config, dry_run):
     if new_retry_count >= 3:
         # Max retries exceeded
         ops.update_draft(
-            conn, draft.id,
+            conn,
+            draft.id,
             status="failed",
             retry_count=new_retry_count,
             last_error=error_msg,
@@ -332,11 +359,13 @@ def _handle_post_failure(conn, draft, error_msg, config, dry_run):
     else:
         # Schedule retry with backoff
         from datetime import datetime, timedelta, timezone
-        backoff_minutes = 5 * (2 ** new_retry_count)  # 10, 20 minutes
+
+        backoff_minutes = 5 * (2**new_retry_count)  # 10, 20 minutes
         retry_time = datetime.now(timezone.utc) + timedelta(minutes=backoff_minutes)
 
         ops.update_draft(
-            conn, draft.id,
+            conn,
+            draft.id,
             status="scheduled",
             scheduled_time=retry_time.strftime("%Y-%m-%d %H:%M:%S"),
             retry_count=new_retry_count,

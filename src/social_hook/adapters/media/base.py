@@ -1,7 +1,6 @@
 """Abstract base class for media adapters."""
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 from social_hook.adapters.models import MediaResult
 
@@ -13,7 +12,7 @@ class MediaAdapter(ABC):
     def generate(
         self,
         spec: dict,
-        output_dir: Optional[str] = None,
+        output_dir: str | None = None,
         dry_run: bool = False,
     ) -> MediaResult:
         """Generate media from specification.

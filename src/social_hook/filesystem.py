@@ -3,7 +3,6 @@
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from social_hook.constants import CONFIG_DIR_NAME, DB_FILENAME, PROJECT_NAME
 
@@ -26,7 +25,7 @@ def generate_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
-def init_filesystem(base: Optional[str | Path] = None) -> Path:
+def init_filesystem(base: str | Path | None = None) -> Path:
     """Initialize the social-hook file system structure.
 
     Creates:
@@ -44,10 +43,7 @@ def init_filesystem(base: Optional[str | Path] = None) -> Path:
     Returns:
         Path to base directory
     """
-    if base is None:
-        base = Path.home() / CONFIG_DIR_NAME
-    else:
-        base = Path(base)
+    base = Path.home() / CONFIG_DIR_NAME if base is None else Path(base)
 
     # Create directories
     directories = [

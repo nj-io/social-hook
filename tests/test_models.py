@@ -15,9 +15,11 @@ from social_hook.models import (
     Lifecycle,
     LifecyclePhase,
     PostCategory,
+    PostFormat,
     Project,
+    is_draftable,
+    is_held,
 )
-
 
 # =============================================================================
 # T3: Core Data Models
@@ -39,11 +41,17 @@ class TestEnums:
         assert DraftStatus.CANCELLED.value == "cancelled"
 
     def test_decision_type_values(self):
-        """DecisionType.POST_WORTHY.value returns 'post_worthy'."""
-        assert DecisionType.POST_WORTHY.value == "post_worthy"
-        assert DecisionType.NOT_POST_WORTHY.value == "not_post_worthy"
-        assert DecisionType.CONSOLIDATE.value == "consolidate"
-        assert DecisionType.DEFERRED.value == "deferred"
+        """DecisionType values are correct."""
+        assert DecisionType.DRAFT.value == "draft"
+        assert DecisionType.HOLD.value == "hold"
+        assert DecisionType.SKIP.value == "skip"
+
+    def test_post_format_values(self):
+        """PostFormat values are correct."""
+        assert PostFormat.SINGLE.value == "single"
+        assert PostFormat.THREAD.value == "thread"
+        assert PostFormat.QUOTE.value == "quote"
+        assert PostFormat.REPLY.value == "reply"
 
     def test_episode_type_values(self):
         """EpisodeType values are correct."""
@@ -201,10 +209,10 @@ class TestDecisionModel:
             id="decision_123",
             project_id="project_123",
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Important feature",
         )
-        assert decision.decision == "post_worthy"
+        assert decision.decision == "draft"
 
     def test_decision_with_invalid_decision_raises(self):
         """Create Decision with invalid decision value raises ValueError."""
@@ -226,7 +234,7 @@ class TestDecisionModel:
                 id="decision_123",
                 project_id="project_123",
                 commit_hash="abc123",
-                decision="post_worthy",
+                decision="draft",
                 reasoning="Test",
                 episode_type="invalid_episode",
             )
@@ -239,7 +247,7 @@ class TestDecisionModel:
             id="decision_123",
             project_id="project_123",
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
             platforms={"x": "drafted", "linkedin": "skipped:not_relevant"},
         )
@@ -253,11 +261,11 @@ class TestDecisionModel:
             id="decision_123",
             project_id="project_123",
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
             commit_message="Add auth module",
         )
-        assert len(decision.to_row()) == 13
+        assert len(decision.to_row()) == 16
 
     def test_decision_to_dict_includes_commit_message(self):
         """Decision.to_dict() includes commit_message."""
@@ -265,7 +273,7 @@ class TestDecisionModel:
             id="decision_123",
             project_id="project_123",
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
             commit_message="Add auth module",
         )
@@ -329,3 +337,146 @@ class TestArcModel:
             )
 
         assert "Invalid status" in str(exc_info.value)
+
+
+class TestDecisionNewFields:
+    """Tests for evaluator rework Decision fields."""
+
+    def test_decision_to_row_column_count(self):
+        """Decision.to_row() returns 16-element tuple."""
+        d = Decision(
+            id="test", project_id="p", commit_hash="abc", decision="draft", reasoning="test"
+        )
+        assert len(d.to_row()) == 16
+
+    def test_decision_new_types_valid(self):
+        """New decision types (draft, hold, skip) are accepted."""
+        for dtype in ("draft", "hold", "skip"):
+            d = Decision(id="t", project_id="p", commit_hash="c", decision=dtype, reasoning="r")
+            assert d.decision == dtype
+
+    def test_decision_episode_tags_roundtrip(self):
+        """episode_tags serializes to JSON and deserializes back."""
+        d = Decision(
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="draft",
+            reasoning="r",
+            episode_tags=["milestone", "demo"],
+        )
+        d_dict = d.to_dict()
+        assert d_dict["episode_tags"] == ["milestone", "demo"]
+
+        # Simulate SQLite round-trip (JSON string)
+        d_dict["episode_tags"] = '["milestone", "demo"]'
+        restored = Decision.from_dict(d_dict)
+        assert restored.episode_tags == ["milestone", "demo"]
+
+    def test_decision_targets_roundtrip(self):
+        """targets serializes to JSON and deserializes back."""
+        d = Decision(
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="draft",
+            reasoning="r",
+            targets={"x": {"max_length": 280}},
+        )
+        row = d.to_row()
+        assert '"x"' in row[13]  # targets is at index 13
+
+        # from_dict with JSON string
+        d_dict = d.to_dict()
+        d_dict["targets"] = '{"x": {"max_length": 280}}'
+        restored = Decision.from_dict(d_dict)
+        assert restored.targets == {"x": {"max_length": 280}}
+
+    def test_decision_consolidate_with_roundtrip(self):
+        """consolidate_with serializes and deserializes correctly."""
+        d = Decision(
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="hold",
+            reasoning="r",
+            consolidate_with=["abc123", "def456"],
+        )
+        row = d.to_row()
+        assert row[15] is not None  # consolidate_with is at index 15
+
+        d2 = Decision(
+            id="t2",
+            project_id="p",
+            commit_hash="c2",
+            decision="draft",
+            reasoning="r",
+            consolidate_with=None,
+        )
+        assert d2.to_row()[15] is None
+
+
+class TestDraftNewFields:
+    """Tests for evaluator rework Draft fields."""
+
+    def test_draft_to_row_column_count(self):
+        """Draft.to_row() returns 18-element tuple."""
+        d = Draft(id="test", project_id="p", decision_id="d", platform="x", content="hello")
+        assert len(d.to_row()) == 18
+
+    def test_draft_intro_flag(self):
+        """is_intro flag serializes correctly."""
+        d = Draft(
+            id="t", project_id="p", decision_id="d", platform="x", content="hi", is_intro=True
+        )
+        assert d.to_dict()["is_intro"] is True
+        row = d.to_row()
+        assert row[15] == 1  # is_intro position
+
+    def test_draft_post_format(self):
+        """post_format field round-trips."""
+        d = Draft(
+            id="t",
+            project_id="p",
+            decision_id="d",
+            platform="x",
+            content="hi",
+            post_format="thread",
+        )
+        assert d.to_dict()["post_format"] == "thread"
+        assert d.to_row()[16] == "thread"
+
+    def test_draft_from_dict_new_fields(self):
+        """Draft.from_dict() parses new fields."""
+        d_dict = {
+            "id": "t",
+            "project_id": "p",
+            "decision_id": "d",
+            "platform": "x",
+            "content": "hi",
+            "is_intro": 1,
+            "post_format": "reply",
+            "reference_post_id": "post_abc",
+        }
+        d = Draft.from_dict(d_dict)
+        assert d.is_intro is True
+        assert d.post_format == "reply"
+        assert d.reference_post_id == "post_abc"
+
+
+class TestHelperFunctions:
+    """Tests for is_draftable and is_held helpers."""
+
+    def test_is_draftable(self):
+        assert is_draftable("draft") is True
+        assert is_draftable("hold") is False
+        assert is_draftable("skip") is False
+        # Old values no longer valid
+        assert is_draftable("post_worthy") is False
+
+    def test_is_held(self):
+        assert is_held("hold") is True
+        assert is_held("draft") is False
+        # Old values no longer valid
+        assert is_held("consolidate") is False
+        assert is_held("skip") is False

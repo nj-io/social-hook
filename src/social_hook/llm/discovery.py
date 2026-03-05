@@ -1,14 +1,10 @@
 """Two-pass project discovery: file selection + summary generation."""
 
-import json
 import logging
 import os
-import sqlite3
-from fnmatch import fnmatch
 from pathlib import Path
-from typing import Optional
 
-from social_hook.db import operations as ops
+from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.base import LLMClient, NormalizedResponse
 from social_hook.llm.prompts import count_tokens
 
@@ -16,15 +12,34 @@ logger = logging.getLogger(__name__)
 
 # File extensions to include in project file listing
 DISCOVERY_EXTENSIONS = {
-    ".md", ".py", ".ts", ".tsx", ".yaml", ".yml",
-    ".toml", ".json", ".rs", ".go",
+    ".md",
+    ".py",
+    ".ts",
+    ".tsx",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".json",
+    ".rs",
+    ".go",
 }
 
 # Directories to skip during file listing
 IGNORE_DIRS = {
-    "node_modules", ".git", "__pycache__", ".venv", "venv",
-    "dist", "build", ".next", "target", "vendor",
-    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".next",
+    "target",
+    "vendor",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
     "egg-info",
 }
 
@@ -72,8 +87,8 @@ def _should_ignore_dir(dirname: str) -> bool:
 
 def list_project_files(
     repo_path: str,
-    extensions: Optional[set[str]] = None,
-    ignore_dirs: Optional[set[str]] = None,
+    extensions: set[str] | None = None,
+    ignore_dirs: set[str] | None = None,
     max_files: int = 500,
 ) -> str:
     """Walk repo tree and return formatted file listing.
@@ -92,15 +107,12 @@ def list_project_files(
     if ignore_dirs is None:
         ignore_dirs = IGNORE_DIRS
 
-    entries = []
+    entries: list[str] = []
     repo = Path(repo_path)
 
     for dirpath, dirnames, filenames in os.walk(repo):
         # Prune ignored directories in-place
-        dirnames[:] = [
-            d for d in dirnames
-            if not _should_ignore_dir(d)
-        ]
+        dirnames[:] = [d for d in dirnames if not _should_ignore_dir(d)]
 
         rel_dir = Path(dirpath).relative_to(repo)
         for fname in sorted(filenames):
@@ -131,11 +143,11 @@ def list_project_files(
     return "\n".join(entries)
 
 
-def _extract_tool_input(response: NormalizedResponse, tool_name: str) -> Optional[dict]:
+def _extract_tool_input(response: NormalizedResponse, tool_name: str) -> dict | None:
     """Extract tool call input from a NormalizedResponse."""
     for content in response.content:
         if content.type == "tool_use" and content.name == tool_name:
-            return content.input
+            return content.input  # type: ignore[no-any-return]
     return None
 
 
@@ -155,11 +167,11 @@ def _resolve_project_doc_globs(repo_path: str, globs: list[str]) -> list[str]:
 def discover_project(
     client: LLMClient,
     repo_path: str,
-    project_docs: Optional[list[str]] = None,
+    project_docs: list[str] | None = None,
     max_doc_tokens: int = 10000,
-    db: Optional[object] = None,
-    project_id: Optional[str] = None,
-) -> tuple[Optional[str], list[str]]:
+    db: object | None = None,
+    project_id: str | None = None,
+) -> tuple[str | None, list[str]]:
     """Two-pass project discovery: select files then generate summary.
 
     Pass 1: Given the file listing, LLM selects the most important files.
@@ -209,9 +221,9 @@ def discover_project(
         tools=[SELECT_FILES_TOOL],
         system=system_prompt,
         max_tokens=2048,
-        operation_type="discovery_select",
-        db=db,
-        project_id=project_id,
+    )
+    log_usage(
+        db, "discovery_select", getattr(client, "full_id", "unknown"), response.usage, project_id
     )
 
     tool_input = _extract_tool_input(response, "select_files")
@@ -233,7 +245,9 @@ def discover_project(
 
     # Load priority files first, then other selected files
     priority_set = set(priority_files)
-    ordered_files = [f for f in selected_files if f in priority_set] + [f for f in selected_files if f not in priority_set]
+    ordered_files = [f for f in selected_files if f in priority_set] + [
+        f for f in selected_files if f not in priority_set
+    ]
 
     files_loaded = []
     for rel_path in ordered_files:
@@ -247,7 +261,7 @@ def discover_project(
                 # Truncate this file to fit remaining budget
                 remaining = max_doc_tokens - tokens_used
                 if remaining > 100:  # Only include if meaningful
-                    content = content[:remaining * 4] + "\n[...truncated]"
+                    content = content[: remaining * 4] + "\n[...truncated]"
                     loaded_content.append(f"--- {rel_path} ---\n{content}")
                     files_loaded.append(rel_path)
                 break
@@ -272,9 +286,13 @@ def discover_project(
         tools=[GENERATE_SUMMARY_TOOL],
         system=summary_system,
         max_tokens=2048,
-        operation_type="discovery_summarize",
-        db=db,
-        project_id=project_id,
+    )
+    log_usage(
+        db,
+        "discovery_summarize",
+        getattr(client, "full_id", "unknown"),
+        summary_response.usage,
+        project_id,
     )
 
     summary_input = _extract_tool_input(summary_response, "generate_summary")

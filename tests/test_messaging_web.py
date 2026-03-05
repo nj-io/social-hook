@@ -2,9 +2,7 @@
 
 import json
 import sqlite3
-import tempfile
 import threading
-from pathlib import Path
 
 import pytest
 
@@ -13,7 +11,6 @@ from social_hook.messaging.base import (
     ButtonRow,
     OutboundMessage,
     PlatformCapabilities,
-    SendResult,
 )
 from social_hook.messaging.web import WebAdapter
 
@@ -59,13 +56,17 @@ class TestSendMessage:
     def test_send_message_with_buttons(self, adapter, db_path):
         """send_message should serialize buttons into the event data."""
         buttons = [
-            ButtonRow(buttons=[
-                Button(label="Approve", action="approve", payload="draft_123"),
-                Button(label="Reject", action="reject", payload="draft_123"),
-            ]),
-            ButtonRow(buttons=[
-                Button(label="Edit", action="edit", payload="draft_123"),
-            ]),
+            ButtonRow(
+                buttons=[
+                    Button(label="Approve", action="approve", payload="draft_123"),
+                    Button(label="Reject", action="reject", payload="draft_123"),
+                ]
+            ),
+            ButtonRow(
+                buttons=[
+                    Button(label="Edit", action="edit", payload="draft_123"),
+                ]
+            ),
         ]
         msg = OutboundMessage(text="Review this draft", buttons=buttons)
         result = adapter.send_message("chat_1", msg)
@@ -200,10 +201,7 @@ class TestThreadSafety:
             except Exception as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=write_events, args=(t,))
-            for t in range(3)
-        ]
+        threads = [threading.Thread(target=write_events, args=(t,)) for t in range(3)]
         for t in threads:
             t.start()
         for t in threads:

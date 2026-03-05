@@ -1,19 +1,12 @@
 """Tests for trigger pipeline (T29)."""
 
-import os
 import subprocess
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.config.yaml import ChannelConfig
-from social_hook.db import init_database, insert_project
-from social_hook.filesystem import generate_id
 from social_hook.models import Project
 from social_hook.trigger import (
-    _get_current_branch,
     git_remote_origin,
     parse_commit_info,
     run_trigger,
@@ -48,7 +41,8 @@ class TestParseCommitInfo:
         # Get commit hash
         result = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         commit_hash = result.stdout.strip()
 
@@ -78,7 +72,8 @@ class TestParseCommitInfo:
 
         result = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         commit_hash = result.stdout.strip()
 
@@ -86,7 +81,7 @@ class TestParseCommitInfo:
         assert commit.timestamp is not None
         # ISO 8601 with timezone offset
         assert "T" in commit.timestamp
-        assert "+" in commit.timestamp or "-" in commit.timestamp[11:]
+        assert "+" in commit.timestamp or "Z" in commit.timestamp or "-" in commit.timestamp[11:]
 
     def test_first_commit_has_no_parent_timestamp(self, temp_dir):
         """First commit in a repo has parent_timestamp=None."""
@@ -110,7 +105,8 @@ class TestParseCommitInfo:
 
         result = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         commit_hash = result.stdout.strip()
 
@@ -145,7 +141,8 @@ class TestParseCommitInfo:
 
         result = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         commit_hash = result.stdout.strip()
 
@@ -180,8 +177,7 @@ class TestGitRemoteOrigin:
         repo.mkdir()
         subprocess.run(["git", "init", str(repo)], capture_output=True)
         subprocess.run(
-            ["git", "-C", str(repo), "remote", "add", "origin",
-             "git@github.com:user/repo.git"],
+            ["git", "-C", str(repo), "remote", "add", "origin", "git@github.com:user/repo.git"],
             capture_output=True,
         )
         assert git_remote_origin(str(repo)) == "git@github.com:user/repo.git"
@@ -198,6 +194,7 @@ class TestRunTrigger:
     def test_config_error_returns_1(self, mock_config):
         """Config error returns exit code 1."""
         from social_hook.errors import ConfigError
+
         mock_config.side_effect = ConfigError("bad config")
         exit_code = run_trigger("abc123", "/tmp/nonexistent")
         assert exit_code == 1
@@ -207,6 +204,7 @@ class TestRunTrigger:
     def test_db_error_returns_2(self, mock_config, mock_db):
         """DB error returns exit code 2."""
         from social_hook.errors import DatabaseError
+
         mock_config.return_value = MagicMock()
         mock_db.side_effect = DatabaseError("db error")
         exit_code = run_trigger("abc123", "/tmp/nonexistent")
@@ -236,15 +234,16 @@ class TestRunTrigger:
     @patch("social_hook.trigger.get_db_path")
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
-    def test_paused_project_returns_0(
-        self, mock_config, mock_db, mock_db_path, mock_by_path
-    ):
+    def test_paused_project_returns_0(self, mock_config, mock_db, mock_db_path, mock_by_path):
         """Paused project exits with 0."""
         mock_config.return_value = MagicMock()
         mock_db.return_value = MagicMock()
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(
-            id="p1", name="test", repo_path="/tmp", paused=True,
+            id="p1",
+            name="test",
+            repo_path="/tmp",
+            paused=True,
         )
 
         exit_code = run_trigger("abc123", "/tmp")
@@ -268,7 +267,9 @@ class TestTriggerBranchFilter:
         mock_db.return_value = mock_conn
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(
-            id="p1", name="test", repo_path="/tmp",
+            id="p1",
+            name="test",
+            repo_path="/tmp",
             trigger_branch="main",
         )
         mock_branch.return_value = "feature/x"
@@ -286,19 +287,30 @@ class TestTriggerBranchFilter:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_branch_filter_allows_matching(
-        self, mock_config, mock_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_branch,
+        self,
+        mock_config,
+        mock_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_branch,
     ):
         """Matching branch proceeds past filter (will fail later but that's fine)."""
         mock_config.return_value = MagicMock()
         mock_db.return_value = MagicMock()
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(
-            id="p1", name="test", repo_path="/tmp",
+            id="p1",
+            name="test",
+            repo_path="/tmp",
             trigger_branch="main",
         )
         mock_branch.return_value = "main"
-        mock_parse.return_value = MagicMock(hash="abc123", message="test", timestamp=None, parent_timestamp=None)
+        mock_parse.return_value = MagicMock(
+            hash="abc123", message="test", timestamp=None, parent_timestamp=None
+        )
         mock_context.return_value = MagicMock(project_summary="test")
 
         # Proceeds past branch check; fails at evaluator (exit 3) — not 0
@@ -312,18 +324,27 @@ class TestTriggerBranchFilter:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_branch_filter_null_allows_all(
-        self, mock_config, mock_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context,
+        self,
+        mock_config,
+        mock_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
     ):
         """No trigger_branch set proceeds past filter (will fail later)."""
         mock_config.return_value = MagicMock()
         mock_db.return_value = MagicMock()
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(
-            id="p1", name="test", repo_path="/tmp",
+            id="p1",
+            name="test",
+            repo_path="/tmp",
             trigger_branch=None,
         )
-        mock_parse.return_value = MagicMock(hash="abc123", message="test", timestamp=None, parent_timestamp=None)
+        mock_parse.return_value = MagicMock(
+            hash="abc123", message="test", timestamp=None, parent_timestamp=None
+        )
         mock_context.return_value = MagicMock(project_summary="test")
 
         # Proceeds past branch check (no filter); fails at evaluator — not 0
@@ -344,7 +365,9 @@ class TestTriggerBranchFilter:
         mock_db.return_value = mock_conn
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(
-            id="p1", name="test", repo_path="/tmp",
+            id="p1",
+            name="test",
+            repo_path="/tmp",
             trigger_branch="main",
         )
         mock_branch.return_value = None  # Detached HEAD
@@ -371,23 +394,41 @@ class TestTriggerUsesAdapter:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_sends_via_adapter(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
-        mock_set_context, mock_adapter_send,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
+        mock_set_context,
+        mock_adapter_send,
     ):
         """run_trigger uses TelegramAdapter.send_message instead of direct HTTP."""
         from datetime import datetime
-        from social_hook.messaging.base import SendResult
 
         # Config with Telegram env vars and dict-based platforms
         from social_hook.config.platforms import OutputPlatformConfig
+        from social_hook.messaging.base import SendResult
+
         cfg = MagicMock()
         cfg.platforms = {
-            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+            "x": OutputPlatformConfig(
+                enabled=True, priority="primary", type="builtin", account_tier="free"
+            ),
         }
         cfg.media_generation.enabled = False
-        cfg.media_generation.tools = {"mermaid": True, "nano_banana_pro": True, "playwright": True, "ray_so": True}
+        cfg.media_generation.tools = {
+            "mermaid": True,
+            "nano_banana_pro": True,
+            "playwright": True,
+            "ray_so": True,
+        }
         cfg.scheduling.timezone = "UTC"
         cfg.scheduling.max_posts_per_day = 3
         cfg.scheduling.min_gap_minutes = 30
@@ -405,7 +446,9 @@ class TestTriggerUsesAdapter:
         mock_init_db.return_value = MagicMock()
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(
-            id="p1", name="test-proj", repo_path="/tmp",
+            id="p1",
+            name="test-proj",
+            repo_path="/tmp",
         )
 
         # Commit
@@ -414,20 +457,20 @@ class TestTriggerUsesAdapter:
         commit.message = "Add feature"
         mock_parse.return_value = commit
 
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
 
-        # Evaluator says post-worthy
+        # Evaluator says draft-worthy
         evaluator_instance = MagicMock()
-        evaluation = MagicMock()
-        evaluation.decision = "post_worthy"
-        evaluation.reasoning = "Good commit"
-        evaluation.angle = "new feature"
-        evaluation.episode_type = "launch"
-        evaluation.post_category = "arc"
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
+        evaluation = _make_eval_mock(
+            action="draft",
+            reason="Good commit",
+            angle="new feature",
+            episode_type="launch",
+            post_category="arc",
+        )
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
@@ -463,6 +506,46 @@ class TestTriggerUsesAdapter:
         assert "222" in call_chat_ids
 
 
+def _make_eval_mock(
+    action="draft",
+    reason="Good commit",
+    angle="feature",
+    episode_type="milestone",
+    post_category="arc",
+    arc_id=None,
+    new_arc_theme=None,
+    media_tool=None,
+    consolidate_with=None,
+    queue_actions=None,
+):
+    """Build a LogEvaluationInput-shaped mock for trigger tests."""
+    from social_hook.llm.schemas import (
+        LogEvaluationInput,
+    )
+
+    target_data = {
+        "action": action,
+        "reason": reason,
+        "angle": angle,
+        "episode_type": episode_type,
+        "post_category": post_category,
+        "arc_id": arc_id,
+        "new_arc_theme": new_arc_theme,
+        "media_tool": media_tool,
+        "consolidate_with": consolidate_with,
+    }
+    # Remove None values so Pydantic uses defaults
+    target_data = {k: v for k, v in target_data.items() if v is not None}
+
+    return LogEvaluationInput.model_validate(
+        {
+            "commit_analysis": {"summary": "Test commit summary"},
+            "targets": {"default": target_data},
+            "queue_actions": queue_actions,
+        }
+    )
+
+
 def _make_trigger_mocks(
     media_generation_enabled=False,
     drafter_media_type=None,
@@ -477,15 +560,23 @@ def _make_trigger_mocks(
     plus a reference to the config and draft_result for assertion.
     """
     from datetime import datetime
+
     from social_hook.adapters.models import MediaResult
     from social_hook.config.platforms import OutputPlatformConfig
 
     cfg = MagicMock()
     cfg.platforms = {
-        "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+        "x": OutputPlatformConfig(
+            enabled=True, priority="primary", type="builtin", account_tier="free"
+        ),
     }
     cfg.media_generation.enabled = media_generation_enabled
-    cfg.media_generation.tools = {"mermaid": True, "nano_banana_pro": True, "playwright": True, "ray_so": True}
+    cfg.media_generation.tools = {
+        "mermaid": True,
+        "nano_banana_pro": True,
+        "playwright": True,
+        "ray_so": True,
+    }
     cfg.scheduling.timezone = "UTC"
     cfg.scheduling.max_posts_per_day = 3
     cfg.scheduling.min_gap_minutes = 30
@@ -504,15 +595,14 @@ def _make_trigger_mocks(
     commit.hash = "abc12345"
     commit.message = "Add feature"
 
-    evaluation = MagicMock()
-    evaluation.decision = "post_worthy"
-    evaluation.reasoning = "Good commit"
-    evaluation.angle = "feature"
-    evaluation.episode_type = "milestone"
-    evaluation.post_category = "arc"
-    evaluation.arc_id = None
-    evaluation.media_tool = evaluator_media_tool
-    evaluation.platforms = {}
+    evaluation = _make_eval_mock(
+        action="draft",
+        reason="Good commit",
+        angle="feature",
+        episode_type="milestone",
+        post_category="arc",
+        media_tool=evaluator_media_tool,
+    )
 
     evaluator_instance = MagicMock()
     evaluator_instance.evaluate.return_value = evaluation
@@ -568,9 +658,18 @@ class TestTriggerMedia:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_generates_media_when_enabled(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """When media_generation.enabled and drafter returns media_type, adapter.generate() is called."""
         from social_hook.adapters.models import MediaResult
@@ -588,7 +687,9 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -597,16 +698,21 @@ class TestTriggerMedia:
         mock_adapter = MagicMock()
         mock_adapter.generate.return_value = mocks["media_generate_result"]
 
-        with patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter) as mock_get:
+        with patch(
+            "social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter
+        ) as mock_get:
             exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
 
         assert exit_code == 0
         mock_get.assert_called_once_with("mermaid", api_key=None)
         mock_adapter.generate.assert_called_once()
         call_kwargs = mock_adapter.generate.call_args
-        assert call_kwargs.kwargs.get("dry_run") is False or call_kwargs[1].get("dry_run") is False \
-            or (len(call_kwargs.args) >= 3 and call_kwargs.args[2] is False) \
+        assert (
+            call_kwargs.kwargs.get("dry_run") is False
+            or call_kwargs[1].get("dry_run") is False
+            or (len(call_kwargs.args) >= 3 and call_kwargs.args[2] is False)
             or "dry_run" in str(call_kwargs)
+        )
 
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")
@@ -620,9 +726,18 @@ class TestTriggerMedia:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_skips_media_when_disabled(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """When media_generation.enabled=False, no media adapter is called."""
         from social_hook.llm.schemas import MediaTool
@@ -638,7 +753,9 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -662,9 +779,18 @@ class TestTriggerMedia:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_skips_media_when_none(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """When drafter returns media_type=none and evaluator has no media_tool, skip media."""
         mocks = _make_trigger_mocks(
@@ -678,7 +804,9 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -702,9 +830,18 @@ class TestTriggerMedia:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_handles_media_failure(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """When media generation fails, draft is still saved with media_paths=[]."""
         from social_hook.adapters.models import MediaResult
@@ -722,7 +859,9 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -750,9 +889,18 @@ class TestTriggerMedia:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_skips_nano_without_key(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """When nano_banana_pro requested but GEMINI_API_KEY not set, skip gracefully."""
         from social_hook.llm.schemas import MediaTool
@@ -769,7 +917,9 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -794,9 +944,18 @@ class TestTriggerMedia:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_thread_with_media(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """When use_thread=True and media generated, draft.media_paths is set on the saved draft."""
         from social_hook.adapters.models import MediaResult
@@ -815,7 +974,9 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -829,6 +990,7 @@ class TestTriggerMedia:
 
         class CaptureDryRun:
             """Captures insert_draft calls while acting as DryRunContext."""
+
             def __init__(self, conn, dry_run=False):
                 self.conn = conn
 
@@ -848,8 +1010,13 @@ class TestTriggerMedia:
                 pass
 
         # We need to patch DryRunContext to capture the draft
-        with patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter), \
-             patch("social_hook.trigger.DryRunContext", side_effect=lambda conn, dry_run: CaptureDryRun(conn, dry_run)):
+        with (
+            patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter),
+            patch(
+                "social_hook.trigger.DryRunContext",
+                side_effect=lambda conn, dry_run: CaptureDryRun(conn, dry_run),
+            ),
+        ):
             exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
 
         assert exit_code == 0
@@ -878,13 +1045,23 @@ class TestTriggerSendsMediaNotification:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_trigger_sends_media_notification(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
-        mock_set_context, mock_adapter_send, mock_adapter_send_media,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
+        mock_set_context,
+        mock_adapter_send,
+        mock_adapter_send_media,
     ):
         """When draft has media_paths, adapter.send_media() is called for each chat ID."""
-        from datetime import datetime
         from social_hook.adapters.models import MediaResult
         from social_hook.llm.schemas import MediaTool
         from social_hook.messaging.base import SendResult
@@ -907,7 +1084,9 @@ class TestTriggerSendsMediaNotification:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test-proj", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -919,7 +1098,9 @@ class TestTriggerSendsMediaNotification:
         mock_media_adapter = MagicMock()
         mock_media_adapter.generate.return_value = mocks["media_generate_result"]
 
-        with patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_media_adapter):
+        with patch(
+            "social_hook.adapters.registry.get_media_adapter", return_value=mock_media_adapter
+        ):
             exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
 
         assert exit_code == 0
@@ -933,22 +1114,27 @@ class TestTriggerSendsMediaNotification:
         # Verify media path and caption
         for call in mock_adapter_send_media.call_args_list:
             assert call.args[1] == "/tmp/media/img.png"
-            assert "Media for" in call.kwargs.get("caption", call.args[2] if len(call.args) > 2 else "")
+            assert "Media for" in call.kwargs.get(
+                "caption", call.args[2] if len(call.args) > 2 else ""
+            )
 
 
 class TestPerPlatformPipeline:
     """Tests for per-platform draft creation."""
 
-    def _make_per_platform_mocks(self, platforms_dict, episode_type="milestone",
-                                  web_enabled=False):
+    def _make_per_platform_mocks(self, platforms_dict, episode_type="milestone", web_enabled=False):
         """Build common mocks for per-platform tests."""
         from datetime import datetime
-        from social_hook.config.platforms import OutputPlatformConfig
 
         cfg = MagicMock()
         cfg.platforms = platforms_dict
         cfg.media_generation.enabled = False
-        cfg.media_generation.tools = {"mermaid": True, "nano_banana_pro": True, "playwright": True, "ray_so": True}
+        cfg.media_generation.tools = {
+            "mermaid": True,
+            "nano_banana_pro": True,
+            "playwright": True,
+            "ray_so": True,
+        }
         cfg.scheduling.timezone = "UTC"
         cfg.scheduling.max_posts_per_day = 3
         cfg.scheduling.min_gap_minutes = 30
@@ -963,15 +1149,13 @@ class TestPerPlatformPipeline:
         commit.hash = "abc12345"
         commit.message = "Add feature"
 
-        evaluation = MagicMock()
-        evaluation.decision = "post_worthy"
-        evaluation.reasoning = "Good commit"
-        evaluation.angle = "feature"
-        evaluation.episode_type = episode_type
-        evaluation.post_category = "arc"
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
+        evaluation = _make_eval_mock(
+            action="draft",
+            reason="Good commit",
+            angle="feature",
+            episode_type=episode_type,
+            post_category="arc",
+        )
 
         evaluator_instance = MagicMock()
         evaluator_instance.evaluate.return_value = evaluation
@@ -1013,24 +1197,41 @@ class TestPerPlatformPipeline:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_per_platform_draft_creation(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """Two enabled platforms both get drafts."""
         from social_hook.config.platforms import OutputPlatformConfig
 
-        mocks = self._make_per_platform_mocks({
-            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
-            "linkedin": OutputPlatformConfig(enabled=True, priority="secondary", type="builtin"),
-        })
+        mocks = self._make_per_platform_mocks(
+            {
+                "x": OutputPlatformConfig(
+                    enabled=True, priority="primary", type="builtin", account_tier="free"
+                ),
+                "linkedin": OutputPlatformConfig(
+                    enabled=True, priority="secondary", type="builtin"
+                ),
+            }
+        )
 
         mock_config.return_value = mocks["cfg"]
         mock_init_db.return_value = MagicMock()
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -1042,14 +1243,19 @@ class TestPerPlatformPipeline:
         class CaptureDryRun:
             def __init__(self, conn, dry_run=False):
                 self.conn = conn
+
             def insert_decision(self, decision):
                 pass
+
             def insert_draft(self, draft):
                 saved_drafts.append(draft)
+
             def insert_draft_tweet(self, tweet):
                 pass
+
             def emit_data_event(self, *args, **kwargs):
                 pass
+
             def update_decision(self, *args, **kwargs):
                 pass
 
@@ -1073,17 +1279,30 @@ class TestPerPlatformPipeline:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_content_filter_notable(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """Secondary with filter=notable skips 'decision' episode type."""
         from social_hook.config.platforms import OutputPlatformConfig
 
         mocks = self._make_per_platform_mocks(
             {
-                "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
-                "linkedin": OutputPlatformConfig(enabled=True, priority="secondary", type="builtin"),
+                "x": OutputPlatformConfig(
+                    enabled=True, priority="primary", type="builtin", account_tier="free"
+                ),
+                "linkedin": OutputPlatformConfig(
+                    enabled=True, priority="secondary", type="builtin"
+                ),
             },
             episode_type="decision",
         )
@@ -1093,7 +1312,9 @@ class TestPerPlatformPipeline:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -1104,14 +1325,19 @@ class TestPerPlatformPipeline:
         class CaptureDryRun:
             def __init__(self, conn, dry_run=False):
                 self.conn = conn
+
             def insert_decision(self, decision):
                 pass
+
             def insert_draft(self, draft):
                 saved_drafts.append(draft)
+
             def insert_draft_tweet(self, tweet):
                 pass
+
             def emit_data_event(self, *args, **kwargs):
                 pass
+
             def update_decision(self, *args, **kwargs):
                 pass
 
@@ -1135,31 +1361,49 @@ class TestPerPlatformPipeline:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_no_enabled_platforms(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """No enabled platforms falls back to preview platform and drafts."""
         from social_hook.config.platforms import OutputPlatformConfig
 
-        mocks = self._make_per_platform_mocks({
-            "x": OutputPlatformConfig(enabled=False, priority="primary", type="builtin", account_tier="free"),
-        })
+        mocks = self._make_per_platform_mocks(
+            {
+                "x": OutputPlatformConfig(
+                    enabled=False, priority="primary", type="builtin", account_tier="free"
+                ),
+            }
+        )
 
         saved_drafts = []
 
         class CaptureDryRun:
             def __init__(self, conn, dry_run=False):
                 self.conn = conn
+
             def insert_decision(self, decision):
                 return decision
+
             def update_decision(self, *args, **kwargs):
                 return None
+
             def insert_draft(self, draft):
                 saved_drafts.append(draft)
                 return draft
+
             def insert_draft_tweet(self, tweet):
                 pass
+
             def emit_data_event(self, *args, **kwargs):
                 pass
 
@@ -1168,7 +1412,9 @@ class TestPerPlatformPipeline:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -1194,9 +1440,18 @@ class TestPerPlatformPipeline:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_all_platforms_filtered(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_drafter_cls, mock_schedule,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_drafter_cls,
+        mock_schedule,
     ):
         """All platforms filtered exits with 0, no drafts."""
         from social_hook.config.platforms import OutputPlatformConfig
@@ -1205,7 +1460,9 @@ class TestPerPlatformPipeline:
         mocks = self._make_per_platform_mocks(
             {
                 "linkedin": OutputPlatformConfig(
-                    enabled=True, priority="secondary", type="builtin",
+                    enabled=True,
+                    priority="secondary",
+                    type="builtin",
                     filter="significant",
                 ),
             },
@@ -1217,7 +1474,9 @@ class TestPerPlatformPipeline:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(
+            held_decisions=[], audience_introduced=True, project_summary="test"
+        )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -1370,16 +1629,26 @@ class TestDecisionNotification:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_notification_sent_for_not_post_worthy(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_send_notif,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_send_notif,
     ):
         """Decision notification sent for not_post_worthy when level=all_decisions."""
         from social_hook.config.platforms import OutputPlatformConfig
 
         cfg = MagicMock()
         cfg.platforms = {
-            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+            "x": OutputPlatformConfig(
+                enabled=True, priority="primary", type="builtin", account_tier="free"
+            ),
         }
         cfg.media_generation.enabled = False
         cfg.notification_level = "all_decisions"
@@ -1401,16 +1670,10 @@ class TestDecisionNotification:
         mock_proj_config.return_value = MagicMock()
 
         evaluator_instance = MagicMock()
-        evaluation = MagicMock()
-        evaluation.decision = "not_post_worthy"
-        evaluation.reasoning = "Minor fix"
-        evaluation.angle = None
-        evaluation.episode_type = None
-        evaluation.post_category = None
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
-        evaluation.commit_summary = None
+        evaluation = _make_eval_mock(
+            action="skip",
+            reason="Minor fix",
+        )
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
@@ -1433,9 +1696,18 @@ class TestDecisionNotification:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_notification_skipped_for_post_worthy(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_draft_for_platforms, mock_send_notifs,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_draft_for_platforms,
+        mock_send_notifs,
         mock_send_notif,
     ):
         """Decision notification NOT sent for post_worthy when drafts are created."""
@@ -1445,7 +1717,9 @@ class TestDecisionNotification:
 
         cfg = MagicMock()
         cfg.platforms = {
-            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
+            "x": OutputPlatformConfig(
+                enabled=True, priority="primary", type="builtin", account_tier="free"
+            ),
         }
         cfg.media_generation.enabled = False
         cfg.notification_level = "all_decisions"
@@ -1474,16 +1748,13 @@ class TestDecisionNotification:
         mock_proj_config.return_value = MagicMock()
 
         evaluator_instance = MagicMock()
-        evaluation = MagicMock()
-        evaluation.decision = "post_worthy"
-        evaluation.reasoning = "Great commit"
-        evaluation.angle = "feature"
-        evaluation.episode_type = "launch"
-        evaluation.post_category = "arc"
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
-        evaluation.commit_summary = None
+        evaluation = _make_eval_mock(
+            action="draft",
+            reason="Great commit",
+            angle="feature",
+            episode_type="launch",
+            post_category="arc",
+        )
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
@@ -1508,9 +1779,17 @@ class TestDecisionNotification:
     @patch("social_hook.trigger.init_database")
     @patch("social_hook.trigger.load_full_config")
     def test_notification_skipped_when_drafts_only(
-        self, mock_config, mock_init_db, mock_db_path, mock_by_path,
-        mock_parse, mock_context, mock_proj_config, mock_create_client,
-        mock_evaluator_cls, mock_send_notif,
+        self,
+        mock_config,
+        mock_init_db,
+        mock_db_path,
+        mock_by_path,
+        mock_parse,
+        mock_context,
+        mock_proj_config,
+        mock_create_client,
+        mock_evaluator_cls,
+        mock_send_notif,
     ):
         """Decision notification NOT sent when notification_level=drafts_only."""
         cfg = MagicMock()
@@ -1535,16 +1814,10 @@ class TestDecisionNotification:
         mock_proj_config.return_value = MagicMock()
 
         evaluator_instance = MagicMock()
-        evaluation = MagicMock()
-        evaluation.decision = "not_post_worthy"
-        evaluation.reasoning = "Minor fix"
-        evaluation.angle = None
-        evaluation.episode_type = None
-        evaluation.post_category = None
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
-        evaluation.commit_summary = None
+        evaluation = _make_eval_mock(
+            action="skip",
+            reason="Minor fix",
+        )
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
@@ -1554,9 +1827,8 @@ class TestDecisionNotification:
 
     def test_send_decision_notification_message_format(self):
         """_send_decision_notification formats message correctly."""
-        from social_hook.trigger import _send_decision_notification
-        from social_hook.messaging.base import OutboundMessage
         from social_hook.config.yaml import ChannelConfig
+        from social_hook.trigger import _send_decision_notification
 
         cfg = MagicMock()
         cfg.channels = {"web": ChannelConfig(enabled=False)}
@@ -1568,7 +1840,7 @@ class TestDecisionNotification:
         commit.hash = "abc12345abcdef"
         commit.message = "Fix typo in README"
         decision = MagicMock()
-        decision.decision = "not_post_worthy"
+        decision.decision = "skip"
         decision.reasoning = "Minor documentation fix, not interesting"
 
         with patch("social_hook.messaging.web.WebAdapter") as mock_web:
@@ -1590,16 +1862,18 @@ class TestDecisionNotification:
         commit.hash = "abc12345abcdef"
         commit.message = "Fix typo"
         decision = MagicMock()
-        decision.decision = "not_post_worthy"
+        decision.decision = "skip"
         decision.reasoning = "Minor fix"
 
-        with patch("social_hook.trigger.get_db_path", return_value=Path("/tmp/test.db")):
-            with patch("social_hook.messaging.web.WebAdapter") as mock_web_cls:
-                mock_adapter = MagicMock()
-                mock_web_cls.return_value = mock_adapter
-                _send_decision_notification(cfg, project, commit, decision)
-                mock_adapter.send_message.assert_called_once()
-                msg = mock_adapter.send_message.call_args[0][1]
-                assert "not_post_worthy" in msg.text
-                assert "test-proj" in msg.text
-                assert "abc12345" in msg.text
+        with (
+            patch("social_hook.trigger.get_db_path", return_value=Path("/tmp/test.db")),
+            patch("social_hook.messaging.web.WebAdapter") as mock_web_cls,
+        ):
+            mock_adapter = MagicMock()
+            mock_web_cls.return_value = mock_adapter
+            _send_decision_notification(cfg, project, commit, decision)
+            mock_adapter.send_message.assert_called_once()
+            msg = mock_adapter.send_message.call_args[0][1]
+            assert "skip" in msg.text
+            assert "test-proj" in msg.text
+            assert "abc12345" in msg.text

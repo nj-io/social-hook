@@ -1,7 +1,6 @@
 """LinkedIn platform adapter using REST API."""
 
 import logging
-from typing import Optional
 from urllib.parse import urlencode
 
 import requests
@@ -37,7 +36,7 @@ class LinkedInAdapter(PlatformAdapter):
             access_token: OAuth 2.0 access token
         """
         self.access_token = access_token
-        self.author_urn: Optional[str] = None
+        self.author_urn: str | None = None
         self.rate_limit_state = RateLimitState()
 
     @staticmethod
@@ -103,7 +102,7 @@ class LinkedInAdapter(PlatformAdapter):
             timeout=30,
         )
         response.raise_for_status()
-        return response.json()
+        return response.json()  # type: ignore[no-any-return]
 
     def validate(self) -> tuple[bool, str]:
         """Validate credentials and fetch author URN.
@@ -140,7 +139,7 @@ class LinkedInAdapter(PlatformAdapter):
     def post(
         self,
         content: str,
-        media_paths: Optional[list[str]] = None,
+        media_paths: list[str] | None = None,
         dry_run: bool = False,
     ) -> PostResult:
         """Post content to LinkedIn.
@@ -217,9 +216,7 @@ class LinkedInAdapter(PlatformAdapter):
             logger.error(f"LinkedIn post request failed: {e}")
             return PostResult(success=False, error=f"Request failed: {e}")
 
-    def post_thread(
-        self, tweets: list[dict], dry_run: bool = False
-    ) -> ThreadResult:
+    def post_thread(self, tweets: list[dict], dry_run: bool = False) -> ThreadResult:
         """LinkedIn does not support threads.
 
         Args:

@@ -8,7 +8,6 @@ import pytest
 
 from social_hook.constants import DB_FILENAME
 
-
 # ---------------------------------------------------------------------------
 # Fixtures (mirror test_web_server.py pattern)
 # ---------------------------------------------------------------------------
@@ -177,7 +176,7 @@ def client(tmp_env):
 
     from social_hook.web.server import app
 
-    tmp_path = tmp_env["tmp_path"]
+    tmp_env["tmp_path"]
     db_path = tmp_env["db_path"]
     config_path = tmp_env["config_path"]
     env_path = tmp_env["env_path"]
@@ -195,7 +194,7 @@ def client(tmp_env):
         yield TestClient(app)
 
 
-def _seed_project_and_decision(db_path, decision="post_worthy"):
+def _seed_project_and_decision(db_path, decision="draft"):
     """Seed a project and a decision."""
     conn = sqlite3.connect(str(db_path))
     conn.execute(
@@ -216,7 +215,9 @@ def _seed_project_and_decision(db_path, decision="post_worthy"):
 # ---------------------------------------------------------------------------
 
 
-def _make_draft_result(draft_id="draft_test_1", decision_id="dec_1", project_id="proj_1", platform="x"):
+def _make_draft_result(
+    draft_id="draft_test_1", decision_id="dec_1", project_id="proj_1", platform="x"
+):
     """Build a mock DraftResult for testing."""
     from datetime import datetime, timezone
 
@@ -264,8 +265,11 @@ class TestCreateDraftFromDecision:
 
         mock_result = _make_draft_result()
         p1, p2, p3 = _mock_create_draft_patches()
-        with p1, p2, p3, patch(
-            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+        with (
+            p1,
+            p2,
+            p3,
+            patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
 
@@ -284,9 +288,14 @@ class TestCreateDraftFromDecision:
             _make_draft_result(draft_id="d2", platform="linkedin"),
         ]
         p1, p2, p3 = _mock_create_draft_patches()
-        with p1, p2, p3, patch(
-            "social_hook.drafting.draft_for_platforms", return_value=mock_results
-        ) as mock_dfp:
+        with (
+            p1,
+            p2,
+            p3,
+            patch(
+                "social_hook.drafting.draft_for_platforms", return_value=mock_results
+            ) as mock_dfp,
+        ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={})
 
         assert resp.status_code == 200
@@ -307,8 +316,11 @@ class TestCreateDraftFromDecision:
 
         mock_result = _make_draft_result(draft_id="draft_linked", platform="linkedin")
         p1, p2, p3 = _mock_create_draft_patches()
-        with p1, p2, p3, patch(
-            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+        with (
+            p1,
+            p2,
+            p3,
+            patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "linkedin"})
 

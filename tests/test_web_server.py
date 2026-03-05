@@ -1,11 +1,7 @@
 """Tests for the FastAPI web dashboard API server."""
 
 import json
-import os
 import sqlite3
-import subprocess
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -182,9 +178,9 @@ def client(tmp_env):
     """Create a test client with mocked filesystem paths."""
     from fastapi.testclient import TestClient
 
-    from social_hook.web.server import _invalidate_config, app
+    from social_hook.web.server import app
 
-    tmp_path = tmp_env["tmp_path"]
+    tmp_env["tmp_path"]
     db_path = tmp_env["db_path"]
     config_path = tmp_env["config_path"]
     env_path = tmp_env["env_path"]
@@ -247,9 +243,7 @@ class TestBotEndpoints:
 
             mock_cb.side_effect = side_effect
 
-            resp = client.post(
-                "/api/callback", json={"action": "approve", "payload": "draft_1"}
-            )
+            resp = client.post("/api/callback", json={"action": "approve", "payload": "draft_1"})
             assert resp.status_code == 200
             data = resp.json()
             assert "events" in data
@@ -550,6 +544,7 @@ class TestSettingsEndpoints:
         mock_anthropic.Anthropic.return_value = mock_client
 
         import sys
+
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             resp = client.post(
                 "/api/settings/validate-key",
@@ -819,7 +814,9 @@ class TestInstallationEndpoints:
             assert data["bot_daemon"] is False
 
     def test_install_commit_hook(self, client, tmp_env):
-        with patch("social_hook.setup.install.install_hook", return_value=(True, "Installed")) as mock_fn:
+        with patch(
+            "social_hook.setup.install.install_hook", return_value=(True, "Installed")
+        ) as mock_fn:
             resp = client.post("/api/installations/commit_hook/install")
             assert resp.status_code == 200
             data = resp.json()
@@ -827,7 +824,9 @@ class TestInstallationEndpoints:
             mock_fn.assert_called_once()
 
     def test_uninstall_commit_hook(self, client, tmp_env):
-        with patch("social_hook.setup.install.uninstall_hook", return_value=(True, "Removed")) as mock_fn:
+        with patch(
+            "social_hook.setup.install.uninstall_hook", return_value=(True, "Removed")
+        ) as mock_fn:
             resp = client.post("/api/installations/commit_hook/uninstall")
             assert resp.status_code == 200
             data = resp.json()
@@ -841,7 +840,7 @@ class TestInstallationEndpoints:
     def test_bot_daemon_start(self, client, tmp_env):
         with (
             patch("social_hook.bot.process.is_running", return_value=False),
-            patch("subprocess.Popen") as mock_popen,
+            patch("subprocess.Popen"),
         ):
             resp = client.post("/api/installations/bot_daemon/start")
             assert resp.status_code == 200
@@ -861,12 +860,18 @@ class TestInstallationEndpoints:
     def test_journey_capture_toggle_installs_hook(self, client, tmp_env):
         """Toggling journey_capture.enabled to True installs narrative hook."""
         config = {
-            "models": {"evaluator": "anthropic/claude-opus-4-5", "drafter": "anthropic/claude-opus-4-5", "gatekeeper": "anthropic/claude-haiku-4-5"},
+            "models": {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "anthropic/claude-opus-4-5",
+                "gatekeeper": "anthropic/claude-haiku-4-5",
+            },
             "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
         }
         tmp_env["config_path"].write_text(yaml.dump(config))
 
-        with patch("social_hook.setup.install.install_narrative_hook", return_value=(True, "Installed")) as mock_install:
+        with patch(
+            "social_hook.setup.install.install_narrative_hook", return_value=(True, "Installed")
+        ) as mock_install:
             resp = client.put("/api/settings/config", json={"journey_capture": {"enabled": True}})
             assert resp.status_code == 200
             mock_install.assert_called_once()
@@ -874,13 +879,19 @@ class TestInstallationEndpoints:
     def test_journey_capture_toggle_uninstalls_hook(self, client, tmp_env):
         """Toggling journey_capture.enabled to False uninstalls narrative hook."""
         config = {
-            "models": {"evaluator": "anthropic/claude-opus-4-5", "drafter": "anthropic/claude-opus-4-5", "gatekeeper": "anthropic/claude-haiku-4-5"},
+            "models": {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "anthropic/claude-opus-4-5",
+                "gatekeeper": "anthropic/claude-haiku-4-5",
+            },
             "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
             "journey_capture": {"enabled": True},
         }
         tmp_env["config_path"].write_text(yaml.dump(config))
 
-        with patch("social_hook.setup.install.uninstall_narrative_hook", return_value=(True, "Removed")) as mock_uninstall:
+        with patch(
+            "social_hook.setup.install.uninstall_narrative_hook", return_value=(True, "Removed")
+        ) as mock_uninstall:
             resp = client.put("/api/settings/config", json={"journey_capture": {"enabled": False}})
             assert resp.status_code == 200
             mock_uninstall.assert_called_once()
@@ -896,9 +907,14 @@ class TestInstallationEndpoints:
     def test_project_detail_includes_journey_capture(self, client, tmp_env):
         """Project detail response includes journey_capture_enabled."""
         conn = sqlite3.connect(str(tmp_env["db_path"]))
-        conn.execute("INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)", ("proj_1", "Test", "/tmp/repo"))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_1", "Test", "/tmp/repo"),
+        )
         conn.execute("INSERT INTO lifecycles (project_id) VALUES (?)", ("proj_1",))
-        conn.execute("INSERT INTO narrative_debt (project_id, debt_counter) VALUES (?, ?)", ("proj_1", 0))
+        conn.execute(
+            "INSERT INTO narrative_debt (project_id, debt_counter) VALUES (?, ?)", ("proj_1", 0)
+        )
         conn.commit()
         conn.close()
 
@@ -914,7 +930,10 @@ class TestInstallationEndpoints:
     def test_put_project_summary(self, client, tmp_env):
         """PUT /api/projects/{id}/summary updates the project summary."""
         conn = sqlite3.connect(str(tmp_env["db_path"]))
-        conn.execute("INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)", ("proj_1", "Test", "/tmp/repo"))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_1", "Test", "/tmp/repo"),
+        )
         conn.commit()
         conn.close()
 
@@ -970,6 +989,7 @@ class TestChannelsEndpoints:
         }
         tmp_env["config_path"].write_text(yaml.dump(config))
         import social_hook.web.server as srv
+
         srv._config = None
 
         with patch("social_hook.bot.process.is_running", return_value=False):
@@ -985,6 +1005,7 @@ class TestChannelsEndpoints:
         }
         tmp_env["config_path"].write_text(yaml.dump(config))
         import social_hook.web.server as srv
+
         srv._config = None
 
         tmp_env["env_path"].write_text('TELEGRAM_BOT_TOKEN="test_token"\n')
@@ -1031,6 +1052,7 @@ class TestChannelsEndpoints:
         """POST /api/channels/telegram/test with valid token returns username."""
         tmp_env["env_path"].write_text('TELEGRAM_BOT_TOKEN="test_token"\n')
         import social_hook.web.server as srv
+
         srv._config = None
 
         mock_resp = MagicMock()
@@ -1047,10 +1069,14 @@ class TestChannelsEndpoints:
         """POST /api/channels/telegram/test with bad token returns sanitized error."""
         tmp_env["env_path"].write_text('TELEGRAM_BOT_TOKEN="bad_token"\n')
         import social_hook.web.server as srv
+
         srv._config = None
 
         import requests as req_lib
-        with patch("requests.get", side_effect=req_lib.RequestException("Connection failed with token")):
+
+        with patch(
+            "requests.get", side_effect=req_lib.RequestException("Connection failed with token")
+        ):
             resp = client.post("/api/channels/telegram/test")
             assert resp.status_code == 200
             data = resp.json()
@@ -1269,6 +1295,7 @@ class TestMemoryAPI:
         config_dir.mkdir()
 
         from social_hook.config.project import save_memory
+
         save_memory(str(project_dir), "ctx", "fb", "d1")
 
         resp = client.get(f"/api/settings/memories?project_path={project_dir}")
@@ -1284,12 +1311,15 @@ class TestMemoryAPI:
         config_dir = project_dir / ".social-hook"
         config_dir.mkdir()
 
-        resp = client.post("/api/settings/memories", json={
-            "project_path": str(project_dir),
-            "context": "test context",
-            "feedback": "test feedback",
-            "draft_id": "d42",
-        })
+        resp = client.post(
+            "/api/settings/memories",
+            json={
+                "project_path": str(project_dir),
+                "context": "test context",
+                "feedback": "test feedback",
+                "draft_id": "d42",
+            },
+        )
         assert resp.status_code == 200
 
         resp2 = client.get(f"/api/settings/memories?project_path={project_dir}")
@@ -1305,6 +1335,7 @@ class TestMemoryAPI:
         config_dir.mkdir()
 
         from social_hook.config.project import save_memory
+
         save_memory(str(project_dir), "ctx1", "fb1", "d1")
         save_memory(str(project_dir), "ctx2", "fb2", "d2")
 
@@ -1334,6 +1365,7 @@ class TestMemoryAPI:
         config_dir.mkdir()
 
         from social_hook.config.project import save_memory
+
         save_memory(str(project_dir), "ctx1", "fb1", "d1")
         save_memory(str(project_dir), "ctx2", "fb2", "d2")
 
@@ -1384,7 +1416,9 @@ class TestArcEndpoints:
     def test_create_arc_with_notes(self, client, tmp_env):
         """POST /api/projects/{id}/arcs with notes saves them."""
         self._insert_project(tmp_env["db_path"])
-        resp = client.post("/api/projects/proj_1/arcs", json={"theme": "Auth", "notes": "Focus on JWT"})
+        resp = client.post(
+            "/api/projects/proj_1/arcs", json={"theme": "Auth", "notes": "Focus on JWT"}
+        )
         assert resp.status_code == 200
         arc_id = resp.json()["arc_id"]
 
@@ -1469,7 +1503,9 @@ class TestArcEndpoints:
 # ---------------------------------------------------------------------------
 
 
-def _make_draft_result(draft_id="draft_test_1", decision_id="dec_1", project_id="proj_1", platform="x"):
+def _make_draft_result(
+    draft_id="draft_test_1", decision_id="dec_1", project_id="proj_1", platform="x"
+):
     """Build a mock DraftResult for testing."""
     from datetime import datetime as dt
     from datetime import timezone
@@ -1511,8 +1547,7 @@ def _mock_create_draft_patches():
     )
 
 
-def _seed_project_and_decision(db_path, decision_id="dec_1", project_id="proj_1",
-                                decision="post_worthy"):
+def _seed_project_and_decision(db_path, decision_id="dec_1", project_id="proj_1", decision="draft"):
     """Seed a project and a decision."""
     conn = sqlite3.connect(str(db_path))
     # Only insert project if not exists
@@ -1525,7 +1560,14 @@ def _seed_project_and_decision(db_path, decision_id="dec_1", project_id="proj_1"
     conn.execute(
         "INSERT INTO decisions (id, project_id, commit_hash, commit_message, decision, reasoning) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (decision_id, project_id, "abc123", "feat: add new feature", decision, "This is a cool feature"),
+        (
+            decision_id,
+            project_id,
+            "abc123",
+            "feat: add new feature",
+            decision,
+            "This is a cool feature",
+        ),
     )
     conn.commit()
     conn.close()
@@ -1538,9 +1580,14 @@ class TestCreateDraftEndpoint:
 
         mock_result = _make_draft_result()
         p1, p2, p3 = _mock_create_draft_patches()
-        with p1, p2, p3, patch(
-            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
-        ) as mock_dfp:
+        with (
+            p1,
+            p2,
+            p3,
+            patch(
+                "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+            ) as mock_dfp,
+        ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
 
         assert resp.status_code == 200
@@ -1561,9 +1608,14 @@ class TestCreateDraftEndpoint:
             _make_draft_result(draft_id="d2", platform="linkedin"),
         ]
         p1, p2, p3 = _mock_create_draft_patches()
-        with p1, p2, p3, patch(
-            "social_hook.drafting.draft_for_platforms", return_value=mock_results
-        ) as mock_dfp:
+        with (
+            p1,
+            p2,
+            p3,
+            patch(
+                "social_hook.drafting.draft_for_platforms", return_value=mock_results
+            ) as mock_dfp,
+        ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={})
 
         assert resp.status_code == 200
@@ -1576,12 +1628,15 @@ class TestCreateDraftEndpoint:
 
     def test_create_draft_not_post_worthy_override(self, client, tmp_env):
         """POST /api/decisions/{id}/create-draft works for not_post_worthy decisions."""
-        _seed_project_and_decision(tmp_env["db_path"], decision="not_post_worthy")
+        _seed_project_and_decision(tmp_env["db_path"], decision="skip")
 
         mock_result = _make_draft_result()
         p1, p2, p3 = _mock_create_draft_patches()
-        with p1, p2, p3, patch(
-            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+        with (
+            p1,
+            p2,
+            p3,
+            patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
 
@@ -1607,8 +1662,11 @@ class TestConsolidateEndpoint:
 
         mock_result = _make_draft_result(draft_id="d_con")
         p1, p2, p3 = _mock_create_draft_patches()
-        with p1, p2, p3, patch(
-            "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
+        with (
+            p1,
+            p2,
+            p3,
+            patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
         ):
             resp = client.post(
                 "/api/decisions/consolidate",
@@ -1644,12 +1702,12 @@ class TestConsolidateEndpoint:
         conn.execute(
             "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("dec_a", "proj_1", "aaa", "post_worthy", "reason"),
+            ("dec_a", "proj_1", "aaa", "draft", "reason"),
         )
         conn.execute(
             "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("dec_b", "proj_2", "bbb", "post_worthy", "reason"),
+            ("dec_b", "proj_2", "bbb", "draft", "reason"),
         )
         conn.commit()
         conn.close()
@@ -1692,6 +1750,7 @@ class TestEnabledPlatforms:
         config_path.write_text(yaml.dump(config_yaml))
 
         import social_hook.web.server as srv
+
         srv._config = None  # Force reload
 
         resp = client.get("/api/platforms/enabled")

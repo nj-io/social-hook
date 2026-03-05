@@ -15,6 +15,7 @@ runner = CliRunner()
 def db_env(tmp_path):
     """Set up isolated DB with project and arcs table."""
     from social_hook.db.connection import init_database
+
     db_path = tmp_path / "social_hook.db"
     conn = init_database(str(db_path))
 
@@ -32,10 +33,9 @@ def db_env(tmp_path):
 def _patch_paths(db_env):
     """Return context manager patching filesystem paths."""
     from contextlib import ExitStack
+
     stack = ExitStack()
-    stack.enter_context(
-        patch("social_hook.filesystem.get_db_path", return_value=db_env["db_path"])
-    )
+    stack.enter_context(patch("social_hook.filesystem.get_db_path", return_value=db_env["db_path"]))
     return stack
 
 
@@ -85,7 +85,9 @@ class TestArcList:
         conn.close()
 
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["arc", "list", "--project", str(db_env["tmp_path"]), "--status", "all"])
+            result = runner.invoke(
+                app, ["arc", "list", "--project", str(db_env["tmp_path"]), "--status", "all"]
+            )
             assert result.exit_code == 0
             assert "Active arc" in result.output
             assert "Done arc" in result.output
@@ -100,18 +102,27 @@ class TestArcList:
 class TestArcCreate:
     def test_create_arc(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["arc", "create", "Building auth", "--project", str(db_env["tmp_path"])])
+            result = runner.invoke(
+                app, ["arc", "create", "Building auth", "--project", str(db_env["tmp_path"])]
+            )
             assert result.exit_code == 0
             assert "Created arc" in result.output
             assert "Building auth" in result.output
 
     def test_create_arc_with_notes(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, [
-                "arc", "create", "Testing flow",
-                "--project", str(db_env["tmp_path"]),
-                "--notes", "Focus on e2e tests",
-            ])
+            result = runner.invoke(
+                app,
+                [
+                    "arc",
+                    "create",
+                    "Testing flow",
+                    "--project",
+                    str(db_env["tmp_path"]),
+                    "--notes",
+                    "Focus on e2e tests",
+                ],
+            )
             assert result.exit_code == 0
             assert "Created arc" in result.output
 
@@ -133,7 +144,9 @@ class TestArcCreate:
         conn.close()
 
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["arc", "create", "One too many", "--project", str(db_env["tmp_path"])])
+            result = runner.invoke(
+                app, ["arc", "create", "One too many", "--project", str(db_env["tmp_path"])]
+            )
             assert result.exit_code == 1
             assert "Maximum 3" in result.output
 
@@ -211,7 +224,9 @@ class TestArcAbandon:
         conn.close()
 
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["arc", "abandon", "arc_abn2", "--notes", "No longer relevant"])
+            result = runner.invoke(
+                app, ["arc", "abandon", "arc_abn2", "--notes", "No longer relevant"]
+            )
             assert result.exit_code == 0
 
         conn = sqlite3.connect(str(db_env["db_path"]))

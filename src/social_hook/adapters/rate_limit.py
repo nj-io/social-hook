@@ -3,7 +3,7 @@
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -11,8 +11,8 @@ class RateLimitState:
     """Tracks rate limit state for retry logic."""
 
     attempts: int = 0
-    last_attempt: Optional[datetime] = None
-    backoff_until: Optional[datetime] = None
+    last_attempt: datetime | None = None
+    backoff_until: datetime | None = None
 
 
 def calculate_backoff(attempts: int) -> timedelta:
@@ -43,9 +43,7 @@ def should_retry(state: RateLimitState, max_attempts: int = 3) -> bool:
     """
     if state.attempts >= max_attempts:
         return False
-    if state.backoff_until and datetime.now() < state.backoff_until:
-        return False
-    return True
+    return not (state.backoff_until and datetime.now() < state.backoff_until)
 
 
 def handle_rate_limit(

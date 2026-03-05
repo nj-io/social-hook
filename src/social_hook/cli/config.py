@@ -1,6 +1,6 @@
 """CLI commands for configuration management."""
 
-from typing import Optional
+from typing import Any
 
 import typer
 import yaml
@@ -32,8 +32,8 @@ def _build_nested(dotted_key: str, value) -> dict:
     Example: 'platforms.x.account_tier', 'premium' -> {'platforms': {'x': {'account_tier': 'premium'}}}
     """
     parts = dotted_key.split(".")
-    result = {}
-    current = result
+    result: dict[str, Any] = {}
+    current: dict[str, Any] = result
     for part in parts[:-1]:
         current[part] = {}
         current = current[part]
@@ -65,6 +65,7 @@ def show():
             data = {}
     else:
         from social_hook.config.yaml import DEFAULT_CONFIG
+
         data = DEFAULT_CONFIG.copy()
 
     typer.echo(yaml.dump(data, default_flow_style=False, sort_keys=False).rstrip())
@@ -83,13 +84,14 @@ def get_key(key: str = typer.Argument(help="Dotted key path (e.g. platforms.x.ac
             data = {}
     else:
         from social_hook.config.yaml import DEFAULT_CONFIG
+
         data = DEFAULT_CONFIG.copy()
 
     try:
         value = _traverse(data, key)
     except KeyError:
         typer.echo(f"Key not found: {key}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     if isinstance(value, (dict, list)):
         typer.echo(yaml.dump(value, default_flow_style=False, sort_keys=False).rstrip())
@@ -107,9 +109,9 @@ def set_key(
     Only scalar values (strings, numbers, booleans) are supported.
     For lists/arrays, edit the YAML directly or use the web UI.
     """
+    from social_hook.config.yaml import save_config
     from social_hook.errors import ConfigError
     from social_hook.filesystem import get_config_path
-    from social_hook.config.yaml import save_config
 
     parsed = _parse_value(value)
     updates = _build_nested(key, parsed)
@@ -118,6 +120,6 @@ def set_key(
         save_config(updates, config_path=get_config_path(), deep_merge=True)
     except ConfigError as e:
         typer.echo(f"Validation error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     typer.echo(f"Set {key} = {parsed}")

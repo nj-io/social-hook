@@ -24,8 +24,6 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -33,14 +31,18 @@ from typing import Any, Optional
 
 # Test commits from this repo's git history
 COMMITS = {
-    "significant": "0d50ea7",   # Implement WS1 Foundation
-    "major_feature": "93fbd11", # Implement WS3 adapters
-    "large_feature": "d47c089", # WS4 gap fix
-    "bugfix": "409bf74",        # Fix setup wizard UX
-    "docs_only": "3b85806",     # Fix section nav scroll reliability and gitignore
-    "docs_only_2": "8c139a1",   # Fix E2E A10: pass repo root
-    "initial": "c085a12",       # Initial commit: Research documentation
-    "web_dashboard": "07c85d9", # Add web dashboard + per-platform pipeline
+    "significant": "0d50ea7",  # Implement WS1 Foundation
+    "major_feature": "93fbd11",  # Implement WS3 adapters
+    "large_feature": "d47c089",  # WS4 gap fix
+    "bugfix": "409bf74",  # Fix setup wizard UX
+    "docs_only": "3b85806",  # Fix section nav scroll reliability and gitignore
+    "docs_only_2": "8c139a1",  # Fix E2E A10: pass repo root
+    "initial": "c085a12",  # Initial commit: Research documentation
+    "web_dashboard": "07c85d9",  # Add web dashboard + per-platform pipeline
+    "arc_llm_roles": "c180f7a",  # WS2: introduces entire LLM layer
+    "arc_journey": "0399e55",  # New subsystem: dev journey capture
+    "arc_multi_provider": "f9267e2",  # New abstraction: provider layer
+    "arc_media_pipeline": "1ef0058",  # New pipeline: media generation
 }
 
 SECTION_MAP = {
@@ -56,6 +58,7 @@ SECTION_MAP = {
     "multiprovider": "L",
     "journey": "M",
     "web": "N",
+    "queue": "Q",
 }
 
 # Provider presets: maps --provider flag to model configs
@@ -74,27 +77,36 @@ PROVIDER_PRESETS = {
     },
 }
 
+LLM_COOLDOWN_SECONDS = 20
+
+
+def rate_limit_cooldown():
+    """Wait between LLM calls to avoid rate limiting."""
+    print(f"       (waiting {LLM_COOLDOWN_SECONDS}s for rate limit cooldown)")
+    time.sleep(LLM_COOLDOWN_SECONDS)
+
 
 # ---------------------------------------------------------------------------
 # E2E Harness
 # ---------------------------------------------------------------------------
 
+
 class E2EHarness:
     """Isolated temp environment for E2E tests."""
 
-    def __init__(self, real_base: Optional[Path] = None, provider: str = "claude-cli"):
+    def __init__(self, real_base: Path | None = None, provider: str = "claude-cli"):
         if real_base is None:
             # Resolve before we patch HOME
             real_home = os.environ.get("HOME", str(Path.home()))
             real_base = Path(real_home) / ".social-hook"
         self.real_base = real_base
         self.provider = provider
-        self.fake_home: Optional[Path] = None
-        self.base: Optional[Path] = None  # = fake_home / ".social-hook"
-        self.repo_path: Optional[Path] = None
+        self.fake_home: Path | None = None
+        self.base: Path | None = None  # = fake_home / ".social-hook"
+        self.repo_path: Path | None = None
         self.conn = None
-        self.project_id: Optional[str] = None
-        self._orig_home: Optional[str] = None
+        self.project_id: str | None = None
+        self._orig_home: str | None = None
 
     def setup(self):
         """Create isolated environment."""
@@ -107,9 +119,7 @@ class E2EHarness:
         if env_src.exists():
             shutil.copy(env_src, self.base / ".env")
         else:
-            raise FileNotFoundError(
-                f"No .env found at {env_src}. Configure credentials first."
-            )
+            raise FileNotFoundError(f"No .env found at {env_src}. Configure credentials first.")
 
         # Copy prompt files
         prompts_src = self.real_base / "prompts"
@@ -134,6 +144,7 @@ class E2EHarness:
 
         # Init fresh DB
         from social_hook.db import init_database
+
         self.conn = init_database(self.base / "social-hook.db")
 
         # Clone this repo
@@ -178,6 +189,7 @@ class E2EHarness:
     def _write_global_config(self):
         """Write deterministic global config.yaml for E2E tests."""
         import yaml
+
         preset = PROVIDER_PRESETS[self.provider]
         config = {
             "models": {
@@ -221,9 +233,9 @@ class E2EHarness:
             '  tier: "free"\n'
             "\n"
             "models:\n"
-            f'  evaluator: {PROVIDER_PRESETS[self.provider]["evaluator"]}\n'
-            f'  drafter: {PROVIDER_PRESETS[self.provider]["drafter"]}\n'
-            f'  gatekeeper: {PROVIDER_PRESETS[self.provider]["gatekeeper"]}\n'
+            f"  evaluator: {PROVIDER_PRESETS[self.provider]['evaluator']}\n"
+            f"  drafter: {PROVIDER_PRESETS[self.provider]['drafter']}\n"
+            f"  gatekeeper: {PROVIDER_PRESETS[self.provider]['gatekeeper']}\n"
             "\n"
             "platforms:\n"
             "  x:\n"
@@ -274,7 +286,8 @@ class E2EHarness:
 
         origin = subprocess.run(
             ["git", "-C", str(self.repo_path), "remote", "get-url", "origin"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         repo_origin = origin.stdout.strip() if origin.returncode == 0 else None
 
@@ -313,8 +326,8 @@ class E2EHarness:
         decision = Decision(
             id=generate_id("decision"),
             project_id=project_id,
-            commit_hash=COMMITS["significant"],
-            decision="post_worthy",
+            commit_hash=f"seed_{generate_id('commit')[:12]}",  # unique per call
+            decision="draft",
             reasoning="E2E test decision",
             episode_type="milestone",
             post_category="arc",
@@ -343,6 +356,7 @@ class E2EHarness:
     def update_config(self, overrides: dict):
         """Update the global config.yaml with overrides."""
         import yaml
+
         config_path = self.base / "config.yaml"
         data = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
         for key, value in overrides.items():
@@ -355,12 +369,39 @@ class E2EHarness:
     def load_config(self):
         """Load config using the patched paths."""
         from social_hook.config import load_full_config
+
         return load_full_config()
+
+    def clean_scenario_state(self):
+        """Delete all decisions, drafts, and arcs for the test project.
+
+        Preserves project registration, lifecycle, and narrative_debt so
+        each scenario starts from a 'project registered, nothing evaluated'
+        state. Works across connections because it operates on committed data.
+        """
+        if not self.project_id or not self.conn:
+            return
+        # Order matters: drafts reference decisions, decisions may reference arcs
+        for draft_row in self.conn.execute(
+            "SELECT id FROM drafts WHERE project_id = ?", (self.project_id,)
+        ).fetchall():
+            self.conn.execute("DELETE FROM draft_changes WHERE draft_id = ?", (draft_row[0],))
+            self.conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_row[0],))
+        self.conn.execute("DELETE FROM posts WHERE project_id = ?", (self.project_id,))
+        self.conn.execute("DELETE FROM drafts WHERE project_id = ?", (self.project_id,))
+        self.conn.execute("DELETE FROM decisions WHERE project_id = ?", (self.project_id,))
+        self.conn.execute("DELETE FROM arcs WHERE project_id = ?", (self.project_id,))
+        self.conn.execute("DELETE FROM usage_log WHERE project_id = ?", (self.project_id,))
+        self.conn.execute(
+            "DELETE FROM milestone_summaries WHERE project_id = ?", (self.project_id,)
+        )
+        self.conn.commit()
 
 
 # ---------------------------------------------------------------------------
 # Capture Adapter
 # ---------------------------------------------------------------------------
+
 
 class CaptureAdapter:
     """MessagingAdapter that captures all outbound messages for test assertions.
@@ -377,20 +418,28 @@ class CaptureAdapter:
 
     def send_message(self, chat_id, message):
         from social_hook.messaging.base import SendResult
-        self.messages.append({
-            "type": "buttons" if message.buttons else "text",
-            "chat_id": chat_id,
-            "text": message.text,
-            "buttons": [
-                [{"label": b.label, "action": b.action, "payload": b.payload}
-                 for b in row.buttons]
-                for row in message.buttons
-            ] if message.buttons else None,
-        })
+
+        self.messages.append(
+            {
+                "type": "buttons" if message.buttons else "text",
+                "chat_id": chat_id,
+                "text": message.text,
+                "buttons": [
+                    [
+                        {"label": b.label, "action": b.action, "payload": b.payload}
+                        for b in row.buttons
+                    ]
+                    for row in message.buttons
+                ]
+                if message.buttons
+                else None,
+            }
+        )
         return SendResult(success=True, message_id=str(len(self.messages)))
 
     def edit_message(self, chat_id, message_id, message):
         from social_hook.messaging.base import SendResult
+
         self.messages.append({"type": "edit", "chat_id": chat_id, "text": message.text})
         return SendResult(success=True, message_id=message_id)
 
@@ -399,14 +448,20 @@ class CaptureAdapter:
 
     def send_media(self, chat_id, file_path, caption="", parse_mode="markdown"):
         from social_hook.messaging.base import SendResult
-        self.messages.append({
-            "type": "media", "chat_id": chat_id,
-            "file_path": file_path, "caption": caption,
-        })
+
+        self.messages.append(
+            {
+                "type": "media",
+                "chat_id": chat_id,
+                "file_path": file_path,
+                "caption": caption,
+            }
+        )
         return SendResult(success=True, message_id=str(len(self.messages)))
 
     def get_capabilities(self):
         from social_hook.messaging.base import PlatformCapabilities
+
         return PlatformCapabilities(
             max_message_length=100000,
             supports_buttons=True,
@@ -420,13 +475,14 @@ class CaptureAdapter:
     def last_message_contains(self, text: str) -> bool:
         return any(text.lower() in m.get("text", "").lower() for m in self.messages)
 
-    def last_message(self) -> Optional[dict]:
+    def last_message(self) -> dict | None:
         return self.messages[-1] if self.messages else None
 
 
 # ---------------------------------------------------------------------------
 # Test Runner
 # ---------------------------------------------------------------------------
+
 
 class E2ERunner:
     """Runs E2E scenarios and collects results."""
@@ -437,11 +493,26 @@ class E2ERunner:
         self.review_items: list[dict] = []  # For human review report
         self.total_cost = 0.0
         self.start_time = 0.0
+        self._harness = None
+        self._only_scenario: str | None = None  # e.g. "C13" to run only that scenario
 
-    def run_scenario(self, scenario_id: str, name: str, fn, *args,
-                     llm_call: bool = False, **kwargs):
+    def run_scenario(
+        self,
+        scenario_id: str,
+        name: str,
+        fn,
+        *args,
+        llm_call: bool = False,
+        isolate: bool = False,
+        **kwargs,
+    ):
         """Run a single scenario, catching exceptions."""
+        if self._only_scenario and scenario_id.upper() != self._only_scenario.upper():
+            return
+        if isolate and self._harness:
+            self._harness.clean_scenario_state()
         print(f"\n  [{scenario_id}] {name}")
+        passed = True
         try:
             detail = fn(*args, **kwargs)
             if detail is None:
@@ -454,16 +525,16 @@ class E2ERunner:
             print(f"       FAIL  {detail}")
             if self.verbose:
                 traceback.print_exc()
+            passed = False
         except Exception as e:
             detail = f"{type(e).__name__}: {e}"
             self.results.append((scenario_id, name, False, detail))
             print(f"       FAIL  {detail}")
             if self.verbose:
                 traceback.print_exc()
-        if llm_call:
-            import time
-            print("       (waiting 65s for rate limit cooldown)")
-            time.sleep(65)
+            passed = False
+        if llm_call and passed:
+            rate_limit_cooldown()
 
     def add_review_item(self, scenario_id: str, **kwargs):
         """Add an item for human review."""
@@ -505,22 +576,35 @@ class E2ERunner:
             if "decision" in item:
                 print(f"       Decision: {item['decision']}")
             if "episode_type" in item:
-                print(f"       Episode: {item['episode_type']} | Category: {item.get('post_category', 'N/A')}")
+                print(
+                    f"       Episode: {item['episode_type']} | Category: {item.get('post_category', 'N/A')}"
+                )
             if "reasoning" in item:
-                print(f'       Reasoning: "{item["reasoning"][:100]}"')
+                print("       Reasoning:")
+                for line in item["reasoning"].split("\n"):
+                    print(f"         {line}")
             if "draft_content" in item:
                 content = item["draft_content"]
                 print("       Draft:")
                 print("       " + "-" * 40)
-                for line in content.split("\n")[:10]:
+                for line in content.split("\n"):
                     print(f"       {line}")
-                if content.count("\n") > 10:
-                    print("       [...]")
                 print("       " + "-" * 40)
+            if "decisions" in item:
+                for di, dec in enumerate(item["decisions"]):
+                    print(
+                        f"       Decision {di + 1}: {dec.get('decision', '?')} "
+                        f"(category={dec.get('post_category', 'N/A')}, "
+                        f"episode={dec.get('episode_type', 'N/A')})"
+                    )
+                    if dec.get("reasoning"):
+                        print("         Reasoning:")
+                        for line in dec["reasoning"].split("\n"):
+                            print(f"           {line}")
             if "response" in item:
                 resp = item["response"]
                 if len(resp) > 200:
-                    print(f"       Response:")
+                    print("       Response:")
                     for line in resp.split("\n"):
                         print(f"         {line}")
                 else:
@@ -541,9 +625,11 @@ class E2ERunner:
 # Section A: Project Onboarding
 # ---------------------------------------------------------------------------
 
+
 def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
     """A1-A10: Project onboarding scenarios."""
     from typer.testing import CliRunner
+
     from social_hook.cli import app
 
     cli = CliRunner()
@@ -552,7 +638,11 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
     def a1():
         result = cli.invoke(app, ["project", "register", str(harness.repo_path)])
         assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
-        assert "Registered project" in result.output or "proj_" in result.output.lower() or "project_" in result.output.lower()
+        assert (
+            "Registered project" in result.output
+            or "proj_" in result.output.lower()
+            or "project_" in result.output.lower()
+        )
         # Extract project ID from output
         for line in result.output.splitlines():
             if "ID:" in line:
@@ -565,13 +655,16 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 
     # A2: Verify DB state after register
     def a2():
-        from social_hook.db import get_project, get_lifecycle, get_narrative_debt
+        from social_hook.db import get_lifecycle, get_narrative_debt, get_project
+
         project = get_project(harness.conn, harness.project_id)
         assert project is not None, "Project not found in DB"
         assert project.name == "social-media-auto-hook"
         assert Path(project.repo_path).resolve() == Path(harness.repo_path).resolve()
         assert project.paused is False, f"paused={project.paused}"
-        assert project.audience_introduced is False, f"audience_introduced={project.audience_introduced}"
+        assert project.audience_introduced is False, (
+            f"audience_introduced={project.audience_introduced}"
+        )
 
         lifecycle = get_lifecycle(harness.conn, harness.project_id)
         assert lifecycle is not None, "Lifecycle not found"
@@ -619,7 +712,8 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
         second_clone = harness.base / "repos" / "second-clone"
         subprocess.run(
             ["git", "clone", "--quiet", str(project_root), str(second_clone)],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
         result = cli.invoke(app, ["project", "register", str(second_clone)])
         assert result.exit_code == 1, f"Expected exit 1, got {result.exit_code}"
@@ -630,11 +724,12 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 
     # A7: Project introduction — first trigger with audience_introduced=False
     def a7():
-        from social_hook.trigger import run_trigger
         from social_hook.db import get_recent_decisions
+        from social_hook.trigger import run_trigger
 
-        exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["significant"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -642,13 +737,13 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
         d = decisions[0]
 
         # Structural check: decision is valid
-        valid_decisions = {"post_worthy", "not_post_worthy", "consolidate", "deferred"}
+        valid_decisions = {"draft", "hold", "skip"}
         assert d.decision in valid_decisions, f"Invalid decision: {d.decision}"
 
         detail = f"Decision: {d.decision}"
-        if d.decision == "post_worthy":
-            assert d.episode_type is not None, "episode_type is None for post_worthy"
-            assert d.post_category is not None, "post_category is None for post_worthy"
+        if d.decision == "draft":
+            assert d.episode_type is not None, "episode_type is None for draft"
+            assert d.post_category is not None, "post_category is None for draft"
             detail += f" ({d.episode_type})"
 
         # Add to review report
@@ -664,6 +759,7 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 
         # Check if draft was created
         from social_hook.db import get_pending_drafts
+
         drafts = get_pending_drafts(harness.conn, harness.project_id)
         if drafts:
             runner.review_items[-1]["draft_content"] = drafts[0].content
@@ -671,7 +767,9 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 
         return detail
 
-    runner.run_scenario("A7", "Project introduction (audience_introduced=False)", a7, llm_call=True)
+    runner.run_scenario(
+        "A7", "Project introduction (audience_introduced=False)", a7, llm_call=True, isolate=True
+    )
 
     # A8: Verify audience_introduced flag operations
     def a8():
@@ -720,7 +818,6 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 
         from social_hook.config.project import load_project_config
         from social_hook.llm.prompts import assemble_evaluator_context
-        from social_hook.config.project import ContextConfig
 
         # Load project config from repo
         project_config = load_project_config(str(harness.repo_path))
@@ -731,13 +828,17 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
             Only injects conn as the first arg — callers provide
             all other args (including project_id) themselves.
             """
+
             def __init__(self, conn, project_id):
                 self._conn = conn
                 self._pid = project_id
+
             def __getattr__(self, name):
                 from social_hook.db import operations as ops
+
                 fn = getattr(ops, name)
                 import inspect
+
                 sig = inspect.signature(fn)
                 params = list(sig.parameters.keys())
                 if params and params[0] == "conn":
@@ -760,10 +861,11 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
 # Section B: Pipeline Scenarios
 # ---------------------------------------------------------------------------
 
+
 def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
     """B1-B11: Pipeline scenarios."""
+    from social_hook.db import get_pending_drafts, get_recent_decisions
     from social_hook.trigger import run_trigger
-    from social_hook.db import get_recent_decisions, get_pending_drafts
 
     # Ensure we have a project (may already exist from Section A)
     if not harness.project_id:
@@ -771,28 +873,36 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
 
     # B1: Significant commit → evaluate → draft → schedule
     def b1():
-        exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["significant"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
         assert len(decisions) > 0, "No decisions created"
         d = decisions[0]
 
-        valid_decisions = {"post_worthy", "not_post_worthy", "consolidate", "deferred"}
+        valid_decisions = {"draft", "hold", "skip"}
         assert d.decision in valid_decisions, f"Invalid decision: {d.decision}"
 
         detail = f"Commit: {COMMITS['significant']} Decision: {d.decision}"
 
-        if d.decision == "post_worthy":
-            valid_episodes = {"decision", "before_after", "demo_proof", "milestone",
-                            "postmortem", "launch", "synthesis"}
+        if d.decision == "draft":
+            valid_episodes = {
+                "decision",
+                "before_after",
+                "demo_proof",
+                "milestone",
+                "postmortem",
+                "launch",
+                "synthesis",
+            }
             valid_categories = {"arc", "opportunistic", "experiment"}
             assert d.episode_type in valid_episodes, f"Invalid episode_type: {d.episode_type}"
             assert d.post_category in valid_categories, f"Invalid post_category: {d.post_category}"
 
             drafts = get_pending_drafts(harness.conn, harness.project_id)
-            assert len(drafts) > 0, "No draft created for post_worthy decision"
+            assert len(drafts) > 0, "No draft created for draft decision"
             assert drafts[0].content, "Draft content is empty"
             detail += f" ({d.episode_type}), Draft: {len(drafts[0].content)} chars"
 
@@ -809,12 +919,15 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
 
         return detail
 
-    runner.run_scenario("B1", "Significant commit → evaluate → draft", b1, llm_call=True)
+    runner.run_scenario(
+        "B1", "Significant commit → evaluate → draft", b1, llm_call=True, isolate=True
+    )
 
     # B2: Docs-only commit → not post worthy
     def b2():
-        exit_code = run_trigger(COMMITS["docs_only"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["docs_only"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -835,7 +948,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         )
         return f"Decision: {d.decision}"
 
-    runner.run_scenario("B2", "Docs-only commit → likely not_post_worthy", b2, llm_call=True)
+    runner.run_scenario("B2", "Docs-only commit → likely skip", b2, llm_call=True, isolate=True)
 
     # B3: Unregistered repo → silent exit
     def b3():
@@ -849,12 +962,18 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         subprocess.run(
             ["git", "-C", str(unregistered), "commit", "-m", "init", "--allow-empty"],
             capture_output=True,
-            env={**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@test.com",
-                 "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@test.com"},
+            env={
+                **os.environ,
+                "GIT_AUTHOR_NAME": "test",
+                "GIT_AUTHOR_EMAIL": "test@test.com",
+                "GIT_COMMITTER_NAME": "test",
+                "GIT_COMMITTER_EMAIL": "test@test.com",
+            },
         )
         log = subprocess.run(
             ["git", "-C", str(unregistered), "log", "--oneline", "-1"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         commit_hash = log.stdout.strip().split()[0] if log.stdout.strip() else "HEAD"
 
@@ -892,8 +1011,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         env_content = env_path.read_text()
         # Remove ANTHROPIC_API_KEY
         modified = "\n".join(
-            line for line in env_content.splitlines()
-            if not line.startswith("ANTHROPIC_API_KEY")
+            line for line in env_content.splitlines() if not line.startswith("ANTHROPIC_API_KEY")
         )
         env_path.write_text(modified)
 
@@ -913,7 +1031,9 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
 
         before = len(get_all_recent_decisions(harness.conn))
         exit_code = run_trigger(
-            COMMITS["large_feature"], str(harness.repo_path), dry_run=True,
+            COMMITS["large_feature"],
+            str(harness.repo_path),
+            dry_run=True,
             verbose=runner.verbose,
         )
         assert exit_code == 0, f"run_trigger dry-run returned {exit_code}"
@@ -928,45 +1048,48 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
     def b6():
         from social_hook.db.operations import get_draft_tweets
 
-        exit_code = run_trigger(COMMITS["large_feature"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["large_feature"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         drafts = get_pending_drafts(harness.conn, harness.project_id)
-        thread_found = False
         for draft in drafts:
             tweets = get_draft_tweets(harness.conn, draft.id)
             if tweets:
-                thread_found = True
                 return f"Thread found: {len(tweets)} tweets"
 
         # Thread not guaranteed — LLM may create a short post
         return "No thread (LLM chose single post)"
 
-    runner.run_scenario("B6", "Free tier + long content → thread check", b6, llm_call=True)
+    runner.run_scenario(
+        "B6", "Free tier + long content → thread check", b6, llm_call=True, isolate=True
+    )
 
     # B8: Consolidation context visible
     def b8():
         # Seed a pending draft first
         harness.seed_draft(harness.project_id, status="draft")
 
-        exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["major_feature"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
         assert len(decisions) > 0, "No decisions"
         d = decisions[0]
-        valid = {"post_worthy", "not_post_worthy", "consolidate", "deferred"}
+        valid = {"draft", "hold", "skip"}
         assert d.decision in valid, f"Invalid decision: {d.decision}"
-        return f"Decision: {d.decision} (consolidate is valid outcome)"
+        return f"Decision: {d.decision} (hold is valid outcome)"
 
-    runner.run_scenario("B8", "Consolidation context visible", b8, llm_call=True)
+    runner.run_scenario("B8", "Consolidation context visible", b8, llm_call=True, isolate=True)
 
     # B9: Deferred decision check
     def b9():
-        exit_code = run_trigger(COMMITS["docs_only_2"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["docs_only_2"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -976,19 +1099,20 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
                 d = dec
                 break
         assert d is not None, f"No decision for {COMMITS['docs_only_2']}"
-        valid = {"post_worthy", "not_post_worthy", "consolidate", "deferred"}
+        valid = {"draft", "hold", "skip"}
         assert d.decision in valid
-        return f"Decision: {d.decision} (deferred is valid)"
+        return f"Decision: {d.decision} (hold is valid)"
 
-    runner.run_scenario("B9", "Deferred/not_post_worthy for minor commit", b9, llm_call=True)
+    runner.run_scenario("B9", "Hold/skip for minor commit", b9, llm_call=True, isolate=True)
 
     # B10: Pipeline generates media when enabled
     def b10():
         # Enable image generation in config
         harness.update_config({"media_generation": {"enabled": True}})
 
-        exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["significant"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         drafts = get_pending_drafts(harness.conn, harness.project_id)
@@ -1001,7 +1125,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         runner.add_review_item(
             "B10",
             title="Pipeline with media generation enabled",
-            decision="post_worthy",
+            decision="draft",
             draft_content=draft.content,
             review_question="Does the generated media match the content?",
             media_type=draft.media_type,
@@ -1012,23 +1136,30 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         harness.update_config({"media_generation": {"enabled": False}})
         return detail
 
-    runner.run_scenario("B10", "Pipeline generates media when enabled", b10, llm_call=True)
+    runner.run_scenario(
+        "B10", "Pipeline generates media when enabled", b10, llm_call=True, isolate=True
+    )
 
     # B11: Per-tool media disable
     def b11():
         # Enable media generation globally but disable all tools
-        harness.update_config({"media_generation": {
-            "enabled": True,
-            "tools": {
-                "mermaid": False,
-                "nano_banana_pro": False,
-                "playwright": False,
-                "ray_so": False,
-            },
-        }})
+        harness.update_config(
+            {
+                "media_generation": {
+                    "enabled": True,
+                    "tools": {
+                        "mermaid": False,
+                        "nano_banana_pro": False,
+                        "playwright": False,
+                        "ray_so": False,
+                    },
+                }
+            }
+        )
 
-        exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["significant"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         drafts = get_pending_drafts(harness.conn, harness.project_id)
@@ -1036,12 +1167,14 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
 
         # Verify no media files generated (all tools disabled)
         draft = drafts[0]
-        detail = f"Draft: {draft.id}, media_type={draft.media_type}, media_paths={draft.media_paths}"
+        detail = (
+            f"Draft: {draft.id}, media_type={draft.media_type}, media_paths={draft.media_paths}"
+        )
 
         runner.add_review_item(
             "B11",
             title="Per-tool media disable",
-            decision="post_worthy",
+            decision="draft",
             draft_content=draft.content,
             review_question="Were all media tools correctly skipped despite evaluator suggesting one?",
             media_type=draft.media_type,
@@ -1052,12 +1185,13 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         harness.update_config({"media_generation": {"enabled": False}})
         return detail
 
-    runner.run_scenario("B11", "Per-tool media disable", b11, llm_call=True)
+    runner.run_scenario("B11", "Per-tool media disable", b11, llm_call=True, isolate=True)
 
 
 # ---------------------------------------------------------------------------
 # Section C: Narrative Mechanics
 # ---------------------------------------------------------------------------
+
 
 def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
     """C1-C12: Narrative mechanics scenarios."""
@@ -1066,40 +1200,48 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
     if not harness.project_id:
         harness.seed_project()
 
-    # C1: Episode type assigned on post_worthy decision
+    # C1: Episode type assigned on draft decision
     def c1():
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=20)
-        pw = [d for d in decisions if d.decision == "post_worthy"]
+        pw = [d for d in decisions if d.decision == "draft"]
         if not pw:
-            return "SKIP: No post_worthy decisions to check"
+            return "SKIP: No draft decisions to check"
         d = pw[0]
-        valid_episodes = {"decision", "before_after", "demo_proof", "milestone",
-                        "postmortem", "launch", "synthesis"}
+        valid_episodes = {
+            "decision",
+            "before_after",
+            "demo_proof",
+            "milestone",
+            "postmortem",
+            "launch",
+            "synthesis",
+        }
         assert d.episode_type in valid_episodes, f"Invalid episode_type: {d.episode_type}"
         return f"Episode type: {d.episode_type}"
 
-    runner.run_scenario("C1", "Episode type assigned on post_worthy", c1)
+    runner.run_scenario("C1", "Episode type assigned on draft", c1)
 
-    # C2: Post category assigned on post_worthy decision
+    # C2: Post category assigned on draft decision
     def c2():
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=20)
-        pw = [d for d in decisions if d.decision == "post_worthy"]
+        pw = [d for d in decisions if d.decision == "draft"]
         if not pw:
-            return "SKIP: No post_worthy decisions to check"
+            return "SKIP: No draft decisions to check"
         d = pw[0]
         valid_categories = {"arc", "opportunistic", "experiment"}
         assert d.post_category in valid_categories, f"Invalid post_category: {d.post_category}"
         return f"Post category: {d.post_category}"
 
-    runner.run_scenario("C2", "Post category assigned on post_worthy", c2)
+    runner.run_scenario("C2", "Post category assigned on draft", c2)
 
     # C3: Arc created for arc-category post
     def c3():
         arcs = ops.get_active_arcs(harness.conn, harness.project_id)
         # If no arc posts happened, seed one
         if not arcs:
-            from social_hook.models import Arc
             from social_hook.filesystem import generate_id
+            from social_hook.models import Arc
+
             arc = Arc(
                 id=generate_id("arc"),
                 project_id=harness.project_id,
@@ -1119,8 +1261,8 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
 
     # C4: Max 3 active arcs
     def c4():
-        from social_hook.models import Arc
         from social_hook.filesystem import generate_id
+        from social_hook.models import Arc
 
         # Ensure we have 3 active arcs
         current = ops.get_active_arcs(harness.conn, harness.project_id)
@@ -1149,8 +1291,9 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
 
         debt_after = ops.get_narrative_debt(harness.conn, harness.project_id)
         assert debt_after is not None
-        assert debt_after.debt_counter == before_count + 1, \
+        assert debt_after.debt_counter == before_count + 1, (
             f"Expected {before_count + 1}, got {debt_after.debt_counter}"
+        )
         return f"Debt: {before_count} → {debt_after.debt_counter}"
 
     runner.run_scenario("C5", "Narrative debt increments", c5)
@@ -1176,8 +1319,9 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
         # Experiment posts should NOT call increment_narrative_debt
         # This is a contract test — verify the counter doesn't change
         debt_after = ops.get_narrative_debt(harness.conn, harness.project_id)
-        assert debt_after.debt_counter == before_count, \
+        assert debt_after.debt_counter == before_count, (
             f"Debt changed: {before_count} → {debt_after.debt_counter}"
+        )
         return f"Debt unchanged: {before_count}"
 
     runner.run_scenario("C7", "Experiment posts don't affect debt", c7)
@@ -1194,8 +1338,8 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
 
         # Run trigger — evaluator should see high debt
         from social_hook.trigger import run_trigger
-        exit_code = run_trigger(COMMITS["bugfix"], str(harness.repo_path),
-                                verbose=runner.verbose)
+
+        exit_code = run_trigger(COMMITS["bugfix"], str(harness.repo_path), verbose=runner.verbose)
         assert exit_code == 0
 
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=5)
@@ -1211,38 +1355,46 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
             review_question="Did evaluator consider high debt? Lean toward synthesis?",
         )
 
+        from social_hook.db import get_pending_drafts
+
+        drafts = get_pending_drafts(harness.conn, harness.project_id)
+        if drafts:
+            runner.review_items[-1]["draft_content"] = drafts[0].content
+
         # Reset debt for remaining tests
         ops.reset_narrative_debt(harness.conn, harness.project_id)
         return f"Decision: {d.decision} (debt was {debt.debt_counter})"
 
-    runner.run_scenario("C8", "High debt signals synthesis needed", c8)
+    runner.run_scenario("C8", "High debt signals synthesis needed", c8, llm_call=True, isolate=True)
 
     # C9: Lifecycle phase in evaluator context
     def c9():
-        from social_hook.db import update_lifecycle
-        from social_hook.models import Lifecycle
 
         # Seed lifecycle at build phase
         harness.conn.execute(
-            "UPDATE lifecycle SET phase = ?, confidence = ? WHERE project_id = ?",
+            "UPDATE lifecycles SET phase = ?, confidence = ? WHERE project_id = ?",
             ("build", 0.6, harness.project_id),
         )
         harness.conn.commit()
 
         from social_hook.trigger import run_trigger
-        exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose)
+
+        exit_code = run_trigger(
+            COMMITS["major_feature"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0
 
         # Reset to research
         harness.conn.execute(
-            "UPDATE lifecycle SET phase = ?, confidence = ? WHERE project_id = ?",
+            "UPDATE lifecycles SET phase = ?, confidence = ? WHERE project_id = ?",
             ("research", 0.3, harness.project_id),
         )
         harness.conn.commit()
         return "Lifecycle phase visible in context"
 
-    runner.run_scenario("C9", "Lifecycle phase in evaluator context", c9)
+    runner.run_scenario(
+        "C9", "Lifecycle phase in evaluator context", c9, llm_call=True, isolate=True
+    )
 
     # C10: Lifecycle phase detection
     def c10():
@@ -1274,8 +1426,8 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
 
     # C11: Strategy trigger: phase transition
     def c11():
-        from social_hook.narrative import check_strategy_triggers, record_strategy_moment
         from social_hook.models import Lifecycle
+        from social_hook.narrative import check_strategy_triggers, record_strategy_moment
 
         # Seed stored lifecycle at research
         harness.conn.execute(
@@ -1290,7 +1442,9 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
             confidence=0.8,
         )
         triggers = check_strategy_triggers(
-            harness.conn, harness.project_id, new_lifecycle=new_lc,
+            harness.conn,
+            harness.project_id,
+            new_lifecycle=new_lc,
         )
         assert "phase_transition" in triggers, f"Expected phase_transition, got {triggers}"
 
@@ -1317,10 +1471,89 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
 
     runner.run_scenario("C12", "Strategy trigger: time-based", c12)
 
+    # C13: Arc creation probe — 3 diverse commits to see if evaluator creates arcs
+    def c13():
+        from social_hook.trigger import run_trigger
+
+        arc_commits = [
+            COMMITS["arc_llm_roles"],
+            COMMITS["arc_journey"],
+            COMMITS["arc_multi_provider"],
+        ]
+        created_arcs = []
+        all_decisions = []
+        for i, commit in enumerate(arc_commits):
+            arcs_before = ops.get_active_arcs(harness.conn, harness.project_id)
+            exit_code = run_trigger(commit, str(harness.repo_path), verbose=runner.verbose)
+            assert exit_code == 0, f"Trigger failed for {commit}"
+            arcs_after = ops.get_active_arcs(harness.conn, harness.project_id)
+            new_arcs = [a for a in arcs_after if a not in arcs_before]
+            created_arcs.extend(new_arcs)
+
+            # Capture decision for review regardless of outcome
+            recent = ops.get_recent_decisions(harness.conn, harness.project_id, limit=1)
+            if recent:
+                d = recent[0]
+                all_decisions.append(
+                    {
+                        "commit": commit,
+                        "decision": d.decision,
+                        "post_category": getattr(d, "post_category", None),
+                        "episode_type": getattr(d, "episode_type", None),
+                        "reasoning": d.reasoning or "",
+                    }
+                )
+
+            if i < len(arc_commits) - 1:
+                rate_limit_cooldown()
+
+        runner.add_review_item(
+            "C13",
+            title="Arc creation probe",
+            arc_count=len(created_arcs),
+            arc_themes=[a.theme for a in created_arcs],
+            decisions=all_decisions,
+            review_question="Did the evaluator autonomously create arcs for diverse commits?",
+        )
+        return f"Arcs created: {len(created_arcs)}, decisions: {len(all_decisions)}"
+
+    runner.run_scenario("C13", "Arc creation probe (3 triggers)", c13, llm_call=True, isolate=True)
+
+    # C14: Arc continuation probe — reuses C13 state, triggers a 4th commit
+    def c14():
+        from social_hook.trigger import run_trigger
+
+        arcs_before = ops.get_active_arcs(harness.conn, harness.project_id)
+        if not arcs_before:
+            return "SKIP — C13 created no arcs"
+
+        exit_code = run_trigger(
+            COMMITS["arc_media_pipeline"], str(harness.repo_path), verbose=runner.verbose
+        )
+        assert exit_code == 0
+
+        arcs_after = ops.get_active_arcs(harness.conn, harness.project_id)
+        decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=1)
+        d = decisions[0] if decisions else None
+
+        runner.add_review_item(
+            "C14",
+            title="Arc continuation probe",
+            arcs_before=len(arcs_before),
+            arcs_after=len(arcs_after),
+            decision=d.decision if d else "none",
+            arc_id=d.arc_id if d and hasattr(d, "arc_id") else "none",
+            review_question="Did evaluator continue an existing arc or create a new one?",
+        )
+        return f"Arcs: {len(arcs_before)} → {len(arcs_after)}"
+
+    runner.run_scenario("C14", "Arc continuation probe", c14, llm_call=True)
+
 
 # ---------------------------------------------------------------------------
 # Section D: Draft Lifecycle
 # ---------------------------------------------------------------------------
+
 
 def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """D1-D7: Draft lifecycle scenarios."""
@@ -1336,6 +1569,7 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: Capt
     def d1():
         draft = harness.seed_draft(harness.project_id, status="draft")
         from social_hook.bot.commands import cmd_approve
+
         adapter.clear()
         cmd_approve(adapter, chat_id, draft.id, config)
 
@@ -1349,13 +1583,15 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: Capt
     def d2():
         draft = harness.seed_draft(harness.project_id, status="draft")
         from social_hook.bot.commands import cmd_reject
+
         adapter.clear()
         cmd_reject(adapter, chat_id, f"{draft.id} too formal", config)
 
         updated = ops.get_draft(harness.conn, draft.id)
         assert updated.status == "rejected", f"Status: {updated.status}"
-        assert updated.last_error and "Rejected:" in updated.last_error, \
+        assert updated.last_error and "Rejected:" in updated.last_error, (
             f"last_error: {updated.last_error}"
+        )
         return f"Rejected with reason: {updated.last_error}"
 
     runner.run_scenario("D2", "Reject draft with reason", d2)
@@ -1364,6 +1600,7 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: Capt
     def d3():
         draft = harness.seed_draft(harness.project_id, status="draft")
         from social_hook.bot.commands import cmd_schedule
+
         adapter.clear()
         cmd_schedule(adapter, chat_id, draft.id, config)
 
@@ -1378,6 +1615,7 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: Capt
     def d4():
         draft = harness.seed_draft(harness.project_id, status="draft")
         from social_hook.bot.commands import cmd_schedule
+
         adapter.clear()
         cmd_schedule(adapter, chat_id, f"{draft.id} 2026-03-01 14:00", config)
 
@@ -1391,10 +1629,12 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: Capt
     # D5: Cancel scheduled draft
     def d5():
         draft = harness.seed_draft(
-            harness.project_id, status="scheduled",
+            harness.project_id,
+            status="scheduled",
             scheduled_time=datetime.now(timezone.utc).isoformat(),
         )
         from social_hook.bot.commands import cmd_cancel
+
         adapter.clear()
         cmd_cancel(adapter, chat_id, draft.id, config)
 
@@ -1407,11 +1647,13 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: Capt
     # D6: Retry failed draft (known bug: last_error not cleared)
     def d6():
         draft = harness.seed_draft(
-            harness.project_id, status="failed",
+            harness.project_id,
+            status="failed",
             last_error="Posting failed: API timeout",
             retry_count=1,
         )
         from social_hook.bot.commands import cmd_retry
+
         adapter.clear()
         cmd_retry(adapter, chat_id, draft.id, config)
 
@@ -1438,7 +1680,7 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: Capt
         updated = ops.get_draft(harness.conn, draft1.id)
         assert updated.status == "superseded", f"Status: {updated.status}"
         assert updated.superseded_by == draft2.id
-        return f"Draft1 superseded by draft2"
+        return "Draft1 superseded by draft2"
 
     runner.run_scenario("D7", "Draft superseded", d7)
 
@@ -1446,6 +1688,7 @@ def test_D_draft_lifecycle(harness: E2EHarness, runner: E2ERunner, adapter: Capt
 # ---------------------------------------------------------------------------
 # Section E: Scheduler
 # ---------------------------------------------------------------------------
+
 
 def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
     """E1-E5: Scheduler scenarios."""
@@ -1460,7 +1703,8 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
 
         past_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         draft = harness.seed_draft(
-            harness.project_id, status="scheduled",
+            harness.project_id,
+            status="scheduled",
             scheduled_time=past_time,
         )
 
@@ -1485,7 +1729,8 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
 
         past_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         draft = harness.seed_draft(
-            harness.project_id, status="scheduled",
+            harness.project_id,
+            status="scheduled",
             scheduled_time=past_time,
         )
 
@@ -1534,10 +1779,10 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
 
     # E5: max_per_week deferral (structural, no LLM call)
     def e5():
-        from social_hook.scheduling import calculate_optimal_time
-        from social_hook.db import insert_post, insert_draft, insert_decision
+        from social_hook.db import insert_decision, insert_draft, insert_post
         from social_hook.filesystem import generate_id
         from social_hook.models import Decision, Draft, Post
+        from social_hook.scheduling import calculate_optimal_time
 
         # Insert fake posts to hit the weekly limit
         for i in range(10):
@@ -1545,7 +1790,7 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
                 id=generate_id("decision"),
                 project_id=harness.project_id,
                 commit_hash=f"e5hash{i}",
-                decision="post_worthy",
+                decision="draft",
                 reasoning="test",
             )
             insert_decision(harness.conn, d)
@@ -1567,11 +1812,14 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
             insert_post(harness.conn, post)
 
         result = calculate_optimal_time(
-            harness.conn, harness.project_id,
+            harness.conn,
+            harness.project_id,
             max_per_week=10,
         )
         assert result.deferred is True, f"Expected deferred=True, got {result.deferred}"
-        assert "Weekly limit" in result.day_reason, f"Expected 'Weekly limit' in day_reason, got: {result.day_reason}"
+        assert "Weekly limit" in result.day_reason, (
+            f"Expected 'Weekly limit' in day_reason, got: {result.day_reason}"
+        )
         return f"Deferred: {result.day_reason}"
 
     runner.run_scenario("E5", "max_per_week deferral", e5)
@@ -1580,6 +1828,7 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
 # ---------------------------------------------------------------------------
 # Section F: Bot Commands
 # ---------------------------------------------------------------------------
+
 
 def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """F1-F13: Bot command scenarios."""
@@ -1605,8 +1854,7 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: Capture
     def f1():
         adapter.clear()
         handle_command(make_message("/help"), adapter, config)
-        assert adapter.last_message_contains("command"), \
-            f"Expected 'command' in response"
+        assert adapter.last_message_contains("command"), "Expected 'command' in response"
         return "Help sent"
 
     runner.run_scenario("F1", "Help command", f1)
@@ -1684,8 +1932,9 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: Capture
         adapter.clear()
         handle_command(make_message("/foo"), adapter, config)
         assert adapter.messages, "No message sent"
-        assert adapter.last_message_contains("unknown") or \
-               adapter.last_message_contains("not recognized")
+        assert adapter.last_message_contains("unknown") or adapter.last_message_contains(
+            "not recognized"
+        )
         return "Unknown command handled"
 
     runner.run_scenario("F9", "Unknown command", f9)
@@ -1693,6 +1942,7 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: Capture
     # F10: Pause project
     def f10():
         from social_hook.db import operations as ops
+
         adapter.clear()
         handle_command(make_message(f"/pause {harness.project_id}"), adapter, config)
 
@@ -1732,7 +1982,8 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: Capture
     # F12: Scheduled list
     def f12():
         harness.seed_draft(
-            harness.project_id, status="scheduled",
+            harness.project_id,
+            status="scheduled",
             scheduled_time=datetime.now(timezone.utc).isoformat(),
         )
         adapter.clear()
@@ -1753,7 +2004,7 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: Capture
             id=generate_id("decision"),
             project_id=harness.project_id,
             commit_hash=COMMITS["significant"],
-            decision="post_worthy",
+            decision="draft",
             reasoning="Great feature launch with demo potential",
             episode_type="demo_proof",
             post_category="arc",
@@ -1777,10 +2028,12 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: Capture
 
         assert adapter.messages, "No message sent"
         msg_text = adapter.last_message()["text"]
-        assert "Episode:" in msg_text or "episode" in msg_text.lower(), \
-            f"Expected episode_type in review output"
-        assert "Angle:" in msg_text or "angle" in msg_text.lower(), \
-            f"Expected angle in review output"
+        assert "Episode:" in msg_text or "episode" in msg_text.lower(), (
+            "Expected episode_type in review output"
+        )
+        assert "Angle:" in msg_text or "angle" in msg_text.lower(), (
+            "Expected angle in review output"
+        )
         return "Review shows episode_type and angle"
 
     runner.run_scenario("F13", "Review shows evaluator context", f13)
@@ -1790,11 +2043,12 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: Capture
 # Section G: Bot Buttons
 # ---------------------------------------------------------------------------
 
+
 def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """G1-G14: Bot button scenarios."""
-    from social_hook.db import operations as ops
     from social_hook.bot.buttons import handle_callback
-    from social_hook.messaging.base import InboundMessage, CallbackEvent
+    from social_hook.db import operations as ops
+    from social_hook.messaging.base import CallbackEvent, InboundMessage
 
     if not harness.project_id:
         harness.seed_project()
@@ -1878,7 +2132,8 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
     # G7: Cancel
     def g7():
         draft = harness.seed_draft(
-            harness.project_id, status="scheduled",
+            harness.project_id,
+            status="scheduled",
             scheduled_time=datetime.now(timezone.utc).isoformat(),
         )
         adapter.clear()
@@ -1901,11 +2156,11 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
 
     # G9: Edit text -> reply saves content
     def g9():
-        from social_hook.bot.buttons import _pending_edits, clear_pending_edit
         from social_hook.bot.commands import handle_message
 
-        draft = harness.seed_draft(harness.project_id, status="draft",
-                                    content="Original content for G9 test")
+        draft = harness.seed_draft(
+            harness.project_id, status="draft", content="Original content for G9 test"
+        )
         adapter.clear()
 
         # Step 1: Tap edit_text button to register pending edit
@@ -1925,14 +2180,14 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
 
         # Verify: draft content updated in DB
         updated = ops.get_draft(harness.conn, draft.id)
-        assert updated.content == new_content, \
-            f"Expected '{new_content}', got '{updated.content}'"
+        assert updated.content == new_content, f"Expected '{new_content}', got '{updated.content}'"
 
         # Verify: DraftChange row exists
         changes = ops.get_draft_changes(harness.conn, draft.id)
         assert len(changes) >= 1, f"Expected DraftChange row, got {len(changes)}"
-        assert changes[-1].changed_by == "human", \
+        assert changes[-1].changed_by == "human", (
             f"Expected changed_by='human', got '{changes[-1].changed_by}'"
+        )
         return "Edit saved, DraftChange recorded"
 
     runner.run_scenario("G9", "Edit text -> reply saves content", g9)
@@ -1941,11 +2196,13 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
     def g10():
         import time as _time
         from unittest.mock import patch as _patch
-        from social_hook.bot.buttons import _pending_edits, _EDIT_TTL_SECONDS
+
+        from social_hook.bot.buttons import _EDIT_TTL_SECONDS
         from social_hook.bot.commands import handle_message
 
-        draft = harness.seed_draft(harness.project_id, status="draft",
-                                    content="Original content for G10 test")
+        draft = harness.seed_draft(
+            harness.project_id, status="draft", content="Original content for G10 test"
+        )
         original_content = "Original content for G10 test"
         adapter.clear()
 
@@ -1971,20 +2228,19 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
 
         # Verify: draft content unchanged
         updated = ops.get_draft(harness.conn, draft.id)
-        assert updated.content == original_content, \
+        assert updated.content == original_content, (
             f"Content should be unchanged, got '{updated.content}'"
+        )
         return "Expired edit TTL correctly prevented save"
 
     runner.run_scenario("G10", "Edit text -> expired TTL", g10)
 
     # G10a: Edit overwrite warning
     def g10a():
-        from social_hook.bot.buttons import _pending_edits, get_pending_edit
+        from social_hook.bot.buttons import get_pending_edit
 
-        draft_a = harness.seed_draft(harness.project_id, status="draft",
-                                      content="Draft A content")
-        draft_b = harness.seed_draft(harness.project_id, status="draft",
-                                      content="Draft B content")
+        draft_a = harness.seed_draft(harness.project_id, status="draft", content="Draft A content")
+        draft_b = harness.seed_draft(harness.project_id, status="draft", content="Draft B content")
         adapter.clear()
 
         # Register edit for draft A
@@ -1996,13 +2252,12 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
         handle_callback(make_callback(f"edit_text:{draft_b.id}"), adapter, config)
 
         # Verify warning was sent
-        assert adapter.last_message_contains("switching") or \
-               adapter.last_message_contains("cancelled"), \
-            "Expected overwrite warning"
+        assert adapter.last_message_contains("switching") or adapter.last_message_contains(
+            "cancelled"
+        ), "Expected overwrite warning"
 
         # Verify pending edit is now B
-        assert get_pending_edit(chat_id) == draft_b.id, \
-            f"Expected pending edit for draft B"
+        assert get_pending_edit(chat_id) == draft_b.id, "Expected pending edit for draft B"
         return "Overwrite warning shown, edit switched to B"
 
     runner.run_scenario("G10a", "Edit overwrite warning", g10a)
@@ -2010,22 +2265,22 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
     # G11: Adapter bridge sends via adapter when set
     def g11():
         from unittest.mock import MagicMock as _MagicMock
+
         from social_hook.messaging.base import SendResult
 
         draft = harness.seed_draft(harness.project_id, status="draft")
 
         mock_adapter = _MagicMock()
-        mock_adapter.send_message.return_value = SendResult(
-            success=True, message_id="mock_msg_1"
-        )
+        mock_adapter.send_message.return_value = SendResult(success=True, message_id="mock_msg_1")
         mock_adapter.answer_callback.return_value = True
 
         adapter.clear()
         handle_callback(make_callback(f"approve:{draft.id}"), mock_adapter, config)
 
         # Verify adapter was used (not direct HTTP)
-        assert mock_adapter.send_message.called or mock_adapter.answer_callback.called, \
+        assert mock_adapter.send_message.called or mock_adapter.answer_callback.called, (
             "Expected adapter methods to be called"
+        )
         return "Adapter bridge used for button handler"
 
     runner.run_scenario("G11", "Adapter bridge sends via adapter", g11)
@@ -2033,17 +2288,18 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
     # G12: Edit media shows current file
     def g12():
         from unittest.mock import MagicMock as _MagicMock
+
         from social_hook.messaging.base import SendResult
 
         draft = harness.seed_draft(
-            harness.project_id, status="draft",
-            media_paths=["/tmp/test.png"], media_type="mermaid",
+            harness.project_id,
+            status="draft",
+            media_paths=["/tmp/test.png"],
+            media_type="mermaid",
         )
 
         mock_adapter = _MagicMock()
-        mock_adapter.send_message.return_value = SendResult(
-            success=True, message_id="mock_msg_1"
-        )
+        mock_adapter.send_message.return_value = SendResult(success=True, message_id="mock_msg_1")
         mock_adapter.answer_callback.return_value = True
         caps = _MagicMock()
         caps.supports_media = True
@@ -2056,8 +2312,9 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
         # Verify send_media was called with the file path
         assert mock_adapter.send_media.called, "Expected send_media to be called"
         call_args = mock_adapter.send_media.call_args
-        assert "/tmp/test.png" in str(call_args), \
+        assert "/tmp/test.png" in str(call_args), (
             f"Expected /tmp/test.png in send_media args: {call_args}"
+        )
 
         # Verify buttons include Regenerate and Remove media
         assert mock_adapter.send_message.called, "No button message sent"
@@ -2067,11 +2324,14 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
 
     # G13: Media regeneration
     def g13():
-        from unittest.mock import MagicMock as _MagicMock, patch as _patch
+        from unittest.mock import MagicMock as _MagicMock
+        from unittest.mock import patch as _patch
+
         from social_hook.adapters.models import MediaResult
 
         draft = harness.seed_draft(
-            harness.project_id, status="draft",
+            harness.project_id,
+            status="draft",
             media_paths=["/tmp/old.png"],
             media_type="mermaid",
             media_spec={"diagram": "graph TD; A-->B"},
@@ -2093,8 +2353,9 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
 
         # Verify draft media_paths updated
         updated = ops.get_draft(harness.conn, draft.id)
-        assert updated.media_paths == ["/tmp/regenerated.png"], \
+        assert updated.media_paths == ["/tmp/regenerated.png"], (
             f"Expected ['/tmp/regenerated.png'], got {updated.media_paths}"
+        )
         return "Media regenerated, draft updated"
 
     runner.run_scenario("G13", "Media regeneration", g13)
@@ -2102,21 +2363,22 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
     # G14: Media removal
     def g14():
         draft = harness.seed_draft(
-            harness.project_id, status="draft",
+            harness.project_id,
+            status="draft",
             media_paths=["/tmp/to_remove.png"],
         )
         adapter.clear()
         handle_callback(make_callback(f"media_remove:{draft.id}"), adapter, config)
 
         updated = ops.get_draft(harness.conn, draft.id)
-        assert updated.media_paths == [], \
-            f"Expected empty media_paths, got {updated.media_paths}"
+        assert updated.media_paths == [], f"Expected empty media_paths, got {updated.media_paths}"
 
         # Verify DraftChange audit trail exists
         changes = ops.get_draft_changes(harness.conn, draft.id)
         media_changes = [c for c in changes if c.field == "media_paths"]
-        assert len(media_changes) >= 1, \
+        assert len(media_changes) >= 1, (
             f"Expected DraftChange audit entry for media_paths, got {len(media_changes)}"
+        )
 
         return "Media removed, paths cleared, audit trail verified"
 
@@ -2126,6 +2388,7 @@ def test_G_bot_buttons(harness: E2EHarness, runner: E2ERunner, adapter: CaptureA
 # ---------------------------------------------------------------------------
 # Section H: Bot Free-Text (Gatekeeper)
 # ---------------------------------------------------------------------------
+
 
 def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """H1-H5: Bot free-text scenarios."""
@@ -2184,17 +2447,19 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAd
 
     # H3: Substitute via gatekeeper
     def h3():
-        from social_hook.db import operations as ops
         from social_hook.bot.commands import set_chat_draft_context
+        from social_hook.db import operations as ops
 
-        draft = harness.seed_draft(harness.project_id, status="draft",
-                                    content="Old draft content for substitution")
+        draft = harness.seed_draft(
+            harness.project_id, status="draft", content="Old draft content for substitution"
+        )
         set_chat_draft_context(chat_id, draft.id, harness.project_id)
 
         adapter.clear()
         handle_message(
             make_message("use this instead: Brand new post content about automation"),
-            adapter, config,
+            adapter,
+            config,
         )
         assert adapter.messages, "No response sent"
 
@@ -2220,11 +2485,12 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAd
 
     # H4: Expert refine saves to DB
     def h4():
-        from social_hook.db import operations as ops
         from social_hook.bot.commands import set_chat_draft_context
+        from social_hook.db import operations as ops
 
-        draft = harness.seed_draft(harness.project_id, status="draft",
-                                    content="Original draft for expert refinement test")
+        draft = harness.seed_draft(
+            harness.project_id, status="draft", content="Original draft for expert refinement test"
+        )
         set_chat_draft_context(chat_id, draft.id, harness.project_id)
 
         adapter.clear()
@@ -2255,11 +2521,13 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAd
 
     # H5: Gatekeeper receives draft context
     def h5():
-        from unittest.mock import patch as _patch, MagicMock as _MagicMock
+        from unittest.mock import patch as _patch
+
         from social_hook.bot.commands import set_chat_draft_context
 
-        draft = harness.seed_draft(harness.project_id, status="draft",
-                                    content="Draft content for context threading test")
+        draft = harness.seed_draft(
+            harness.project_id, status="draft", content="Draft content for context threading test"
+        )
         set_chat_draft_context(chat_id, draft.id, harness.project_id)
 
         # Capture Gatekeeper.route() args while still calling through
@@ -2273,19 +2541,23 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAd
             return original_route(self, *args, **kwargs)
 
         from social_hook.llm.gatekeeper import Gatekeeper
+
         original_route = Gatekeeper.route
 
         with _patch.object(Gatekeeper, "route", capture_route):
             adapter.clear()
             handle_message(
                 make_message("what do you think of this draft?"),
-                adapter, config,
+                adapter,
+                config,
             )
 
-        assert captured_args.get("draft_context") is not None, \
+        assert captured_args.get("draft_context") is not None, (
             "Expected draft_context to be passed to Gatekeeper.route()"
-        assert captured_args.get("project_id") is not None, \
+        )
+        assert captured_args.get("project_id") is not None, (
             "Expected project_id to be passed to Gatekeeper.route()"
+        )
 
         runner.add_review_item(
             "H5",
@@ -2302,6 +2574,7 @@ def test_H_gatekeeper(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAd
 # Section I: Setup Validation
 # ---------------------------------------------------------------------------
 
+
 def test_I_setup_validation(harness: E2EHarness, runner: E2ERunner):
     """I1-I3: Setup validation scenarios."""
     config = harness.load_config()
@@ -2309,6 +2582,7 @@ def test_I_setup_validation(harness: E2EHarness, runner: E2ERunner):
     # I1: Valid Anthropic key
     def i1():
         from social_hook.setup.validation import validate_anthropic_key
+
         key = config.env.get("ANTHROPIC_API_KEY", "")
         if not key:
             return "SKIP: No ANTHROPIC_API_KEY (provider not configured)"
@@ -2321,6 +2595,7 @@ def test_I_setup_validation(harness: E2EHarness, runner: E2ERunner):
     # I2: Valid Telegram token
     def i2():
         from social_hook.setup.validation import validate_telegram_bot
+
         token = config.env.get("TELEGRAM_BOT_TOKEN", "")
         assert token, "No TELEGRAM_BOT_TOKEN in config"
         ok, msg = validate_telegram_bot(token)
@@ -2332,6 +2607,7 @@ def test_I_setup_validation(harness: E2EHarness, runner: E2ERunner):
     # I3: Invalid Anthropic key
     def i3():
         from social_hook.setup.validation import validate_anthropic_key
+
         ok, msg = validate_anthropic_key("sk-ant-bad-key-12345")
         assert not ok, f"Expected validation failure, got success: {msg}"
         return f"Correctly rejected: {msg[:60]}"
@@ -2343,9 +2619,11 @@ def test_I_setup_validation(harness: E2EHarness, runner: E2ERunner):
 # Section J: CLI Commands
 # ---------------------------------------------------------------------------
 
+
 def test_J_cli(harness: E2EHarness, runner: E2ERunner):
     """J1-J6: CLI command scenarios."""
     from typer.testing import CliRunner
+
     from social_hook.cli import app
 
     cli = CliRunner()
@@ -2399,12 +2677,17 @@ def test_J_cli(harness: E2EHarness, runner: E2ERunner):
         throwaway = harness.base / "repos" / "throwaway"
         throwaway.mkdir(exist_ok=True)
         subprocess.run(["git", "init", str(throwaway)], capture_output=True)
-        subprocess.run(["git", "-C", str(throwaway), "commit", "--allow-empty", "-m", "init"],
-                       capture_output=True,
-                       env={**os.environ, "GIT_AUTHOR_NAME": "test",
-                            "GIT_AUTHOR_EMAIL": "test@test.com",
-                            "GIT_COMMITTER_NAME": "test",
-                            "GIT_COMMITTER_EMAIL": "test@test.com"})
+        subprocess.run(
+            ["git", "-C", str(throwaway), "commit", "--allow-empty", "-m", "init"],
+            capture_output=True,
+            env={
+                **os.environ,
+                "GIT_AUTHOR_NAME": "test",
+                "GIT_AUTHOR_EMAIL": "test@test.com",
+                "GIT_COMMITTER_NAME": "test",
+                "GIT_COMMITTER_EMAIL": "test@test.com",
+            },
+        )
 
         reg_result = cli.invoke(app, ["project", "register", str(throwaway)])
         if reg_result.exit_code != 0:
@@ -2423,6 +2706,7 @@ def test_J_cli(harness: E2EHarness, runner: E2ERunner):
         assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
 
         from social_hook.db import operations as ops
+
         project = ops.get_project(harness.conn, throwaway_id)
         assert project is None, "Project still exists after unregister"
         return "Project unregistered"
@@ -2433,6 +2717,7 @@ def test_J_cli(harness: E2EHarness, runner: E2ERunner):
 # ---------------------------------------------------------------------------
 # Section K: Cross-Cutting
 # ---------------------------------------------------------------------------
+
 
 def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: CaptureAdapter):
     """K1-K6: Cross-cutting scenarios."""
@@ -2446,17 +2731,18 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
 
     # K1: Full chain: trigger → approve → schedule → post
     def k1():
-        from social_hook.trigger import run_trigger
-        from social_hook.scheduler import scheduler_tick
         from social_hook.bot.commands import cmd_approve
+        from social_hook.scheduler import scheduler_tick
+        from social_hook.trigger import run_trigger
 
-        exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["significant"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0, f"Trigger failed: {exit_code}"
 
         drafts = ops.get_pending_drafts(harness.conn, harness.project_id)
         if not drafts:
-            return "SKIP: No draft created (evaluator chose not_post_worthy)"
+            return "SKIP: No draft created (evaluator chose skip)"
 
         draft = drafts[0]
         adapter.clear()
@@ -2466,6 +2752,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
         if updated.status == "approved":
             # Need to schedule it
             from social_hook.bot.commands import cmd_schedule
+
             cmd_schedule(adapter, chat_id, draft.id, config)
             updated = ops.get_draft(harness.conn, draft.id)
 
@@ -2477,7 +2764,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
             )
             harness.conn.commit()
 
-            count = scheduler_tick(dry_run=True)
+            scheduler_tick(dry_run=True)
 
             updated = ops.get_draft(harness.conn, draft.id)
             assert updated.status == "posted", f"Status: {updated.status}"
@@ -2485,15 +2772,18 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
 
         return f"Chain completed with status: {updated.status}"
 
-    runner.run_scenario("K1", "Full chain: trigger → approve → post", k1)
+    runner.run_scenario(
+        "K1", "Full chain: trigger → approve → post", k1, llm_call=True, isolate=True
+    )
 
     # K2: Full chain: trigger → reject → no post
     def k2():
-        from social_hook.trigger import run_trigger
         from social_hook.bot.commands import cmd_reject
+        from social_hook.trigger import run_trigger
 
-        exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose)
+        exit_code = run_trigger(
+            COMMITS["major_feature"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0
 
         drafts = ops.get_pending_drafts(harness.conn, harness.project_id)
@@ -2508,7 +2798,9 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
         assert updated.status == "rejected", f"Status: {updated.status}"
         return "Rejected, no post"
 
-    runner.run_scenario("K2", "Full chain: trigger → reject → no post", k2)
+    runner.run_scenario(
+        "K2", "Full chain: trigger → reject → no post", k2, llm_call=True, isolate=True
+    )
 
     # K3: Dry-run end-to-end
     def k3():
@@ -2517,14 +2809,17 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
         before_decisions = len(ops.get_all_recent_decisions(harness.conn))
 
         exit_code = run_trigger(
-            COMMITS["large_feature"], str(harness.repo_path), dry_run=True,
+            COMMITS["large_feature"],
+            str(harness.repo_path),
+            dry_run=True,
             verbose=runner.verbose,
         )
         assert exit_code == 0
 
         after_decisions = len(ops.get_all_recent_decisions(harness.conn))
-        assert after_decisions == before_decisions, \
+        assert after_decisions == before_decisions, (
             f"Dry-run persisted: {after_decisions} vs {before_decisions}"
+        )
         return "Dry-run: nothing persisted"
 
     runner.run_scenario("K3", "Dry-run end-to-end", k3)
@@ -2535,14 +2830,16 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
         arc_count_before = len(arcs_before)
 
         from social_hook.trigger import run_trigger
-        exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose)
+
+        exit_code = run_trigger(
+            COMMITS["major_feature"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0
 
         arcs_after = ops.get_active_arcs(harness.conn, harness.project_id)
         return f"Arcs: {arc_count_before} → {len(arcs_after)}"
 
-    runner.run_scenario("K4", "Full chain: verify arc state", k4)
+    runner.run_scenario("K4", "Full chain: verify arc state", k4, llm_call=True, isolate=True)
 
     # K5: Debt accumulation → synthesis trigger
     def k5():
@@ -2555,8 +2852,10 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
         assert debt.debt_counter >= 3, f"Debt: {debt.debt_counter}"
 
         from social_hook.trigger import run_trigger
-        exit_code = run_trigger(COMMITS["major_feature"], str(harness.repo_path),
-                                verbose=runner.verbose)
+
+        exit_code = run_trigger(
+            COMMITS["major_feature"], str(harness.repo_path), verbose=runner.verbose
+        )
         assert exit_code == 0
 
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=3)
@@ -2574,10 +2873,19 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
                 reasoning=d.reasoning or "",
                 review_question="Did evaluator consider high debt? Synthesis?",
             )
+
+            from social_hook.db import get_pending_drafts
+
+            drafts = get_pending_drafts(harness.conn, harness.project_id)
+            if drafts:
+                runner.review_items[-1]["draft_content"] = drafts[0].content
+
             return f"Debt={debt.debt_counter}, Decision: {d.decision}"
         return f"Debt={debt.debt_counter}"
 
-    runner.run_scenario("K5", "Debt accumulation → synthesis trigger", k5)
+    runner.run_scenario(
+        "K5", "Debt accumulation → synthesis trigger", k5, llm_call=True, isolate=True
+    )
 
     # K6: Supersede draft (DB operation)
     def k6():
@@ -2599,10 +2907,11 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
 # Section L: Multi-Provider
 # ---------------------------------------------------------------------------
 
+
 def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
     """L1-L8: Multi-provider integration scenarios."""
     from social_hook.errors import ConfigError
-    from social_hook.llm.factory import parse_provider_model, create_client
+    from social_hook.llm.factory import parse_provider_model
     from social_hook.trigger import run_trigger
 
     # Save original config
@@ -2612,70 +2921,92 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
     # L1: Claude CLI evaluator (if claude is in PATH)
     def l1():
         import shutil
+
         if not shutil.which("claude"):
             return "SKIP: Claude CLI not in PATH"
-        harness.update_config({"models": {
-            "evaluator": "claude-cli/sonnet",
-            "drafter": "anthropic/claude-sonnet-4-5",
-            "gatekeeper": "anthropic/claude-haiku-4-5",
-        }})
+        harness.update_config(
+            {
+                "models": {
+                    "evaluator": "claude-cli/sonnet",
+                    "drafter": "anthropic/claude-sonnet-4-5",
+                    "gatekeeper": "anthropic/claude-haiku-4-5",
+                }
+            }
+        )
         try:
-            exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                    verbose=runner.verbose)
+            exit_code = run_trigger(
+                COMMITS["significant"], str(harness.repo_path), verbose=runner.verbose
+            )
             assert exit_code == 0, f"Expected exit 0, got {exit_code}"
             return "CLI evaluator succeeded"
         finally:
             config_path.write_text(original_config)
 
-    runner.run_scenario("L1", "Claude CLI evaluator", l1, llm_call=True)
+    runner.run_scenario("L1", "Claude CLI evaluator", l1, llm_call=True, isolate=True)
 
     # L2: Claude CLI full pipeline
     def l2():
         import shutil
+
         if not shutil.which("claude"):
             return "SKIP: Claude CLI not in PATH"
-        harness.update_config({"models": {
-            "evaluator": "claude-cli/sonnet",
-            "drafter": "claude-cli/sonnet",
-            "gatekeeper": "claude-cli/haiku",
-        }})
+        harness.update_config(
+            {
+                "models": {
+                    "evaluator": "claude-cli/sonnet",
+                    "drafter": "claude-cli/sonnet",
+                    "gatekeeper": "claude-cli/haiku",
+                }
+            }
+        )
         try:
-            exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                    verbose=runner.verbose)
+            exit_code = run_trigger(
+                COMMITS["significant"], str(harness.repo_path), verbose=runner.verbose
+            )
             assert exit_code == 0, f"Expected exit 0, got {exit_code}"
             return "Full CLI pipeline succeeded"
         finally:
             config_path.write_text(original_config)
 
-    runner.run_scenario("L2", "Claude CLI full pipeline", l2, llm_call=True)
+    runner.run_scenario("L2", "Claude CLI full pipeline", l2, llm_call=True, isolate=True)
 
     # L3: Mixed providers
     def l3():
         import shutil
+
         if not shutil.which("claude"):
             return "SKIP: Claude CLI not in PATH"
-        harness.update_config({"models": {
-            "evaluator": "anthropic/claude-haiku-4-5",
-            "drafter": "claude-cli/sonnet",
-            "gatekeeper": "anthropic/claude-haiku-4-5",
-        }})
+        harness.update_config(
+            {
+                "models": {
+                    "evaluator": "anthropic/claude-haiku-4-5",
+                    "drafter": "claude-cli/sonnet",
+                    "gatekeeper": "anthropic/claude-haiku-4-5",
+                }
+            }
+        )
         try:
-            exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path),
-                                    verbose=runner.verbose)
+            exit_code = run_trigger(
+                COMMITS["significant"], str(harness.repo_path), verbose=runner.verbose
+            )
             assert exit_code == 0, f"Expected exit 0, got {exit_code}"
             return "Mixed providers succeeded"
         finally:
             config_path.write_text(original_config)
 
-    runner.run_scenario("L3", "Mixed providers", l3, llm_call=True)
+    runner.run_scenario("L3", "Mixed providers", l3, llm_call=True, isolate=True)
 
     # L4: Invalid provider -> graceful error
     def l4():
-        harness.update_config({"models": {
-            "evaluator": "invalid/model",
-            "drafter": "anthropic/claude-sonnet-4-5",
-            "gatekeeper": "anthropic/claude-haiku-4-5",
-        }})
+        harness.update_config(
+            {
+                "models": {
+                    "evaluator": "invalid/model",
+                    "drafter": "anthropic/claude-sonnet-4-5",
+                    "gatekeeper": "anthropic/claude-haiku-4-5",
+                }
+            }
+        )
         try:
             exit_code = run_trigger(COMMITS["significant"], str(harness.repo_path))
             assert exit_code == 1, f"Expected exit 1, got {exit_code}"
@@ -2688,16 +3019,19 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
     # L5: Missing key for chosen provider
     def l5():
         # Explicitly set anthropic models so removing the key is meaningful
-        harness.update_config({"models": {
-            "evaluator": "anthropic/claude-haiku-4-5",
-            "drafter": "anthropic/claude-haiku-4-5",
-            "gatekeeper": "anthropic/claude-haiku-4-5",
-        }})
+        harness.update_config(
+            {
+                "models": {
+                    "evaluator": "anthropic/claude-haiku-4-5",
+                    "drafter": "anthropic/claude-haiku-4-5",
+                    "gatekeeper": "anthropic/claude-haiku-4-5",
+                }
+            }
+        )
         env_path = harness.base / ".env"
         env_content = env_path.read_text()
         modified = "\n".join(
-            line for line in env_content.splitlines()
-            if not line.startswith("ANTHROPIC_API_KEY")
+            line for line in env_content.splitlines() if not line.startswith("ANTHROPIC_API_KEY")
         )
         env_path.write_text(modified)
         try:
@@ -2712,16 +3046,21 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
 
     # L6: Bare model name -> config error
     def l6():
-        harness.update_config({"models": {
-            "evaluator": "claude-opus-4-5",
-            "drafter": "anthropic/claude-sonnet-4-5",
-            "gatekeeper": "anthropic/claude-haiku-4-5",
-        }})
+        harness.update_config(
+            {
+                "models": {
+                    "evaluator": "claude-opus-4-5",
+                    "drafter": "anthropic/claude-sonnet-4-5",
+                    "gatekeeper": "anthropic/claude-haiku-4-5",
+                }
+            }
+        )
         try:
             from social_hook.config.yaml import load_config
+
             try:
                 load_config(config_path)
-                assert False, "Should have raised ConfigError"
+                raise AssertionError("Should have raised ConfigError")
             except ConfigError as e:
                 assert "provider/model-id" in str(e).lower() or "invalid model" in str(e).lower()
                 return f"Bare name rejected: {e}"
@@ -2734,12 +3073,15 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
     def l7():
         assert parse_provider_model("anthropic/claude-opus-4-5") == ("anthropic", "claude-opus-4-5")
         assert parse_provider_model("claude-cli/sonnet") == ("claude-cli", "sonnet")
-        assert parse_provider_model("openrouter/anthropic/claude-sonnet-4.5") == ("openrouter", "anthropic/claude-sonnet-4.5")
+        assert parse_provider_model("openrouter/anthropic/claude-sonnet-4.5") == (
+            "openrouter",
+            "anthropic/claude-sonnet-4.5",
+        )
         assert parse_provider_model("openai/gpt-4o") == ("openai", "gpt-4o")
         assert parse_provider_model("ollama/llama3.3") == ("ollama", "llama3.3")
         try:
             parse_provider_model("bare-model-name")
-            assert False, "Should raise ConfigError"
+            raise AssertionError("Should raise ConfigError")
         except ConfigError:
             pass
         return "All parsing tests passed"
@@ -2749,6 +3091,7 @@ def test_L_multi_provider(harness: E2EHarness, runner: E2ERunner):
     # L8: Provider auto-discovery
     def l8():
         from social_hook.setup.wizard import _discover_providers
+
         providers = _discover_providers({})
         provider_ids = [p["id"] for p in providers]
         # Should always have anthropic and openrouter (even if unconfigured)
@@ -2851,7 +3194,7 @@ def _write_m_sample_jsonl(directory: Path) -> Path:
     return jsonl_path
 
 
-def _discover_m_transcript(repo_path: str) -> Optional[Path]:
+def _discover_m_transcript(repo_path: str) -> Path | None:
     """Discover a real Claude Code transcript for the given repo path.
 
     Follows the dogfooding strategy: use real data from actual sessions.
@@ -2891,10 +3234,10 @@ def _discover_m_transcript(repo_path: str) -> Optional[Path]:
 
 def test_M_journey(harness: E2EHarness, runner: E2ERunner):
     """M1-M11: Development Journey (Narrative Capture) scenarios."""
-    import json as _json
     import tempfile as _tempfile
     from types import SimpleNamespace as _SN
-    from unittest.mock import MagicMock as _MagicMock, patch as _patch
+    from unittest.mock import MagicMock as _MagicMock
+    from unittest.mock import patch as _patch
 
     if not harness.project_id:
         harness.seed_project()
@@ -2917,50 +3260,52 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
         from social_hook.config.yaml import _parse_config
 
         config = _parse_config({})
-        assert config.journey_capture.enabled is False, \
-            f"enabled={config.journey_capture.enabled}"
-        assert config.journey_capture.model is None, \
-            f"model={config.journey_capture.model}"
+        assert config.journey_capture.enabled is False, f"enabled={config.journey_capture.enabled}"
+        assert config.journey_capture.model is None, f"model={config.journey_capture.model}"
         return "enabled=False, model=None"
 
     runner.run_scenario("M1", "Journey config defaults", m1)
 
     # M2: Journey CLI on/off
     def m2():
-        from typer.testing import CliRunner
-        from social_hook.cli import app
         import yaml
+        from typer.testing import CliRunner
+
+        from social_hook.cli import app
 
         cli = CliRunner()
 
         # Journey on
         result = cli.invoke(app, ["journey", "on"])
-        assert result.exit_code == 0, \
-            f"journey on exit {result.exit_code}: {result.output}"
-        assert "enabled" in result.output.lower() or "capture" in result.output.lower(), \
+        assert result.exit_code == 0, f"journey on exit {result.exit_code}: {result.output}"
+        assert "enabled" in result.output.lower() or "capture" in result.output.lower(), (
             f"Expected enabled/capture in: {result.output}"
+        )
 
         # Verify config updated
         from social_hook.filesystem import get_config_path
+
         config_data = yaml.safe_load(get_config_path().read_text())
-        assert config_data.get("journey_capture", {}).get("enabled") is True, \
+        assert config_data.get("journey_capture", {}).get("enabled") is True, (
             f"Config not updated: {config_data.get('journey_capture')}"
+        )
 
         # Verify hook installed
         from social_hook.setup.install import check_narrative_hook_installed
+
         hook_installed = check_narrative_hook_installed()
         detail = f"on: config=True, hook={'yes' if hook_installed else 'no'}"
 
         # Journey off
         result = cli.invoke(app, ["journey", "off"])
-        assert result.exit_code == 0, \
-            f"journey off exit {result.exit_code}: {result.output}"
+        assert result.exit_code == 0, f"journey off exit {result.exit_code}: {result.output}"
 
         config_data = yaml.safe_load(get_config_path().read_text())
-        assert config_data.get("journey_capture", {}).get("enabled") is False, \
+        assert config_data.get("journey_capture", {}).get("enabled") is False, (
             f"Config not updated: {config_data.get('journey_capture')}"
+        )
 
-        detail += f" | off: config=False"
+        detail += " | off: config=False"
         return detail
 
     runner.run_scenario("M2", "Journey CLI on/off", m2)
@@ -2968,12 +3313,12 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
     # M3: Journey status
     def m3():
         from typer.testing import CliRunner
+
         from social_hook.cli import app
 
         cli = CliRunner()
         result = cli.invoke(app, ["journey", "status"])
-        assert result.exit_code == 0, \
-            f"journey status exit {result.exit_code}: {result.output}"
+        assert result.exit_code == 0, f"journey status exit {result.exit_code}: {result.output}"
 
         output_lower = result.output.lower()
         has_enabled = "yes" in output_lower or "no" in output_lower
@@ -3007,8 +3352,9 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
             content = msg.get("message", {}).get("content")
             if isinstance(content, list):
                 for block in content:
-                    assert block.get("type") not in ("tool_use", "tool_result", "image"), \
+                    assert block.get("type") not in ("tool_use", "tool_result", "image"), (
                         f"Block type {block.get('type')} should be filtered"
+                    )
 
         # Sidechain should be excluded
         sidechain = [m for m in filtered if m.get("isSidechain")]
@@ -3035,14 +3381,14 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
 
     # M5: Narrative capture happy path
     def m5():
+        from social_hook.narrative.extractor import NarrativeExtractor
+        from social_hook.narrative.storage import load_recent_narratives, save_narrative
         from social_hook.narrative.transcript import (
             filter_for_extraction,
             format_for_prompt,
             read_transcript,
             truncate_to_budget,
         )
-        from social_hook.narrative.extractor import NarrativeExtractor
-        from social_hook.narrative.storage import save_narrative, load_recent_narratives
 
         use_real = _real_transcript is not None
 
@@ -3059,8 +3405,9 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
 
             config = load_full_config()
             model_str = config.journey_capture.model or config.models.evaluator
-            assert "haiku" not in model_str.lower(), \
+            assert "haiku" not in model_str.lower(), (
                 f"Evaluator model is haiku ({model_str}) — extraction needs Sonnet/Opus"
+            )
 
             client = create_client(model_str, config)
             extractor = NarrativeExtractor(client)
@@ -3174,9 +3521,11 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
         # Ensure journey_capture is disabled
         harness.update_config({"journey_capture": {"enabled": False}})
         from social_hook.config.yaml import load_full_config
+
         config = load_full_config()
-        assert config.journey_capture.enabled is False, \
+        assert config.journey_capture.enabled is False, (
             f"Expected disabled, got {config.journey_capture.enabled}"
+        )
         # The narrative-capture command checks enabled and returns early
         # We verify the config check logic directly
         return "Config: enabled=False → early exit"
@@ -3186,6 +3535,7 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
     # M7: Narrative capture paused project
     def m7():
         from social_hook.db import operations as ops
+
         project = ops.get_project(harness.conn, harness.project_id)
         assert project is not None, "Project not found"
 
@@ -3222,10 +3572,10 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
 
     # M9: Narratives in evaluator context
     def m9():
-        from social_hook.narrative.storage import save_narrative
-        from social_hook.llm.schemas import ExtractNarrativeInput
-        from social_hook.llm.prompts import assemble_evaluator_context
         from social_hook.config.project import load_project_config
+        from social_hook.llm.prompts import assemble_evaluator_context
+        from social_hook.llm.schemas import ExtractNarrativeInput
+        from social_hook.narrative.storage import save_narrative
         from social_hook.trigger import parse_commit_info
 
         # Use M5's real extraction if available, otherwise fall back to synthetic
@@ -3233,16 +3583,18 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
             extraction = _m5_extraction["result"]
             source = "M5 extraction"
         else:
-            extraction = ExtractNarrativeInput.validate({
-                "summary": "Implemented caching layer with Redis",
-                "key_decisions": ["Chose Redis over Memcached"],
-                "rejected_approaches": ["SQLite cache was too slow"],
-                "aha_moments": ["Connection pooling halved latency"],
-                "challenges": ["Cache invalidation strategy"],
-                "narrative_arc": "From no cache to 10x faster responses",
-                "relevant_for_social": True,
-                "social_hooks": ["Why Redis cache reduced latency by 10x"],
-            })
+            extraction = ExtractNarrativeInput.validate(
+                {
+                    "summary": "Implemented caching layer with Redis",
+                    "key_decisions": ["Chose Redis over Memcached"],
+                    "rejected_approaches": ["SQLite cache was too slow"],
+                    "aha_moments": ["Connection pooling halved latency"],
+                    "challenges": ["Cache invalidation strategy"],
+                    "narrative_arc": "From no cache to 10x faster responses",
+                    "relevant_for_social": True,
+                    "social_hooks": ["Why Redis cache reduced latency by 10x"],
+                }
+            )
             source = "synthetic fallback"
 
         narratives_dir = harness.base / "narratives"
@@ -3259,10 +3611,13 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
                 def __init__(self, conn, project_id):
                     self._conn = conn
                     self._pid = project_id
+
                 def __getattr__(self, name):
                     from social_hook.db import operations as ops
+
                     fn = getattr(ops, name)
                     import inspect
+
                     sig = inspect.signature(fn)
                     params = list(sig.parameters.keys())
                     if params and params[0] == "conn":
@@ -3284,19 +3639,16 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
             prompt_template = load_prompt("evaluator")
             prompt = assemble_evaluator_prompt(prompt_template, ctx, commit)
 
-            assert "## Development Narrative" in prompt, \
+            assert "## Development Narrative" in prompt, (
                 "Evaluator prompt missing ## Development Narrative section"
-            assert extraction.summary[:20] in prompt, \
-                "Evaluator prompt missing narrative content"
+            )
+            assert extraction.summary[:20] in prompt, "Evaluator prompt missing narrative content"
 
             # Extract the narrative section for human review
             narrative_start = prompt.index("## Development Narrative")
             rest = prompt[narrative_start:]
             next_boundary = rest.find("\n---\n", 1)
-            if next_boundary > 0:
-                narrative_section = rest[:next_boundary]
-            else:
-                narrative_section = rest[:800]
+            narrative_section = rest[:next_boundary] if next_boundary > 0 else rest[:800]
 
             runner.add_review_item(
                 "M9",
@@ -3310,23 +3662,25 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
 
     # M10: Session deduplication
     def m10():
-        from social_hook.narrative.storage import save_narrative, load_recent_narratives
         from social_hook.llm.schemas import ExtractNarrativeInput
+        from social_hook.narrative.storage import load_recent_narratives, save_narrative
 
         tmp = Path(_tempfile.mkdtemp(prefix="m10_"))
         narratives_dir = tmp / "narratives"
         narratives_dir.mkdir()
 
-        extraction = ExtractNarrativeInput.validate({
-            "summary": "Dedup test session",
-            "key_decisions": ["d1"],
-            "rejected_approaches": [],
-            "aha_moments": [],
-            "challenges": [],
-            "narrative_arc": "test",
-            "relevant_for_social": True,
-            "social_hooks": ["hook1"],
-        })
+        extraction = ExtractNarrativeInput.validate(
+            {
+                "summary": "Dedup test session",
+                "key_decisions": ["d1"],
+                "rejected_approaches": [],
+                "aha_moments": [],
+                "challenges": [],
+                "narrative_arc": "test",
+                "relevant_for_social": True,
+                "social_hooks": ["hook1"],
+            }
+        )
 
         with _patch(
             "social_hook.narrative.storage.get_narratives_path",
@@ -3337,8 +3691,9 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
             save_narrative("proj_m10", extraction, "same_session", "auto")
 
             loaded = load_recent_narratives("proj_m10", limit=10)
-            assert len(loaded) == 1, \
+            assert len(loaded) == 1, (
                 f"Expected 1 after dedup (3 saves, same session_id), got {len(loaded)}"
+            )
         return f"3 saves same session_id → {len(loaded)} loaded (deduplicated)"
 
     runner.run_scenario("M10", "Session deduplication", m10)
@@ -3362,9 +3717,9 @@ def test_M_journey(harness: E2EHarness, runner: E2ERunner):
 # Section N: Web Dashboard + Per-Platform
 # ---------------------------------------------------------------------------
 
+
 def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
     """N1-N8: Web Dashboard + Per-Platform scenarios."""
-    import json as _json
 
     if not harness.project_id:
         harness.seed_project()
@@ -3377,9 +3732,12 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
     def _get_test_client():
         # Force re-import so module-level state picks up patched paths
         import importlib
+
         import social_hook.web.server as srv_mod
+
         importlib.reload(srv_mod)
         from fastapi.testclient import TestClient
+
         return TestClient(srv_mod.app)
 
     # N1: API /help command
@@ -3402,7 +3760,9 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
         runner.add_review_item(
             "N1",
             title="API /help command via web",
-            response=data["events"][0].get("data", {}).get("text", "")[:200] if data["events"] else "",
+            response=data["events"][0].get("data", {}).get("text", "")[:200]
+            if data["events"]
+            else "",
             review_question="Is the help text complete and well-formatted?",
         )
         return f"200 OK, {len(data['events'])} events"
@@ -3413,19 +3773,24 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
     def n2():
         draft = harness.seed_draft(harness.project_id, status="draft")
         client = _get_test_client()
-        resp = client.post("/api/callback", json={
-            "action": "quick_approve",
-            "payload": draft.id,
-        })
+        resp = client.post(
+            "/api/callback",
+            json={
+                "action": "quick_approve",
+                "payload": draft.id,
+            },
+        )
         assert resp.status_code == 200, f"Status {resp.status_code}: {resp.text}"
         data = resp.json()
         assert "events" in data, f"No 'events' in response: {data}"
 
         # Verify draft status changed
         from social_hook.db import operations as ops
+
         updated = ops.get_draft(harness.conn, draft.id)
-        assert updated.status in ("approved", "scheduled"), \
+        assert updated.status in ("approved", "scheduled"), (
             f"Draft status after approve: {updated.status}"
+        )
 
         return f"Draft {draft.id[:12]} → {updated.status}"
 
@@ -3433,43 +3798,41 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
 
     # N3: Trigger with 2 platforms
     def n3():
-        from social_hook.trigger import run_trigger
         from social_hook.db import operations as ops
+        from social_hook.trigger import run_trigger
 
         # Enable both X and LinkedIn
-        harness.update_config({
-            "platforms": {
-                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
-                "linkedin": {"enabled": True, "priority": "secondary"},
-            },
-        })
-
-        # Count drafts before
-        before_drafts = ops.get_pending_drafts(harness.conn, harness.project_id)
-        before_count = len(before_drafts)
+        harness.update_config(
+            {
+                "platforms": {
+                    "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+                    "linkedin": {"enabled": True, "priority": "secondary"},
+                },
+            }
+        )
 
         exit_code = run_trigger(
-            COMMITS["web_dashboard"], str(harness.repo_path),
+            COMMITS["web_dashboard"],
+            str(harness.repo_path),
             verbose=runner.verbose,
         )
         assert exit_code == 0, f"run_trigger returned {exit_code}"
 
         # Check for new drafts
         after_drafts = ops.get_pending_drafts(harness.conn, harness.project_id)
-        new_drafts = after_drafts[: len(after_drafts) - before_count] if len(after_drafts) > before_count else after_drafts
 
         # We need at least 1 draft. With 2 platforms we expect 2, but the LLM
-        # might decide not_post_worthy. If post_worthy, check platforms differ.
+        # might decide skip. If draft, check platforms differ.
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=5)
         d = decisions[0] if decisions else None
 
-        if d and d.decision == "post_worthy":
+        if d and d.decision == "draft":
             # Look for drafts with different platforms
             platforms_seen = set()
             for draft in after_drafts:
                 platforms_seen.add(draft.platform)
 
-            detail = f"Decision: post_worthy, platforms: {platforms_seen}"
+            detail = f"Decision: draft, platforms: {platforms_seen}"
             if len(platforms_seen) >= 2:
                 detail += " (multi-platform confirmed)"
             else:
@@ -3487,15 +3850,17 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
             detail = f"Decision: {d.decision if d else 'none'} (no multi-platform check)"
 
         # Restore single-platform config
-        harness.update_config({
-            "platforms": {
-                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
-                "linkedin": {"enabled": False},
-            },
-        })
+        harness.update_config(
+            {
+                "platforms": {
+                    "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+                    "linkedin": {"enabled": False},
+                },
+            }
+        )
         return detail
 
-    runner.run_scenario("N3", "Trigger with 2 platforms", n3, llm_call=True)
+    runner.run_scenario("N3", "Trigger with 2 platforms", n3, llm_call=True, isolate=True)
 
     # N4: Content filter: notable skips decision episode
     def n4():
@@ -3531,8 +3896,9 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
         config = data["config"]
         assert isinstance(config, dict), f"Config is not dict: {type(config)}"
         assert "platforms" in config, f"No 'platforms' in config: {list(config.keys())}"
-        assert isinstance(config["platforms"], dict), \
+        assert isinstance(config["platforms"], dict), (
             f"platforms is not dict: {type(config['platforms'])}"
+        )
         return f"Config keys: {list(config.keys())}"
 
     runner.run_scenario("N5", "Settings: read config", n5)
@@ -3542,26 +3908,31 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
         client = _get_test_client()
 
         # Update X priority to secondary
-        resp = client.put("/api/settings/config", json={
-            "platforms": {
-                "x": {"enabled": True, "priority": "secondary", "account_tier": "free"},
+        resp = client.put(
+            "/api/settings/config",
+            json={
+                "platforms": {
+                    "x": {"enabled": True, "priority": "secondary", "account_tier": "free"},
+                },
             },
-        })
+        )
         assert resp.status_code == 200, f"PUT status {resp.status_code}: {resp.text}"
 
         # Re-read and verify
         resp2 = client.get("/api/settings/config")
         config = resp2.json()["config"]
         x_cfg = config.get("platforms", {}).get("x", {})
-        assert x_cfg.get("priority") == "secondary", \
-            f"Expected priority=secondary, got: {x_cfg}"
+        assert x_cfg.get("priority") == "secondary", f"Expected priority=secondary, got: {x_cfg}"
 
         # Restore to primary
-        client.put("/api/settings/config", json={
-            "platforms": {
-                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+        client.put(
+            "/api/settings/config",
+            json={
+                "platforms": {
+                    "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+                },
             },
-        })
+        )
         return "Priority updated and verified"
 
     runner.run_scenario("N6", "Settings: update platform priority", n6)
@@ -3570,18 +3941,21 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
     def n7():
         client = _get_test_client()
 
-        resp = client.put("/api/settings/config", json={
-            "platforms": {
-                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
-                "blog": {
-                    "enabled": True,
-                    "type": "custom",
-                    "priority": "secondary",
-                    "format": "article",
-                    "description": "Technical blog",
+        resp = client.put(
+            "/api/settings/config",
+            json={
+                "platforms": {
+                    "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+                    "blog": {
+                        "enabled": True,
+                        "type": "custom",
+                        "priority": "secondary",
+                        "format": "article",
+                        "description": "Technical blog",
+                    },
                 },
             },
-        })
+        )
         assert resp.status_code == 200, f"PUT status {resp.status_code}: {resp.text}"
 
         # Re-read and verify
@@ -3594,12 +3968,15 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
         assert blog.get("format") == "article"
 
         # Clean up: remove blog
-        client.put("/api/settings/config", json={
-            "platforms": {
-                "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+        client.put(
+            "/api/settings/config",
+            json={
+                "platforms": {
+                    "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
+                },
             },
-        })
-        return f"Custom platform 'blog' added and verified"
+        )
+        return "Custom platform 'blog' added and verified"
 
     runner.run_scenario("N7", "Settings: add custom platform", n7)
 
@@ -3614,39 +3991,231 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
         resp = client.get("/api/events?lastId=0")
         assert resp.status_code == 200, f"Status {resp.status_code}: {resp.text}"
         content_type = resp.headers.get("content-type", "")
-        assert "text/event-stream" in content_type, \
+        assert "text/event-stream" in content_type, (
             f"Expected text/event-stream, got: {content_type}"
+        )
         return f"SSE content-type: {content_type}"
 
     runner.run_scenario("N8", "SSE endpoint streams events", n8)
 
 
 # ---------------------------------------------------------------------------
+# Section Q: Queue / Evaluator Rework
+# ---------------------------------------------------------------------------
+
+
+def test_Q_queue_rework(harness: E2EHarness, runner: E2ERunner):
+    """Q8-Q12: Queue and evaluator rework scenarios.
+
+    These test DB-level operations and model correctness for the evaluator
+    rework (hold decisions, queue actions). No LLM calls required.
+    """
+    if not harness.project_id:
+        harness.seed_project()
+
+    # Q8: Decision type validation — only draft/hold/skip accepted
+    def q8():
+
+        from social_hook.models import Decision
+
+        # 'draft' is valid
+        d = Decision(
+            id="test_q8",
+            project_id=harness.project_id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="test draft value",
+        )
+        assert d.decision == "draft"
+        row = d.to_row()
+        assert row[4] == "draft"  # Column 5 is decision
+
+        # 'hold' is valid
+        d2 = Decision(
+            id="test_q8b",
+            project_id=harness.project_id,
+            commit_hash="def456",
+            decision="hold",
+            reasoning="test hold value",
+        )
+        assert d2.decision == "hold"
+
+        # 'skip' is valid
+        d3 = Decision(
+            id="test_q8c",
+            project_id=harness.project_id,
+            commit_hash="ghi789",
+            decision="skip",
+            reasoning="test skip",
+        )
+        assert d3.decision == "skip"
+
+        # Old values like 'post_worthy' are rejected
+        try:
+            Decision(
+                id="test_q8d",
+                project_id=harness.project_id,
+                commit_hash="jkl012",
+                decision="post_worthy",
+                reasoning="should fail",
+            )
+            raise AssertionError("post_worthy should have raised ValueError")
+        except ValueError:
+            pass  # Expected
+
+        return "draft, hold, skip all parse correctly; old values rejected"
+
+    runner.run_scenario("Q8", "Decision type validation: only draft/hold/skip", q8, isolate=True)
+
+    # Q9: Hold decision stored and retrievable
+    def q9():
+        from social_hook.db import operations as ops
+        from social_hook.models import Decision
+
+        d = Decision(
+            id="test_q9",
+            project_id=harness.project_id,
+            commit_hash="hold123",
+            decision="hold",
+            reasoning="Wait for related commits",
+            commit_summary="Added initial auth scaffolding",
+        )
+        ops.insert_decision(harness.conn, d)
+        harness.conn.commit()
+
+        held = ops.get_held_decisions(harness.conn, harness.project_id)
+        assert any(h.id == "test_q9" for h in held), (
+            f"test_q9 not found in held decisions: {[h.id for h in held]}"
+        )
+
+        # Verify the decision roundtrips correctly
+        found = [h for h in held if h.id == "test_q9"][0]
+        assert found.commit_summary == "Added initial auth scaffolding"
+        assert found.decision == "hold"
+
+        return f"Hold decision stored, {len(held)} held total"
+
+    runner.run_scenario("Q9", "Hold decision stored correctly", q9, isolate=True)
+
+    # Q10: is_held and is_draftable helper functions
+    def q10():
+        from social_hook.models import is_draftable, is_held
+
+        # Held decisions — only "hold" returns True
+        assert is_held("hold"), "hold should be held"
+        assert not is_held("draft"), "draft should not be held"
+        assert not is_held("skip"), "skip should not be held"
+        assert not is_held("consolidate"), "consolidate (old value) should not be held"
+
+        # Draftable decisions — only "draft" returns True
+        assert is_draftable("draft"), "draft should be draftable"
+        assert not is_draftable("skip"), "skip should not be draftable"
+        assert not is_draftable("hold"), "hold should not be draftable"
+        assert not is_draftable("post_worthy"), "post_worthy (old value) should not be draftable"
+
+        return "is_held and is_draftable correct for all decision types"
+
+    runner.run_scenario("Q10", "Hold/draftable helper functions", q10)
+
+    # Q11: Queue action — supersede
+    def q11():
+        from social_hook.db import operations as ops
+        from social_hook.models import Decision, Draft
+
+        d = Decision(
+            id="test_q11_dec",
+            project_id=harness.project_id,
+            commit_hash="sup123",
+            decision="draft",
+            reasoning="test",
+        )
+        ops.insert_decision(harness.conn, d)
+
+        draft = Draft(
+            id="test_q11",
+            project_id=harness.project_id,
+            decision_id="test_q11_dec",
+            platform="x",
+            content="Original draft content",
+            status="draft",
+        )
+        ops.insert_draft(harness.conn, draft)
+        harness.conn.commit()
+
+        ops.execute_queue_action(harness.conn, "supersede", "test_q11", "Replaced by newer commit")
+
+        updated = ops.get_draft(harness.conn, "test_q11")
+        assert updated is not None, "Draft not found after supersede"
+        assert updated.status == "superseded", f"Expected superseded, got {updated.status}"
+
+        return "Draft superseded successfully"
+
+    runner.run_scenario("Q11", "Queue action: supersede", q11, isolate=True)
+
+    # Q12: Queue action — drop
+    def q12():
+        from social_hook.db import operations as ops
+        from social_hook.models import Decision, Draft
+
+        d = Decision(
+            id="test_q12_dec",
+            project_id=harness.project_id,
+            commit_hash="drop123",
+            decision="draft",
+            reasoning="test",
+        )
+        ops.insert_decision(harness.conn, d)
+
+        draft = Draft(
+            id="test_q12",
+            project_id=harness.project_id,
+            decision_id="test_q12_dec",
+            platform="x",
+            content="Stale draft content",
+            status="draft",
+        )
+        ops.insert_draft(harness.conn, draft)
+        harness.conn.commit()
+
+        ops.execute_queue_action(harness.conn, "drop", "test_q12", "No longer relevant")
+
+        updated = ops.get_draft(harness.conn, "test_q12")
+        assert updated is not None, "Draft not found after drop"
+        assert updated.status == "cancelled", f"Expected cancelled, got {updated.status}"
+        assert "No longer relevant" in (updated.last_error or ""), (
+            f"Reason not in last_error: {updated.last_error}"
+        )
+
+        return "Draft dropped (cancelled) with reason"
+
+    runner.run_scenario("Q12", "Queue action: drop", q12, isolate=True)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="E2E test suite for social-media-auto-hook"
-    )
+    parser = argparse.ArgumentParser(description="E2E test suite for social-media-auto-hook")
     parser.add_argument(
-        "--only", type=str, default=None,
+        "--only",
+        type=str,
+        default=None,
         help="Run only a specific section (onboarding, pipeline, narrative, draft, "
-             "scheduler, bot, setup, cli, crosscutting, multiprovider, journey, web) or scenario (A1, B1, etc.)"
+        "scheduler, bot, setup, cli, crosscutting, multiprovider, journey, web, queue) or scenario (A1, B1, etc.)",
     )
     parser.add_argument(
-        "--skip-telegram", action="store_true",
-        help="Skip Telegram-dependent sections (F, G, H)"
+        "--skip-telegram", action="store_true", help="Skip Telegram-dependent sections (F, G, H)"
     )
+    parser.add_argument("--verbose", action="store_true", help="Show full LLM outputs inline")
     parser.add_argument(
-        "--verbose", action="store_true",
-        help="Show full LLM outputs inline"
-    )
-    parser.add_argument(
-        "--provider", type=str, default=None,
+        "--provider",
+        type=str,
+        default=None,
         choices=list(PROVIDER_PRESETS.keys()),
         help="LLM provider for pipeline tests (claude-cli: $0 subscription, anthropic: ~$3-9 API). "
-             "If not specified, you will be prompted to choose."
+        "If not specified, you will be prompted to choose.",
     )
     args = parser.parse_args()
 
@@ -3678,14 +4247,17 @@ def main():
                 print("  Invalid choice. Enter 1 or 2.")
 
     # Determine which sections to run
-    sections_to_run = set("ABCDEFGHIJKLMN")
+    sections_to_run = set("ABCDEFGHIJKLMNQ")
+    only_scenario = None
     if args.only:
         only = args.only
         if only.lower() in SECTION_MAP:
             sections_to_run = set(SECTION_MAP[only.lower()])
-        elif only.upper()[0] in "ABCDEFGHIJKLMN":
-            # Single scenario — run the whole section
+        elif only.upper()[0] in "ABCDEFGHIJKLMNQ":
+            # Single scenario (e.g. "C13") — run the section, skip non-matching scenarios
             sections_to_run = {only.upper()[0]}
+            if any(c.isdigit() for c in only):
+                only_scenario = only.upper()
         else:
             print(f"Unknown section: {args.only}")
             sys.exit(1)
@@ -3699,16 +4271,20 @@ def main():
     print("  Repo: social-media-auto-hook")
     print(f"  Provider: {provider} ({preset['cost']})")
     print(f"  Sections: {', '.join(sorted(sections_to_run))}")
+    if only_scenario:
+        print(f"  Scenario: {only_scenario}")
     print("=" * 60)
 
     runner = E2ERunner(verbose=args.verbose)
     runner.start_time = time.time()
+    runner._only_scenario = only_scenario
 
     # Resolve real base path before patching HOME
     real_home = os.environ.get("HOME", str(Path.home()))
     real_base = Path(real_home) / ".social-hook"
 
     harness = E2EHarness(real_base=real_base, provider=provider)
+    runner._harness = harness
     adapter = CaptureAdapter()
 
     try:
@@ -3773,6 +4349,10 @@ def main():
         if "N" in sections_to_run:
             print("\n--- N. Web Dashboard + Per-Platform ---")
             test_N_web_dashboard(harness, runner)
+
+        if "Q" in sections_to_run:
+            print("\n--- Q. Queue / Evaluator Rework ---")
+            test_Q_queue_rework(harness, runner)
 
     except KeyboardInterrupt:
         print("\n\nInterrupted.")

@@ -1,7 +1,7 @@
 """CLI commands for inspecting state (log, pending, usage, logs)."""
 
+import contextlib
 import subprocess
-from typing import Optional
 
 import typer
 
@@ -11,7 +11,7 @@ app = typer.Typer()
 @app.command()
 def log(
     ctx: typer.Context,
-    project_id: Optional[str] = typer.Argument(None, help="Project ID (optional)"),
+    project_id: str | None = typer.Argument(None, help="Project ID (optional)"),
     limit: int = typer.Option(20, "--limit", "-n", help="Number of entries"),
 ):
     """View decision log."""
@@ -37,9 +37,7 @@ def log(
         if json_mode:
             import json
 
-            typer.echo(
-                json.dumps([d.to_dict() for d in decisions], indent=2, default=str)
-            )
+            typer.echo(json.dumps([d.to_dict() for d in decisions], indent=2, default=str))
         else:
             for d in decisions:
                 typer.echo(
@@ -52,7 +50,7 @@ def log(
 @app.command()
 def pending(
     ctx: typer.Context,
-    project_id: Optional[str] = typer.Argument(None, help="Project ID (optional)"),
+    project_id: str | None = typer.Argument(None, help="Project ID (optional)"),
 ):
     """View pending drafts."""
     from social_hook.db import (
@@ -77,14 +75,10 @@ def pending(
         if json_mode:
             import json
 
-            typer.echo(
-                json.dumps([d.to_dict() for d in drafts], indent=2, default=str)
-            )
+            typer.echo(json.dumps([d.to_dict() for d in drafts], indent=2, default=str))
         else:
             for d in drafts:
-                typer.echo(
-                    f"  {d.id[:12]}  [{d.status:10s}]  {d.platform:8s}  {d.content[:50]}"
-                )
+                typer.echo(f"  {d.id[:12]}  [{d.status:10s}]  {d.platform:8s}  {d.content[:50]}")
     finally:
         conn.close()
 
@@ -93,7 +87,9 @@ def pending(
 def usage(
     ctx: typer.Context,
     days: int = typer.Option(30, "--days", "-d", help="Number of days"),
-    recent: Optional[int] = typer.Option(None, "--recent", "-r", help="Show last N individual operations"),
+    recent: int | None = typer.Option(
+        None, "--recent", "-r", help="Show last N individual operations"
+    ),
 ):
     """View token usage and costs."""
     from social_hook.db import get_recent_usage, get_usage_summary, init_database
@@ -155,7 +151,9 @@ def usage(
                 total_input += inp
                 total_output += out
                 total_cost += cost
-            typer.echo(f"\n  {'Total':30s}  in:{total_input:>10,}  out:{total_output:>10,}  ${total_cost:.2f}")
+            typer.echo(
+                f"\n  {'Total':30s}  in:{total_input:>10,}  out:{total_output:>10,}  ${total_cost:.2f}"
+            )
     finally:
         conn.close()
 
@@ -174,17 +172,20 @@ def platforms(
 
     platform_list = []
     for pname, pcfg in config.platforms.items():
-        platform_list.append({
-            "name": pname,
-            "enabled": pcfg.enabled,
-            "priority": pcfg.priority,
-            "type": pcfg.type,
-            "account_tier": getattr(pcfg, "account_tier", None),
-            "description": getattr(pcfg, "description", None),
-        })
+        platform_list.append(
+            {
+                "name": pname,
+                "enabled": pcfg.enabled,
+                "priority": pcfg.priority,
+                "type": pcfg.type,
+                "account_tier": getattr(pcfg, "account_tier", None),
+                "description": getattr(pcfg, "description", None),
+            }
+        )
 
     if json_mode:
         import json
+
         typer.echo(json.dumps(platform_list, indent=2))
     else:
         if not platform_list:
@@ -203,7 +204,7 @@ VALID_LOG_COMPONENTS = ("trigger", "scheduler", "bot")
 
 @app.command()
 def logs(
-    component: Optional[str] = typer.Argument(
+    component: str | None = typer.Argument(
         None, help=f"Component to tail ({', '.join(VALID_LOG_COMPONENTS)}, or omit for all)"
     ),
     level: str = typer.Option("info", "--level", "-l", help="Filter by log level"),
@@ -218,7 +219,9 @@ def logs(
 
     if component:
         if component not in VALID_LOG_COMPONENTS:
-            typer.echo(f"Unknown component: {component}. Use one of: {', '.join(VALID_LOG_COMPONENTS)}")
+            typer.echo(
+                f"Unknown component: {component}. Use one of: {', '.join(VALID_LOG_COMPONENTS)}"
+            )
             raise typer.Exit(1)
         log_files = [logs_dir / f"{component}.log"]
     else:
@@ -232,7 +235,5 @@ def logs(
 
     # Use tail to follow logs
     cmd = ["tail", "-f"] + [str(f) for f in existing]
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         subprocess.run(cmd)
-    except KeyboardInterrupt:
-        pass

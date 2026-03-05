@@ -15,7 +15,6 @@ from social_hook.models import (
     Project,
 )
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -39,7 +38,7 @@ def sample_decisions():
             id="dec_1",
             project_id="proj_gk1",
             commit_hash="abc12345deadbeef",
-            decision="post_worthy",
+            decision="draft",
             reasoning="First commit on registered project with substantial feature",
             commit_message="Add WebSocket gateway for real-time updates",
             angle="Introducing Social Hook",
@@ -48,7 +47,7 @@ def sample_decisions():
             id="dec_2",
             project_id="proj_gk1",
             commit_hash="def67890abcd1234",
-            decision="not_post_worthy",
+            decision="skip",
             reasoning="Minor typo fix, not interesting for audience",
             commit_message="Fixed typo in README",
         ),
@@ -93,7 +92,7 @@ def sample_linked_decision():
         id="dec_linked",
         project_id="proj_gk1",
         commit_hash="linked123abc",
-        decision="post_worthy",
+        decision="draft",
         reasoning="First commit on registered project with substantial WebSocket feature",
         angle="Introducing Social Hook",
         episode_type="launch",
@@ -110,7 +109,9 @@ class TestGatekeeperProjectState:
 
     def test_includes_lifecycle_phase(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             lifecycle_phase="build",
         )
         assert "## Project State" in result
@@ -118,21 +119,27 @@ class TestGatekeeperProjectState:
 
     def test_includes_audience_introduced(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             audience_introduced=False,
         )
         assert "Audience introduced: False" in result
 
     def test_includes_narrative_debt(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             narrative_debt=3,
         )
         assert "Narrative debt: 3" in result
 
     def test_all_state_fields(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             lifecycle_phase="demo",
             audience_introduced=True,
             narrative_debt=0,
@@ -144,7 +151,9 @@ class TestGatekeeperProjectState:
 
     def test_no_state_no_section(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
         )
         assert "## Project State" not in result
 
@@ -154,7 +163,9 @@ class TestGatekeeperActiveArcs:
 
     def test_includes_arcs(self, sample_draft, sample_arcs):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             active_arcs=sample_arcs,
         )
         assert "## Active Arcs" in result
@@ -162,14 +173,18 @@ class TestGatekeeperActiveArcs:
 
     def test_no_arcs_no_section(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             active_arcs=[],
         )
         assert "## Active Arcs" not in result
 
     def test_none_arcs_no_section(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             active_arcs=None,
         )
         assert "## Active Arcs" not in result
@@ -180,24 +195,30 @@ class TestGatekeeperRecentDecisions:
 
     def test_includes_decisions(self, sample_draft, sample_decisions):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             recent_decisions=sample_decisions,
         )
         assert "## Recent Decisions (last 2)" in result
-        assert "[post_worthy] abc12345" in result
-        assert "[not_post_worthy] def67890" in result
+        assert "[draft] abc12345" in result
+        assert "[skip] def67890" in result
         assert "Add WebSocket gateway" in result
 
     def test_no_decisions_no_section(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             recent_decisions=[],
         )
         assert "## Recent Decisions" not in result
 
     def test_none_decisions_no_section(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             recent_decisions=None,
         )
         assert "## Recent Decisions" not in result
@@ -208,7 +229,9 @@ class TestGatekeeperRecentPosts:
 
     def test_includes_posts(self, sample_draft, sample_posts):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             recent_posts=sample_posts,
         )
         assert "## Recent Posts (last 2)" in result
@@ -217,7 +240,9 @@ class TestGatekeeperRecentPosts:
 
     def test_no_posts_no_section(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             recent_posts=[],
         )
         assert "## Recent Posts" not in result
@@ -228,7 +253,9 @@ class TestGatekeeperLinkedDecision:
 
     def test_includes_linked_decision(self, sample_draft, sample_linked_decision):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             linked_decision=sample_linked_decision,
         )
         assert "## Linked Decision (for current draft)" in result
@@ -241,11 +268,13 @@ class TestGatekeeperLinkedDecision:
             id="dec_no_angle",
             project_id="proj_gk1",
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Simple feature addition",
         )
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             linked_decision=decision,
         )
         assert "## Linked Decision" in result
@@ -254,7 +283,9 @@ class TestGatekeeperLinkedDecision:
 
     def test_no_linked_decision_no_section(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
             linked_decision=None,
         )
         assert "## Linked Decision" not in result
@@ -270,7 +301,9 @@ class TestGatekeeperSectionOrder:
 
     def test_project_state_before_summary(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "test",
+            "# GK",
+            sample_draft,
+            "test",
             lifecycle_phase="build",
             project_summary="My project summary.",
         )
@@ -280,7 +313,9 @@ class TestGatekeeperSectionOrder:
 
     def test_arcs_before_summary(self, sample_draft, sample_arcs):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "test",
+            "# GK",
+            sample_draft,
+            "test",
             active_arcs=sample_arcs,
             project_summary="My project summary.",
         )
@@ -290,7 +325,9 @@ class TestGatekeeperSectionOrder:
 
     def test_decisions_before_summary(self, sample_draft, sample_decisions):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "test",
+            "# GK",
+            sample_draft,
+            "test",
             recent_decisions=sample_decisions,
             project_summary="My project summary.",
         )
@@ -300,7 +337,9 @@ class TestGatekeeperSectionOrder:
 
     def test_linked_decision_before_draft(self, sample_draft, sample_linked_decision):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "test",
+            "# GK",
+            sample_draft,
+            "test",
             linked_decision=sample_linked_decision,
         )
         linked_pos = result.index("## Linked Decision")
@@ -310,7 +349,9 @@ class TestGatekeeperSectionOrder:
     def test_snapshot_before_state(self, sample_draft):
         snapshot = "## System Status\n- Projects: test (active)"
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "test",
+            "# GK",
+            sample_draft,
+            "test",
             system_snapshot=snapshot,
             lifecycle_phase="build",
         )
@@ -329,7 +370,9 @@ class TestGatekeeperBackwardCompat:
 
     def test_no_new_params_no_new_sections(self, sample_draft):
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "approve",
+            "# GK",
+            sample_draft,
+            "approve",
         )
         assert "## Project State" not in result
         assert "## Active Arcs" not in result
@@ -344,7 +387,9 @@ class TestGatekeeperBackwardCompat:
     def test_existing_params_still_work(self, sample_draft):
         snapshot = "## System Status\n- Projects: test (active)"
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "what drafts?",
+            "# GK",
+            sample_draft,
+            "what drafts?",
             project_summary="Auth project.",
             system_snapshot=snapshot,
             chat_history="## Recent Chat\n- User: hi",
@@ -366,12 +411,18 @@ class TestGatekeeperFullEnrichedPrompt:
     """Test with all enrichment parameters provided."""
 
     def test_all_sections_present(
-        self, sample_draft, sample_decisions, sample_posts,
-        sample_arcs, sample_linked_decision,
+        self,
+        sample_draft,
+        sample_decisions,
+        sample_posts,
+        sample_arcs,
+        sample_linked_decision,
     ):
         snapshot = "## System Status\n- Projects: test (active)"
         result = assemble_gatekeeper_prompt(
-            "# GK", sample_draft, "make it shorter",
+            "# GK",
+            sample_draft,
+            "make it shorter",
             project_summary="A dev tool for social media.",
             system_snapshot=snapshot,
             chat_history="## Recent Chat\n- User: hello",
@@ -408,7 +459,6 @@ class TestGatekeeperRouteForwarding:
     @patch("social_hook.llm.gatekeeper.assemble_gatekeeper_prompt")
     def test_route_forwards_enrichment_params(self, mock_assemble, mock_load):
         from social_hook.llm.gatekeeper import Gatekeeper
-        from social_hook.llm.schemas import GatekeeperOperation, RouteAction, RouteActionInput
 
         # Setup mock client
         mock_client = MagicMock()
@@ -475,7 +525,6 @@ class TestHandleMessageEnrichedContext:
         """
         from social_hook.db import operations as ops
         from social_hook.messaging.base import InboundMessage
-        from social_hook.models import Lifecycle, NarrativeDebt
 
         # Setup test data in DB
         project = Project(id="proj_hm1", name="test-project", repo_path="/tmp/test")
@@ -491,15 +540,21 @@ class TestHandleMessageEnrichedContext:
         ops.insert_narrative_debt(temp_db, debt)
 
         decision = Decision(
-            id="dec_hm1", project_id="proj_hm1", commit_hash="abc12345",
-            decision="post_worthy", reasoning="Added auth feature",
+            id="dec_hm1",
+            project_id="proj_hm1",
+            commit_hash="abc12345",
+            decision="draft",
+            reasoning="Added auth feature",
             commit_message="Add authentication module",
         )
         ops.insert_decision(temp_db, decision)
 
         msg = InboundMessage(
-            chat_id="123", text="hello", sender_id="user1",
-            sender_name="Test", message_id="msg1",
+            chat_id="123",
+            text="hello",
+            sender_id="user1",
+            sender_name="Test",
+            message_id="msg1",
         )
 
         mock_config = MagicMock()
@@ -508,20 +563,24 @@ class TestHandleMessageEnrichedContext:
         # Wrap temp_db to prevent handle_message from closing it (it's shared)
         class NoCloseConn:
             """Proxy that prevents close() from actually closing."""
+
             def __init__(self, conn):
                 self._conn = conn
+
             def __getattr__(self, name):
                 if name == "close":
                     return lambda: None
                 return getattr(self._conn, name)
+
         wrapped_conn = NoCloseConn(temp_db)
 
-        with patch("social_hook.bot.commands._get_conn", return_value=wrapped_conn), \
-             patch("social_hook.bot.commands.get_chat_draft_context", return_value=None), \
-             patch("social_hook.bot.buttons.get_pending_edit", return_value=None), \
-             patch("social_hook.llm.factory.create_client") as mock_create, \
-             patch("social_hook.llm.gatekeeper.Gatekeeper") as mock_gk_cls:
-
+        with (
+            patch("social_hook.bot.commands._get_conn", return_value=wrapped_conn),
+            patch("social_hook.bot.commands.get_chat_draft_context", return_value=None),
+            patch("social_hook.bot.buttons.get_pending_edit", return_value=None),
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.gatekeeper.Gatekeeper") as mock_gk_cls,
+        ):
             # Setup gatekeeper mock
             mock_gk = MagicMock()
             mock_route_result = MagicMock()
@@ -534,6 +593,7 @@ class TestHandleMessageEnrichedContext:
             adapter.send_message.return_value = MagicMock(success=True)
 
             from social_hook.bot.commands import handle_message
+
             handle_message(msg, adapter, mock_config)
 
             # Verify gatekeeper.route was called with enrichment params

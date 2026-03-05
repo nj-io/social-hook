@@ -3,10 +3,10 @@
 from typing import TYPE_CHECKING, Any, Optional
 
 from social_hook.config.project import ContextConfig
-from social_hook.db import operations as ops
-from social_hook.llm.base import LLMClient
+from social_hook.llm._usage_logger import log_usage
+from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.prompts import assemble_evaluator_prompt, load_prompt
-from social_hook.llm.schemas import LogDecisionInput, extract_tool_call
+from social_hook.llm.schemas import LogEvaluationInput
 from social_hook.models import CommitInfo, ProjectContext
 
 if TYPE_CHECKING:
@@ -29,14 +29,14 @@ class Evaluator:
         commit: CommitInfo,
         context: ProjectContext,
         db: Any,
-        config: Optional[ContextConfig] = None,
+        config: ContextConfig | None = None,
         show_prompt: bool = False,
-        platform_summaries: Optional[list[str]] = None,
+        platform_summaries: list[str] | None = None,
         media_config: Optional["MediaGenerationConfig"] = None,
-        media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
+        media_guidance: dict[str, "MediaToolGuidance"] | None = None,
         strategy_config: Optional["StrategyConfig"] = None,
         summary_config: Optional["SummaryConfig"] = None,
-    ) -> LogDecisionInput:
+    ) -> LogEvaluationInput:
         """Evaluate a commit for post-worthiness.
 
         Args:
@@ -52,11 +52,14 @@ class Evaluator:
             summary_config: Summary refresh thresholds
 
         Returns:
-            Validated LogDecisionInput from the LLM
+            Validated LogEvaluationInput from the LLM
         """
         prompt = load_prompt("evaluator")
         system = assemble_evaluator_prompt(
-            prompt, context, commit, config,
+            prompt,
+            context,
+            commit,
+            config,
             platform_summaries=platform_summaries,
             media_config=media_config,
             media_guidance=media_guidance,
@@ -83,6 +86,7 @@ class Evaluator:
 
         if show_prompt:
             import sys
+
             print("=" * 72, file=sys.stderr)
             print("EVALUATOR SYSTEM PROMPT", file=sys.stderr)
             print("=" * 72, file=sys.stderr)
@@ -95,13 +99,17 @@ class Evaluator:
 
         response = self.client.complete(
             messages=[{"role": "user", "content": user_message}],
-            tools=[LogDecisionInput.to_tool_schema()],
+            tools=[LogEvaluationInput.to_tool_schema()],
             system=system,
-            operation_type="evaluate",
-            db=db,
-            project_id=context.project.id,
-            commit_hash=commit.hash,
+        )
+        log_usage(
+            db,
+            "evaluate",
+            getattr(self.client, "full_id", "unknown"),
+            response.usage,
+            context.project.id,
+            commit.hash,
         )
 
-        tool_input = extract_tool_call(response, "log_decision")
-        return LogDecisionInput.validate(tool_input)
+        tool_input = extract_tool_call(response, "log_evaluation")
+        return LogEvaluationInput.validate(tool_input)

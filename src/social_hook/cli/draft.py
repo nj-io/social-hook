@@ -2,7 +2,6 @@
 
 import json as json_mod
 from datetime import datetime
-from typing import Optional
 
 import typer
 
@@ -53,7 +52,7 @@ def approve(
 def reject(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to reject"),
-    reason: Optional[str] = typer.Option(None, "--reason", "-r", help="Rejection reason"),
+    reason: str | None = typer.Option(None, "--reason", "-r", help="Rejection reason"),
 ):
     """Reject a draft."""
     from social_hook.db import operations as ops
@@ -67,9 +66,17 @@ def reject(
         kwargs = {"status": "rejected"}
         if reason:
             kwargs["last_error"] = f"Rejected: {reason}"
-        ops.update_draft(conn, draft_id, **kwargs)
+        ops.update_draft(conn, draft_id, **kwargs)  # type: ignore[arg-type]
         ops.emit_data_event(conn, "draft", "rejected", draft_id, draft.project_id)
+
+        # Cascade re-draft if this was an intro draft
+        from social_hook.intro_lifecycle import on_intro_rejected
+
+        cascade_msg = on_intro_rejected(conn, draft, draft.project_id, verbose=False)
+
         typer.echo(f"Draft {draft_id} rejected.")
+        if cascade_msg:
+            typer.echo(cascade_msg)
     finally:
         conn.close()
 
@@ -78,7 +85,7 @@ def reject(
 def schedule(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to schedule"),
-    time: Optional[str] = typer.Option(None, "--time", "-t", help="Schedule time (ISO format)"),
+    time: str | None = typer.Option(None, "--time", "-t", help="Schedule time (ISO format)"),
 ):
     """Schedule a draft for posting."""
     from social_hook.db import operations as ops
@@ -95,7 +102,7 @@ def schedule(
                 datetime.fromisoformat(time)
             except ValueError:
                 typer.echo(f"Invalid datetime format: {time}")
-                raise typer.Exit(1)
+                raise typer.Exit(1) from None
             ops.update_draft(conn, draft_id, status="scheduled", scheduled_time=time)
             typer.echo(f"Draft {draft_id} scheduled for {time}.")
         else:
@@ -333,15 +340,23 @@ def media_remove(
 @app.command("list")
 def list_cmd(
     ctx: typer.Context,
-    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status"),
-    project: Optional[str] = typer.Option(None, "--project", "-p", help="Filter by project ID"),
+    status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project ID"),
+    pending: bool = typer.Option(
+        False, "--pending", help="Show only actionable drafts (draft/approved/scheduled)"
+    ),
 ):
-    """List drafts with optional filters."""
+    """List drafts with optional filters.
+
+    Example: social-hook draft list --pending --json
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
     try:
         drafts = ops.get_drafts_filtered(conn, status=status, project_id=project)
+        if pending:
+            drafts = [d for d in drafts if d.status in ("draft", "approved", "scheduled")]
         json_output = ctx.obj.get("json", False) if ctx.obj else False
 
         if json_output:
@@ -352,11 +367,15 @@ def list_cmd(
             typer.echo("No drafts found.")
             return
 
-        typer.echo(f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Content'}")
-        typer.echo("-" * 70)
+        typer.echo(f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Fmt':<8} {'Content'}")
+        typer.echo("-" * 80)
         for d in drafts:
             content_preview = d.content[:40].replace("\n", " ") if d.content else ""
-            typer.echo(f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {content_preview}")
+            intro = " [INTRO]" if getattr(d, "is_intro", False) else ""
+            fmt = d.post_format or "single"
+            typer.echo(
+                f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {fmt:<8} {content_preview}{intro}"
+            )
     finally:
         conn.close()
 

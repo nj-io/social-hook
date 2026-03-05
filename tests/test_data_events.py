@@ -1,11 +1,8 @@
 """Tests for data event emission (WebSocket push notifications)."""
 
 import json
-import sqlite3
 
-import pytest
-
-from social_hook.db import emit_data_event, init_database
+from social_hook.db import emit_data_event
 from social_hook.llm.dry_run import DryRunContext
 
 
@@ -26,9 +23,7 @@ class TestEmitDataEvent:
         """Payload contains entity, action, entity_id, and project_id."""
         emit_data_event(temp_db, "decision", "updated", "dec-42", "proj-7")
 
-        row = temp_db.execute(
-            "SELECT data FROM web_events ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        row = temp_db.execute("SELECT data FROM web_events ORDER BY id DESC LIMIT 1").fetchone()
         payload = json.loads(row[0])
         assert payload["entity"] == "decision"
         assert payload["action"] == "updated"
@@ -39,9 +34,7 @@ class TestEmitDataEvent:
         """entity_id and project_id default to empty string."""
         emit_data_event(temp_db, "post", "created")
 
-        row = temp_db.execute(
-            "SELECT data FROM web_events ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        row = temp_db.execute("SELECT data FROM web_events ORDER BY id DESC LIMIT 1").fetchone()
         payload = json.loads(row[0])
         assert payload["entity_id"] == ""
         assert payload["project_id"] == ""

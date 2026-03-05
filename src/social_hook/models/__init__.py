@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
-
 # =============================================================================
 # Enums (must match DB CHECK constraints)
 # =============================================================================
@@ -27,10 +26,9 @@ class DraftStatus(Enum):
 class DecisionType(Enum):
     """Evaluation decision for a commit."""
 
-    POST_WORTHY = "post_worthy"
-    NOT_POST_WORTHY = "not_post_worthy"
-    CONSOLIDATE = "consolidate"
-    DEFERRED = "deferred"
+    DRAFT = "draft"
+    HOLD = "hold"
+    SKIP = "skip"
 
 
 class EpisodeType(Enum):
@@ -51,6 +49,15 @@ class PostCategory(Enum):
     ARC = "arc"  # Advances an active narrative arc
     OPPORTUNISTIC = "opportunistic"  # High-signal standalone post
     EXPERIMENT = "experiment"  # Testing new format, tone, or angle
+
+
+class PostFormat(Enum):
+    """Format of a drafted post."""
+
+    SINGLE = "single"
+    THREAD = "thread"
+    QUOTE = "quote"
+    REPLY = "reply"
 
 
 class LifecyclePhase(Enum):
@@ -76,12 +83,12 @@ class ArcStatus(Enum):
 # =============================================================================
 
 
-def _to_iso(dt: Optional[datetime]) -> Optional[str]:
+def _to_iso(dt: datetime | None) -> str | None:
     """Convert datetime to ISO string."""
     return dt.isoformat() if dt else None
 
 
-def _from_iso(s: Optional[str]) -> Optional[datetime]:
+def _from_iso(s: str | None) -> datetime | None:
     """Convert ISO string to datetime."""
     return datetime.fromisoformat(s) if s else None
 
@@ -89,6 +96,16 @@ def _from_iso(s: Optional[str]) -> Optional[datetime]:
 def _now_iso() -> str:
     """Get current time as ISO string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def is_draftable(decision: str) -> bool:
+    """Check if a decision indicates content should be drafted."""
+    return decision == "draft"
+
+
+def is_held(decision: str) -> bool:
+    """Check if a decision is held for consolidation."""
+    return decision == "hold"
 
 
 # =============================================================================
@@ -103,14 +120,14 @@ class Project:
     id: str
     name: str
     repo_path: str
-    repo_origin: Optional[str] = None
-    summary: Optional[str] = None
-    summary_updated_at: Optional[datetime] = None
+    repo_origin: str | None = None
+    summary: str | None = None
+    summary_updated_at: datetime | None = None
     audience_introduced: bool = False
     paused: bool = False
-    discovery_files: Optional[str] = None  # JSON-serialized list of file paths
-    trigger_branch: Optional[str] = None
-    created_at: Optional[datetime] = None
+    discovery_files: str | None = None  # JSON-serialized list of file paths
+    trigger_branch: str | None = None
+    created_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -166,18 +183,21 @@ class Decision:
     commit_hash: str
     decision: str  # DecisionType value
     reasoning: str
-    commit_message: Optional[str] = None
-    angle: Optional[str] = None
-    episode_type: Optional[str] = None  # EpisodeType value
-    post_category: Optional[str] = None  # PostCategory value
-    arc_id: Optional[str] = None
-    media_tool: Optional[str] = None
+    commit_message: str | None = None
+    angle: str | None = None
+    episode_type: str | None = None  # EpisodeType value
+    episode_tags: list[str] = field(default_factory=list)
+    post_category: str | None = None  # PostCategory value
+    arc_id: str | None = None
+    media_tool: str | None = None
     platforms: dict[str, str] = field(default_factory=dict)
-    commit_summary: Optional[str] = None
+    targets: dict = field(default_factory=dict)
+    commit_summary: str | None = None
+    consolidate_with: list[str] | None = None
     processed: bool = False
-    processed_at: Optional[datetime] = None
-    batch_id: Optional[str] = None
-    created_at: Optional[datetime] = None
+    processed_at: datetime | None = None
+    batch_id: str | None = None
+    created_at: datetime | None = None
 
     def __post_init__(self):
         # Validate decision value
@@ -213,11 +233,14 @@ class Decision:
             "reasoning": self.reasoning,
             "angle": self.angle,
             "episode_type": self.episode_type,
+            "episode_tags": self.episode_tags,
             "post_category": self.post_category,
             "arc_id": self.arc_id,
             "media_tool": self.media_tool,
             "platforms": self.platforms,
+            "targets": self.targets,
             "commit_summary": self.commit_summary,
+            "consolidate_with": self.consolidate_with,
             "processed": self.processed,
             "processed_at": _to_iso(self.processed_at),
             "batch_id": self.batch_id,
@@ -226,11 +249,24 @@ class Decision:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Decision":
+        import json
+
         platforms = d.get("platforms", {})
         if isinstance(platforms, str):
-            import json
-
             platforms = json.loads(platforms)
+
+        episode_tags = d.get("episode_tags", [])
+        if isinstance(episode_tags, str):
+            episode_tags = json.loads(episode_tags)
+
+        targets = d.get("targets", {})
+        if isinstance(targets, str):
+            targets = json.loads(targets)
+
+        consolidate_with = d.get("consolidate_with")
+        if isinstance(consolidate_with, str):
+            consolidate_with = json.loads(consolidate_with)
+
         return cls(
             id=d["id"],
             project_id=d["project_id"],
@@ -240,11 +276,14 @@ class Decision:
             commit_message=d.get("commit_message"),
             angle=d.get("angle"),
             episode_type=d.get("episode_type"),
+            episode_tags=episode_tags,
             post_category=d.get("post_category"),
             arc_id=d.get("arc_id"),
             media_tool=d.get("media_tool"),
             platforms=platforms,
+            targets=targets,
             commit_summary=d.get("commit_summary"),
+            consolidate_with=consolidate_with,
             processed=bool(d.get("processed", False)),
             processed_at=_from_iso(d.get("processed_at")),
             batch_id=d.get("batch_id"),
@@ -252,7 +291,7 @@ class Decision:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT."""
+        """Return tuple for INSERT (16 columns)."""
         import json
 
         return (
@@ -264,11 +303,14 @@ class Decision:
             self.reasoning,
             self.angle,
             self.episode_type,
+            json.dumps(self.episode_tags),
             self.post_category,
             self.arc_id,
             self.media_tool,
             json.dumps(self.platforms),
+            json.dumps(self.targets),
             self.commit_summary,
+            json.dumps(self.consolidate_with) if self.consolidate_with is not None else None,
         )
 
 
@@ -283,23 +325,24 @@ class Draft:
     content: str
     status: str = "draft"  # DraftStatus value
     media_paths: list[str] = field(default_factory=list)
-    media_type: Optional[str] = None
-    media_spec: Optional[dict] = None
-    suggested_time: Optional[datetime] = None
-    scheduled_time: Optional[datetime] = None
-    reasoning: Optional[str] = None
-    superseded_by: Optional[str] = None
+    media_type: str | None = None
+    media_spec: dict | None = None
+    suggested_time: datetime | None = None
+    scheduled_time: datetime | None = None
+    reasoning: str | None = None
+    superseded_by: str | None = None
     retry_count: int = 0
-    last_error: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    last_error: str | None = None
+    is_intro: bool = False
+    post_format: str | None = None
+    reference_post_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     def __post_init__(self):
         valid_statuses = [s.value for s in DraftStatus]
         if self.status not in valid_statuses:
-            raise ValueError(
-                f"Invalid status '{self.status}', must be one of {valid_statuses}"
-            )
+            raise ValueError(f"Invalid status '{self.status}', must be one of {valid_statuses}")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -318,21 +361,22 @@ class Draft:
             "superseded_by": self.superseded_by,
             "retry_count": self.retry_count,
             "last_error": self.last_error,
+            "is_intro": self.is_intro,
+            "post_format": self.post_format,
+            "reference_post_id": self.reference_post_id,
             "created_at": _to_iso(self.created_at),
             "updated_at": _to_iso(self.updated_at),
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Draft":
+        import json
+
         media_paths = d.get("media_paths", [])
         if isinstance(media_paths, str):
-            import json
-
             media_paths = json.loads(media_paths)
         media_spec_raw = d.get("media_spec")
         if isinstance(media_spec_raw, str):
-            import json
-
             media_spec = json.loads(media_spec_raw) if media_spec_raw else None
         else:
             media_spec = media_spec_raw
@@ -352,12 +396,15 @@ class Draft:
             superseded_by=d.get("superseded_by"),
             retry_count=d.get("retry_count", 0),
             last_error=d.get("last_error"),
+            is_intro=bool(d.get("is_intro", False)),
+            post_format=d.get("post_format"),
+            reference_post_id=d.get("reference_post_id"),
             created_at=_from_iso(d.get("created_at")),
             updated_at=_from_iso(d.get("updated_at")),
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT."""
+        """Return tuple for INSERT (18 columns)."""
         import json
 
         return (
@@ -376,6 +423,9 @@ class Draft:
             self.superseded_by,
             self.retry_count,
             self.last_error,
+            1 if self.is_intro else 0,
+            self.post_format,
+            self.reference_post_id,
         )
 
 
@@ -388,9 +438,9 @@ class DraftTweet:
     position: int
     content: str
     media_paths: list[str] = field(default_factory=list)
-    external_id: Optional[str] = None
-    posted_at: Optional[datetime] = None
-    error: Optional[str] = None
+    external_id: str | None = None
+    posted_at: datetime | None = None
+    error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -445,10 +495,10 @@ class DraftChange:
     id: str
     draft_id: str
     field: str
-    old_value: Optional[str]
-    new_value: Optional[str]
+    old_value: str | None
+    new_value: str | None
     changed_by: str  # 'gatekeeper', 'human', 'expert'
-    changed_at: Optional[datetime] = None
+    changed_at: datetime | None = None
 
     def __post_init__(self):
         valid_changers = ("gatekeeper", "human", "expert")
@@ -501,9 +551,9 @@ class Post:
     project_id: str
     platform: str
     content: str
-    external_id: Optional[str] = None
-    external_url: Optional[str] = None
-    posted_at: Optional[datetime] = None
+    external_id: str | None = None
+    external_url: str | None = None
+    posted_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -551,17 +601,15 @@ class Lifecycle:
     phase: str = "research"  # LifecyclePhase value
     confidence: float = 0.5
     evidence: list[str] = field(default_factory=list)
-    last_strategy_moment: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    last_strategy_moment: datetime | None = None
+    updated_at: datetime | None = None
 
     def __post_init__(self):
         valid_phases = [p.value for p in LifecyclePhase]
         if self.phase not in valid_phases:
-            raise ValueError(
-                f"Invalid phase '{self.phase}', must be one of {valid_phases}"
-            )
+            raise ValueError(f"Invalid phase '{self.phase}', must be one of {valid_phases}")
         if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError(f"Confidence must be between 0.0 and 1.0")
+            raise ValueError("Confidence must be between 0.0 and 1.0")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -611,18 +659,16 @@ class Arc:
     theme: str
     status: str = "active"  # ArcStatus value
     post_count: int = 0
-    last_post_at: Optional[datetime] = None
-    notes: Optional[str] = None
-    started_at: Optional[datetime] = None
-    ended_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    last_post_at: datetime | None = None
+    notes: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    updated_at: datetime | None = None
 
     def __post_init__(self):
         valid_statuses = [s.value for s in ArcStatus]
         if self.status not in valid_statuses:
-            raise ValueError(
-                f"Invalid status '{self.status}', must be one of {valid_statuses}"
-            )
+            raise ValueError(f"Invalid status '{self.status}', must be one of {valid_statuses}")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -672,7 +718,7 @@ class NarrativeDebt:
 
     project_id: str
     debt_counter: int = 0
-    last_synthesis_at: Optional[datetime] = None
+    last_synthesis_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -710,9 +756,9 @@ class UsageLog:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     cost_cents: float = 0.0
-    project_id: Optional[str] = None
-    commit_hash: Optional[str] = None
-    created_at: Optional[datetime] = None
+    project_id: str | None = None
+    commit_hash: str | None = None
+    created_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -776,8 +822,8 @@ class CommitInfo:
     files_changed: list[str] = field(default_factory=list)
     insertions: int = 0
     deletions: int = 0
-    timestamp: Optional[str] = None  # ISO 8601 author date of this commit
-    parent_timestamp: Optional[str] = None  # ISO 8601 author date of parent commit
+    timestamp: str | None = None  # ISO 8601 author date of this commit
+    parent_timestamp: str | None = None  # ISO 8601 author date of parent commit
 
 
 @dataclass
@@ -785,7 +831,7 @@ class ProjectContext:
     """Assembled project state for agent context."""
 
     project: "Project"
-    social_context: Optional[str]
+    social_context: str | None
     lifecycle: Optional["Lifecycle"]
     active_arcs: list["Arc"]
     narrative_debt: int
@@ -793,8 +839,9 @@ class ProjectContext:
     pending_drafts: list["Draft"]
     recent_decisions: list["Decision"]
     recent_posts: list["Post"]
-    project_summary: Optional[str]
+    project_summary: str | None
     memories: list[dict] = field(default_factory=list)
     milestone_summaries: list[dict] = field(default_factory=list)
     context_notes: list[dict] = field(default_factory=list)
     session_narratives: list[dict] = field(default_factory=list)
+    held_decisions: list["Decision"] = field(default_factory=list)

@@ -5,7 +5,6 @@ from typing import Any
 
 from social_hook.db import operations as ops
 
-
 # Prefixes that indicate write operations (should be no-ops in dry run)
 _WRITE_PREFIXES = (
     "insert_",
@@ -19,9 +18,7 @@ _WRITE_PREFIXES = (
 )
 
 # Prefixes that indicate read operations (always pass through)
-_READ_PREFIXES = (
-    "get_",
-)
+_READ_PREFIXES = ("get_",)
 
 
 class DryRunContext:
@@ -45,8 +42,7 @@ class DryRunContext:
         func = getattr(ops, name, None)
         if func is None:
             raise AttributeError(
-                f"'DryRunContext' has no attribute '{name}' "
-                f"(not found in db.operations)"
+                f"'DryRunContext' has no attribute '{name}' (not found in db.operations)"
             )
 
         if self.dry_run and name.startswith(_WRITE_PREFIXES):
@@ -67,6 +63,7 @@ def _make_noop(name: str, func: Any) -> Any:
     - increment_*: returns 0
     - Others: returns None
     """
+
     def noop(*args: Any, **kwargs: Any) -> Any:
         if name.startswith("insert_"):
             # insert_* functions take a model object and return its ID
@@ -78,11 +75,12 @@ def _make_noop(name: str, func: Any) -> Any:
             return None
         elif name.startswith("increment_"):
             return 0
-        elif name.startswith("update_") or name.startswith("reset_"):
-            return False
-        elif name.startswith("set_"):
-            return False
-        elif name.startswith("supersede_"):
+        elif (
+            name.startswith("update_")
+            or name.startswith("reset_")
+            or name.startswith("set_")
+            or name.startswith("supersede_")
+        ):
             return False
         return None
 

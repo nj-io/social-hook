@@ -153,7 +153,7 @@ def _write_sample_jsonl(path: Path) -> Path:
 
 # Ideal transcript size range for verification: large enough to contain real
 # conversational content but not so large that it costs a fortune to extract.
-_MIN_TRANSCRIPT_BYTES = 500_000     # 500 KB — enough signal
+_MIN_TRANSCRIPT_BYTES = 500_000  # 500 KB — enough signal
 _MAX_TRANSCRIPT_BYTES = 10_000_000  # 10 MB — keeps cost reasonable
 
 
@@ -197,7 +197,7 @@ def _discover_real_transcript(transcript_arg: str | None) -> tuple[Path | None, 
 
         claude_projects_dir = Path.home() / ".claude" / "projects"
         if not claude_projects_dir.exists():
-            return None, f"~/.claude/projects/ not found — no Claude Code sessions available"
+            return None, "~/.claude/projects/ not found — no Claude Code sessions available"
 
         # Search each project for transcripts
         candidates: list[tuple[Path, str, float]] = []  # (path, project_name, size_mb)
@@ -307,26 +307,26 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     _failures = 0
 
     mode = "LIVE" if live else "DRY-RUN"
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Narrative Capture Verification ({mode})")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # --- Resolve transcript source early (live mode) ---
     real_transcript_path: Path | None = None
     if live:
         real_transcript_path, discovery_desc = _discover_real_transcript(transcript_arg)
         if real_transcript_path is None:
-            print(f"\n  ABORT: Cannot run --live without a real transcript.")
+            print("\n  ABORT: Cannot run --live without a real transcript.")
             print(f"         Reason: {discovery_desc}")
-            print(f"         Hint: use --transcript <path> to provide one manually.")
+            print("         Hint: use --transcript <path> to provide one manually.")
             print()
             return False
         print(f"\n  Transcript: {real_transcript_path}")
         print(f"  Source:     {discovery_desc}")
-        print(f"\n  To reproduce this exact run:")
+        print("\n  To reproduce this exact run:")
         print(f"    python scripts/verify_narrative.py --live --transcript {real_transcript_path}")
     else:
-        print(f"\n  Transcript: synthetic sample data (dry-run only)")
+        print("\n  Transcript: synthetic sample data (dry-run only)")
 
     # --- Setup temp directory ---
     tmpdir = tempfile.mkdtemp(prefix="narrative_verify_")
@@ -336,7 +336,7 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     # Step 1: Config parsing with journey_capture section
     # =========================================================================
     step("Config parsing with journey_capture")
-    from social_hook.config.yaml import JourneyCaptureConfig, _parse_config
+    from social_hook.config.yaml import _parse_config
 
     # Default config (no journey_capture key)
     config_no_jc = _parse_config({})
@@ -352,9 +352,11 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     )
 
     # Explicit enabled
-    config_enabled = _parse_config({
-        "journey_capture": {"enabled": True},
-    })
+    config_enabled = _parse_config(
+        {
+            "journey_capture": {"enabled": True},
+        }
+    )
     check(
         config_enabled.journey_capture.enabled is True,
         "Explicit: enabled=True",
@@ -362,12 +364,14 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     )
 
     # With custom model
-    config_model = _parse_config({
-        "journey_capture": {
-            "enabled": True,
-            "model": "anthropic/claude-sonnet-4-5",
-        },
-    })
+    config_model = _parse_config(
+        {
+            "journey_capture": {
+                "enabled": True,
+                "model": "anthropic/claude-sonnet-4-5",
+            },
+        }
+    )
     check(
         config_model.journey_capture.model == "anthropic/claude-sonnet-4-5",
         "Custom model: anthropic/claude-sonnet-4-5",
@@ -378,12 +382,14 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     from social_hook.errors import ConfigError
 
     try:
-        _parse_config({
-            "journey_capture": {
-                "enabled": True,
-                "model": "bare-model-name",
-            },
-        })
+        _parse_config(
+            {
+                "journey_capture": {
+                    "enabled": True,
+                    "model": "bare-model-name",
+                },
+            }
+        )
         fail("Should have raised ConfigError for bare model name")
     except ConfigError:
         ok("Bare model name raises ConfigError")
@@ -394,7 +400,7 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     from social_hook.narrative.transcript import read_transcript
 
     if live:
-        step(f"Transcript reading from real session")
+        step("Transcript reading from real session")
         print(f"       File: {real_transcript_path.name}")
         print(f"       Size: {real_transcript_path.stat().st_size / 1_000_000:.1f} MB")
         messages = read_transcript(real_transcript_path)
@@ -451,8 +457,11 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
         elif isinstance(content, str):
             all_block_types.add("text_str")
 
-    check("text" in all_block_types or "text_str" in all_block_types,
-          "Text blocks kept", "No text blocks found")
+    check(
+        "text" in all_block_types or "text_str" in all_block_types,
+        "Text blocks kept",
+        "No text blocks found",
+    )
 
     if live:
         # Real transcripts should have thinking blocks (Claude uses extended thinking)
@@ -462,13 +471,15 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
         else:
             ok("No thinking blocks in this transcript (model may not use extended thinking)")
     else:
-        check("thinking" in all_block_types,
-              "Thinking blocks kept", "No thinking blocks found")
+        check("thinking" in all_block_types, "Thinking blocks kept", "No thinking blocks found")
 
     # Sidechain messages should be excluded
     sidechain_count = sum(1 for m in filtered if m.get("isSidechain"))
-    check(sidechain_count == 0, "Sidechain messages excluded",
-          f"Sidechain messages present: {sidechain_count}")
+    check(
+        sidechain_count == 0,
+        "Sidechain messages excluded",
+        f"Sidechain messages present: {sidechain_count}",
+    )
 
     if live:
         check(
@@ -492,8 +503,7 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     formatted = format_for_prompt(filtered)
     check(len(formatted) > 0, f"Formatted: {len(formatted):,} chars", "Empty formatted output")
     check("[USER]" in formatted, "Contains [USER] labels", "Missing [USER] labels")
-    check("[ASSISTANT]" in formatted, "Contains [ASSISTANT] labels",
-          "Missing [ASSISTANT] labels")
+    check("[ASSISTANT]" in formatted, "Contains [ASSISTANT] labels", "Missing [ASSISTANT] labels")
 
     if live:
         has_thinking_labels = "[ASSISTANT THINKING]" in formatted
@@ -502,8 +512,11 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
         else:
             ok("No [ASSISTANT THINKING] labels (transcript has no thinking blocks)")
     else:
-        check("[ASSISTANT THINKING]" in formatted, "Contains [ASSISTANT THINKING] labels",
-              "Missing [ASSISTANT THINKING] labels")
+        check(
+            "[ASSISTANT THINKING]" in formatted,
+            "Contains [ASSISTANT THINKING] labels",
+            "Missing [ASSISTANT THINKING] labels",
+        )
 
     # =========================================================================
     # Step 5: Truncate to budget
@@ -512,8 +525,11 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     from social_hook.narrative.transcript import truncate_to_budget
 
     short_text = "Short text"
-    check(truncate_to_budget(short_text) == short_text,
-          "Short text passes through", "Short text truncated")
+    check(
+        truncate_to_budget(short_text) == short_text,
+        "Short text passes through",
+        "Short text truncated",
+    )
 
     long_text = "x" * 200_000
     truncated = truncate_to_budget(long_text, max_chars=100_000)
@@ -541,23 +557,25 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
         "social_hook.narrative.storage.get_narratives_path",
         return_value=narratives_dir,
     ):
+        from social_hook.llm.schemas import ExtractNarrativeInput
         from social_hook.narrative.storage import (
             cleanup_old_narratives,
             load_recent_narratives,
             save_narrative,
         )
-        from social_hook.llm.schemas import ExtractNarrativeInput
 
-        extraction = ExtractNarrativeInput.validate({
-            "summary": "Test session summary",
-            "key_decisions": ["Decision A", "Decision B"],
-            "rejected_approaches": ["Approach X"],
-            "aha_moments": ["Aha moment 1"],
-            "challenges": ["Challenge 1"],
-            "narrative_arc": "From problem to solution",
-            "relevant_for_social": True,
-            "social_hooks": ["Hook angle 1", "Hook angle 2"],
-        })
+        extraction = ExtractNarrativeInput.validate(
+            {
+                "summary": "Test session summary",
+                "key_decisions": ["Decision A", "Decision B"],
+                "rejected_approaches": ["Approach X"],
+                "aha_moments": ["Aha moment 1"],
+                "challenges": ["Challenge 1"],
+                "narrative_arc": "From problem to solution",
+                "relevant_for_social": True,
+                "social_hooks": ["Hook angle 1", "Hook angle 2"],
+            }
+        )
 
         saved_path = save_narrative("proj_test1", extraction, "session_001", "auto")
         check(saved_path.exists(), f"Saved to {saved_path.name}", "Save failed")
@@ -594,6 +612,7 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     # =========================================================================
     step("CLI commands: journey on/off/status")
     from typer.testing import CliRunner
+
     from social_hook.cli import app
 
     cli = CliRunner()
@@ -604,7 +623,9 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     sh_dir = cli_home / ".social-hook"
     sh_dir.mkdir()
     (sh_dir / ".env").write_text("TELEGRAM_BOT_TOKEN=fake\n")
-    (sh_dir / "config.yaml").write_text("models:\n  evaluator: anthropic/claude-opus-4-5\n  drafter: anthropic/claude-opus-4-5\n  gatekeeper: anthropic/claude-haiku-4-5\n")
+    (sh_dir / "config.yaml").write_text(
+        "models:\n  evaluator: anthropic/claude-opus-4-5\n  drafter: anthropic/claude-opus-4-5\n  gatekeeper: anthropic/claude-haiku-4-5\n"
+    )
 
     # Create .claude dir for hook installation
     claude_dir = cli_home / ".claude"
@@ -629,6 +650,7 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
 
         # Verify config was updated
         import yaml
+
         config_data = yaml.safe_load((sh_dir / "config.yaml").read_text())
         check(
             config_data.get("journey_capture", {}).get("enabled") is True,
@@ -638,6 +660,7 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
 
         # Verify hook was installed
         from social_hook.setup.install import check_narrative_hook_installed
+
         check(
             check_narrative_hook_installed(),
             "Narrative hook installed",
@@ -682,16 +705,18 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     # =========================================================================
     step("ExtractNarrativeInput schema validation")
 
-    valid = ExtractNarrativeInput.validate({
-        "summary": "A good session",
-        "key_decisions": ["d1"],
-        "rejected_approaches": [],
-        "aha_moments": [],
-        "challenges": [],
-        "narrative_arc": "story",
-        "relevant_for_social": False,
-        "social_hooks": [],
-    })
+    valid = ExtractNarrativeInput.validate(
+        {
+            "summary": "A good session",
+            "key_decisions": ["d1"],
+            "rejected_approaches": [],
+            "aha_moments": [],
+            "challenges": [],
+            "narrative_arc": "story",
+            "relevant_for_social": False,
+            "social_hooks": [],
+        }
+    )
     check(valid.summary == "A good session", "Valid input parsed", "Parse failed")
     check(valid.relevant_for_social is False, "relevant_for_social=False", "Wrong value")
 
@@ -726,8 +751,8 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     # Step 10: NarrativeExtractor (dry-run or live)
     # =========================================================================
     step("NarrativeExtractor extraction")
-    from social_hook.narrative.extractor import NarrativeExtractor
     from social_hook.llm.base import LLMClient as _LLMClient
+    from social_hook.narrative.extractor import NarrativeExtractor
 
     if live:
         from social_hook.config.yaml import load_full_config
@@ -756,44 +781,51 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
                     project_id="proj_verify",
                 )
                 check(result is not None, "Extraction succeeded", "Extraction returned None")
-                check(len(result.summary) > 0, f"Summary: {result.summary[:80]}...",
-                      "Empty summary")
-                check(isinstance(result.key_decisions, list),
-                      f"key_decisions: {len(result.key_decisions)} items",
-                      "key_decisions not list")
-                check(isinstance(result.relevant_for_social, bool),
-                      f"relevant_for_social={result.relevant_for_social}",
-                      "relevant_for_social not bool")
-                check(isinstance(result.social_hooks, list),
-                      f"social_hooks: {len(result.social_hooks)} items",
-                      "social_hooks not list")
+                check(
+                    len(result.summary) > 0, f"Summary: {result.summary[:80]}...", "Empty summary"
+                )
+                check(
+                    isinstance(result.key_decisions, list),
+                    f"key_decisions: {len(result.key_decisions)} items",
+                    "key_decisions not list",
+                )
+                check(
+                    isinstance(result.relevant_for_social, bool),
+                    f"relevant_for_social={result.relevant_for_social}",
+                    "relevant_for_social not bool",
+                )
+                check(
+                    isinstance(result.social_hooks, list),
+                    f"social_hooks: {len(result.social_hooks)} items",
+                    "social_hooks not list",
+                )
 
                 # Print full extraction for human review
-                print(f"\n       --- Extraction Result (human review) ---")
+                print("\n       --- Extraction Result (human review) ---")
                 print(f"       Summary: {result.summary}")
                 if result.key_decisions:
-                    print(f"       Key decisions:")
+                    print("       Key decisions:")
                     for d in result.key_decisions:
                         print(f"         - {d}")
                 if result.rejected_approaches:
-                    print(f"       Rejected approaches:")
+                    print("       Rejected approaches:")
                     for r in result.rejected_approaches:
                         print(f"         - {r}")
                 if result.aha_moments:
-                    print(f"       Aha moments:")
+                    print("       Aha moments:")
                     for a in result.aha_moments:
                         print(f"         - {a}")
                 if result.challenges:
-                    print(f"       Challenges:")
+                    print("       Challenges:")
                     for c in result.challenges:
                         print(f"         - {c}")
                 print(f"       Narrative arc: {result.narrative_arc}")
                 print(f"       Relevant for social: {result.relevant_for_social}")
                 if result.social_hooks:
-                    print(f"       Social hooks:")
+                    print("       Social hooks:")
                     for h in result.social_hooks:
                         print(f"         - {h}")
-                print(f"       --- End extraction ---")
+                print("       --- End extraction ---")
 
             except Exception as e:
                 fail(f"Live extraction failed: {e}")
@@ -813,14 +845,22 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
             project_id="proj_verify",
         )
         check(result is not None, "Extraction succeeded (mock)", "Extraction returned None")
-        check(result.summary is not None and len(result.summary) > 0,
-              f"Summary: {result.summary[:60]}", "Empty summary")
-        check(len(result.key_decisions) == 2,
-              f"key_decisions: {len(result.key_decisions)}", "Wrong count")
-        check(result.relevant_for_social is True,
-              "relevant_for_social=True", "Wrong value")
-        check(len(result.social_hooks) == 2,
-              f"social_hooks: {len(result.social_hooks)}", "Wrong count")
+        check(
+            result.summary is not None and len(result.summary) > 0,
+            f"Summary: {result.summary[:60]}",
+            "Empty summary",
+        )
+        check(
+            len(result.key_decisions) == 2,
+            f"key_decisions: {len(result.key_decisions)}",
+            "Wrong count",
+        )
+        check(result.relevant_for_social is True, "relevant_for_social=True", "Wrong value")
+        check(
+            len(result.social_hooks) == 2,
+            f"social_hooks: {len(result.social_hooks)}",
+            "Wrong count",
+        )
 
     # =========================================================================
     # Step 11: Full pipeline (live only): read -> filter -> extract -> save -> load
@@ -839,8 +879,7 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
                 check(saved.exists(), "Pipeline save succeeded", "Save failed")
 
                 loaded = load_recent_narratives("proj_pipeline", limit=5)
-                check(len(loaded) >= 1, f"Pipeline load: {len(loaded)} narrative(s)",
-                      "Load failed")
+                check(len(loaded) >= 1, f"Pipeline load: {len(loaded)} narrative(s)", "Load failed")
                 if loaded:
                     check(
                         loaded[0]["summary"] == result.summary,
@@ -860,8 +899,7 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
             check(saved.exists(), "Pipeline save succeeded", "Save failed")
 
             loaded = load_recent_narratives("proj_pipeline", limit=5)
-            check(len(loaded) >= 1, f"Pipeline load: {len(loaded)} narrative(s)",
-                  "Load failed")
+            check(len(loaded) >= 1, f"Pipeline load: {len(loaded)} narrative(s)", "Load failed")
 
     # =========================================================================
     # Step 12 (live only): Narrative in evaluator prompt with real commit
@@ -920,7 +958,9 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
 
             project_config = load_project_config(str(project_root))
             ctx = assemble_evaluator_context(
-                db_ctx, "proj_prompt_test", project_config,
+                db_ctx,
+                "proj_prompt_test",
+                project_config,
             )
 
             check(
@@ -931,7 +971,9 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
 
             prompt_template = load_prompt("evaluator")
             full_prompt = assemble_evaluator_prompt(
-                prompt_template, ctx, commit,
+                prompt_template,
+                ctx,
+                commit,
             )
 
             has_narrative_section = "## Development Narrative" in full_prompt
@@ -946,15 +988,12 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
                 idx = full_prompt.index("## Development Narrative")
                 rest = full_prompt[idx:]
                 next_boundary = rest.find("\n---\n", 1)
-                if next_boundary > 0:
-                    narrative_section = rest[:next_boundary]
-                else:
-                    narrative_section = rest[:800]
+                narrative_section = rest[:next_boundary] if next_boundary > 0 else rest[:800]
 
-                print(f"\n       --- Narrative in evaluator prompt (human review) ---")
+                print("\n       --- Narrative in evaluator prompt (human review) ---")
                 for line in narrative_section.split("\n"):
                     print(f"       {line}")
-                print(f"       --- End prompt section ---")
+                print("       --- End prompt section ---")
 
             prompt_conn.close()
             conn.close()
@@ -962,12 +1001,12 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
     # =========================================================================
     # Cleanup and summary
     # =========================================================================
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     if _failures == 0:
         print(f"  ALL {_step} STEPS PASSED")
     else:
         print(f"  {_failures} FAILURE(S) out of {_step} steps")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     return _failures == 0
 
@@ -988,11 +1027,14 @@ def main():
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--dry-run", action="store_true", default=True,
+        "--dry-run",
+        action="store_true",
+        default=True,
         help="No API calls, uses sample data (default)",
     )
     group.add_argument(
-        "--live", action="store_true",
+        "--live",
+        action="store_true",
         help="Real API calls with real transcripts (~$0.09 per extraction)",
     )
     parser.add_argument(

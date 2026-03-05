@@ -3,7 +3,7 @@
 import logging
 import signal
 import time
-from typing import Any, Optional
+from typing import Any
 
 from social_hook.bot.process import remove_pid, write_pid
 from social_hook.bot.runner import ChannelRunner
@@ -40,6 +40,7 @@ class BotDaemon:
 
     def _run_multi(self):
         import threading
+
         threads = []
         for runner in self._runners:
             t = threading.Thread(target=runner.run, daemon=True, name=f"runner-{runner.platform}")
@@ -61,9 +62,9 @@ class BotDaemon:
 
 def _create_telegram_runner(
     token: str,
-    allowed_chat_ids: Optional[set[str]],
+    allowed_chat_ids: set[str] | None,
     config: Any,
-) -> "TelegramRunner":
+) -> "ChannelRunner":
     from social_hook.bot.buttons import handle_callback
     from social_hook.bot.commands import handle_command, handle_message
     from social_hook.bot.runners.telegram import TelegramRunner
@@ -95,8 +96,8 @@ def _create_telegram_runner(
 def create_bot(
     config: Any,
     *,
-    token: Optional[str] = None,
-    allowed_chat_ids: Optional[set[str]] = None,
+    token: str | None = None,
+    allowed_chat_ids: set[str] | None = None,
 ) -> BotDaemon:
     """Create a configured BotDaemon.
 
@@ -108,11 +109,11 @@ def create_bot(
     runners = []
 
     # Channel-aware path
-    channels = getattr(config, 'channels', None) or {}
-    enabled_channels = {k: v for k, v in channels.items() if getattr(v, 'enabled', False)}
+    channels = getattr(config, "channels", None) or {}
+    enabled_channels = {k: v for k, v in channels.items() if getattr(v, "enabled", False)}
 
     if enabled_channels:
-        env = getattr(config, 'env', {}) or {}
+        env = getattr(config, "env", {}) or {}
         for name, ch_cfg in enabled_channels.items():
             if name == "telegram":
                 tg_token = env.get("TELEGRAM_BOT_TOKEN")
@@ -130,7 +131,7 @@ def create_bot(
     else:
         # Legacy fallback
         if token is None:
-            env = getattr(config, 'env', {}) or {}
+            env = getattr(config, "env", {}) or {}
             token = env.get("TELEGRAM_BOT_TOKEN")
             if not token:
                 raise ConfigError("No channels configured and TELEGRAM_BOT_TOKEN not set")

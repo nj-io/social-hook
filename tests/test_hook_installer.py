@@ -1,13 +1,9 @@
 """Tests for hook installer (T32)."""
 
 import json
-from pathlib import Path
-
-import pytest
 
 from social_hook.setup.install import (
     COMMIT_HOOK_COMMAND,
-    OUR_HOOK,
     check_hook_installed,
     install_hook,
     uninstall_hook,
@@ -46,9 +42,7 @@ class TestInstallHook:
         hooks_file = temp_dir / "settings.json"
         existing = {
             "hooks": {
-                "PostToolUse": [
-                    {"hooks": [{"type": "command", "command": "other-tool run"}]}
-                ]
+                "PostToolUse": [{"hooks": [{"type": "command", "command": "other-tool run"}]}]
             }
         }
         hooks_file.write_text(json.dumps(existing))

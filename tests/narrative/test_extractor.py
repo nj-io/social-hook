@@ -1,12 +1,19 @@
 """Tests for narrative.extractor — NarrativeExtractor + ExtractNarrativeInput schema."""
 
+from unittest.mock import patch
+
 import pytest
 
 from social_hook.errors import MalformedResponseError
-from social_hook.llm.base import NormalizedResponse, NormalizedToolCall, NormalizedUsage
-from social_hook.llm.schemas import ExtractNarrativeInput, extract_tool_call
+from social_hook.llm.base import (
+    NormalizedResponse,
+    NormalizedToolCall,
+    NormalizedUsage,
+    ToolExtractionError,
+    extract_tool_call,
+)
+from social_hook.llm.schemas import ExtractNarrativeInput
 from social_hook.narrative.extractor import NarrativeExtractor
-
 
 # =============================================================================
 # Helpers
@@ -220,7 +227,7 @@ class TestExtractToolCallIntegration:
 
     def test_raises_when_no_extract_narrative(self):
         response = _mock_response("log_decision", {"decision": "post_worthy"})
-        with pytest.raises(MalformedResponseError, match="No extract_narrative"):
+        with pytest.raises(ToolExtractionError, match="No extract_narrative"):
             extract_tool_call(response, "extract_narrative")
 
 
@@ -321,7 +328,8 @@ class TestNarrativeExtractor:
         user_msg = client.last_call["messages"][0]["content"]
         assert "/home/user/dev/my-project" in user_msg
 
-    def test_extract_passes_operation_type(self):
+    @patch("social_hook.narrative.extractor.log_usage")
+    def test_extract_passes_operation_type(self, mock_log_usage):
         data = _valid_extract_data()
         response = _mock_response("extract_narrative", data)
         client = _MockLLMClient(response)
@@ -335,11 +343,14 @@ class TestNarrativeExtractor:
             project_id="proj_1",
         )
 
-        assert client.last_call["operation_type"] == "narrative_extract"
-        assert client.last_call["db"] == "mock_db"
-        assert client.last_call["project_id"] == "proj_1"
+        mock_log_usage.assert_called_once()
+        call_args = mock_log_usage.call_args[0]
+        assert call_args[0] == "mock_db"
+        assert call_args[1] == "narrative_extract"
+        assert call_args[4] == "proj_1"
 
-    def test_extract_does_not_pass_commit_hash(self):
+    @patch("social_hook.narrative.extractor.log_usage")
+    def test_extract_does_not_pass_commit_hash(self, mock_log_usage):
         data = _valid_extract_data()
         response = _mock_response("extract_narrative", data)
         client = _MockLLMClient(response)
@@ -353,8 +364,10 @@ class TestNarrativeExtractor:
             project_id="proj_1",
         )
 
-        # commit_hash should not be passed (or should be absent/None)
-        assert "commit_hash" not in client.last_call or client.last_call.get("commit_hash") is None
+        # log_usage should not receive commit_hash (only 5 positional args, no commit_hash)
+        mock_log_usage.assert_called_once()
+        call_args = mock_log_usage.call_args[0]
+        assert len(call_args) == 5  # db, op_type, model_id, usage, project_id — no commit_hash
 
     def test_extract_has_system_prompt(self):
         data = _valid_extract_data()
@@ -383,7 +396,7 @@ class TestNarrativeExtractor:
         client = _MockLLMClient(response)
         extractor = NarrativeExtractor(client)
 
-        with pytest.raises(MalformedResponseError, match="No extract_narrative"):
+        with pytest.raises(ToolExtractionError, match="No extract_narrative"):
             extractor.extract(
                 transcript_text="t",
                 project_name="p",

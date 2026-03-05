@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.constants import PROJECT_SLUG
 from social_hook.setup.install import (
     CRON_MARKER,

@@ -6,7 +6,6 @@ When dry_run=True, adapters return simulated success without making API calls.
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from social_hook.adapters.models import MediaResult, PostResult, ThreadResult
 
@@ -43,9 +42,7 @@ def dry_run_thread_result(tweet_count: int) -> ThreadResult:
     )
 
 
-def dry_run_media_result(
-    media_type: str = "image", output_dir: Optional[str] = None
-) -> MediaResult:
+def dry_run_media_result(media_type: str = "image", output_dir: str | None = None) -> MediaResult:
     """Create a simulated successful MediaResult.
 
     Args:
@@ -64,10 +61,7 @@ def dry_run_media_result(
         "screenshot": "png",
     }.get(media_type, "png")
 
-    if output_dir:
-        dir_path = Path(output_dir)
-    else:
-        dir_path = Path(tempfile.gettempdir())
+    dir_path = Path(output_dir) if output_dir else Path(tempfile.gettempdir())
 
     placeholder_path = dir_path / f"dry_run_{generate_dry_run_id()}.{extension}"
 

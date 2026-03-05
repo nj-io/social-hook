@@ -1,6 +1,6 @@
 """Tests for XAdapter tier-aware character limits (Phase A)."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

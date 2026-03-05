@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.config.platforms import ResolvedPlatformConfig
 from social_hook.llm.drafter import Drafter
 from social_hook.models import CommitInfo
@@ -50,7 +48,7 @@ def _make_drafter_mocks():
     project_context.recent_decisions = []
 
     decision = MagicMock()
-    decision.decision = "post_worthy"
+    decision.decision = "draft"
     decision.reasoning = "Good commit"
     decision.angle = "feature"
     decision.episode_type = "milestone"
@@ -72,15 +70,29 @@ class TestDrafterPlatformConfig:
         drafter = Drafter(client)
 
         rpc = ResolvedPlatformConfig(
-            name="x", enabled=True, priority="primary", type="builtin",
-            account_tier="free", description=None, format=None, max_length=None,
-            filter="all", frequency="high", max_posts_per_day=3,
-            min_gap_minutes=30, optimal_days=["Tue"], optimal_hours=[9],
+            name="x",
+            enabled=True,
+            priority="primary",
+            type="builtin",
+            account_tier="free",
+            description=None,
+            format=None,
+            max_length=None,
+            filter="all",
+            frequency="high",
+            max_posts_per_day=3,
+            min_gap_minutes=30,
+            optimal_days=["Tue"],
+            optimal_hours=[9],
         )
 
         drafter.create_draft(
-            decision, ctx, commit, db,
-            platform="x", platform_config=rpc,
+            decision,
+            ctx,
+            commit,
+            db,
+            platform="x",
+            platform_config=rpc,
         )
 
         call_args = client.complete.call_args
@@ -95,16 +107,29 @@ class TestDrafterPlatformConfig:
         drafter = Drafter(client)
 
         rpc = ResolvedPlatformConfig(
-            name="blog", enabled=True, priority="secondary", type="custom",
-            account_tier=None, description="My tech blog about ML",
-            format="article", max_length=5000,
-            filter="notable", frequency="moderate", max_posts_per_day=1,
-            min_gap_minutes=120, optimal_days=["Tue"], optimal_hours=[9],
+            name="blog",
+            enabled=True,
+            priority="secondary",
+            type="custom",
+            account_tier=None,
+            description="My tech blog about ML",
+            format="article",
+            max_length=5000,
+            filter="notable",
+            frequency="moderate",
+            max_posts_per_day=1,
+            min_gap_minutes=120,
+            optimal_days=["Tue"],
+            optimal_hours=[9],
         )
 
         drafter.create_draft(
-            decision, ctx, commit, db,
-            platform="blog", platform_config=rpc,
+            decision,
+            ctx,
+            commit,
+            db,
+            platform="blog",
+            platform_config=rpc,
         )
 
         call_args = client.complete.call_args
@@ -121,15 +146,29 @@ class TestDrafterPlatformConfig:
         drafter = Drafter(client)
 
         rpc = ResolvedPlatformConfig(
-            name="x", enabled=True, priority="primary", type="builtin",
-            account_tier="free", description=None, format=None, max_length=None,
-            filter="all", frequency="high", max_posts_per_day=3,
-            min_gap_minutes=30, optimal_days=["Tue"], optimal_hours=[9],
+            name="x",
+            enabled=True,
+            priority="primary",
+            type="builtin",
+            account_tier="free",
+            description=None,
+            format=None,
+            max_length=None,
+            filter="all",
+            frequency="high",
+            max_posts_per_day=3,
+            min_gap_minutes=30,
+            optimal_days=["Tue"],
+            optimal_hours=[9],
         )
 
         drafter.create_draft(
-            decision, ctx, commit, db,
-            platform="x", platform_config=rpc,
+            decision,
+            ctx,
+            commit,
+            db,
+            platform="x",
+            platform_config=rpc,
         )
 
         call_args = client.complete.call_args
@@ -144,8 +183,12 @@ class TestDrafterPlatformConfig:
         drafter = Drafter(client)
 
         drafter.create_draft(
-            decision, ctx, commit, db,
-            platform="x", tier="free",
+            decision,
+            ctx,
+            commit,
+            db,
+            platform="x",
+            tier="free",
         )
 
         call_args = client.complete.call_args

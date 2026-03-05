@@ -5,13 +5,10 @@ Source: WS3_ASSUMPTIONS.md A8 (lines 317-348) - ray.so URL format
 """
 
 import base64
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from social_hook.adapters.media.rayso import RaySoAdapter, build_rayso_url
 from social_hook.adapters.models import MediaResult
-
 
 # =============================================================================
 # T10: build_rayso_url
@@ -153,14 +150,10 @@ class TestRaySoAdapterGenerate:
     def test_delegates_to_playwright(self):
         """generate() calls PlaywrightAdapter with ray.so URL."""
         mock_pw = MagicMock()
-        mock_pw.generate.return_value = MediaResult(
-            success=True, file_path="/tmp/screenshot.png"
-        )
+        mock_pw.generate.return_value = MediaResult(success=True, file_path="/tmp/screenshot.png")
 
         adapter = RaySoAdapter(playwright_adapter=mock_pw)
-        result = adapter.generate(
-            {"code": "print('hello')", "language": "python", "theme": "candy"}
-        )
+        adapter.generate({"code": "print('hello')", "language": "python", "theme": "candy"})
 
         # Should have called playwright.generate with a spec containing ray.so URL
         mock_pw.generate.assert_called()
@@ -174,9 +167,7 @@ class TestRaySoAdapterGenerate:
         mock_pw.generate.return_value = MediaResult(success=True, file_path="/tmp/test.png")
 
         adapter = RaySoAdapter(playwright_adapter=mock_pw)
-        adapter.generate(
-            {"code": "x = 1", "language": "python", "theme": "midnight"}
-        )
+        adapter.generate({"code": "x = 1", "language": "python", "theme": "midnight"})
 
         call_spec = mock_pw.generate.call_args.args[0]
         assert "theme=midnight" in call_spec["url"]
@@ -187,9 +178,7 @@ class TestRaySoAdapterGenerate:
         mock_pw.generate.return_value = MediaResult(success=True, file_path="/tmp/test.png")
 
         adapter = RaySoAdapter(playwright_adapter=mock_pw)
-        adapter.generate(
-            {"code": "const x = 1;", "language": "typescript"}
-        )
+        adapter.generate({"code": "const x = 1;", "language": "typescript"})
 
         call_spec = mock_pw.generate.call_args.args[0]
         assert "language=typescript" in call_spec["url"]
@@ -206,9 +195,7 @@ class TestRaySoAdapterRendering:
     def test_passes_frame_selector(self):
         """generate() passes selector='#frame' to PlaywrightAdapter."""
         mock_pw = MagicMock()
-        mock_pw.generate.return_value = MediaResult(
-            success=True, file_path="/tmp/test.png"
-        )
+        mock_pw.generate.return_value = MediaResult(success=True, file_path="/tmp/test.png")
 
         adapter = RaySoAdapter(playwright_adapter=mock_pw)
         adapter.generate({"code": "x = 1"})
@@ -219,9 +206,7 @@ class TestRaySoAdapterRendering:
     def test_viewport_dimensions(self):
         """ray.so screenshots use 1280x800 viewport for proper rendering."""
         mock_pw = MagicMock()
-        mock_pw.generate.return_value = MediaResult(
-            success=True, file_path="/tmp/test.png"
-        )
+        mock_pw.generate.return_value = MediaResult(success=True, file_path="/tmp/test.png")
 
         adapter = RaySoAdapter(playwright_adapter=mock_pw)
         adapter.generate({"code": "x = 1"})

@@ -1,6 +1,13 @@
 """LLM integration module for social-hook."""
 
-from social_hook.llm.base import LLMClient, NormalizedResponse, NormalizedToolCall, NormalizedUsage
+from social_hook.llm.base import (
+    LLMClient,
+    NormalizedResponse,
+    NormalizedToolCall,
+    NormalizedUsage,
+    ToolExtractionError,
+    extract_tool_call,
+)
 from social_hook.llm.client import ClaudeClient
 from social_hook.llm.drafter import Drafter
 from social_hook.llm.dry_run import DryRunContext
@@ -12,9 +19,8 @@ from social_hook.llm.prompts import assemble_evaluator_context
 from social_hook.llm.schemas import (
     CreateDraftInput,
     ExpertResponseInput,
-    LogDecisionInput,
+    LogEvaluationInput,
     RouteActionInput,
-    extract_tool_call,
 )
 
 __all__ = [
@@ -22,6 +28,8 @@ __all__ = [
     "NormalizedResponse",
     "NormalizedToolCall",
     "NormalizedUsage",
+    "ToolExtractionError",
+    "extract_tool_call",
     "create_client",
     "parse_provider_model",
     "ClaudeClient",
@@ -31,9 +39,8 @@ __all__ = [
     "Gatekeeper",
     "Expert",
     "assemble_evaluator_context",
-    "LogDecisionInput",
     "CreateDraftInput",
+    "LogEvaluationInput",
     "RouteActionInput",
     "ExpertResponseInput",
-    "extract_tool_call",
 ]

@@ -5,10 +5,9 @@ Source: WS3_ADAPTERS.md T1 (lines 118-128), T6 (lines 168-174)
 
 import pytest
 
-from social_hook.adapters.models import MediaResult, PostResult, ThreadResult
 from social_hook.adapters.media.base import MediaAdapter
+from social_hook.adapters.models import MediaResult, PostResult, ThreadResult
 from social_hook.adapters.platform.base import PlatformAdapter
-
 
 # =============================================================================
 # T1: PlatformAdapter Interface
@@ -51,6 +50,7 @@ class TestPlatformAdapterABC:
         class IncompleteAdapter(PlatformAdapter):
             def post(self, content, media_paths=None, dry_run=False):
                 return PostResult(success=True)
+
             # Missing: post_thread, delete, get_rate_limit_status, validate
 
         with pytest.raises(TypeError):

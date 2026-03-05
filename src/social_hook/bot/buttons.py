@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from social_hook.messaging.base import (
     Button,
@@ -19,7 +19,7 @@ _pending_edits: dict[str, tuple[str, float]] = {}
 _EDIT_TTL_SECONDS = 300  # 5 minutes
 
 
-def get_pending_edit(chat_id: str) -> Optional[str]:
+def get_pending_edit(chat_id: str) -> str | None:
     """Check for a pending edit without consuming it.
 
     Returns draft_id if a non-expired pending edit exists, else None.
@@ -58,7 +58,9 @@ def _answer_callback(adapter: MessagingAdapter, callback_id: str, text: str = ""
     return adapter.answer_callback(callback_id, text)
 
 
-def handle_callback(event: CallbackEvent, adapter: MessagingAdapter, config: Optional[Any] = None, **kwargs: Any) -> None:
+def handle_callback(
+    event: CallbackEvent, adapter: MessagingAdapter, config: Any | None = None, **kwargs: Any
+) -> None:
     """Route a callback query to the appropriate handler.
 
     Callback data format: "action:payload" (already parsed in CallbackEvent)
@@ -109,7 +111,7 @@ def btn_approve(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Handle approve button press."""
@@ -142,7 +144,7 @@ def btn_schedule_optimal(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Handle schedule (optimal time) button press."""
@@ -187,7 +189,7 @@ def btn_edit_text(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Handle edit text button press.
@@ -236,7 +238,7 @@ def btn_reject(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Handle reject button press (direct reject)."""
@@ -255,7 +257,16 @@ def btn_reject(
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         update_draft(conn, draft_id, status="rejected")
-        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` rejected.")
+
+        # Cascade re-draft if this was an intro draft
+        from social_hook.intro_lifecycle import on_intro_rejected
+
+        cascade_msg = on_intro_rejected(conn, draft, draft.project_id, verbose=False)
+
+        reject_msg = f"Draft `{draft_id[:12]}` rejected."
+        if cascade_msg:
+            reject_msg += f"\n{cascade_msg}"
+        _send(adapter, chat_id, reject_msg)
     finally:
         conn.close()
 
@@ -265,7 +276,7 @@ def btn_quick_approve(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Approve and schedule at optimal time in one step."""
@@ -314,21 +325,27 @@ def btn_schedule_submenu(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Show schedule submenu with optimal/custom options."""
     _answer_callback(adapter, callback_id)
 
     buttons = [
-        ButtonRow(buttons=[
-            Button(label="Optimal time", action="schedule_optimal", payload=draft_id),
-            Button(label="Custom time", action="schedule_custom", payload=draft_id),
-        ]),
+        ButtonRow(
+            buttons=[
+                Button(label="Optimal time", action="schedule_optimal", payload=draft_id),
+                Button(label="Custom time", action="schedule_custom", payload=draft_id),
+            ]
+        ),
     ]
-    adapter.send_message(chat_id, OutboundMessage(
-        text=f"Schedule `{draft_id[:12]}`:", buttons=buttons,
-    ))
+    adapter.send_message(
+        chat_id,
+        OutboundMessage(
+            text=f"Schedule `{draft_id[:12]}`:",
+            buttons=buttons,
+        ),
+    )
 
 
 def btn_schedule_custom(
@@ -336,7 +353,7 @@ def btn_schedule_custom(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Prompt user to reply with a custom time."""
@@ -354,24 +371,32 @@ def btn_edit_submenu(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Show edit submenu with text/media/angle options."""
     _answer_callback(adapter, callback_id)
 
     buttons = [
-        ButtonRow(buttons=[
-            Button(label="Change text", action="edit_text", payload=draft_id),
-            Button(label="Change media", action="edit_media", payload=draft_id),
-        ]),
-        ButtonRow(buttons=[
-            Button(label="Change angle", action="edit_angle", payload=draft_id),
-        ]),
+        ButtonRow(
+            buttons=[
+                Button(label="Change text", action="edit_text", payload=draft_id),
+                Button(label="Change media", action="edit_media", payload=draft_id),
+            ]
+        ),
+        ButtonRow(
+            buttons=[
+                Button(label="Change angle", action="edit_angle", payload=draft_id),
+            ]
+        ),
     ]
-    adapter.send_message(chat_id, OutboundMessage(
-        text=f"Edit `{draft_id[:12]}`:", buttons=buttons,
-    ))
+    adapter.send_message(
+        chat_id,
+        OutboundMessage(
+            text=f"Edit `{draft_id[:12]}`:",
+            buttons=buttons,
+        ),
+    )
 
 
 def btn_edit_media(
@@ -379,7 +404,7 @@ def btn_edit_media(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Show current media and action buttons (regenerate/remove)."""
@@ -407,15 +432,20 @@ def btn_edit_media(
                     )
             # Show action buttons
             buttons = [
-                ButtonRow(buttons=[
-                    Button(label="Regenerate", action="media_regen", payload=draft_id),
-                    Button(label="Remove media", action="media_remove", payload=draft_id),
-                ]),
+                ButtonRow(
+                    buttons=[
+                        Button(label="Regenerate", action="media_regen", payload=draft_id),
+                        Button(label="Remove media", action="media_remove", payload=draft_id),
+                    ]
+                ),
             ]
-            adapter.send_message(chat_id, OutboundMessage(
-                text=f"Media for `{draft_id[:12]}` ({draft.media_type or 'unknown'}):",
-                buttons=buttons,
-            ))
+            adapter.send_message(
+                chat_id,
+                OutboundMessage(
+                    text=f"Media for `{draft_id[:12]}` ({draft.media_type or 'unknown'}):",
+                    buttons=buttons,
+                ),
+            )
         else:
             _send(adapter, chat_id, f"No media attached to `{draft_id[:12]}`.")
     finally:
@@ -427,7 +457,7 @@ def btn_media_regen(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Regenerate media using the stored media_spec."""
@@ -509,7 +539,7 @@ def btn_media_remove(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Remove media from a draft."""
@@ -551,7 +581,7 @@ def btn_edit_angle(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Prompt user to reply with a new angle."""
@@ -564,21 +594,27 @@ def btn_reject_submenu(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Show reject submenu with just reject/reject with note."""
     _answer_callback(adapter, callback_id)
 
     buttons = [
-        ButtonRow(buttons=[
-            Button(label="Just reject", action="reject_now", payload=draft_id),
-            Button(label="Reject with note", action="reject_note", payload=draft_id),
-        ]),
+        ButtonRow(
+            buttons=[
+                Button(label="Just reject", action="reject_now", payload=draft_id),
+                Button(label="Reject with note", action="reject_note", payload=draft_id),
+            ]
+        ),
     ]
-    adapter.send_message(chat_id, OutboundMessage(
-        text=f"Reject `{draft_id[:12]}`:", buttons=buttons,
-    ))
+    adapter.send_message(
+        chat_id,
+        OutboundMessage(
+            text=f"Reject `{draft_id[:12]}`:",
+            buttons=buttons,
+        ),
+    )
 
 
 def btn_reject_note(
@@ -586,7 +622,7 @@ def btn_reject_note(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Prompt user to reply with a rejection reason."""
@@ -599,7 +635,7 @@ def btn_cancel(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Handle cancel button press from scheduled list."""
@@ -628,7 +664,7 @@ def btn_review(
     chat_id: str,
     callback_id: str,
     draft_id: str,
-    config: Optional[Any],
+    config: Any | None,
     **kwargs: Any,
 ) -> None:
     """Show full draft review via button callback."""

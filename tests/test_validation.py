@@ -3,15 +3,11 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.setup.validation import validate_claude_cli
 
-
-VALID_CLI_RESPONSE = {
-    "structured_output": {"status": "ok"},
-    "usage": {"input_tokens": 10, "output_tokens": 5},
-}
+VALID_CLI_RESPONSE = [
+    {"type": "result", "result": '{"status": "ok"}'},
+]
 
 
 class TestValidateClaudeCli:
@@ -32,6 +28,7 @@ class TestValidateClaudeCli:
         assert "-p" in cmd
         assert "--model" in cmd
         assert "haiku" in cmd
+        assert "--output-format" in cmd
 
     @patch("social_hook.setup.validation.subprocess.run")
     def test_nonzero_exit(self, mock_run):
@@ -52,6 +49,7 @@ class TestValidateClaudeCli:
     @patch("social_hook.setup.validation.subprocess.run")
     def test_timeout(self, mock_run):
         import subprocess
+
         mock_run.side_effect = subprocess.TimeoutExpired("claude", 30)
         ok, msg = validate_claude_cli()
         assert ok is False
@@ -61,7 +59,7 @@ class TestValidateClaudeCli:
     def test_missing_structured_output(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout=json.dumps({"result": "no structured_output key"}),
+            stdout=json.dumps([{"type": "text", "text": "hello"}]),
             stderr="",
         )
         ok, msg = validate_claude_cli()

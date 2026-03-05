@@ -30,7 +30,9 @@ class TestSendMessage:
             "result": {"message_id": 42},
         }
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             result = adapter.send_message("123", OutboundMessage(text="Hello"))
 
         assert result.success is True
@@ -56,14 +58,18 @@ class TestSendMessage:
         msg = OutboundMessage(
             text="Review",
             buttons=[
-                ButtonRow(buttons=[
-                    Button(label="Approve", action="approve", payload="d1"),
-                    Button(label="Reject", action="reject", payload="d1"),
-                ]),
+                ButtonRow(
+                    buttons=[
+                        Button(label="Approve", action="approve", payload="d1"),
+                        Button(label="Reject", action="reject", payload="d1"),
+                    ]
+                ),
             ],
         )
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             result = adapter.send_message("123", msg)
 
         assert result.success is True
@@ -80,7 +86,9 @@ class TestSendMessage:
         mock_response.status_code = 200
         mock_response.json.return_value = {"ok": True, "result": {"message_id": 1}}
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             adapter.send_message("123", OutboundMessage(text="<b>Bold</b>", parse_mode="html"))
 
         payload = mock_post.call_args[1]["json"]
@@ -103,7 +111,10 @@ class TestSendMessage:
         """Network exception returns SendResult with success=False."""
         import requests as req
 
-        with patch("social_hook.messaging.telegram.requests.post", side_effect=req.ConnectionError("timeout")):
+        with patch(
+            "social_hook.messaging.telegram.requests.post",
+            side_effect=req.ConnectionError("timeout"),
+        ):
             result = adapter.send_message("123", OutboundMessage(text="fail"))
 
         assert result.success is False
@@ -120,7 +131,9 @@ class TestEditMessage:
             "result": {"message_id": 42},
         }
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             result = adapter.edit_message("123", "42", OutboundMessage(text="Updated"))
 
         assert result.success is True
@@ -142,7 +155,9 @@ class TestEditMessage:
             buttons=[ButtonRow(buttons=[Button(label="OK", action="ok")])],
         )
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             adapter.edit_message("123", "42", msg)
 
         payload = mock_post.call_args[1]["json"]
@@ -158,7 +173,9 @@ class TestAnswerCallback:
         mock_response.status_code = 200
         mock_response.json.return_value = {"ok": True, "result": True}
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             ok = adapter.answer_callback("cb_123", text="Done")
 
         assert ok is True
@@ -174,7 +191,9 @@ class TestAnswerCallback:
         mock_response.status_code = 200
         mock_response.json.return_value = {"ok": True, "result": True}
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             adapter.answer_callback("cb_123")
 
         payload = mock_post.call_args[1]["json"]
@@ -195,10 +214,14 @@ class TestAnswerCallback:
 class TestButtonsToTelegram:
     def test_single_row(self, adapter):
         """Convert a single button row."""
-        rows = [ButtonRow(buttons=[
-            Button(label="A", action="act_a", payload="p1"),
-            Button(label="B", action="act_b", payload="p2"),
-        ])]
+        rows = [
+            ButtonRow(
+                buttons=[
+                    Button(label="A", action="act_a", payload="p1"),
+                    Button(label="B", action="act_b", payload="p2"),
+                ]
+            )
+        ]
         result = adapter._buttons_to_telegram(rows)
         assert result == [
             [
@@ -326,7 +349,9 @@ class TestSendMedia:
             "result": {"message_id": 99},
         }
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             result = adapter.send_media("123", str(photo), caption="A photo")
 
         assert result.success is True
@@ -351,7 +376,9 @@ class TestSendMedia:
             "result": {"message_id": 100},
         }
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             result = adapter.send_media("123", str(svg))
 
         assert result.success is True
@@ -371,7 +398,9 @@ class TestSendMedia:
             "result": {"message_id": 101},
         }
 
-        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
             result = adapter.send_media("123", str(large_png))
 
         assert result.success is True
@@ -393,7 +422,10 @@ class TestSendMedia:
         photo = tmp_path / "test.jpg"
         photo.write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
 
-        with patch("social_hook.messaging.telegram.requests.post", side_effect=req.ConnectionError("network down")):
+        with patch(
+            "social_hook.messaging.telegram.requests.post",
+            side_effect=req.ConnectionError("network down"),
+        ):
             result = adapter.send_media("123", str(photo))
 
         assert result.success is False

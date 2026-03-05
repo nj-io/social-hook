@@ -1,21 +1,18 @@
 """One-shot trigger: commit evaluation and draft creation pipeline."""
 
-import json
 import logging
 import subprocess
 import sys
-from typing import Optional
+from typing import Any
 
 from social_hook.config.yaml import load_full_config
-from social_hook.db.connection import get_connection, init_database
 from social_hook.db import operations as ops
+from social_hook.db.connection import init_database
 from social_hook.errors import ConfigError, DatabaseError
-from social_hook.filesystem import generate_id, get_db_path, get_base_path
+from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
-from social_hook.models import CommitInfo, Decision, Draft, DraftTweet, Post
-from social_hook.config.yaml import TIER_CHAR_LIMITS
-from social_hook.scheduling import calculate_optimal_time
+from social_hook.models import CommitInfo, Decision, is_draftable
 
 logger = logging.getLogger(__name__)
 
@@ -34,26 +31,33 @@ def parse_commit_info(commit_hash: str, repo_path: str) -> CommitInfo:
         # Get full commit message (subject + body)
         message = subprocess.run(
             ["git", "-C", repo_path, "log", "-1", "--format=%B", commit_hash],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
         # Get author date (ISO 8601 with timezone)
         timestamp = subprocess.run(
             ["git", "-C", repo_path, "log", "-1", "--format=%aI", commit_hash],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
         # Get parent commit's author date (fails with exit 128 on first commit)
         parent_result = subprocess.run(
             ["git", "-C", repo_path, "log", "-1", "--format=%aI", f"{commit_hash}~1"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         parent_timestamp = parent_result.stdout.strip() if parent_result.returncode == 0 else None
 
         # Get stat summary
         stat_output = subprocess.run(
             ["git", "-C", repo_path, "show", "--stat", "--format=", commit_hash],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
         # Parse files changed from stat
@@ -80,14 +84,16 @@ def parse_commit_info(commit_hash: str, repo_path: str) -> CommitInfo:
         # Get diff
         diff = subprocess.run(
             ["git", "-C", repo_path, "diff", f"{commit_hash}~1..{commit_hash}"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         ).stdout
 
         # Fallback for first commit (no parent)
         if not diff:
             diff = subprocess.run(
                 ["git", "-C", repo_path, "show", "--format=", commit_hash],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             ).stdout
 
         return CommitInfo(
@@ -109,7 +115,7 @@ def parse_commit_info(commit_hash: str, repo_path: str) -> CommitInfo:
         )
 
 
-def git_remote_origin(repo_path: str) -> Optional[str]:
+def git_remote_origin(repo_path: str) -> str | None:
     """Get the git remote origin URL for worktree detection.
 
     Args:
@@ -121,19 +127,23 @@ def git_remote_origin(repo_path: str) -> Optional[str]:
     try:
         result = subprocess.run(
             ["git", "-C", repo_path, "remote", "get-url", "origin"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         return result.stdout.strip() or None
     except subprocess.CalledProcessError:
         return None
 
 
-def _get_current_branch(repo_path: str) -> Optional[str]:
+def _get_current_branch(repo_path: str) -> str | None:
     """Get the current git branch name. Returns None for detached HEAD."""
     try:
         result = subprocess.run(
             ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         branch = result.stdout.strip()
         return None if branch == "HEAD" else branch
@@ -145,7 +155,7 @@ def run_trigger(
     commit_hash: str,
     repo_path: str,
     dry_run: bool = False,
-    config_path: Optional[str] = None,
+    config_path: str | None = None,
     verbose: bool = False,
     show_prompt: bool = False,
 ) -> int:
@@ -219,8 +229,10 @@ def run_trigger(
         if current_branch != project.trigger_branch:
             branch_desc = current_branch or "(detached HEAD)"
             if verbose:
-                print(f"Branch '{branch_desc}' doesn't match trigger branch "
-                      f"'{project.trigger_branch}'. Skipping.")
+                print(
+                    f"Branch '{branch_desc}' doesn't match trigger branch "
+                    f"'{project.trigger_branch}'. Skipping."
+                )
             conn.close()
             return 0
 
@@ -234,7 +246,9 @@ def run_trigger(
 
     # 6. Assemble context (with commit timestamps for narrative filtering)
     context = assemble_evaluator_context(
-        db, project.id, project_config,
+        db,
+        project.id,
+        project_config,
         commit_timestamp=commit.timestamp,
         parent_timestamp=commit.parent_timestamp,
     )
@@ -242,8 +256,8 @@ def run_trigger(
     # 6b. Auto-discovery: seed project summary if missing
     if getattr(context, "project_summary", None) is None:
         try:
-            from social_hook.llm.factory import create_client as _create_client
             from social_hook.llm.discovery import discover_project
+            from social_hook.llm.factory import create_client as _create_client
 
             discovery_client = _create_client(config.models.evaluator, config, verbose=verbose)
             summary, selected_files = discover_project(
@@ -269,8 +283,8 @@ def run_trigger(
         print(f"Evaluating commit {commit.hash[:8]}: {commit.message}")
 
     # 7. Evaluate
-    from social_hook.llm.factory import create_client
     from social_hook.llm.evaluator import Evaluator
+    from social_hook.llm.factory import create_client
 
     try:
         evaluator_client = create_client(config.models.evaluator, config, verbose=verbose)
@@ -293,7 +307,10 @@ def run_trigger(
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(
-            commit, context, db, show_prompt=show_prompt,
+            commit,
+            context,
+            db,
+            show_prompt=show_prompt,
             platform_summaries=platform_summaries or None,
             media_config=config.media_generation,
             media_guidance=project_config.media_guidance if project_config else None,
@@ -307,36 +324,61 @@ def run_trigger(
         conn.close()
         return 3
 
-    # 8. Save decision
+    # 8. Map evaluation output to Decision
+    analysis = evaluation.commit_analysis
+    target = evaluation.targets.get("default")
+    if target is None:
+        logger.error("Evaluation missing 'default' target")
+        if verbose:
+            print("Error: evaluation missing 'default' target", file=sys.stderr)
+        conn.close()
+        return 3
+
+    def _val(x):
+        return x.value if hasattr(x, "value") else x
+
+    decision_type = _val(target.action)  # "draft", "hold", or "skip"
+
     decision = Decision(
         id=generate_id("decision"),
         project_id=project.id,
         commit_hash=commit_hash,
-        decision=evaluation.decision,
-        reasoning=evaluation.reasoning,
+        decision=decision_type,
+        reasoning=target.reason,
         commit_message=commit.message,
-        angle=getattr(evaluation, "angle", None),
-        episode_type=evaluation.episode_type,
-        post_category=evaluation.post_category,
-        arc_id=getattr(evaluation, "arc_id", None),
-        media_tool=getattr(evaluation, "media_tool", None),
-        platforms=getattr(evaluation, "platforms", {}),
-        commit_summary=getattr(evaluation, "commit_summary", None),
+        angle=target.angle,
+        episode_type=_val(target.episode_type),
+        episode_tags=analysis.episode_tags,
+        post_category=_val(target.post_category),
+        arc_id=target.arc_id,
+        media_tool=_val(target.media_tool),
+        targets={"default": target.model_dump()},
+        commit_summary=analysis.summary,
+        consolidate_with=target.consolidate_with,
     )
+
+    # Hold count enforcement
+    if decision_type == "hold":
+        max_hold = project_config.context.max_hold_count if project_config else 5
+        current_held = ops.get_held_decisions(conn, project.id)
+        if len(current_held) >= max_hold:
+            logger.warning(f"Hold limit reached ({max_hold}), forcing skip for {commit_hash[:8]}")
+            decision.decision = "skip"
+            decision_type = "skip"
+
     db.insert_decision(decision)
     db.emit_data_event("decision", "created", decision.id, project.id)
 
     # 8b. Arc activation: create new arc or link to existing
-    if evaluation.decision == "post_worthy":
-        _arc_id = getattr(evaluation, "arc_id", None)
-        _new_arc_theme = getattr(evaluation, "new_arc_theme", None)
+    if is_draftable(decision.decision):
+        _arc_id = target.arc_id
+        _new_arc_theme = target.new_arc_theme
 
         if _new_arc_theme and not _arc_id:
-            # Evaluator wants to start a new arc
             try:
                 from social_hook.narrative.arcs import create_arc as _create_arc
+
                 new_arc_id = _create_arc(db.conn, project.id, _new_arc_theme)
-                # Update decision with the new arc ID
                 db.update_decision(decision.id, arc_id=new_arc_id)
                 decision.arc_id = new_arc_id
                 if verbose:
@@ -346,32 +388,99 @@ def run_trigger(
                 if verbose:
                     print(f"Arc creation skipped: {e}", file=sys.stderr)
 
-    # 8c. Send decision notification for non-post_worthy decisions
+    # 8c. Held decision absorption
+    if is_draftable(decision.decision) and target.consolidate_with:
+        valid_ids = [d.id for d in context.held_decisions]
+        absorbed = [cid for cid in target.consolidate_with if cid in valid_ids]
+        if absorbed and not dry_run:
+            batch_id = generate_id("batch")
+            ops.mark_decisions_processed(conn, absorbed, batch_id)
+
+    # 8d. Queue actions
+    if evaluation.queue_actions:
+        for _target_name, actions in evaluation.queue_actions.items():
+            for qa in actions:
+                action_type = qa.action
+                if action_type == "merge":
+                    continue  # handled after draft creation
+                if not dry_run:
+                    draft_ref = ops.get_draft(conn, qa.draft_id)
+                    if not draft_ref or draft_ref.status not in ("draft", "approved", "scheduled"):
+                        if verbose:
+                            print(f"Queue action skipped: draft {qa.draft_id} not actionable")
+                        continue
+                    ops.execute_queue_action(conn, action_type, qa.draft_id, qa.reason)
+                if verbose:
+                    print(f"Queue action: {action_type} draft {qa.draft_id}")
+
+    # 8e. Send decision notification for non-draftable decisions
     if (
         not dry_run
         and config.notification_level == "all_decisions"
-        and evaluation.decision != "post_worthy"
+        and not is_draftable(decision.decision)
     ):
         _send_decision_notification(config, project, commit, decision)
 
     if verbose:
-        print(f"Decision: {evaluation.decision}")
-        print(f"Reasoning: {evaluation.reasoning}")
+        print(f"Decision: {decision_type}")
+        print(f"Reasoning: {target.reason}")
 
-    # 9. If post-worthy, create drafts per platform
-    if evaluation.decision == "post_worthy":
+    # 9. If draftable, create drafts per platform
+    if is_draftable(decision.decision):
+        from social_hook.compat import make_eval_compat
         from social_hook.drafting import draft_for_platforms
 
-        draft_results = draft_for_platforms(
-            config, conn, db, project, decision_id=decision.id,
-            evaluation=evaluation, context=context, commit=commit,
-            project_config=project_config, dry_run=dry_run, verbose=verbose,
-        )
+        eval_compat = make_eval_compat(evaluation, decision.decision)
+
+        # Duplicate intro check
+        draft_results: list[Any] | None = None
+        if not context.audience_introduced:
+            existing_intro = ops.get_intro_draft(conn, project.id)
+            if existing_intro:
+                if verbose:
+                    print("Intro draft already exists, skipping new draft creation")
+                draft_results = []
+
+        if draft_results is None:
+            draft_results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=eval_compat,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+                dry_run=dry_run,
+                verbose=verbose,
+            )
+
+        # Audience introduced lifecycle
+        if draft_results and not context.audience_introduced:
+            for r in draft_results:
+                if not dry_run:
+                    ops.update_draft(conn, r.draft.id, is_intro=True)
+                r.draft.is_intro = True
+            if not dry_run:
+                ops.set_audience_introduced(conn, project.id, True)
+
+        # Merge queue actions — after draft creation
+        merge_actions = [
+            qa
+            for actions in (evaluation.queue_actions or {}).values()
+            for qa in actions
+            if qa.action == "merge"
+        ]
+        if merge_actions and draft_results and not dry_run:
+            for qa in merge_actions:
+                ops.execute_queue_action(conn, "supersede", qa.draft_id, qa.reason)
 
         # Increment arc post count if drafts were created for an arc
         if draft_results and decision.arc_id:
             try:
                 from social_hook.narrative.arcs import increment_arc_post_count
+
                 increment_arc_post_count(db.conn, decision.arc_id)
                 if verbose:
                     print(f"Incremented post count for arc: {decision.arc_id}")
@@ -383,7 +492,6 @@ def run_trigger(
             if draft_results:
                 _send_notifications(config, project, commit, draft_results)
             elif config.notification_level != "drafts_only":
-                # Post-worthy but no drafts (no enabled platforms) -- still notify
                 _send_decision_notification(config, project, commit, decision)
 
     conn.close()
@@ -407,7 +515,9 @@ def _send_notifications(config, project, commit, draft_results):
         is_thread = bool(thread_tweets)
         tweet_count = len(thread_tweets) if is_thread else None
         suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
-        media_info = f"{draft.media_type} ({len(draft.media_paths)} file)" if draft.media_paths else None
+        media_info = (
+            f"{draft.media_type} ({len(draft.media_paths)} file)" if draft.media_paths else None
+        )
 
         msg_text = format_draft_review(
             project_name=project.name,
@@ -424,14 +534,15 @@ def _send_notifications(config, project, commit, draft_results):
         buttons = get_review_buttons_normalized(draft.id)
         msg = OutboundMessage(text=msg_text, buttons=buttons)
 
-        channels = getattr(config, 'channels', None) or {}
+        channels = getattr(config, "channels", None) or {}
 
         # Web dashboard (enabled by default via DEFAULT_CONFIG)
         web_ch = channels.get("web")
         if not web_ch or web_ch.enabled:
             try:
-                from social_hook.messaging.web import WebAdapter
                 from social_hook.filesystem import get_db_path as _get_db_path
+                from social_hook.messaging.web import WebAdapter
+
                 web_adapter = WebAdapter(db_path=str(_get_db_path()))
                 web_adapter.send_message("web", msg)
                 if draft.media_paths:
@@ -445,25 +556,33 @@ def _send_notifications(config, project, commit, draft_results):
         telegram_ch = channels.get("telegram")
         telegram_enabled = telegram_ch.enabled if telegram_ch else bool(token)
         chat_ids = (
-            telegram_ch.allowed_chat_ids if telegram_ch
-            else [c.strip() for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if c.strip()]
+            telegram_ch.allowed_chat_ids
+            if telegram_ch
+            else [
+                c.strip()
+                for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
+                if c.strip()
+            ]
         )
 
         if telegram_enabled and token and chat_ids:
             from social_hook.messaging.telegram import TelegramAdapter
+
             adapter = TelegramAdapter(token=token)
             for chat_id in chat_ids:
-                result = adapter.send_message(chat_id, msg)
-                if not result.success:
+                send_result = adapter.send_message(chat_id, msg)
+                if not send_result.success:
                     logger.warning(f"Failed to send Telegram notification to {chat_id}")
             if draft.media_paths:
                 caps = adapter.get_capabilities()
                 if caps.supports_media:
                     for media_path in draft.media_paths:
                         for chat_id in chat_ids:
-                            adapter.send_media(chat_id, media_path,
-                                             caption=f"Media for `{draft.id[:12]}`")
+                            adapter.send_media(
+                                chat_id, media_path, caption=f"Media for `{draft.id[:12]}`"
+                            )
             from social_hook.bot.commands import set_chat_draft_context
+
             for chat_id in chat_ids:
                 set_chat_draft_context(chat_id, draft.id, project.id)
 
@@ -471,12 +590,14 @@ def _send_notifications(config, project, commit, draft_results):
 def _send_decision_notification(config, project, commit, decision):
     """Send a notification for an evaluated decision to all configured channels.
 
-    Used for non-post_worthy decisions (when notification_level == all_decisions)
-    and for post_worthy decisions where no platforms produced drafts.
+    Used for non-draft decisions (when notification_level == all_decisions)
+    and for draft decisions where no platforms produced drafts.
     """
     from social_hook.messaging.base import OutboundMessage
 
-    reasoning_preview = (decision.reasoning[:200] + "...") if len(decision.reasoning) > 200 else decision.reasoning
+    reasoning_preview = (
+        (decision.reasoning[:200] + "...") if len(decision.reasoning) > 200 else decision.reasoning
+    )
 
     msg_text = (
         f"Commit evaluated\n\n"
@@ -493,8 +614,9 @@ def _send_decision_notification(config, project, commit, decision):
     web_ch = channels.get("web")
     if not web_ch or web_ch.enabled:
         try:
-            from social_hook.messaging.web import WebAdapter
             from social_hook.filesystem import get_db_path as _get_db_path
+            from social_hook.messaging.web import WebAdapter
+
             web_adapter = WebAdapter(db_path=str(_get_db_path()))
             web_adapter.send_message("web", msg)
         except Exception as e:
@@ -505,12 +627,18 @@ def _send_decision_notification(config, project, commit, decision):
     telegram_ch = channels.get("telegram")
     telegram_enabled = telegram_ch.enabled if telegram_ch else bool(token)
     chat_ids = (
-        telegram_ch.allowed_chat_ids if telegram_ch
-        else [c.strip() for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if c.strip()]
+        telegram_ch.allowed_chat_ids
+        if telegram_ch
+        else [
+            c.strip()
+            for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
+            if c.strip()
+        ]
     )
 
     if telegram_enabled and token and chat_ids:
         from social_hook.messaging.telegram import TelegramAdapter
+
         adapter = TelegramAdapter(token=token)
         for chat_id in chat_ids:
             result = adapter.send_message(chat_id, msg)

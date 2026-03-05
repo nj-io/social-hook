@@ -1,7 +1,6 @@
 """X (Twitter) platform adapter using API v2."""
 
 import logging
-from typing import Optional
 
 import requests
 from requests_oauthlib import OAuth1
@@ -53,9 +52,7 @@ class XAdapter(PlatformAdapter):
             raise ConfigError("Missing required X API credentials")
 
         if tier not in VALID_TIERS:
-            raise ConfigError(
-                f"Invalid tier '{tier}', must be one of {VALID_TIERS}"
-            )
+            raise ConfigError(f"Invalid tier '{tier}', must be one of {VALID_TIERS}")
 
         self.tier = tier
         self.char_limit = TIER_CHAR_LIMITS[tier]
@@ -66,7 +63,7 @@ class XAdapter(PlatformAdapter):
             resource_owner_secret=access_token_secret,
         )
         self.rate_limit_state = RateLimitState()
-        self._cached_username: Optional[str] = None
+        self._cached_username: str | None = None
 
     def validate(self) -> tuple[bool, str]:
         """Validate credentials by fetching current user.
@@ -99,7 +96,7 @@ class XAdapter(PlatformAdapter):
     def post(
         self,
         content: str,
-        media_paths: Optional[list[str]] = None,
+        media_paths: list[str] | None = None,
         dry_run: bool = False,
     ) -> PostResult:
         """Post a single tweet.
@@ -133,9 +130,7 @@ class XAdapter(PlatformAdapter):
 
         return self._post_tweet(body)
 
-    def post_thread(
-        self, tweets: list[dict], dry_run: bool = False
-    ) -> ThreadResult:
+    def post_thread(self, tweets: list[dict], dry_run: bool = False) -> ThreadResult:
         """Post a thread of connected tweets.
 
         Uses atomic failure: stops on first error, returns partial results.
@@ -157,7 +152,7 @@ class XAdapter(PlatformAdapter):
             return dry_run_thread_result(len(tweets))
 
         results: list[PostResult] = []
-        reply_to_id: Optional[str] = None
+        reply_to_id: str | None = None
 
         for i, tweet in enumerate(tweets):
             content = tweet.get("content", "")
@@ -204,6 +199,14 @@ class XAdapter(PlatformAdapter):
             reply_to_id = result.external_id
 
         return ThreadResult(success=True, tweet_results=results)
+
+    def post_raw(self, body: dict) -> PostResult:
+        """Post with a pre-built request body.
+
+        Used for quote tweets and replies where the caller builds
+        the full request body including quote_tweet_id or reply fields.
+        """
+        return self._post_tweet(body)
 
     def delete(self, external_id: str) -> bool:
         """Delete a tweet by ID.
@@ -274,8 +277,10 @@ class XAdapter(PlatformAdapter):
                     )
 
                 try:
-                    body = response.json()
-                    error_detail = body.get("detail") or body.get("title") or response.text
+                    error_body = response.json()
+                    error_detail = (
+                        error_body.get("detail") or error_body.get("title") or response.text
+                    )
                 except Exception:
                     error_detail = response.text
                 logger.warning(f"Tweet failed: {error_type} - {error_detail}")

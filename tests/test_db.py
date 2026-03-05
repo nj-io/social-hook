@@ -2,39 +2,36 @@
 
 import sqlite3
 import threading
-from pathlib import Path
 
 import pytest
 
 from social_hook.db import (
     delete_project,
+    get_active_arcs,
     get_all_recent_decisions,
     get_all_recent_posts,
-    get_connection,
-    get_due_drafts,
-    get_project_by_origin,
-    get_project_by_path,
-    get_schema_version,
-    init_database,
-    create_schema,
-    get_active_arcs,
-    get_all_pending_drafts,
     get_arc_posts,
+    get_connection,
     get_draft,
     get_draft_changes,
     get_draft_tweets,
+    get_due_drafts,
     get_lifecycle,
     get_milestone_summaries,
     get_narrative_debt,
     get_pending_drafts,
     get_project,
+    get_project_by_origin,
+    get_project_by_path,
     get_project_summary,
     get_recent_decisions,
     get_recent_posts,
     get_recent_posts_for_context,
+    get_schema_version,
     get_summary_freshness,
     get_usage_summary,
     increment_narrative_debt,
+    init_database,
     insert_arc,
     insert_decision,
     insert_draft,
@@ -67,7 +64,6 @@ from social_hook.models import (
     Project,
     UsageLog,
 )
-
 
 # =============================================================================
 # T1: Database Initialization
@@ -129,9 +125,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 12."""
+        """Check schema version returns 13."""
         version = get_schema_version(temp_db)
-        assert version == 12
+        assert version == 13
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent.
@@ -285,14 +281,14 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test decision",
         )
         insert_decision(temp_db, decision)
 
         decisions = get_recent_decisions(temp_db, project.id)
         assert len(decisions) == 1
-        assert decisions[0].decision == "post_worthy"
+        assert decisions[0].decision == "draft"
 
     def test_commit_message_round_trip(self, temp_db):
         """commit_message persists through insert → get."""
@@ -307,7 +303,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test decision",
             commit_message="Add user authentication module",
         )
@@ -330,7 +326,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test decision",
         )
         insert_decision(temp_db, decision)
@@ -352,7 +348,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test decision",
         )
         insert_decision(temp_db, decision)
@@ -379,7 +375,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -409,7 +405,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -449,7 +445,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -481,7 +477,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -518,7 +514,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -639,7 +635,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -678,7 +674,7 @@ class TestDatabaseOperations:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -753,7 +749,7 @@ class TestProjectSummary:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -786,7 +782,7 @@ class TestArcPosts:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
             post_category="arc",
             arc_id=arc.id,
@@ -945,7 +941,7 @@ class TestDeleteProject:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -959,9 +955,7 @@ class TestDeleteProject:
         )
         insert_draft(temp_db, draft)
 
-        tweet = DraftTweet(
-            id=generate_id("tweet"), draft_id=draft.id, position=1, content="t1"
-        )
+        tweet = DraftTweet(id=generate_id("tweet"), draft_id=draft.id, position=1, content="t1")
         insert_draft_tweet(temp_db, tweet)
 
         change = DraftChange(
@@ -1010,7 +1004,7 @@ class TestGetDueDrafts:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -1044,7 +1038,7 @@ class TestGetDueDrafts:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -1075,7 +1069,7 @@ class TestGetDueDrafts:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -1106,7 +1100,7 @@ class TestGetAllRecentDecisions:
                 id=generate_id("decision"),
                 project_id=p.id,
                 commit_hash=f"hash{i}",
-                decision="post_worthy",
+                decision="draft",
                 reasoning=f"test {i}",
             )
             insert_decision(temp_db, d)
@@ -1123,7 +1117,7 @@ class TestGetAllRecentDecisions:
                 id=generate_id("decision"),
                 project_id=project.id,
                 commit_hash=f"hash{i}",
-                decision="post_worthy",
+                decision="draft",
                 reasoning=f"test {i}",
             )
             insert_decision(temp_db, d)
@@ -1144,7 +1138,7 @@ class TestGetAllRecentPosts:
                 id=generate_id("decision"),
                 project_id=p.id,
                 commit_hash=f"hash{i}",
-                decision="post_worthy",
+                decision="draft",
                 reasoning=f"test {i}",
             )
             insert_decision(temp_db, d)
@@ -1176,7 +1170,7 @@ class TestGetAllRecentPosts:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="hash",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, d)
@@ -1212,9 +1206,7 @@ class TestProjectPausedField:
         assert loaded.paused is False
 
     def test_insert_paused(self, temp_db):
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp", paused=True
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp", paused=True)
         insert_project(temp_db, project)
         loaded = get_project(temp_db, project.id)
         assert loaded.paused is True
@@ -1247,7 +1239,7 @@ class TestDraftMediaFields:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(temp_db, decision)
@@ -1303,9 +1295,9 @@ class TestDraftMediaFields:
             media_spec={"prompt": "test prompt", "width": 1024},
         )
 
-        # Verify to_row returns exactly 15 elements
+        # Verify to_row returns exactly 18 elements
         row = draft.to_row()
-        assert len(row) == 15
+        assert len(row) == 18
 
         # Verify round-trip via to_dict/from_dict
         d = draft.to_dict()
@@ -1346,7 +1338,8 @@ class TestTriggerBranch:
     def test_set_and_get_trigger_branch(self, temp_db):
         """Set and retrieve trigger branch."""
         project = Project(
-            id=generate_id("project"), name="Branch Test",
+            id=generate_id("project"),
+            name="Branch Test",
             repo_path="/tmp/branch-test",
         )
         insert_project(temp_db, project)

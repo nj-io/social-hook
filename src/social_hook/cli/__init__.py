@@ -1,12 +1,11 @@
 """CLI module for social-hook."""
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 
 from social_hook import __version__
-from social_hook.constants import PROJECT_NAME, PROJECT_SLUG, PROJECT_DESCRIPTION
+from social_hook.constants import PROJECT_DESCRIPTION, PROJECT_NAME, PROJECT_SLUG
 
 # Create main Typer app
 app = typer.Typer(
@@ -20,7 +19,7 @@ app = typer.Typer(
 @app.callback()
 def main(
     ctx: typer.Context,
-    config: Optional[Path] = typer.Option(
+    config: Path | None = typer.Option(
         None,
         "--config",
         "-c",
@@ -59,73 +58,57 @@ def version():
     typer.echo(f"{PROJECT_SLUG} {__version__}")
 
 
-@app.command("help")
+@app.command("help", context_settings={"allow_extra_args": True, "allow_interspersed_args": False})
 def help_cmd(
     ctx: typer.Context,
-    command: Optional[str] = typer.Argument(None, help="Command or group to describe"),
     json_output: bool = typer.Option(False, "--json", help="Output as structured JSON"),
 ):
-    """Show command help. Use --json for machine-readable output."""
+    """Show command help. Use --json for machine-readable output.
+
+    Examples: social-hook help draft, social-hook help draft approve, social-hook help --json
+    """
     import json as json_mod
+
     import click
 
     click_app = typer.main.get_command(app)
+    command_parts = ctx.args  # e.g. ["draft", "approve"]
 
-    if json_output:
-        def _cmd_to_dict(cmd, name=None):
-            result = {}
-            if name:
-                result["name"] = name
-            if cmd.help:
-                result["help"] = cmd.help.split("\n")[0]
+    def _cmd_to_dict(cmd, name=None):
+        result = {}
+        if name:
+            result["name"] = name
+        if cmd.help:
+            result["help"] = cmd.help.split("\n")[0]
 
-            if hasattr(cmd, "commands") and cmd.commands:
-                cmds = {}
-                for sub_name in sorted(cmd.commands):
-                    sub_cmd = cmd.commands[sub_name]
-                    if getattr(sub_cmd, "hidden", False):
-                        continue
-                    cmds[sub_name] = _cmd_to_dict(sub_cmd, sub_name)
-                if cmds:
-                    result["commands"] = cmds
+        if hasattr(cmd, "commands") and cmd.commands:
+            cmds = {}
+            for sub_name in sorted(cmd.commands):
+                sub_cmd = cmd.commands[sub_name]
+                if getattr(sub_cmd, "hidden", False):
+                    continue
+                cmds[sub_name] = _cmd_to_dict(sub_cmd, sub_name)
+            if cmds:
+                result["commands"] = cmds
 
-            args = []
-            for param in cmd.params:
-                if isinstance(param, click.Argument):
-                    args.append({
+        args = []
+        for param in cmd.params:
+            if isinstance(param, click.Argument):
+                args.append(
+                    {
                         "name": param.name,
                         "required": param.required,
-                    })
-            if args:
-                result["arguments"] = args
-
-            opts = []
-            skip_names = {"install_completion", "show_completion", "help", "ctx"}
-            for param in cmd.params:
-                if isinstance(param, click.Option):
-                    if param.name in skip_names:
-                        continue
-                    opt_info = {
-                        "name": param.opts[0] if param.opts else f"--{param.name}",
                     }
-                    if len(param.opts) > 1:
-                        opt_info["short"] = param.opts[1]
-                    if param.help:
-                        opt_info["help"] = param.help
-                    type_name = param.type.name if hasattr(param.type, "name") else str(param.type)
-                    opt_info["type"] = type_name.upper()
-                    if param.default is not None:
-                        opt_info["default"] = param.default
-                    opts.append(opt_info)
-            if opts:
-                result["options"] = opts
+                )
+        if args:
+            result["arguments"] = args
 
-            return result
-
-        global_options = []
+        opts = []
         skip_names = {"install_completion", "show_completion", "help", "ctx"}
-        for param in click_app.params:
-            if isinstance(param, click.Option) and param.name not in skip_names:
+        for param in cmd.params:
+            if isinstance(param, click.Option):
+                if param.name in skip_names:
+                    continue
                 opt_info = {
                     "name": param.opts[0] if param.opts else f"--{param.name}",
                 }
@@ -137,35 +120,75 @@ def help_cmd(
                 opt_info["type"] = type_name.upper()
                 if param.default is not None:
                     opt_info["default"] = param.default
-                global_options.append(opt_info)
+                opts.append(opt_info)
+        if opts:
+            result["options"] = opts
 
-        output = {
-            "name": PROJECT_SLUG,
-            "global_options": global_options,
-            "commands": {},
-        }
+        return result
 
-        for cmd_name in sorted(click_app.commands):
-            cmd = click_app.commands[cmd_name]
-            if getattr(cmd, "hidden", False):
-                continue
-            output["commands"][cmd_name] = _cmd_to_dict(cmd, cmd_name)
-
-        typer.echo(json_mod.dumps(output, indent=2, default=str))
-    elif command:
-        try:
-            sub = click_app.commands.get(command)
-            if sub:
-                help_ctx = click.Context(sub, info_name=f"{PROJECT_SLUG} {command}", parent=ctx)
-                typer.echo(sub.get_help(help_ctx))
-            else:
-                typer.echo(f"Unknown command: {command}")
+    def _resolve_command(parts):
+        """Walk the Click command tree following the given path parts."""
+        current = click_app
+        info_parts = [PROJECT_SLUG]
+        for part in parts:
+            if not hasattr(current, "commands") or not current.commands:
+                typer.echo(f"Unknown command: {' '.join(parts)}")
                 raise typer.Exit(1)
+            sub = current.commands.get(part)
+            if not sub:
+                typer.echo(f"Unknown command: {' '.join(parts)}")
+                raise typer.Exit(1)
+            current = sub
+            info_parts.append(part)
+        return current, " ".join(info_parts)
+
+    if json_output:
+        if command_parts:
+            target, _ = _resolve_command(command_parts)
+            typer.echo(
+                json_mod.dumps(_cmd_to_dict(target, command_parts[-1]), indent=2, default=str)
+            )
+        else:
+            global_options = []
+            skip_names = {"install_completion", "show_completion", "help", "ctx"}
+            for param in click_app.params:
+                if isinstance(param, click.Option) and param.name not in skip_names:
+                    opt_info = {
+                        "name": param.opts[0] if param.opts else f"--{param.name}",
+                    }
+                    if len(param.opts) > 1:
+                        opt_info["short"] = param.opts[1]
+                    if param.help:
+                        opt_info["help"] = param.help
+                    type_name = param.type.name if hasattr(param.type, "name") else str(param.type)
+                    opt_info["type"] = type_name.upper()
+                    if param.default is not None:
+                        opt_info["default"] = param.default  # type: ignore[assignment]
+                    global_options.append(opt_info)
+
+            output = {
+                "name": PROJECT_SLUG,
+                "global_options": global_options,
+                "commands": {},
+            }
+
+            for cmd_name in sorted(click_app.commands):  # type: ignore[attr-defined]
+                cmd = click_app.commands[cmd_name]  # type: ignore[attr-defined]
+                if getattr(cmd, "hidden", False):
+                    continue
+                output["commands"][cmd_name] = _cmd_to_dict(cmd, cmd_name)  # type: ignore[index]
+
+            typer.echo(json_mod.dumps(output, indent=2, default=str))
+    elif command_parts:
+        try:
+            target, info_name = _resolve_command(command_parts)
+            help_ctx = click.Context(target, info_name=info_name)
+            typer.echo(target.get_help(help_ctx))
         except typer.Exit:
             raise
         except Exception as e:
             typer.echo(f"Error: {e}")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
     else:
         help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)
         typer.echo(click_app.get_help(help_ctx))
@@ -305,6 +328,7 @@ def web(
                 for pid in out.split("\n"):
                     sp.run(["kill", "-9", pid.strip()], check=False)
                 import time
+
                 time.sleep(0.5)
         except (sp.CalledProcessError, FileNotFoundError):
             pass
@@ -379,7 +403,7 @@ def bot_start(
         bot = create_bot(config=config)
     except ConfigError as e:
         typer.echo(f"Error: {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     if daemon:
         import shutil
@@ -390,7 +414,7 @@ def bot_start(
 
         log_path = get_base_path() / "logs" / "bot.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_fd = open(log_path, "a")
+        log_fd = open(log_path, "a")  # noqa: SIM115 — fd must outlive this scope for subprocess
 
         # Re-invoke in foreground mode as a detached subprocess
         binary = shutil.which(PROJECT_SLUG) or PROJECT_SLUG
@@ -446,8 +470,8 @@ def discover(
 ):
     """Run two-pass project discovery and print results."""
     from social_hook.config.yaml import load_full_config
-    from social_hook.db.connection import get_connection, init_database
     from social_hook.db import operations as ops
+    from social_hook.db.connection import init_database
     from social_hook.filesystem import get_db_path
 
     verbose = ctx.obj.get("verbose", False)
@@ -459,7 +483,7 @@ def discover(
         )
     except Exception as e:
         typer.echo(f"Config error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     db_path = get_db_path()
     conn = init_database(db_path)
@@ -538,7 +562,9 @@ def commit_hook():
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, cwd=cwd,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
         )
         if result.returncode != 0:
             return
@@ -566,9 +592,7 @@ def narrative_capture():
     log_dir.mkdir(parents=True, exist_ok=True)
     file_handler = logging.FileHandler(log_dir / "narrative.log")
     file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    )
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.getLogger().addHandler(file_handler)
 
     logger = logging.getLogger("social_hook.narrative_capture")
@@ -622,8 +646,7 @@ def narrative_capture():
         model_str = config.journey_capture.model or config.models.evaluator
         if "haiku" in model_str.lower():
             logger.warning(
-                "Skipping narrative extraction: %s is too small. "
-                "Use Sonnet or Opus.",
+                "Skipping narrative extraction: %s is too small. Use Sonnet or Opus.",
                 model_str,
             )
             conn.close()
@@ -699,9 +722,7 @@ def narrative_capture():
         conn.close()
 
     except Exception:
-        logging.getLogger("social_hook.narrative_capture").exception(
-            "narrative-capture failed"
-        )
+        logging.getLogger("social_hook.narrative_capture").exception("narrative-capture failed")
         # Exit 0 -- never disrupt the user's session
 
 
@@ -709,15 +730,15 @@ def narrative_capture():
 # Register subcommand modules
 # =============================================================================
 
-from social_hook.cli.project import app as project_app
+from social_hook.cli.arc import app as arc_app
+from social_hook.cli.config import app as config_app
 from social_hook.cli.inspect import app as inspect_app
+from social_hook.cli.journey import app as journey_app
 from social_hook.cli.manual import app as manual_app
+from social_hook.cli.memory import app as memory_app
+from social_hook.cli.project import app as project_app
 from social_hook.cli.setup import app as setup_app
 from social_hook.cli.test_cmd import app as test_app
-from social_hook.cli.config import app as config_app
-from social_hook.cli.journey import app as journey_app
-from social_hook.cli.memory import app as memory_app
-from social_hook.cli.arc import app as arc_app
 
 # Project commands: register, unregister, list
 app.add_typer(project_app, name="project", help="Project management.")

@@ -7,9 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from social_hook.errors import ConfigError, MalformedResponseError
+from social_hook.llm.base import NormalizedResponse, NormalizedToolCall
 from social_hook.llm.claude_cli import ClaudeCliClient, _extract_json
-from social_hook.llm.base import NormalizedResponse, NormalizedToolCall, NormalizedUsage
-
 
 SAMPLE_TOOL = {
     "name": "log_decision",
@@ -23,7 +22,9 @@ SAMPLE_TOOL = {
 
 SAMPLE_MESSAGES = [{"role": "user", "content": "Evaluate this commit"}]
 
-VALID_ENVELOPE = {
+VALID_RESULT_ELEMENT = {
+    "type": "result",
+    "subtype": "success",
     "result": '{"decision": "post_worthy"}',
     "usage": {
         "input_tokens": 100,
@@ -32,6 +33,13 @@ VALID_ENVELOPE = {
         "cache_creation_input_tokens": 5,
     },
 }
+
+# --output-format json returns a JSON array of event objects
+VALID_ENVELOPE = [
+    {"type": "system", "subtype": "init"},
+    {"type": "assistant", "message": {}},
+    VALID_RESULT_ELEMENT,
+]
 
 
 def _make_mock_popen(returncode=0, stdout=None, stderr=""):
@@ -104,7 +112,8 @@ class TestCommandConstruction:
         cmd = mock_popen.call_args[0][0]
         assert cmd[0] == "claude"
         assert cmd[1] == "-p"
-        assert cmd[2] == "Evaluate this commit"
+        # Prompt is piped via stdin, not as a CLI argument
+        assert "Evaluate this commit" not in cmd
         assert "--model" in cmd
         assert "sonnet" in cmd
         assert "--output-format" in cmd
@@ -113,6 +122,10 @@ class TestCommandConstruction:
         assert "--no-session-persistence" in cmd
         # Must NOT use --json-schema (causes multi-turn validation loops)
         assert "--json-schema" not in cmd
+        # Verify prompt sent via stdin
+        mock_popen.return_value.communicate.assert_called_once()
+        call_kwargs = mock_popen.return_value.communicate.call_args
+        assert call_kwargs[1]["input"] == "Evaluate this commit"
         # Must always include --system-prompt with JSON instructions
         assert "--system-prompt" in cmd
 
@@ -176,7 +189,10 @@ class TestCommandConstruction:
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        mock_popen.return_value.communicate.assert_called_once_with(timeout=300)
+        mock_popen.return_value.communicate.assert_called_once_with(
+            input="Evaluate this commit",
+            timeout=300,
+        )
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_runs_in_new_session(self, mock_popen):
@@ -230,7 +246,7 @@ class TestResponseParsing:
         client = ClaudeCliClient()
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        assert resp.raw == VALID_ENVELOPE
+        assert resp.raw == VALID_RESULT_ELEMENT
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_json_in_code_fence_parsed(self, mock_popen):
@@ -318,47 +334,12 @@ class TestErrorHandling:
         with pytest.raises(MalformedResponseError, match="Could not extract JSON"):
             client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-
-class TestUsageLogging:
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_usage_logged_with_db(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
-        client = ClaudeCliClient()
-        mock_db = MagicMock()
-        mock_db.insert_usage = MagicMock()
-
-        client.complete(
-            SAMPLE_MESSAGES,
-            [SAMPLE_TOOL],
-            operation_type="evaluate",
-            db=mock_db,
-            project_id="proj-123",
-            commit_hash="abc123",
+    def test_array_without_result_element_raises_malformed(self, mock_popen):
+        """CLI returns JSON array but no element has type=result."""
+        mock_popen.return_value = _make_mock_popen(
+            stdout=json.dumps([{"type": "system"}, {"type": "assistant"}]),
         )
-
-        mock_db.insert_usage.assert_called_once()
-        usage_log = mock_db.insert_usage.call_args[0][0]
-        assert usage_log.model == "claude-cli/sonnet"
-        assert usage_log.input_tokens == 100
-        assert usage_log.output_tokens == 50
-        assert usage_log.cost_cents == 0.0
-        assert usage_log.project_id == "proj-123"
-        assert usage_log.commit_hash == "abc123"
-
-    @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_no_logging_without_db(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
         client = ClaudeCliClient()
-        # Should not raise even without db
-        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL], operation_type="evaluate")
-        assert resp is not None
-
-    @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_no_logging_without_operation_type(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
-        client = ClaudeCliClient()
-        mock_db = MagicMock()
-        mock_db.insert_usage = MagicMock()
-
-        client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL], db=mock_db)
-        mock_db.insert_usage.assert_not_called()
+        with pytest.raises(MalformedResponseError, match="No result element"):
+            client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])

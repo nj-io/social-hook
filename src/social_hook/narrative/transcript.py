@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from typing import Optional
 
 
 def read_transcript(path: str | Path) -> list[dict]:
@@ -37,7 +36,7 @@ def read_transcript(path: str | Path) -> list[dict]:
     return messages
 
 
-def discover_transcript_path(session_id: str, cwd: str) -> Optional[Path]:
+def discover_transcript_path(session_id: str, cwd: str) -> Path | None:
     """Construct transcript path from session_id + cwd.
 
     Handles the empty transcript_path bug (anthropics/claude-code#13668).
@@ -51,9 +50,7 @@ def discover_transcript_path(session_id: str, cwd: str) -> Optional[Path]:
         Path to the JSONL transcript file if it exists, None otherwise.
     """
     encoded_cwd = cwd.replace("/", "-")
-    transcript_path = (
-        Path.home() / ".claude" / "projects" / encoded_cwd / f"{session_id}.jsonl"
-    )
+    transcript_path = Path.home() / ".claude" / "projects" / encoded_cwd / f"{session_id}.jsonl"
     if transcript_path.exists():
         return transcript_path
     return None
@@ -144,9 +141,7 @@ def format_for_prompt(messages: list[dict]) -> str:
                     label = role.upper()
                     parts.append(f"[{label}] {block.get('text', '')}")
                 elif block_type == "thinking":
-                    parts.append(
-                        f"[{role.upper()} THINKING] {block.get('thinking', '')}"
-                    )
+                    parts.append(f"[{role.upper()} THINKING] {block.get('thinking', '')}")
 
     return "\n\n".join(parts)
 

@@ -7,15 +7,12 @@ Source: TECHNICAL_ARCHITECTURE.md lines 1263-1331
 import time
 from datetime import datetime, timedelta
 
-import pytest
-
 from social_hook.adapters.rate_limit import (
     RateLimitState,
     calculate_backoff,
     handle_rate_limit,
     should_retry,
 )
-
 
 # =============================================================================
 # T11: Rate Limiting

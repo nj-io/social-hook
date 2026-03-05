@@ -4,7 +4,6 @@ import logging
 import re
 import sqlite3
 from dataclasses import dataclass
-from typing import Optional
 
 from social_hook.config.platforms import passes_content_filter, resolve_platform
 from social_hook.config.yaml import TIER_CHAR_LIMITS
@@ -34,7 +33,7 @@ def draft_for_platforms(
     context,
     commit,
     project_config=None,
-    target_platform_names: Optional[list[str]] = None,
+    target_platform_names: list[str] | None = None,
     dry_run: bool = False,
     verbose: bool = False,
 ) -> list[DraftResult]:
@@ -49,7 +48,7 @@ def draft_for_platforms(
         db: DryRunContext wrapping conn.
         project: Project model instance.
         decision_id: ID of the decision that triggered drafting.
-        evaluation: Evaluator result (LogDecisionInput or similar).
+        evaluation: Evaluator result (evaluation result or similar).
         context: ProjectContext for drafter prompts.
         commit: CommitInfo for this commit.
         project_config: Optional ProjectConfig (per-project settings).
@@ -67,14 +66,15 @@ def draft_for_platforms(
     for pname, pcfg in config.platforms.items():
         if pcfg.enabled:
             resolved_platforms[pname] = resolve_platform(
-                pname, pcfg, config.scheduling,
+                pname,
+                pcfg,
+                config.scheduling,
             )
 
     # Filter to target platforms if specified
     if target_platform_names is not None:
         resolved_platforms = {
-            k: v for k, v in resolved_platforms.items()
-            if k in target_platform_names
+            k: v for k, v in resolved_platforms.items() if k in target_platform_names
         }
 
     # Auto-inject preview platform when no platforms are enabled and no
@@ -82,6 +82,7 @@ def draft_for_platforms(
     # a real platform first.
     if not resolved_platforms and target_platform_names is None:
         from social_hook.config.platforms import OutputPlatformConfig
+
         preview_raw = OutputPlatformConfig(
             enabled=True,
             priority="secondary",
@@ -92,7 +93,9 @@ def draft_for_platforms(
             filter="all",
         )
         resolved_platforms["preview"] = resolve_platform(
-            "preview", preview_raw, config.scheduling,
+            "preview",
+            preview_raw,
+            config.scheduling,
         )
         if verbose:
             print("No enabled platforms — using built-in preview platform.")
@@ -136,18 +139,41 @@ def draft_for_platforms(
 
     # 4. Generate media once (shared across platforms)
     media_paths, media_type_str, media_spec_dict = _generate_media(
-        config, evaluation, dry_run=dry_run, verbose=verbose,
+        config,
+        evaluation,
+        dry_run=dry_run,
+        verbose=verbose,
         project_config=project_config,
     )
+
+    # 4b. Assemble arc context if this is an arc post
+    arc_context = None
+    _arc_id = getattr(evaluation, "arc_id", None)
+    if _arc_id:
+        try:
+            from social_hook.db import operations as _ops
+
+            arc_obj = _ops.get_arc(conn, _arc_id)
+            if arc_obj:
+                arc_context = {
+                    "arc": arc_obj,
+                    "posts": _ops.get_arc_posts(conn, _arc_id),
+                }
+        except Exception as e:
+            logger.warning(f"Arc context assembly failed (non-fatal): {e}")
 
     # 5. Draft for each target platform
     results = []
     for pname, rpcfg in target_platforms.items():
         try:
             draft_result = drafter.create_draft(
-                evaluation, context, commit, db,
+                evaluation,
+                context,
+                commit,
+                db,
                 platform=pname,
                 platform_config=rpcfg,
+                arc_context=arc_context,
                 config=project_config.context if project_config else None,
                 media_config=config.media_generation,
                 media_guidance=project_config.media_guidance if project_config else None,
@@ -157,13 +183,19 @@ def draft_for_platforms(
             draft_result.platform = pname
 
             use_thread = _needs_thread(
-                draft_result, pname, rpcfg.account_tier or "free",
+                draft_result,
+                pname,
+                rpcfg.account_tier or "free",
                 thread_min=config.scheduling.thread_min_tweets,
             )
             thread_tweets = []
             if use_thread:
                 thread_result = drafter.create_thread(
-                    evaluation, context, commit, db, platform=pname,
+                    evaluation,
+                    context,
+                    commit,
+                    db,
+                    platform=pname,
                     media_config=config.media_generation,
                     media_guidance=project_config.media_guidance if project_config else None,
                 )
@@ -179,7 +211,8 @@ def draft_for_platforms(
 
             # Per-platform scheduling
             schedule = calculate_optimal_time(
-                conn, project.id,
+                conn,
+                project.id,
                 platform=pname,
                 tz=config.scheduling.timezone,
                 max_posts_per_day=rpcfg.max_posts_per_day,
@@ -211,14 +244,22 @@ def draft_for_platforms(
 
             if thread_tweets:
                 for pos, tc in enumerate(thread_tweets):
-                    db.insert_draft_tweet(DraftTweet(
-                        id=generate_id("tweet"), draft_id=draft.id,
-                        position=pos, content=tc,
-                    ))
+                    db.insert_draft_tweet(
+                        DraftTweet(
+                            id=generate_id("tweet"),
+                            draft_id=draft.id,
+                            position=pos,
+                            content=tc,
+                        )
+                    )
 
-            results.append(DraftResult(
-                draft=draft, schedule=schedule, thread_tweets=thread_tweets,
-            ))
+            results.append(
+                DraftResult(
+                    draft=draft,
+                    schedule=schedule,
+                    thread_tweets=thread_tweets,
+                )
+            )
 
             if verbose:
                 print(f"Draft created for {pname}: {draft.id}")
@@ -236,8 +277,7 @@ def draft_for_platforms(
     return results
 
 
-def _generate_media(config, evaluation, dry_run=False, verbose=False,
-                    project_config=None):
+def _generate_media(config, evaluation, dry_run=False, verbose=False, project_config=None):
     """Generate media based on evaluator's recommendation.
 
     Called ONCE before the per-platform drafting loop.
@@ -257,15 +297,12 @@ def _generate_media(config, evaluation, dry_run=False, verbose=False,
     media_type_str = None
     media_spec_dict = None
 
-    _evaluator_media = (
-        getattr(evaluation, 'media_tool', None)
-        and evaluation.media_tool != "none"
-    )
+    _evaluator_media = getattr(evaluation, "media_tool", None) and evaluation.media_tool != "none"
 
     if config.media_generation.enabled and _evaluator_media:
         media_type_str = evaluation.media_tool
         # Handle enum values
-        if hasattr(media_type_str, 'value'):
+        if hasattr(media_type_str, "value"):
             media_type_str = media_type_str.value
 
         # Per-tool check: global toggle (config.yaml)
@@ -314,8 +351,7 @@ def _generate_media(config, evaluation, dry_run=False, verbose=False,
     return media_paths, media_type_str, media_spec_dict
 
 
-def _needs_thread(draft_result, platform: str, tier: str,
-                  thread_min: int = 4) -> bool:
+def _needs_thread(draft_result, platform: str, tier: str, thread_min: int = 4) -> bool:
     """Determine if content should be posted as a thread.
 
     LLM-driven format decision with platform constraint enforcement.
@@ -341,10 +377,7 @@ def _needs_thread(draft_result, platform: str, tier: str,
         return True
 
     # Content has thread_min+ narrative beats -> thread candidate
-    if beat_count is not None and beat_count >= thread_min:
-        return True
-
-    return False
+    return bool(beat_count is not None and beat_count >= thread_min)
 
 
 def _parse_thread_tweets(thread_content: str, thread_min: int = 4) -> list[str]:
@@ -353,7 +386,7 @@ def _parse_thread_tweets(thread_content: str, thread_min: int = 4) -> list[str]:
     Handles numbered format (1/, 2/) and --- separators.
     """
     # Try numbered format first: "1/ ...\n\n2/ ..."
-    numbered = re.split(r'(?:^|\n+)\d+/\s*', thread_content)
+    numbered = re.split(r"(?:^|\n+)\d+/\s*", thread_content)
     # First element may be empty if content starts with "1/"
     numbered = [t.strip() for t in numbered if t.strip()]
     if len(numbered) >= thread_min:

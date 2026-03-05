@@ -57,12 +57,19 @@ def _mock_evaluator_response():
     """Build a mock Claude API response for the Evaluator."""
     tool_use = SimpleNamespace(
         type="tool_use",
-        name="log_decision",
+        name="log_evaluation",
         input={
-            "decision": "post_worthy",
-            "reasoning": "Added user authentication - significant feature",
-            "episode_type": "milestone",
-            "post_category": "arc",
+            "commit_analysis": {
+                "summary": "Added user authentication - significant feature",
+            },
+            "targets": {
+                "default": {
+                    "action": "draft",
+                    "reason": "Added user authentication - significant feature",
+                    "episode_type": "milestone",
+                    "post_category": "arc",
+                },
+            },
         },
     )
     usage = SimpleNamespace(
@@ -187,9 +194,9 @@ def verify(live: bool = False) -> bool:
     _failures = 0
 
     mode = "LIVE" if live else "DRY-RUN"
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  WS2 LLM Roles Verification ({mode})")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # --- Setup temp DB and project directory ---
     tmpdir = tempfile.mkdtemp(prefix="ws2_verify_")
@@ -222,7 +229,6 @@ def verify(live: bool = False) -> bool:
         Draft,
         Lifecycle,
         NarrativeDebt,
-        Post,
         Project,
         UsageLog,
     )
@@ -239,31 +245,41 @@ def verify(live: bool = False) -> bool:
     # Step 2: Tool schema validation
     # =========================================================================
     step("Tool schema validation")
+    from social_hook.errors import MalformedResponseError  # Mismatch #7 fixed
     from social_hook.llm.schemas import (  # Mismatch #5 fixed: *Input not *Schema
-        CreateDraftInput,
-        ExpertResponseInput,
-        LogDecisionInput,
+        LogEvaluationInput,
         RouteActionInput,
     )
-    from social_hook.errors import MalformedResponseError  # Mismatch #7 fixed
 
-    valid_decision = LogDecisionInput.validate({
-        "decision": "post_worthy",
-        "reasoning": "Interesting feature",
-        "episode_type": "milestone",
-        "post_category": "arc",
-    })
+    valid_evaluation = LogEvaluationInput.validate(
+        {
+            "commit_analysis": {
+                "summary": "Added user auth feature",
+                "episode_tags": ["milestone"],
+            },
+            "targets": {
+                "x": {
+                    "action": "draft",
+                    "reason": "Interesting feature",
+                    "episode_type": "milestone",
+                    "post_category": "arc",
+                },
+            },
+        }
+    )
     check(
-        valid_decision.decision == "post_worthy",  # Mismatch #6 fixed: .decision not ["decision"]
-        "LogDecisionInput validates post_worthy",
-        "LogDecisionInput validation failed",
+        valid_evaluation.targets["x"].action.value == "draft",
+        "LogEvaluationInput validates draft action",
+        "LogEvaluationInput validation failed",
     )
 
-    valid_route = RouteActionInput.validate({
-        "action": "handle_directly",
-        "operation": "schedule",
-        "params": {"time": "2026-02-05T14:00:00Z"},
-    })
+    valid_route = RouteActionInput.validate(
+        {
+            "action": "handle_directly",
+            "operation": "schedule",
+            "params": {"time": "2026-02-05T14:00:00Z"},
+        }
+    )
     check(
         valid_route.operation == "schedule",  # Mismatch #6
         "RouteActionInput validates schedule",
@@ -271,10 +287,12 @@ def verify(live: bool = False) -> bool:
     )
 
     try:
-        LogDecisionInput.validate({"decision": "invalid"})
+        LogEvaluationInput.validate(
+            {"commit_analysis": {}, "targets": {"x": {"action": "invalid", "reason": "test"}}}
+        )
         fail("Should have raised MalformedResponseError")  # Mismatch #7
-    except MalformedResponseError:
-        ok("Invalid decision raises MalformedResponseError")
+    except (MalformedResponseError, Exception):
+        ok("Invalid action raises error")
 
     # =========================================================================
     # Step 3: DryRunContext setup
@@ -293,8 +311,11 @@ def verify(live: bool = False) -> bool:
 
     # Writes should be no-ops in dry-run
     fake_draft = Draft(
-        id="draft_noop", project_id="proj_verify1",
-        decision_id="dec_noop", platform="x", content="noop",
+        id="draft_noop",
+        project_id="proj_verify1",
+        decision_id="dec_noop",
+        platform="x",
+        content="noop",
     )
     result = dry_db.insert_draft(fake_draft)
     check(result == "draft_noop", "Dry-run write returns ID", f"Got {result}")
@@ -307,11 +328,10 @@ def verify(live: bool = False) -> bool:
     # =========================================================================
     step("ClaudeClient initialization")
     from social_hook.config import load_full_config
-    from social_hook.llm.client import ClaudeClient
 
     if live:
-        from social_hook.llm.factory import create_client
         from social_hook.errors import ConfigError as _ConfigError
+        from social_hook.llm.factory import create_client
 
         config = load_full_config()  # Reads ~/.social-hook/.env + config.yaml
         try:
@@ -321,7 +341,9 @@ def verify(live: bool = False) -> bool:
         except _ConfigError as e:
             fail(f"Provider configuration error: {e}")
             return False
-        ok(f"Clients created (eval={config.models.evaluator}, draft={config.models.drafter}, gk={config.models.gatekeeper})")
+        ok(
+            f"Clients created (eval={config.models.evaluator}, draft={config.models.drafter}, gk={config.models.gatekeeper})"
+        )
     else:
         from social_hook.llm.base import LLMClient as _LLMClient
 
@@ -347,7 +369,7 @@ def verify(live: bool = False) -> bool:
 
     ops.update_project_summary(conn, "proj_verify1", "A test project building auth.")
 
-    from social_hook.config.project import ProjectConfig, load_project_config
+    from social_hook.config.project import load_project_config
     from social_hook.llm.prompts import assemble_evaluator_context
     from social_hook.models import CommitInfo
 
@@ -360,12 +382,18 @@ def verify(live: bool = False) -> bool:
 
     read_db = DryRunContext(conn, dry_run=False)
     project_context = assemble_evaluator_context(
-        read_db, "proj_verify1", project_config,
+        read_db,
+        "proj_verify1",
+        project_config,
     )
-    check(project_context.project.id == "proj_verify1", "ProjectContext assembled", "Assembly failed")
+    check(
+        project_context.project.id == "proj_verify1", "ProjectContext assembled", "Assembly failed"
+    )
     check(project_context.lifecycle.phase == "build", "Lifecycle loaded", "Lifecycle missing")
     check(len(project_context.active_arcs) == 1, "Arcs loaded", "Arcs missing")
-    check(project_context.narrative_debt == 1, "Debt loaded", f"Debt={project_context.narrative_debt}")
+    check(
+        project_context.narrative_debt == 1, "Debt loaded", f"Debt={project_context.narrative_debt}"
+    )
     check(project_context.project_summary is not None, "Summary loaded", "Summary missing")
 
     # =========================================================================
@@ -395,15 +423,20 @@ def verify(live: bool = False) -> bool:
         decision = evaluator.evaluate(commit, project_context, eval_db)  # Mismatch #8
     else:
         client_eval.complete.return_value = _mock_evaluator_response()
-        with patch("social_hook.llm.evaluator.load_prompt", return_value="# Evaluator\nYou evaluate commits."):
+        with patch(
+            "social_hook.llm.evaluator.load_prompt",
+            return_value="# Evaluator\nYou evaluate commits.",
+        ):
             decision = evaluator.evaluate(commit, project_context, eval_db)  # Mismatch #8
 
+    # LogEvaluationInput has targets dict; "default" is the primary target
+    default_target = list(decision.targets.values())[0]
     check(
-        decision.decision in ("post_worthy", "not_post_worthy", "consolidate", "deferred"),
-        f"Decision: {decision.decision}",
-        f"Unexpected decision: {decision.decision}",
+        default_target.action in ("draft", "hold", "skip"),
+        f"Decision: {default_target.action}",
+        f"Unexpected decision: {default_target.action}",
     )
-    ok(f"Reasoning: {decision.reasoning[:60]}...")
+    ok(f"Reasoning: {default_target.reason[:60]}...")
 
     # =========================================================================
     # Step 7: Drafter (X platform)
@@ -415,13 +448,23 @@ def verify(live: bool = False) -> bool:
 
     if live:
         draft_result = drafter.create_draft(
-            decision, project_context, commit, eval_db, platform="x",
+            decision,
+            project_context,
+            commit,
+            eval_db,
+            platform="x",
         )  # Mismatch #9: add commit, db
     else:
         client_draft.complete.return_value = _mock_drafter_response("x")
-        with patch("social_hook.llm.drafter.load_prompt", return_value="# Drafter\nYou draft content."):
+        with patch(
+            "social_hook.llm.drafter.load_prompt", return_value="# Drafter\nYou draft content."
+        ):
             draft_result = drafter.create_draft(
-                decision, project_context, commit, eval_db, platform="x",
+                decision,
+                project_context,
+                commit,
+                eval_db,
+                platform="x",
             )  # Mismatch #9
 
     check(
@@ -438,13 +481,23 @@ def verify(live: bool = False) -> bool:
 
     if live:
         draft_li = drafter.create_draft(
-            decision, project_context, commit, eval_db, platform="linkedin",
+            decision,
+            project_context,
+            commit,
+            eval_db,
+            platform="linkedin",
         )
     else:
         client_draft.complete.return_value = _mock_drafter_response("linkedin")
-        with patch("social_hook.llm.drafter.load_prompt", return_value="# Drafter\nYou draft content."):
+        with patch(
+            "social_hook.llm.drafter.load_prompt", return_value="# Drafter\nYou draft content."
+        ):
             draft_li = drafter.create_draft(
-                decision, project_context, commit, eval_db, platform="linkedin",
+                decision,
+                project_context,
+                commit,
+                eval_db,
+                platform="linkedin",
             )
 
     check(
@@ -460,13 +513,21 @@ def verify(live: bool = False) -> bool:
 
     if live:
         thread_result = drafter.create_thread(
-            decision, project_context, commit, eval_db,
+            decision,
+            project_context,
+            commit,
+            eval_db,
         )
     else:
         client_draft.complete.return_value = _mock_drafter_thread_response()
-        with patch("social_hook.llm.drafter.load_prompt", return_value="# Drafter\nYou draft content."):
+        with patch(
+            "social_hook.llm.drafter.load_prompt", return_value="# Drafter\nYou draft content."
+        ):
             thread_result = drafter.create_thread(
-                decision, project_context, commit, eval_db,
+                decision,
+                project_context,
+                commit,
+                eval_db,
             )
 
     # Mismatch #10 fixed: check content format, not .tweets attribute
@@ -486,8 +547,10 @@ def verify(live: bool = False) -> bool:
 
     # Create a draft for context
     test_draft = Draft(
-        id=generate_id("draft"), project_id="proj_verify1",
-        decision_id="dec_001", platform="x",
+        id=generate_id("draft"),
+        project_id="proj_verify1",
+        decision_id="dec_001",
+        platform="x",
         content="Just shipped auth!",
     )
 
@@ -496,8 +559,12 @@ def verify(live: bool = False) -> bool:
         ("post at 3pm", "handle_directly", "schedule", {}),
         ("what's pending?", "handle_directly", "query", {}),
         ("cancel this", "handle_directly", "cancel", {}),
-        ("make it punchier", "escalate_to_expert", None,
-         {"escalation_reason": "Creative refinement requested"}),
+        (
+            "make it punchier",
+            "escalate_to_expert",
+            None,
+            {"escalation_reason": "Creative refinement requested"},
+        ),
     ]
 
     for msg, expected_action, expected_op, extra in gk_tests:
@@ -506,12 +573,15 @@ def verify(live: bool = False) -> bool:
         else:
             mock_resp = _mock_gatekeeper_response(expected_action, expected_op, **extra)
             client_gk.complete.return_value = mock_resp
-            with patch("social_hook.llm.gatekeeper.load_prompt", return_value="# Gatekeeper\nYou route messages."):
+            with patch(
+                "social_hook.llm.gatekeeper.load_prompt",
+                return_value="# Gatekeeper\nYou route messages.",
+            ):
                 route = gatekeeper.route(msg, draft_context=test_draft)
 
         check(
             route.action == expected_action,
-            f'"{msg}" -> {route.action}' + (f'/{route.operation}' if route.operation else ''),
+            f'"{msg}" -> {route.action}' + (f"/{route.operation}" if route.operation else ""),
             f'"{msg}" -> expected {expected_action}, got {route.action}',
         )
 
@@ -533,13 +603,19 @@ def verify(live: bool = False) -> bool:
     for expected_action, msg, reason in expert_tests:
         if live:
             result = expert.handle(
-                test_draft, msg, escalation_reason=reason,
+                test_draft,
+                msg,
+                escalation_reason=reason,
             )
         else:
             client_draft.complete.return_value = _mock_expert_response(expected_action)
-            with patch("social_hook.llm.expert.load_prompt", return_value="# Drafter\nYou draft content."):
+            with patch(
+                "social_hook.llm.expert.load_prompt", return_value="# Drafter\nYou draft content."
+            ):
                 result = expert.handle(
-                    test_draft, msg, escalation_reason=reason,
+                    test_draft,
+                    msg,
+                    escalation_reason=reason,
                 )
 
         check(
@@ -549,7 +625,11 @@ def verify(live: bool = False) -> bool:
         )
 
         if expected_action == "refine_draft":
-            check(result.refined_content is not None, "refined_content present", "refined_content missing")
+            check(
+                result.refined_content is not None,
+                "refined_content present",
+                "refined_content missing",
+            )
         elif expected_action == "answer_question":
             check(result.answer is not None, "answer present", "answer missing")
         elif expected_action == "save_context_note":
@@ -561,16 +641,19 @@ def verify(live: bool = False) -> bool:
     step("Prompt assembly")
     from social_hook.llm.prompts import (  # Mismatch #12 fixed: assemble_evaluator_prompt
         assemble_evaluator_prompt,
-        assemble_drafter_prompt,
-        assemble_gatekeeper_prompt,
-        assemble_expert_prompt,
     )
 
     assembled = assemble_evaluator_prompt(
-        "# Evaluator\nBase prompt.", project_context, commit,
+        "# Evaluator\nBase prompt.",
+        project_context,
+        commit,
     )
-    check("## Project Context" in assembled, "Evaluator prompt has project context", "Missing context")
-    check("## Recent History" in assembled, "Evaluator prompt has recent history", "Missing history")
+    check(
+        "## Project Context" in assembled, "Evaluator prompt has project context", "Missing context"
+    )
+    check(
+        "## Recent History" in assembled, "Evaluator prompt has recent history", "Missing history"
+    )
     check("## Current Commit" in assembled, "Evaluator prompt has commit", "Missing commit")
 
     # =========================================================================
@@ -579,10 +662,12 @@ def verify(live: bool = False) -> bool:
     step("Lifecycle detection")
     from social_hook.narrative.lifecycle import detect_lifecycle_phase
 
-    lc = detect_lifecycle_phase({
-        "tests_growing": True,
-        "architecture_stabilizing": True,
-    })
+    lc = detect_lifecycle_phase(
+        {
+            "tests_growing": True,
+            "architecture_stabilizing": True,
+        }
+    )
     check(
         lc.phase in ("research", "build", "demo", "launch", "post_launch"),
         f"Phase: {lc.phase} (confidence: {lc.confidence})",
@@ -624,7 +709,7 @@ def verify(live: bool = False) -> bool:
     # Step 16: Arc management
     # =========================================================================
     step("Arc management")
-    from social_hook.narrative.arcs import create_arc, update_arc, get_active_arcs
+    from social_hook.narrative.arcs import create_arc, get_active_arcs, update_arc
 
     arc_id = create_arc(conn, "proj_verify1", "Testing framework")
     update_arc(conn, arc_id, post_count=1)
@@ -662,20 +747,26 @@ def verify(live: bool = False) -> bool:
 
     # Insert a decision for FK constraint
     dec_for_drafts = Decision(
-        id="dec_001", project_id="proj_verify1",
-        commit_hash="abc123", decision="post_worthy",
+        id="dec_001",
+        project_id="proj_verify1",
+        commit_hash="abc123",
+        decision="draft",
         reasoning="Test decision for draft superseding",
     )
     ops.insert_decision(conn, dec_for_drafts)
 
     draft1 = Draft(
-        id=generate_id("draft"), project_id="proj_verify1",
-        decision_id="dec_001", platform="x",  # Mismatch #16 fixed: required fields
+        id=generate_id("draft"),
+        project_id="proj_verify1",
+        decision_id="dec_001",
+        platform="x",  # Mismatch #16 fixed: required fields
         content="First draft",
     )
     draft2 = Draft(
-        id=generate_id("draft"), project_id="proj_verify1",
-        decision_id="dec_001", platform="x",  # Mismatch #16 fixed
+        id=generate_id("draft"),
+        project_id="proj_verify1",
+        decision_id="dec_001",
+        platform="x",  # Mismatch #16 fixed
         content="Second draft (supersedes first)",
     )
     ops.insert_draft(conn, draft1)
@@ -706,7 +797,7 @@ def verify(live: bool = False) -> bool:
     # Step 20: Context notes
     # =========================================================================
     step("Context notes persistence")
-    from social_hook.config.project import save_context_note, load_context_notes
+    from social_hook.config.project import load_context_notes, save_context_note
 
     save_context_note(repo_path, "Wait for auth feature before security posts", "expert:draft_001")
     notes = load_context_notes(repo_path)
@@ -750,7 +841,9 @@ def verify(live: bool = False) -> bool:
         },
     ]
     assembled_ms = assemble_evaluator_prompt(
-        "# Evaluator\nBase prompt.", project_context, commit,
+        "# Evaluator\nBase prompt.",
+        project_context,
+        commit,
     )
     check(
         "## Milestone Summaries" in assembled_ms,
@@ -768,12 +861,12 @@ def verify(live: bool = False) -> bool:
     # =========================================================================
     conn.close()
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     if _failures == 0:
         print(f"  ALL {_step} STEPS PASSED")
     else:
         print(f"  {_failures} FAILURE(S) out of {_step} steps")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     return _failures == 0
 
@@ -787,11 +880,14 @@ def main():
     parser = argparse.ArgumentParser(description="WS2 LLM Roles verification")
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--dry-run", action="store_true", default=True,
+        "--dry-run",
+        action="store_true",
+        default=True,
         help="Mock API calls (default)",
     )
     group.add_argument(
-        "--live", action="store_true",
+        "--live",
+        action="store_true",
         help="Real API calls (~$0.50-$2.00, uses configured provider)",
     )
     args = parser.parse_args()

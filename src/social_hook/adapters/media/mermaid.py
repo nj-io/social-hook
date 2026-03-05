@@ -9,7 +9,6 @@ import tempfile
 import uuid
 import zlib
 from pathlib import Path
-from typing import Optional
 
 import requests
 
@@ -63,7 +62,7 @@ class MermaidAdapter(MediaAdapter):
     def generate(
         self,
         spec: dict,
-        output_dir: Optional[str] = None,
+        output_dir: str | None = None,
         dry_run: bool = False,
     ) -> MediaResult:
         """Generate mermaid diagram image.
@@ -122,10 +121,7 @@ class MermaidAdapter(MediaAdapter):
 
             if response.status_code == 200:
                 # Save to file
-                if output_dir:
-                    dir_path = Path(output_dir)
-                else:
-                    dir_path = Path(tempfile.gettempdir())
+                dir_path = Path(output_dir) if output_dir else Path(tempfile.gettempdir())
 
                 dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -156,10 +152,10 @@ class MermaidAdapter(MediaAdapter):
     def _try_mmdc(
         self,
         diagram_code: str,
-        output_dir: Optional[str],
+        output_dir: str | None,
         output_format: str,
         theme: str,
-    ) -> Optional[MediaResult]:
+    ) -> MediaResult | None:
         """Try to generate diagram using local mmdc CLI.
 
         Args:
@@ -175,10 +171,7 @@ class MermaidAdapter(MediaAdapter):
         if not mmdc_path:
             return None
 
-        if output_dir:
-            dir_path = Path(output_dir)
-        else:
-            dir_path = Path(tempfile.gettempdir())
+        dir_path = Path(output_dir) if output_dir else Path(tempfile.gettempdir())
         dir_path.mkdir(parents=True, exist_ok=True)
 
         filename = f"mermaid_{uuid.uuid4().hex[:8]}.{output_format}"
@@ -193,9 +186,7 @@ class MermaidAdapter(MediaAdapter):
             if theme and theme != "default":
                 cmd.extend(["-t", theme])
 
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0 and file_path.exists():
                 return MediaResult(success=True, file_path=str(file_path))

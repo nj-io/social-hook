@@ -4,10 +4,9 @@ import pytest
 
 from social_hook.config import load_config, load_env, load_full_config, load_project_config
 from social_hook.config.project import (
-    ContextConfig,
     DEFAULT_MEDIA_GUIDANCE,
+    ContextConfig,
     EpisodePreferences,
-    MediaToolGuidance,
     StrategyConfig,
     SummaryConfig,
     _parse_context_config,
@@ -18,7 +17,6 @@ from social_hook.config.project import (
 )
 from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
-
 
 # =============================================================================
 # T2: Config Loading
@@ -252,7 +250,6 @@ platforms:
     def test_save_memory_appends_entry(self, temp_project_dir):
         """save_memory appends new entry to existing memories.md."""
         config = load_project_config(temp_project_dir)
-        original_memories = config.memories
 
         save_memory(temp_project_dir, "new context", "new feedback", "draft-002")
 
@@ -367,7 +364,9 @@ platforms:
         project_dir = temp_dir / "project"
         project_config_dir = project_dir / CONFIG_DIR_NAME
         project_config_dir.mkdir(parents=True)
-        (project_config_dir / "content-config.yaml").write_text("platforms:\n  x:\n    enabled: true")
+        (project_config_dir / "content-config.yaml").write_text(
+            "platforms:\n  x:\n    enabled: true"
+        )
 
         config = load_project_config(project_dir, global_base=global_base)
 

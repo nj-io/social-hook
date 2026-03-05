@@ -1,7 +1,6 @@
 """Model catalog with rich metadata for all supported LLM providers."""
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 import requests
 
@@ -9,6 +8,7 @@ import requests
 @dataclass
 class ModelInfo:
     """Per-model metadata."""
+
     id: str
     provider: str
     full_id: str
@@ -17,7 +17,7 @@ class ModelInfo:
     tier: str  # "premium", "standard", "budget", "local"
     context_window: int
     max_output_tokens: int
-    cost_input: float = 0.0   # per 1M tokens in dollars
+    cost_input: float = 0.0  # per 1M tokens in dollars
     cost_output: float = 0.0  # per 1M tokens in dollars
     supports_tools: bool = True
     supports_vision: bool = False
@@ -27,6 +27,7 @@ class ModelInfo:
 @dataclass
 class ProviderInfo:
     """Per-provider metadata."""
+
     id: str
     name: str
     description: str
@@ -38,6 +39,7 @@ class ProviderInfo:
 @dataclass
 class ProviderCompat:
     """Provider compatibility flags for request building."""
+
     system_in_messages: bool = False
     tool_schema_format: str = "anthropic"  # "anthropic" or "openai"
     max_tokens_field: str = "max_tokens"
@@ -361,7 +363,7 @@ def get_models_for_provider(provider_id: str) -> list[ModelInfo]:
     return list(_MODELS_BY_PROVIDER.get(provider_id, []))
 
 
-def get_provider_info(provider_id: str) -> Optional[ProviderInfo]:
+def get_provider_info(provider_id: str) -> ProviderInfo | None:
     """Return provider metadata.
 
     Args:
@@ -373,7 +375,7 @@ def get_provider_info(provider_id: str) -> Optional[ProviderInfo]:
     return _PROVIDERS.get(provider_id)
 
 
-def get_provider_compat(provider_id: str) -> Optional[ProviderCompat]:
+def get_provider_compat(provider_id: str) -> ProviderCompat | None:
     """Return provider compatibility flags.
 
     Args:
@@ -424,18 +426,22 @@ def discover_ollama_models(base_url: str = "http://localhost:11434") -> list[Mod
         details = entry.get("details", {})
         param_size = details.get("parameter_size", "")
 
-        models.append(ModelInfo(
-            id=clean_name,
-            provider="ollama",
-            full_id=f"ollama/{clean_name}",
-            name=f"{clean_name} (Ollama)",
-            description=f"Local {param_size} model" if param_size else f"Local model ({size // (1024*1024)}MB)",
-            tier="local",
-            context_window=int(details.get("context_length", 4096)),
-            max_output_tokens=4096,
-            supports_tools=True,
-            supports_vision=False,
-        ))
+        models.append(
+            ModelInfo(
+                id=clean_name,
+                provider="ollama",
+                full_id=f"ollama/{clean_name}",
+                name=f"{clean_name} (Ollama)",
+                description=f"Local {param_size} model"
+                if param_size
+                else f"Local model ({size // (1024 * 1024)}MB)",
+                tier="local",
+                context_window=int(details.get("context_length", 4096)),
+                max_output_tokens=4096,
+                supports_tools=True,
+                supports_vision=False,
+            )
+        )
     return models
 
 

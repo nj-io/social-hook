@@ -28,21 +28,16 @@ class SlackAdapter(MessagingAdapter):
         try:
             from slack_bolt import App  # noqa: F401
         except ImportError:
-            raise ConfigError(
-                "slack-bolt package required for Slack integration."
-            )
+            raise ConfigError("slack-bolt package required for Slack integration.") from None
         self.token = token
 
     def send_message(self, chat_id: str, message: OutboundMessage) -> SendResult:
         """Send a message to a Slack channel."""
         raise NotImplementedError(
-            "Slack adapter is a stub. Full implementation planned -- "
-            "see ROADMAP.md for status."
+            "Slack adapter is a stub. Full implementation planned -- see ROADMAP.md for status."
         )
 
-    def edit_message(
-        self, chat_id: str, message_id: str, message: OutboundMessage
-    ) -> SendResult:
+    def edit_message(self, chat_id: str, message_id: str, message: OutboundMessage) -> SendResult:
         """Edit an existing Slack message."""
         raise NotImplementedError("Slack adapter is a stub.")
 

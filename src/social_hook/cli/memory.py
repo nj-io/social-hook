@@ -1,21 +1,20 @@
 """CLI commands for voice memory management."""
 
 import os
-from typing import Optional
 
 import typer
 
 app = typer.Typer(no_args_is_help=True)
 
 
-def _resolve_project(project: Optional[str] = None) -> str:
+def _resolve_project(project: str | None = None) -> str:
     """Resolve project path, defaulting to cwd."""
     return os.path.realpath(project or os.getcwd())
 
 
 @app.command("list")
 def list_cmd(
-    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
 ):
     """List all voice memories for a project."""
     from social_hook.config.project import list_memories
@@ -40,7 +39,7 @@ def add(
     context: str = typer.Option(..., "--context", "-c", help="Brief description of content type"),
     feedback: str = typer.Option(..., "--feedback", "-f", help="Human feedback text"),
     draft_id: str = typer.Option("", "--draft-id", "-d", help="Reference to original draft"),
-    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
 ):
     """Add a voice memory to the project."""
     from social_hook.config.project import save_memory
@@ -53,7 +52,7 @@ def add(
 @app.command()
 def delete(
     index: int = typer.Argument(help="Memory number to delete (1-based, from 'memory list')"),
-    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
 ):
     """Delete a voice memory by its number."""
     from social_hook.config.project import delete_memory
@@ -68,13 +67,13 @@ def delete(
         delete_memory(repo_path, zero_based)
     except (IndexError, FileNotFoundError) as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     typer.echo(f"Memory #{index} deleted.")
 
 
 @app.command()
 def clear(
-    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ):
     """Clear all voice memories for a project."""

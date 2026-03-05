@@ -55,6 +55,10 @@ export interface ConsolidationConfig {
   enabled: boolean;
   mode: string;
   batch_size: number;
+  auto_consolidate_drafts: boolean;
+  consolidate_approved: boolean;
+  time_window_hours: number;
+  time_window_max_drafts: number;
 }
 
 export interface Config {
@@ -97,6 +101,9 @@ export interface Draft {
   reasoning?: string;
   last_error?: string;
   retry_count?: number;
+  is_intro: boolean;
+  post_format: string | null;
+  reference_post_id: string | null;
   created_at: string;
   updated_at?: string;
   tweets?: DraftTweet[];
@@ -139,10 +146,13 @@ export interface Decision {
   reasoning: string;
   angle: string;
   episode_type: string;
+  episode_tags: string[];
   post_category: string;
   arc_id?: string;
   media_tool?: string;
   platforms: string;
+  targets: Record<string, unknown>;
+  consolidate_with: string[] | null;
   draft_count: number;
   created_at: string;
 }

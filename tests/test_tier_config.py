@@ -46,41 +46,31 @@ class TestTierValidation:
 
     def test_invalid_tier_raises_config_error(self, temp_dir):
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x:\n    account_tier: ultra_premium\n"
-        )
+        config_path.write_text("platforms:\n  x:\n    account_tier: ultra_premium\n")
         with pytest.raises(ConfigError, match="Invalid account_tier"):
             load_config(config_path)
 
     def test_basic_tier_accepted(self, temp_dir):
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x:\n    account_tier: basic\n"
-        )
+        config_path.write_text("platforms:\n  x:\n    account_tier: basic\n")
         config = load_config(config_path)
         assert config.platforms["x"].account_tier == "basic"
 
     def test_premium_tier_accepted(self, temp_dir):
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x:\n    account_tier: premium\n"
-        )
+        config_path.write_text("platforms:\n  x:\n    account_tier: premium\n")
         config = load_config(config_path)
         assert config.platforms["x"].account_tier == "premium"
 
     def test_premium_plus_tier_accepted(self, temp_dir):
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x:\n    account_tier: premium_plus\n"
-        )
+        config_path.write_text("platforms:\n  x:\n    account_tier: premium_plus\n")
         config = load_config(config_path)
         assert config.platforms["x"].account_tier == "premium_plus"
 
     def test_free_tier_accepted(self, temp_dir):
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x:\n    account_tier: free\n"
-        )
+        config_path.write_text("platforms:\n  x:\n    account_tier: free\n")
         config = load_config(config_path)
         assert config.platforms["x"].account_tier == "free"
 

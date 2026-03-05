@@ -1,18 +1,12 @@
 """Tests for hook installer: commit hook (nested format) and narrative hook."""
 
 import json
-from pathlib import Path
-
-import pytest
 
 from social_hook.setup.install import (
     COMMIT_HOOK_COMMAND,
-    COMMIT_HOOK_EVENT,
     COMMIT_HOOK_MATCHER,
     NARRATIVE_HOOK_COMMAND,
-    NARRATIVE_HOOK_EVENT,
     NARRATIVE_HOOK_TIMEOUT,
-    OUR_HOOK,
     check_hook_installed,
     check_narrative_hook_installed,
     install_hook,
@@ -288,11 +282,15 @@ class TestAtomicWritePreservesKeys:
 
     def test_preserves_env_key(self, temp_dir):
         sf = temp_dir / "settings.json"
-        sf.write_text(json.dumps({
-            "env": {"FOO": "bar"},
-            "enabledPlugins": ["plugin-a"],
-            "permissions": {"allow": ["read"]},
-        }))
+        sf.write_text(
+            json.dumps(
+                {
+                    "env": {"FOO": "bar"},
+                    "enabledPlugins": ["plugin-a"],
+                    "permissions": {"allow": ["read"]},
+                }
+            )
+        )
 
         install_hook(sf)
         data = json.loads(sf.read_text())
@@ -303,17 +301,21 @@ class TestAtomicWritePreservesKeys:
 
     def test_preserves_keys_on_narrative_install(self, temp_dir):
         sf = temp_dir / "settings.json"
-        sf.write_text(json.dumps({
-            "env": {"KEY": "val"},
-            "hooks": {
-                "PostToolUse": [
-                    {
-                        "matcher": COMMIT_HOOK_MATCHER,
-                        "hooks": [{"type": "command", "command": COMMIT_HOOK_COMMAND}],
-                    }
-                ]
-            },
-        }))
+        sf.write_text(
+            json.dumps(
+                {
+                    "env": {"KEY": "val"},
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": COMMIT_HOOK_MATCHER,
+                                "hooks": [{"type": "command", "command": COMMIT_HOOK_COMMAND}],
+                            }
+                        ]
+                    },
+                }
+            )
+        )
 
         install_narrative_hook(sf)
         data = json.loads(sf.read_text())

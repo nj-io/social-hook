@@ -20,7 +20,7 @@ def parse_provider_model(model_str: str) -> tuple[str, str]:
     """
     for prefix in sorted(KNOWN_PROVIDERS, key=len, reverse=True):
         if model_str.startswith(prefix + "/"):
-            return prefix, model_str[len(prefix) + 1:]
+            return prefix, model_str[len(prefix) + 1 :]
 
     raise ConfigError(
         f"Invalid model '{model_str}': must use provider/model-id format "
@@ -63,8 +63,9 @@ def create_client(model_str: str, config, verbose: bool = False) -> LLMClient:
         api_key = config.env.get("OPENAI_API_KEY", "")
         if not api_key:
             raise ConfigError("OPENAI_API_KEY required for openai/ models")
-        return OpenAICompatClient(api_key, model_id, "https://api.openai.com/v1",
-                                  provider_name="openai")
+        return OpenAICompatClient(
+            api_key, model_id, "https://api.openai.com/v1", provider_name="openai"
+        )
 
     elif provider == "openrouter":
         from social_hook.llm.openai_compat import OpenAICompatClient
@@ -72,15 +73,15 @@ def create_client(model_str: str, config, verbose: bool = False) -> LLMClient:
         api_key = config.env.get("OPENROUTER_API_KEY", "")
         if not api_key:
             raise ConfigError("OPENROUTER_API_KEY required for openrouter/ models")
-        return OpenAICompatClient(api_key, model_id, "https://openrouter.ai/api/v1",
-                                  provider_name="openrouter")
+        return OpenAICompatClient(
+            api_key, model_id, "https://openrouter.ai/api/v1", provider_name="openrouter"
+        )
 
     elif provider == "ollama":
         from social_hook.llm.openai_compat import OpenAICompatClient
 
         base_url = config.env.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-        return OpenAICompatClient("unused", model_id, base_url,
-                                  provider_name="ollama")
+        return OpenAICompatClient("unused", model_id, base_url, provider_name="ollama")
 
     else:
         raise ConfigError(f"Unknown provider '{provider}' in model string '{model_str}'")

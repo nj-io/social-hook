@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-from typing import Optional
 
 from dotenv import dotenv_values
 
@@ -10,7 +9,7 @@ from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
 
 # Required keys that must be present
-REQUIRED_KEYS = []
+REQUIRED_KEYS: list[str] = []
 
 # All known environment variable keys
 KNOWN_KEYS = [
@@ -43,7 +42,7 @@ KEY_GROUPS = {
 }
 
 
-def load_env(env_path: Optional[str | Path] = None) -> dict[str, str]:
+def load_env(env_path: str | Path | None = None) -> dict[str, str]:
     """Load environment variables from .env file.
 
     Args:
@@ -55,10 +54,7 @@ def load_env(env_path: Optional[str | Path] = None) -> dict[str, str]:
     Raises:
         ConfigError: If required keys are missing
     """
-    if env_path is None:
-        env_path = Path.home() / CONFIG_DIR_NAME / ".env"
-    else:
-        env_path = Path(env_path)
+    env_path = Path.home() / CONFIG_DIR_NAME / ".env" if env_path is None else Path(env_path)
 
     env_vars: dict[str, str] = {}
 

@@ -16,6 +16,7 @@ Social Hook is a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) h
 Social Hook is built for both humans and AI agents:
 
 - `social-hook help --json` — full command tree as structured JSON for agent consumption
+- `social-hook help draft approve` — drill into any subcommand (human or `--json`)
 - Every CLI command has a corresponding web API endpoint (and vice versa)
 - All commands work non-interactively with `--json` output and `--yes`/`--force` flags
 
@@ -54,7 +55,7 @@ Add to your Claude Code hooks configuration (`.claude/hooks.json`):
 
 ## CLI
 
-The CLI is self-documenting — `social-hook help` for humans, `social-hook help --json` for agents.
+The CLI is self-documenting — `social-hook help` for humans, `social-hook help --json` for agents. Drill into any level: `social-hook help draft approve`.
 
 Core commands:
 
@@ -97,6 +98,27 @@ Social Hook supports multiple LLM providers via a `provider/model-id` format:
 - `claude-cli/sonnet` — Claude Code subprocess
 - `openrouter/anthropic/claude-sonnet-4.5` — OpenRouter
 - `ollama/llama3.3` — Local Ollama
+
+## Development
+
+```bash
+git clone https://github.com/nj-io/social-hook.git
+cd social-hook
+pip install -e ".[dev]"
+pre-commit install
+pre-commit install --hook-type commit-msg
+python -m pytest tests/ -q
+```
+
+## Contributing
+
+- Use [conventional commits](https://www.conventionalcommits.org/): `feat: ✨ description`, `fix: 🐛 description`, etc.
+- All PRs require passing CI (lint, typecheck, tests across Python 3.10-3.12)
+- Run `ruff check src/ tests/` and `mypy src/social_hook/` before pushing
+
+## Versioning
+
+Social Hook uses [Semantic Versioning](https://semver.org/). Releases are automated via [Release Please](https://github.com/googleapis/release-please) — conventional commits on `main` trigger version bumps, changelog generation, and PyPI publishing.
 
 ## License
 

@@ -14,7 +14,6 @@ from social_hook.llm.catalog import (
     get_provider_info,
 )
 
-
 # =============================================================================
 # Provider / model consistency
 # =============================================================================
@@ -239,6 +238,7 @@ class TestDiscoverOllamaModels:
     @patch("social_hook.llm.catalog.requests.get")
     def test_handles_connection_error(self, mock_get):
         import requests as req
+
         mock_get.side_effect = req.ConnectionError("refused")
         models = discover_ollama_models()
         assert models == []

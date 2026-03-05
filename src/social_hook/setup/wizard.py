@@ -1,10 +1,12 @@
 """Interactive setup wizard for social-hook."""
 
+import contextlib
 import logging
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Literal
 
 import typer
 
@@ -94,7 +96,7 @@ def _validate_not_empty(val: str) -> bool | str:
     return True
 
 
-def _validate_positive_int(val: str) -> bool | str:
+def _validate_positive_int(val: str) -> "Literal[True] | str":
     """Validate that input is a positive integer."""
     try:
         n = int(val)
@@ -105,7 +107,9 @@ def _validate_positive_int(val: str) -> bool | str:
         return "Must be a number"
 
 
-def _section(title: str, description: str = "", step: int = 0, progress: Optional[WizardProgress] = None) -> None:
+def _section(
+    title: str, description: str = "", step: int = 0, progress: WizardProgress | None = None
+) -> None:
     """Display a section header with Rich Panel or plain fallback."""
     typer.echo()  # blank line before each section
 
@@ -170,6 +174,7 @@ def _info(message: str) -> None:
     try:
         from rich.console import Console
         from rich.panel import Panel
+
         Console().print(Panel(message, border_style="dim", padding=(0, 1)))
     except Exception:
         typer.echo(f"  i {message}")
@@ -178,23 +183,33 @@ def _info(message: str) -> None:
 def _discover_providers(env: dict) -> list[dict]:
     """Detect which providers are available from environment/PATH/localhost."""
     import shutil
+
     available = []
     if shutil.which("claude"):
-        available.append({"id": "claude-cli", "status": "detected", "detail": "Uses subscription ($0)"})
+        available.append(
+            {"id": "claude-cli", "status": "detected", "detail": "Uses subscription ($0)"}
+        )
     if env.get("ANTHROPIC_API_KEY"):
         available.append({"id": "anthropic", "status": "configured", "detail": "API key found"})
     else:
-        available.append({"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"})
+        available.append(
+            {"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"}
+        )
     if env.get("OPENROUTER_API_KEY"):
         available.append({"id": "openrouter", "status": "configured", "detail": "API key found"})
     else:
-        available.append({"id": "openrouter", "status": "unconfigured", "detail": "Requires OPENROUTER_API_KEY"})
+        available.append(
+            {"id": "openrouter", "status": "unconfigured", "detail": "Requires OPENROUTER_API_KEY"}
+        )
     if env.get("OPENAI_API_KEY"):
         available.append({"id": "openai", "status": "configured", "detail": "API key found"})
     else:
-        available.append({"id": "openai", "status": "unconfigured", "detail": "Requires OPENAI_API_KEY"})
+        available.append(
+            {"id": "openai", "status": "unconfigured", "detail": "Requires OPENAI_API_KEY"}
+        )
     try:
         from urllib.request import urlopen
+
         urlopen("http://localhost:11434/api/tags", timeout=2)
         available.append({"id": "ollama", "status": "detected", "detail": "Running locally"})
     except Exception:
@@ -205,6 +220,7 @@ def _discover_providers(env: dict) -> list[dict]:
 def _keys_needed_for_config(config_data: dict) -> set[str]:
     """Determine which API keys are needed based on model config."""
     from social_hook.llm.factory import parse_provider_model
+
     PROVIDER_KEY_MAP = {
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
@@ -229,7 +245,7 @@ def _keys_needed_for_config(config_data: dict) -> set[str]:
 # =============================================================================
 
 
-def _rich_prompt(text: str, password: bool = False, validate: Optional[Callable] = None) -> str:
+def _rich_prompt(text: str, password: bool = False, validate: Callable | None = None) -> str:
     """Prompt user for input with Rich formatting."""
     # Use plain terminal I/O to avoid screen-clearing side effects from prompt_toolkit
     raise NotImplementedError("Use fallback")
@@ -240,7 +256,7 @@ def _rich_confirm(text: str, default: bool = True) -> bool:
     raise NotImplementedError("Use fallback")
 
 
-def _rich_select(text: str, choices: list[str], default: Optional[str] = None) -> str:
+def _rich_select(text: str, choices: list[str], default: str | None = None) -> str:
     """Select from a list."""
     raise NotImplementedError("Use fallback")
 
@@ -298,7 +314,7 @@ def _confirm(text: str, default: bool = True) -> bool:
         return answer in ("y", "yes")
 
 
-def _select(text: str, choices: list[str], default: Optional[str] = None) -> str:
+def _select(text: str, choices: list[str], default: str | None = None) -> str:
     """Select from a list with arrow keys (TTY) or numbered fallback."""
     if sys.stdout.isatty() and sys.stdin.isatty():
         return _select_arrows(text, choices, default=default)
@@ -320,10 +336,10 @@ def _select(text: str, choices: list[str], default: Optional[str] = None) -> str
             pass
 
 
-def _select_arrows(text: str, choices: list[str], default: Optional[str] = None) -> str:
+def _select_arrows(text: str, choices: list[str], default: str | None = None) -> str:
     """Arrow-key selector for TTY terminals."""
-    import tty
     import termios
+    import tty
 
     # Find initial selection
     selected = 0
@@ -410,7 +426,7 @@ def _prompt_api_key(
         else:
             key = _prompt(text)
 
-        success, msg = _spinner("Validating...", lambda: validate_fn(key))
+        success, msg = _spinner("Validating...", lambda k=key: validate_fn(k))
         if success:
             _success(msg)
             return key
@@ -485,7 +501,7 @@ def _load_existing() -> tuple[dict[str, str], dict[str, Any]]:
 
 def run_wizard(
     validate: bool = False,
-    only: Optional[str] = None,
+    only: str | None = None,
 ) -> bool:
     """Run the interactive setup wizard.
 
@@ -496,7 +512,7 @@ def run_wizard(
     Returns:
         True if setup completed successfully
     """
-    from social_hook.filesystem import get_base_path, init_filesystem
+    from social_hook.filesystem import init_filesystem
 
     if validate:
         return _validate_existing()
@@ -508,25 +524,27 @@ def run_wizard(
 
         console = Console()
         console.print()
-        console.print(Panel(
-            f"[bold]{PROJECT_NAME} Setup[/bold]\n\n"
-            f"{PROJECT_NAME} automatically turns your git commits into social media posts.\n"
-            "It watches your repos, uses AI to decide what's worth posting about,\n"
-            "drafts content in your voice, and sends it for your approval via Telegram.\n\n"
-            "This wizard will configure:\n"
-            "  1. AI model selection (provider & model for each role)\n"
-            "  2. API credentials (only what's needed for your chosen providers)\n"
-            "  3. Voice & style (how your posts sound)\n"
-            "  4. Telegram bot (for draft notifications & approvals)\n"
-            "  5. Platforms (X/Twitter, LinkedIn, custom)\n"
-            "  6. Image generation\n"
-            "  7. Scheduling preferences\n"
-            "  8. Web dashboard\n\n"
-            "Press Ctrl+C at any time to cancel.\n"
-            "[dim]Existing values shown as defaults.[/dim]",
-            title="Welcome",
-            border_style="cyan",
-        ))
+        console.print(
+            Panel(
+                f"[bold]{PROJECT_NAME} Setup[/bold]\n\n"
+                f"{PROJECT_NAME} automatically turns your git commits into social media posts.\n"
+                "It watches your repos, uses AI to decide what's worth posting about,\n"
+                "drafts content in your voice, and sends it for your approval via Telegram.\n\n"
+                "This wizard will configure:\n"
+                "  1. AI model selection (provider & model for each role)\n"
+                "  2. API credentials (only what's needed for your chosen providers)\n"
+                "  3. Voice & style (how your posts sound)\n"
+                "  4. Telegram bot (for draft notifications & approvals)\n"
+                "  5. Platforms (X/Twitter, LinkedIn, custom)\n"
+                "  6. Image generation\n"
+                "  7. Scheduling preferences\n"
+                "  8. Web dashboard\n\n"
+                "Press Ctrl+C at any time to cancel.\n"
+                "[dim]Existing values shown as defaults.[/dim]",
+                title="Welcome",
+                border_style="cyan",
+            )
+        )
         console.print()
     except Exception:
         typer.echo(f"\n=== {PROJECT_NAME} Setup ===\n")
@@ -634,7 +652,9 @@ def run_wizard(
             all_env = {**existing_env, **env_vars}
             missing_keys = [k for k in needed if k not in all_env]
 
-            has_telegram = "TELEGRAM_BOT_TOKEN" in env_vars or existing_env.get("TELEGRAM_BOT_TOKEN")
+            has_telegram = "TELEGRAM_BOT_TOKEN" in env_vars or existing_env.get(
+                "TELEGRAM_BOT_TOKEN"
+            )
             has_voice = (base / "social-context.md").exists()
             has_x = "X_API_KEY" in env_vars or existing_env.get("X_API_KEY")
 
@@ -643,11 +663,15 @@ def run_wizard(
             if not has_telegram:
                 warnings.append("Telegram bot not configured — no draft notifications")
             if not has_voice:
-                warnings.append(f"Voice & style not configured — run `{PROJECT_SLUG} setup --only voice`")
+                warnings.append(
+                    f"Voice & style not configured — run `{PROJECT_SLUG} setup --only voice`"
+                )
             if not has_x:
                 warnings.append("X (Twitter) not configured — no auto-posting")
             if not installed:
-                warnings.append(f"Installations skipped — run `{PROJECT_SLUG} setup` to install hook, cron, and bot")
+                warnings.append(
+                    f"Installations skipped — run `{PROJECT_SLUG} setup` to install hook, cron, and bot"
+                )
 
         if warnings:
             typer.echo("")
@@ -686,14 +710,15 @@ def _validate_existing() -> bool:
         errors.append(".env file not found")
 
     # Provider-aware key validation
-    from social_hook.llm.factory import parse_provider_model
     from social_hook.errors import ConfigError
+    from social_hook.llm.factory import parse_provider_model
+
     PROVIDER_KEY_MAP = {
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
     }
-    for role in ('evaluator', 'drafter', 'gatekeeper'):
+    for role in ("evaluator", "drafter", "gatekeeper"):
         model_str = getattr(config.models, role)
         try:
             provider, _ = parse_provider_model(model_str)
@@ -708,8 +733,8 @@ def _validate_existing() -> bool:
 
     if errors:
         typer.echo("Issues found:")
-        for e in errors:
-            typer.echo(f"  - {e}")
+        for err in errors:
+            typer.echo(f"  - {err}")
         return False
 
     typer.echo("Configuration looks good!")
@@ -721,23 +746,32 @@ def _validate_existing() -> bool:
 # =============================================================================
 
 
-def _setup_api_keys(env_vars: dict, existing_env: dict, yaml_config: dict,
-                    existing_yaml: dict, progress: Optional[WizardProgress] = None) -> None:
+def _setup_api_keys(
+    env_vars: dict,
+    existing_env: dict,
+    yaml_config: dict,
+    existing_yaml: dict,
+    progress: WizardProgress | None = None,
+) -> None:
     """Configure API keys based on chosen providers."""
     if progress:
         progress.set_section(2, "API Keys", substeps=1)
     _section("API Credentials", "Configure keys for your chosen providers", progress=progress)
 
-    _info("API keys authenticate with your chosen AI providers.\n"
-          "Only keys needed for your selected models are required.")
+    _info(
+        "API keys authenticate with your chosen AI providers.\n"
+        "Only keys needed for your selected models are required."
+    )
 
     # Determine which keys are needed
     models_source = yaml_config if yaml_config.get("models") else existing_yaml
     needed_keys = _keys_needed_for_config(models_source)
 
     if not needed_keys:
-        _info("No API keys needed for your configured providers.\n"
-              "Claude CLI and Ollama don't require API keys.")
+        _info(
+            "No API keys needed for your configured providers.\n"
+            "Claude CLI and Ollama don't require API keys."
+        )
         if progress:
             progress.advance()
         return
@@ -779,7 +813,7 @@ def _setup_api_keys(env_vars: dict, existing_env: dict, yaml_config: dict,
         progress.advance()
 
 
-def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) -> None:
+def _setup_voice_style(base: Path, progress: WizardProgress | None = None) -> None:
     """Configure voice and style (social-context.md)."""
     if progress:
         progress.set_section(3, "Voice & Style", substeps=8)
@@ -810,13 +844,15 @@ def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) ->
             from rich.console import Console
             from rich.panel import Panel
 
-            Console().print(Panel(
-                "Voice & style settings control how your social media content sounds.\n"
-                "This creates a social-context.md file that guides the AI drafter.\n\n"
-                "[dim]Example: 'Conversational, technically confident but not arrogant.\n"
-                "Shares the journey honestly, including challenges.'[/dim]",
-                border_style="dim",
-            ))
+            Console().print(
+                Panel(
+                    "Voice & style settings control how your social media content sounds.\n"
+                    "This creates a social-context.md file that guides the AI drafter.\n\n"
+                    "[dim]Example: 'Conversational, technically confident but not arrogant.\n"
+                    "Shares the journey honestly, including challenges.'[/dim]",
+                    border_style="dim",
+                )
+            )
         except Exception:
             typer.echo("  Voice & style settings control how your content sounds.")
             typer.echo("  This creates a social-context.md file that guides the AI drafter.")
@@ -856,14 +892,16 @@ def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) ->
         from rich.console import Console
         from rich.panel import Panel
 
-        Console().print(Panel(
-            "[dim]Examples: 'Excited to announce...', 'Game-changing', 'Leverage',\n"
-            "'Utilize', 'Revolutionary', 'It\\'s important to note that...',\n"
-            "'Here\\'s the thing', 'Let\\'s be honest', 'This is huge',\n"
-            "'Hot take:', 'Unpopular opinion:', em dash pivots (X — Y)[/dim]",
-            title="Pet peeves reference",
-            border_style="dim",
-        ))
+        Console().print(
+            Panel(
+                "[dim]Examples: 'Excited to announce...', 'Game-changing', 'Leverage',\n"
+                "'Utilize', 'Revolutionary', 'It\\'s important to note that...',\n"
+                "'Here\\'s the thing', 'Let\\'s be honest', 'This is huge',\n"
+                "'Hot take:', 'Unpopular opinion:', em dash pivots (X — Y)[/dim]",
+                title="Pet peeves reference",
+                border_style="dim",
+            )
+        )
     except Exception:
         typer.echo("  Examples: 'Excited to announce...', 'Game-changing', 'Leverage',")
         typer.echo("  'Here's the thing', 'Hot take:', 'Unpopular opinion:', em dash pivots")
@@ -888,12 +926,16 @@ def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) ->
         "Primary audience",
         default="Developers, indie hackers, builders",
     )
-    tech_level = _select("Audience technical level:", [
-        "Beginner",
-        "Intermediate",
-        "Intermediate to advanced",
-        "Advanced",
-    ], default="Intermediate to advanced")
+    tech_level = _select(
+        "Audience technical level:",
+        [
+            "Beginner",
+            "Intermediate",
+            "Intermediate to advanced",
+            "Advanced",
+        ],
+        default="Intermediate to advanced",
+    )
     audience_cares = _prompt(
         "What does your audience care about?",
         default="Practical tools, honest experiences, code they can learn from",
@@ -940,10 +982,10 @@ def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) ->
 ## Author's Pet Peeves
 
 ### Words/Phrases to Avoid
-{chr(10).join(f'- "{p.strip()}"' for p in pet_peeves.split(',') if p.strip())}
+{chr(10).join(f'- "{p.strip()}"' for p in pet_peeves.split(",") if p.strip())}
 
 ### Grammar/Style Preferences
-{chr(10).join(f'- {p.strip()}' for p in grammar.split(',') if p.strip())}
+{chr(10).join(f"- {p.strip()}" for p in grammar.split(",") if p.strip())}
 
 ### Authenticity Rules
 - Never claim something works if it doesn't yet
@@ -955,7 +997,7 @@ def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) ->
 ## Writing/Narrative Strategy
 
 ### Identity
-{identity.split(' (')[0]}
+{identity.split(" (")[0]}
 
 ---
 
@@ -971,10 +1013,10 @@ def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) ->
 ## Themes & Topics
 
 ### Emphasize
-{chr(10).join(f'- {t.strip()}' for t in topics_emphasize.split(',') if t.strip())}
+{chr(10).join(f"- {t.strip()}" for t in topics_emphasize.split(",") if t.strip())}
 
 ### Avoid
-{chr(10).join(f'- {t.strip()}' for t in topics_avoid.split(',') if t.strip())}
+{chr(10).join(f"- {t.strip()}" for t in topics_avoid.split(",") if t.strip())}
 
 ---
 
@@ -998,7 +1040,9 @@ def _setup_voice_style(base: Path, progress: Optional[WizardProgress] = None) ->
         progress.advance()
 
 
-def _setup_telegram(env_vars: dict, existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
+def _setup_telegram(
+    env_vars: dict, existing_env: dict, progress: WizardProgress | None = None
+) -> None:
     """Configure Telegram bot."""
     if progress:
         progress.set_section(4, "Telegram", substeps=2)
@@ -1009,7 +1053,9 @@ def _setup_telegram(env_vars: dict, existing_env: dict, progress: Optional[Wizar
     from social_hook.setup.validation import validate_telegram_bot
 
     existing_token = existing_env.get("TELEGRAM_BOT_TOKEN", "")
-    token = _prompt_api_key("Bot token (from @BotFather)", validate_telegram_bot, existing=existing_token)
+    token = _prompt_api_key(
+        "Bot token (from @BotFather)", validate_telegram_bot, existing=existing_token
+    )
 
     if not token:
         if existing_token:
@@ -1052,8 +1098,13 @@ def _setup_telegram(env_vars: dict, existing_env: dict, progress: Optional[Wizar
         progress.advance()
 
 
-def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yaml: dict,
-             progress: Optional[WizardProgress] = None) -> None:
+def _setup_x(
+    env_vars: dict,
+    yaml_config: dict,
+    existing_env: dict,
+    existing_yaml: dict,
+    progress: WizardProgress | None = None,
+) -> None:
     """Configure X (Twitter) API."""
     if progress:
         progress.set_section(5, "X (Twitter)", substeps=5)
@@ -1066,13 +1117,15 @@ def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yam
         from rich.console import Console
         from rich.panel import Panel
 
-        Console().print(Panel(
-            "Get your API keys from the X Developer Console:\n"
-            "[link=https://console.x.com]https://console.x.com[/link]\n\n"
-            "[dim]You need 4 credentials (under OAuth 1.0a):\n"
-            "API Key, API Secret, Access Token, Access Token Secret[/dim]",
-            border_style="dim",
-        ))
+        Console().print(
+            Panel(
+                "Get your API keys from the X Developer Console:\n"
+                "[link=https://console.x.com]https://console.x.com[/link]\n\n"
+                "[dim]You need 4 credentials (under OAuth 1.0a):\n"
+                "API Key, API Secret, Access Token, Access Token Secret[/dim]",
+                border_style="dim",
+            )
+        )
     except Exception:
         typer.echo("  Get your API keys from: https://console.x.com")
         typer.echo("  You need: API Key, API Secret, Access Token, Access Token Secret")
@@ -1108,7 +1161,9 @@ def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yam
     while True:
         success, msg = _spinner(
             "Validating X credentials...",
-            lambda: validate_x_api(api_key, api_secret, access_token, access_secret),
+            lambda ak=api_key, aks=api_secret, at=access_token, ase=access_secret: validate_x_api(
+                ak, aks, at, ase
+            ),
         )
         if success:
             _success(msg)
@@ -1149,7 +1204,9 @@ def _setup_x(env_vars: dict, yaml_config: dict, existing_env: dict, existing_yam
         progress.advance()
 
 
-def _setup_linkedin(env_vars: dict, existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
+def _setup_linkedin(
+    env_vars: dict, existing_env: dict, progress: WizardProgress | None = None
+) -> None:
     """Configure LinkedIn API."""
     if progress:
         progress.set_section(6, "LinkedIn", substeps=1)
@@ -1170,8 +1227,13 @@ def _setup_linkedin(env_vars: dict, existing_env: dict, progress: Optional[Wizar
         progress.advance()
 
 
-def _setup_platforms(yaml_config: dict, env_vars: dict, existing_env: dict,
-                     existing_yaml: dict, progress: Optional[WizardProgress] = None) -> None:
+def _setup_platforms(
+    yaml_config: dict,
+    env_vars: dict,
+    existing_env: dict,
+    existing_yaml: dict,
+    progress: WizardProgress | None = None,
+) -> None:
     """Configure output platforms with primary/secondary priority."""
     if progress:
         progress.set_section(5, "Platforms", substeps=5)
@@ -1183,7 +1245,9 @@ def _setup_platforms(yaml_config: dict, env_vars: dict, existing_env: dict,
         yaml_config.setdefault("platforms", {})["x"] = {"enabled": True}
 
         priority = _select("X priority:", ["Primary (recommended)", "Secondary"])
-        yaml_config["platforms"]["x"]["priority"] = "primary" if "Primary" in priority else "secondary"
+        yaml_config["platforms"]["x"]["priority"] = (
+            "primary" if "Primary" in priority else "secondary"
+        )
 
         tier = _select("X account tier:", ["free (280 chars)", "basic", "premium", "premium_plus"])
         yaml_config["platforms"]["x"]["account_tier"] = tier.split(" ")[0]
@@ -1200,6 +1264,7 @@ def _setup_platforms(yaml_config: dict, env_vars: dict, existing_env: dict,
         existing_access_secret = existing_env.get("X_ACCESS_TOKEN_SECRET", "")
 
         if _confirm("Configure X API credentials now?", default=bool(existing_api_key)):
+
             def _prompt_x_field(label: str, existing: str) -> str:
                 if existing:
                     typer.echo(f"  Current {label}: {_obfuscate(existing)}")
@@ -1223,13 +1288,17 @@ def _setup_platforms(yaml_config: dict, env_vars: dict, existing_env: dict,
     if _confirm("Enable LinkedIn?", default=False):
         yaml_config.setdefault("platforms", {})["linkedin"] = {"enabled": True}
         priority = _select("LinkedIn priority:", ["Secondary (recommended)", "Primary"])
-        yaml_config["platforms"]["linkedin"]["priority"] = "secondary" if "Secondary" in priority else "primary"
+        yaml_config["platforms"]["linkedin"]["priority"] = (
+            "secondary" if "Secondary" in priority else "primary"
+        )
 
         existing_linkedin_token = existing_env.get("LINKEDIN_ACCESS_TOKEN", "")
         if _confirm("Configure LinkedIn credentials now?", default=bool(existing_linkedin_token)):
             if existing_linkedin_token:
                 typer.echo(f"  Current: {_obfuscate(existing_linkedin_token)}")
-                token = _prompt("LinkedIn access token", default=existing_linkedin_token, hide_default=True)
+                token = _prompt(
+                    "LinkedIn access token", default=existing_linkedin_token, hide_default=True
+                )
             else:
                 token = _prompt("LinkedIn access token")
             env_vars["LINKEDIN_ACCESS_TOKEN"] = token
@@ -1255,17 +1324,19 @@ def _setup_platforms(yaml_config: dict, env_vars: dict, existing_env: dict,
         progress.advance()
 
 
-def _setup_web_dashboard(yaml_config: dict, progress: Optional[WizardProgress] = None) -> None:
+def _setup_web_dashboard(yaml_config: dict, progress: WizardProgress | None = None) -> None:
     """Configure web dashboard."""
     if progress:
         progress.set_section(9, "Web Dashboard", substeps=2)
 
     _section("Web Dashboard", "Browser-based settings, drafts, and bot testing", progress=progress)
-    _info("The web dashboard provides:\n"
-          "  - Settings management (all config in one place)\n"
-          "  - Draft review and management\n"
-          "  - Bot interaction testing\n\n"
-          "Runs locally, no API keys required.")
+    _info(
+        "The web dashboard provides:\n"
+        "  - Settings management (all config in one place)\n"
+        "  - Draft review and management\n"
+        "  - Bot interaction testing\n\n"
+        "Runs locally, no API keys required."
+    )
 
     if not _confirm("Enable web dashboard notifications?", default=True):
         yaml_config.setdefault("channels", {}).setdefault("web", {})["enabled"] = False
@@ -1278,17 +1349,24 @@ def _setup_web_dashboard(yaml_config: dict, progress: Optional[WizardProgress] =
         progress.advance()
 
 
-def _setup_models(yaml_config: dict, existing_yaml: dict, env_vars: dict,
-                  existing_env: dict, progress: Optional[WizardProgress] = None) -> None:
+def _setup_models(
+    yaml_config: dict,
+    existing_yaml: dict,
+    env_vars: dict,
+    existing_env: dict,
+    progress: WizardProgress | None = None,
+) -> None:
     """Configure LLM models with QuickStart/Advanced paths."""
     if progress:
         progress.set_section(1, "Models", substeps=3)
     _section("Model Selection", "Choose AI models for each role", progress=progress)
 
-    _info("Models control which AI handles each role in the pipeline.\n"
-          "The Evaluator decides if commits are post-worthy.\n"
-          "The Drafter creates the actual post content.\n"
-          "The Gatekeeper handles Telegram interactions.")
+    _info(
+        "Models control which AI handles each role in the pipeline.\n"
+        "The Evaluator decides if commits are post-worthy.\n"
+        "The Drafter creates the actual post content.\n"
+        "The Gatekeeper handles Telegram interactions."
+    )
 
     # Detect available providers
     combined_env = {**existing_env, **env_vars}
@@ -1322,9 +1400,9 @@ def _setup_models(yaml_config: dict, existing_yaml: dict, env_vars: dict,
             _success("Using Anthropic API defaults")
     else:
         # Advanced: per-role provider and model selection
-        from social_hook.llm.catalog import get_models_for_provider, format_model_choice, get_all_providers as catalog_providers
+        from social_hook.llm.catalog import format_model_choice, get_models_for_provider
 
-        existing_models = existing_yaml.get("models", {})
+        existing_yaml.get("models", {})
 
         # Show available providers
         provider_choices = []
@@ -1393,10 +1471,7 @@ def _setup_models(yaml_config: dict, existing_yaml: dict, env_vars: dict,
             # Default to haiku/fast for gatekeeper
             models = get_models_for_provider(gate_provider)
             fast_models = [m for m in models if m.tier == "fast"]
-            if fast_models:
-                gate_model = f"{gate_provider}/{fast_models[0].id}"
-            else:
-                gate_model = eval_model
+            gate_model = f"{gate_provider}/{fast_models[0].id}" if fast_models else eval_model
         else:
             gate_provider = _select_provider_for_role("gatekeeper")
             gate_model = _select_model_for_provider(gate_provider, "gatekeeper")
@@ -1409,17 +1484,20 @@ def _setup_models(yaml_config: dict, existing_yaml: dict, env_vars: dict,
             "gatekeeper": gate_model,
         }
 
-    _success(f"Models configured:\n"
-             f"    Evaluator:  {yaml_config['models']['evaluator']}\n"
-             f"    Drafter:    {yaml_config['models']['drafter']}\n"
-             f"    Gatekeeper: {yaml_config['models']['gatekeeper']}")
+    _success(
+        f"Models configured:\n"
+        f"    Evaluator:  {yaml_config['models']['evaluator']}\n"
+        f"    Drafter:    {yaml_config['models']['drafter']}\n"
+        f"    Gatekeeper: {yaml_config['models']['gatekeeper']}"
+    )
 
     # Sub-step: Development Journey setup (part of models section, no section count change)
     _setup_journey_capture(yaml_config, progress)
 
 
-def _setup_media_gen(env_vars: dict, yaml_config: dict, existing_env: dict,
-                     progress: Optional[WizardProgress] = None) -> None:
+def _setup_media_gen(
+    env_vars: dict, yaml_config: dict, existing_env: dict, progress: WizardProgress | None = None
+) -> None:
     """Configure media generation."""
     if progress:
         progress.set_section(6, "Media Gen", substeps=2)
@@ -1462,8 +1540,9 @@ def _setup_media_gen(env_vars: dict, yaml_config: dict, existing_env: dict,
         progress.advance()
 
 
-def _setup_scheduling(base: Path, yaml_config: dict, existing_yaml: dict,
-                      progress: Optional[WizardProgress] = None) -> None:
+def _setup_scheduling(
+    base: Path, yaml_config: dict, existing_yaml: dict, progress: WizardProgress | None = None
+) -> None:
     """Configure scheduling settings."""
     if progress:
         progress.set_section(7, "Scheduling", substeps=3)
@@ -1474,6 +1553,7 @@ def _setup_scheduling(base: Path, yaml_config: dict, existing_yaml: dict,
     # Detect system timezone
     try:
         import zoneinfo
+
         local_tz = str(zoneinfo.ZoneInfo("localtime"))
     except Exception:
         local_tz = "UTC"
@@ -1564,7 +1644,7 @@ def _setup_scheduling(base: Path, yaml_config: dict, existing_yaml: dict,
     _success("Scheduling configured")
 
 
-def _setup_journey_capture(yaml_config: dict, progress: Optional[WizardProgress] = None) -> None:
+def _setup_journey_capture(yaml_config: dict, progress: WizardProgress | None = None) -> None:
     """Configure Development Journey capture (narrative extraction from Claude Code sessions)."""
     import shutil
 
@@ -1577,22 +1657,26 @@ def _setup_journey_capture(yaml_config: dict, progress: Optional[WizardProgress]
 
         console = Console()
         if has_claude_cli:
-            console.print(Panel(
-                "Captures reasoning from your Claude Code development\n"
-                "sessions to create richer, more insightful posts.\n\n"
-                "Runs automatically before context compaction.",
-                title="Development Journey",
-                border_style="cyan",
-            ))
+            console.print(
+                Panel(
+                    "Captures reasoning from your Claude Code development\n"
+                    "sessions to create richer, more insightful posts.\n\n"
+                    "Runs automatically before context compaction.",
+                    title="Development Journey",
+                    border_style="cyan",
+                )
+            )
         else:
-            console.print(Panel(
-                "Captures reasoning from your Claude Code development\n"
-                "sessions to create richer, more insightful posts.\n\n"
-                "[yellow]⚠[/yellow] Requires Claude Code (not detected).\n"
-                "  Install Claude Code to enable this feature.",
-                title="Development Journey",
-                border_style="cyan",
-            ))
+            console.print(
+                Panel(
+                    "Captures reasoning from your Claude Code development\n"
+                    "sessions to create richer, more insightful posts.\n\n"
+                    "[yellow]⚠[/yellow] Requires Claude Code (not detected).\n"
+                    "  Install Claude Code to enable this feature.",
+                    title="Development Journey",
+                    border_style="cyan",
+                )
+            )
     except Exception:
         typer.echo("\n┌─ Development Journey ─────────────────────────────────┐")
         typer.echo("│ Captures reasoning from your Claude Code development  │")
@@ -1642,12 +1726,10 @@ def _save_config_yaml(base: Path, yaml_config: dict) -> None:
     config_path = base / "config.yaml"
 
     # Merge with existing if present
-    existing = {}
+    existing: dict[str, Any] = {}
     if config_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             existing = yaml.safe_load(config_path.read_text()) or {}
-        except Exception:
-            pass
 
     # Deep merge
     for key, val in yaml_config.items():
@@ -1720,7 +1802,9 @@ def _show_summary(env_vars: dict, yaml_config: dict) -> None:
                 typer.echo(f"  {k}: {v}")
 
 
-def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[WizardProgress] = None) -> bool:
+def _setup_installations(
+    yaml_config: dict | None = None, progress: WizardProgress | None = None
+) -> bool:
     """Install hook, cron, and start bot. Returns True if installed, False if skipped."""
     if progress:
         progress.set_section(10, "Installation", substeps=3)
@@ -1730,16 +1814,18 @@ def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[
         from rich.console import Console
         from rich.panel import Panel
 
-        Console().print(Panel(
-            "The following components will be installed:\n\n"
-            "  • Claude Code hook → ~/.claude/settings.json\n"
-            f"    Triggers {PROJECT_SLUG} on git commit\n\n"
-            "  • Scheduler cron job → runs every minute\n"
-            "    Posts approved drafts at scheduled times\n\n"
-            "  • Telegram bot → background daemon\n"
-            "    Receives and processes draft reviews",
-            border_style="dim",
-        ))
+        Console().print(
+            Panel(
+                "The following components will be installed:\n\n"
+                "  • Claude Code hook → ~/.claude/settings.json\n"
+                f"    Triggers {PROJECT_SLUG} on git commit\n\n"
+                "  • Scheduler cron job → runs every minute\n"
+                "    Posts approved drafts at scheduled times\n\n"
+                "  • Telegram bot → background daemon\n"
+                "    Receives and processes draft reviews",
+                border_style="dim",
+            )
+        )
     except Exception:
         typer.echo("  The following will be installed:")
         typer.echo("  • Claude Code hook (triggers on git commit)")
@@ -1751,7 +1837,7 @@ def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[
         return False
 
     # Hook
-    from social_hook.setup.install import install_hook, check_hook_installed
+    from social_hook.setup.install import check_hook_installed, install_hook
 
     if check_hook_installed():
         _success("Claude Code hook already installed")
@@ -1764,7 +1850,7 @@ def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[
 
     # Narrative hook (if journey capture enabled)
     if yaml_config and yaml_config.get("journey_capture", {}).get("enabled"):
-        from social_hook.setup.install import install_narrative_hook, check_narrative_hook_installed
+        from social_hook.setup.install import check_narrative_hook_installed, install_narrative_hook
 
         if check_narrative_hook_installed():
             _success("Narrative hook already installed")
@@ -1779,7 +1865,7 @@ def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[
         progress.advance()
 
     # Cron
-    from social_hook.setup.install import install_cron, check_cron_installed
+    from social_hook.setup.install import check_cron_installed, install_cron
 
     if check_cron_installed():
         _success("Scheduler cron already installed")
@@ -1810,7 +1896,9 @@ def _setup_installations(yaml_config: Optional[dict] = None, progress: Optional[
             else:
                 _error(f"Bot start failed: {result.stderr.strip() or result.stdout.strip()}")
         except FileNotFoundError:
-            _warn(f"{PROJECT_SLUG} command not found — start bot manually: {PROJECT_SLUG} bot start --daemon")
+            _warn(
+                f"{PROJECT_SLUG} command not found — start bot manually: {PROJECT_SLUG} bot start --daemon"
+            )
         except Exception as e:
             _error(f"Bot start failed: {e}")
     if progress:

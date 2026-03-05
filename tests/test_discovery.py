@@ -1,9 +1,7 @@
 """Tests for two-pass project discovery."""
 
 import json
-import os
 import sqlite3
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -12,8 +10,6 @@ import pytest
 from social_hook.config.project import ContextConfig
 from social_hook.llm.base import NormalizedResponse, NormalizedToolCall, NormalizedUsage
 from social_hook.llm.discovery import (
-    DISCOVERY_EXTENSIONS,
-    IGNORE_DIRS,
     discover_project,
     list_project_files,
 )
@@ -97,12 +93,12 @@ class TestListProjectFiles:
 
     def test_max_files_limit(self, temp_repo):
         listing = list_project_files(str(temp_repo), max_files=3)
-        lines = [l for l in listing.strip().split("\n") if l]
+        lines = [line for line in listing.strip().split("\n") if line]
         assert len(lines) <= 3
 
     def test_custom_extensions(self, temp_repo):
         listing = list_project_files(str(temp_repo), extensions={".toml"})
-        lines = [l for l in listing.strip().split("\n") if l]
+        lines = [line for line in listing.strip().split("\n") if line]
         # Only .toml files
         for line in lines:
             assert ".toml" in line
@@ -121,19 +117,26 @@ def _make_response(tool_name, tool_input):
 
 
 class TestDiscoverProject:
-    def test_two_pass_flow(self, temp_repo):
+    @patch("social_hook.llm.discovery.log_usage")
+    def test_two_pass_flow(self, mock_log_usage, temp_repo):
         """Verify the two-pass flow: select files then generate summary."""
         mock_client = MagicMock()
 
         # Pass 1: select_files response
-        select_response = _make_response("select_files", {
-            "files": ["README.md", "src/main.py"],
-            "reasoning": "Core files for understanding",
-        })
+        select_response = _make_response(
+            "select_files",
+            {
+                "files": ["README.md", "src/main.py"],
+                "reasoning": "Core files for understanding",
+            },
+        )
         # Pass 2: generate_summary response
-        summary_response = _make_response("generate_summary", {
-            "summary": "Test Project is a Python application that does X.",
-        })
+        summary_response = _make_response(
+            "generate_summary",
+            {
+                "summary": "Test Project is a Python application that does X.",
+            },
+        )
 
         mock_client.complete.side_effect = [select_response, summary_response]
 
@@ -149,25 +152,34 @@ class TestDiscoverProject:
         # Verify pass 1 used select_files tool
         call1 = mock_client.complete.call_args_list[0]
         assert call1.kwargs["tools"][0]["name"] == "select_files"
-        assert call1.kwargs["operation_type"] == "discovery_select"
 
         # Verify pass 2 used generate_summary tool
         call2 = mock_client.complete.call_args_list[1]
         assert call2.kwargs["tools"][0]["name"] == "generate_summary"
-        assert call2.kwargs["operation_type"] == "discovery_summarize"
+
+        # Verify log_usage called for both passes
+        assert mock_log_usage.call_count == 2
+        assert mock_log_usage.call_args_list[0][0][1] == "discovery_select"
+        assert mock_log_usage.call_args_list[1][0][1] == "discovery_summarize"
 
     def test_project_docs_priority(self, temp_repo):
         """Verify user-specified project_docs get priority loading."""
         mock_client = MagicMock()
 
         # LLM only selects src/main.py, but project_docs includes docs/guide.md
-        select_response = _make_response("select_files", {
-            "files": ["src/main.py"],
-            "reasoning": "Source code",
-        })
-        summary_response = _make_response("generate_summary", {
-            "summary": "A project.",
-        })
+        select_response = _make_response(
+            "select_files",
+            {
+                "files": ["src/main.py"],
+                "reasoning": "Source code",
+            },
+        )
+        summary_response = _make_response(
+            "generate_summary",
+            {
+                "summary": "A project.",
+            },
+        )
 
         mock_client.complete.side_effect = [select_response, summary_response]
 
@@ -191,13 +203,19 @@ class TestDiscoverProject:
         """Verify glob patterns in project_docs are resolved."""
         mock_client = MagicMock()
 
-        select_response = _make_response("select_files", {
-            "files": ["README.md"],
-            "reasoning": "Main docs",
-        })
-        summary_response = _make_response("generate_summary", {
-            "summary": "A project.",
-        })
+        select_response = _make_response(
+            "select_files",
+            {
+                "files": ["README.md"],
+                "reasoning": "Main docs",
+            },
+        )
+        summary_response = _make_response(
+            "generate_summary",
+            {
+                "summary": "A project.",
+            },
+        )
         mock_client.complete.side_effect = [select_response, summary_response]
 
         summary, files = discover_project(
@@ -218,13 +236,19 @@ class TestDiscoverProject:
 
         mock_client = MagicMock()
 
-        select_response = _make_response("select_files", {
-            "files": ["big.md", "README.md"],
-            "reasoning": "Files",
-        })
-        summary_response = _make_response("generate_summary", {
-            "summary": "A project with a big file.",
-        })
+        select_response = _make_response(
+            "select_files",
+            {
+                "files": ["big.md", "README.md"],
+                "reasoning": "Files",
+            },
+        )
+        summary_response = _make_response(
+            "generate_summary",
+            {
+                "summary": "A project with a big file.",
+            },
+        )
         mock_client.complete.side_effect = [select_response, summary_response]
 
         summary, files = discover_project(
@@ -273,18 +297,25 @@ class TestDiscoverProject:
         # Should not have called the LLM at all
         mock_client.complete.assert_not_called()
 
-    def test_db_tracking_passed_through(self, temp_repo):
-        """Verify db and project_id are passed to LLM client."""
+    @patch("social_hook.llm.discovery.log_usage")
+    def test_db_tracking_passed_through(self, mock_log_usage, temp_repo):
+        """Verify db and project_id are passed to log_usage."""
         mock_client = MagicMock()
         mock_db = MagicMock()
 
-        select_response = _make_response("select_files", {
-            "files": ["README.md"],
-            "reasoning": "Main file",
-        })
-        summary_response = _make_response("generate_summary", {
-            "summary": "A project.",
-        })
+        select_response = _make_response(
+            "select_files",
+            {
+                "files": ["README.md"],
+                "reasoning": "Main file",
+            },
+        )
+        summary_response = _make_response(
+            "generate_summary",
+            {
+                "summary": "A project.",
+            },
+        )
         mock_client.complete.side_effect = [select_response, summary_response]
 
         discover_project(
@@ -294,10 +325,11 @@ class TestDiscoverProject:
             project_id="proj_123",
         )
 
-        # Both calls should pass db and project_id
-        for call in mock_client.complete.call_args_list:
-            assert call.kwargs["db"] is mock_db
-            assert call.kwargs["project_id"] == "proj_123"
+        # Both log_usage calls should receive db and project_id
+        assert mock_log_usage.call_count == 2
+        for call in mock_log_usage.call_args_list:
+            assert call[0][0] is mock_db
+            assert call[0][4] == "proj_123"
 
 
 class TestDiscoverySkippedWhenSummaryExists:
@@ -309,7 +341,9 @@ class TestDiscoverySkippedWhenSummaryExists:
 
         # Create a context with an existing summary
         project = Project(
-            id="proj_1", name="Test", repo_path="/tmp/test",
+            id="proj_1",
+            name="Test",
+            repo_path="/tmp/test",
             summary="Existing summary",
         )
         context = ProjectContext(
@@ -339,7 +373,9 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
 
         files_list = ["README.md", "docs/guide.md"]
         project = Project(
-            id="proj_1", name="Test", repo_path=str(temp_repo),
+            id="proj_1",
+            name="Test",
+            repo_path=str(temp_repo),
             discovery_files=json.dumps(files_list),
         )
         context = ProjectContext(
@@ -359,7 +395,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
 
         commit = CommitInfo(hash="abc123", message="test", diff="")
 
-        decision = {"decision": "post_worthy", "reasoning": "test"}
+        decision = {"decision": "draft", "reasoning": "test"}
 
         result = assemble_drafter_prompt(
             prompt="You are a drafter.",
@@ -380,7 +416,9 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
         from social_hook.models import CommitInfo, Project, ProjectContext
 
         project = Project(
-            id="proj_1", name="Test", repo_path=str(temp_repo),
+            id="proj_1",
+            name="Test",
+            repo_path=str(temp_repo),
             discovery_files=None,
         )
         context = ProjectContext(
@@ -397,7 +435,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
         )
 
         commit = CommitInfo(hash="abc123", message="test", diff="")
-        decision = {"decision": "post_worthy", "reasoning": "test"}
+        decision = {"decision": "draft", "reasoning": "test"}
 
         result = assemble_drafter_prompt(
             prompt="You are a drafter.",
@@ -419,7 +457,9 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
 
         files_list = ["README.md", "docs/guide.md"]
         project = Project(
-            id="proj_1", name="Test", repo_path=str(temp_repo),
+            id="proj_1",
+            name="Test",
+            repo_path=str(temp_repo),
             discovery_files=json.dumps(files_list),
         )
         context = ProjectContext(
@@ -437,7 +477,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
 
         commit = CommitInfo(hash="abc123", message="test", diff="")
         # Decision explicitly requests project docs
-        decision = {"decision": "post_worthy", "reasoning": "test", "include_project_docs": True}
+        decision = {"decision": "draft", "reasoning": "test", "include_project_docs": True}
 
         result = assemble_drafter_prompt(
             prompt="You are a drafter.",
@@ -485,7 +525,9 @@ class TestDbOperations:
         result = update_discovery_files(conn, "proj_1", files)
         assert result is True
 
-        row = conn.execute("SELECT discovery_files FROM projects WHERE id = ?", ("proj_1",)).fetchone()
+        row = conn.execute(
+            "SELECT discovery_files FROM projects WHERE id = ?", ("proj_1",)
+        ).fetchone()
         assert json.loads(row[0]) == files
         conn.close()
 

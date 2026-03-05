@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -80,12 +80,14 @@ class MediaGenerationConfig:
     """
 
     enabled: bool = True
-    tools: dict[str, bool] = field(default_factory=lambda: {
-        "mermaid": True,
-        "nano_banana_pro": True,
-        "playwright": True,
-        "ray_so": True,
-    })
+    tools: dict[str, bool] = field(
+        default_factory=lambda: {
+            "mermaid": True,
+            "nano_banana_pro": True,
+            "playwright": True,
+            "ray_so": True,
+        }
+    )
 
 
 @dataclass
@@ -106,7 +108,7 @@ class JourneyCaptureConfig:
     """Development journey capture configuration."""
 
     enabled: bool = False
-    model: Optional[str] = None  # None = use evaluator model
+    model: str | None = None  # None = use evaluator model
 
 
 @dataclass
@@ -116,11 +118,16 @@ class ConsolidationConfig:
     enabled: bool = False
     mode: str = "notify_only"  # "notify_only" or "re_evaluate"
     batch_size: int = 20
+    auto_consolidate_drafts: bool = True
+    consolidate_approved: bool = False
+    time_window_hours: float = 4.0
+    time_window_max_drafts: int = 3
 
 
 @dataclass
 class ChannelConfig:
     """Configuration for a single messaging channel."""
+
     enabled: bool = False
     allowed_chat_ids: list[str] = field(default_factory=list)
 
@@ -130,9 +137,13 @@ class Config:
     """Main configuration object."""
 
     models: ModelsConfig = field(default_factory=ModelsConfig)
-    platforms: dict[str, OutputPlatformConfig] = field(default_factory=lambda: {
-        "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin", account_tier="free"),
-    })
+    platforms: dict[str, OutputPlatformConfig] = field(
+        default_factory=lambda: {
+            "x": OutputPlatformConfig(
+                enabled=True, priority="primary", type="builtin", account_tier="free"
+            ),
+        }
+    )
     media_generation: MediaGenerationConfig = field(default_factory=MediaGenerationConfig)
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
     journey_capture: JourneyCaptureConfig = field(default_factory=JourneyCaptureConfig)
@@ -158,7 +169,7 @@ def save_config(
     updates: dict[str, Any],
     config_path: str | Path,
     deep_merge: bool = False,
-) -> tuple[dict[str, Any], Optional[str]]:
+) -> tuple[dict[str, Any], str | None]:
     """Merge updates into existing config, validate, and write.
 
     config_path is required (no default) to prevent accidental writes to the
@@ -203,12 +214,14 @@ def save_config(
         jc_enabled = updates["journey_capture"].get("enabled")
         if jc_enabled is True:
             from social_hook.setup.install import install_narrative_hook
+
             success, msg = install_narrative_hook()
             if not success:
                 logger.warning("Failed to install narrative hook: %s", msg)
                 hook_warning = msg
         elif jc_enabled is False:
             from social_hook.setup.install import uninstall_narrative_hook
+
             success, msg = uninstall_narrative_hook()
             if not success:
                 logger.warning("Failed to uninstall narrative hook: %s", msg)
@@ -217,7 +230,7 @@ def save_config(
     return (current, hook_warning)
 
 
-def load_config(config_path: Optional[str | Path] = None) -> Config:
+def load_config(config_path: str | Path | None = None) -> Config:
     """Load configuration from YAML file.
 
     Args:
@@ -258,6 +271,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
 
     # Validate model names (must use provider/model-id format)
     from social_hook.llm.factory import parse_provider_model
+
     for role in ("evaluator", "drafter", "gatekeeper"):
         value = getattr(models, role)
         try:
@@ -266,7 +280,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
             raise ConfigError(
                 f"Invalid model '{value}' for {role}: must use provider/model-id format "
                 f"(e.g., 'anthropic/claude-opus-4-5', 'claude-cli/sonnet')"
-            )
+            ) from None
 
     # Platforms (dynamic registry)
     from social_hook.config.platforms import (
@@ -323,7 +337,10 @@ def _parse_config(data: dict[str, Any]) -> Config:
     # Default: X enabled as primary if no platforms specified
     if not platforms:
         platforms["x"] = OutputPlatformConfig(
-            enabled=True, priority="primary", type="builtin", account_tier="free",
+            enabled=True,
+            priority="primary",
+            type="builtin",
+            account_tier="free",
         )
 
     # Media generation
@@ -363,7 +380,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
             raise ConfigError(
                 f"Invalid model '{jc_model}' for journey_capture: must use provider/model-id format "
                 f"(e.g., 'anthropic/claude-opus-4-5', 'claude-cli/sonnet')"
-            )
+            ) from None
     journey_capture = JourneyCaptureConfig(
         enabled=jc_data.get("enabled", False),
         model=jc_model,
@@ -385,6 +402,10 @@ def _parse_config(data: dict[str, Any]) -> Config:
         enabled=cons_data.get("enabled", False),
         mode=cons_mode,
         batch_size=cons_batch,
+        auto_consolidate_drafts=cons_data.get("auto_consolidate_drafts", True),
+        consolidate_approved=cons_data.get("consolidate_approved", False),
+        time_window_hours=float(cons_data.get("time_window_hours", 4.0)),
+        time_window_max_drafts=cons_data.get("time_window_max_drafts", 3),
     )
 
     # Channels
@@ -428,8 +449,8 @@ def validate_config(data: dict[str, Any]) -> Config:
 
 
 def load_full_config(
-    env_path: Optional[str | Path] = None,
-    yaml_path: Optional[str | Path] = None,
+    env_path: str | Path | None = None,
+    yaml_path: str | Path | None = None,
 ) -> Config:
     """Load full configuration from both .env and config.yaml.
 

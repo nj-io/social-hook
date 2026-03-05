@@ -1,15 +1,9 @@
 """Tests for scheduler thread-aware posting (Phase A)."""
 
-import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from social_hook.adapters.models import PostResult, ThreadResult
 from social_hook.db import (
-    get_connection,
-    get_draft,
     get_draft_tweets,
     init_database,
     insert_decision,
@@ -19,7 +13,7 @@ from social_hook.db import (
 )
 from social_hook.filesystem import generate_id
 from social_hook.models import Decision, Draft, DraftTweet
-from social_hook.scheduler import _post_draft, scheduler_tick
+from social_hook.scheduler import _post_draft
 
 
 class TestPostDraftSignature:
@@ -28,6 +22,7 @@ class TestPostDraftSignature:
     def test_post_draft_requires_conn(self):
         """_post_draft requires conn, draft, config."""
         import inspect
+
         sig = inspect.signature(_post_draft)
         params = list(sig.parameters.keys())
         assert params[0] == "conn"
@@ -43,16 +38,14 @@ class TestPostDraftThread:
         from social_hook.db import insert_project
         from social_hook.models import Project
 
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
 
         decision = Decision(
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -88,18 +81,17 @@ class TestPostDraftThread:
         mock_adapter = MagicMock()
         mock_thread_result = ThreadResult(
             success=True,
-            tweet_results=[
-                PostResult(success=True, external_id=f"ext_{i}")
-                for i in range(4)
-            ],
+            tweet_results=[PostResult(success=True, external_id=f"ext_{i}") for i in range(4)],
         )
         mock_adapter.post_thread.return_value = mock_thread_result
         MockXAdapter.return_value = mock_adapter
 
         config = MagicMock()
         config.env = {
-            "X_API_KEY": "k", "X_API_SECRET": "s",
-            "X_ACCESS_TOKEN": "t", "X_ACCESS_TOKEN_SECRET": "ts",
+            "X_API_KEY": "k",
+            "X_API_SECRET": "s",
+            "X_ACCESS_TOKEN": "t",
+            "X_ACCESS_TOKEN_SECRET": "ts",
         }
         config.platforms = {"x": MagicMock(account_tier="free")}
 
@@ -118,18 +110,17 @@ class TestPostDraftThread:
         mock_adapter = MagicMock()
         mock_thread_result = ThreadResult(
             success=True,
-            tweet_results=[
-                PostResult(success=True, external_id=f"ext_{i}")
-                for i in range(4)
-            ],
+            tweet_results=[PostResult(success=True, external_id=f"ext_{i}") for i in range(4)],
         )
         mock_adapter.post_thread.return_value = mock_thread_result
         MockXAdapter.return_value = mock_adapter
 
         config = MagicMock()
         config.env = {
-            "X_API_KEY": "k", "X_API_SECRET": "s",
-            "X_ACCESS_TOKEN": "t", "X_ACCESS_TOKEN_SECRET": "ts",
+            "X_API_KEY": "k",
+            "X_API_SECRET": "s",
+            "X_ACCESS_TOKEN": "t",
+            "X_ACCESS_TOKEN_SECRET": "ts",
         }
         config.platforms = {"x": MagicMock(account_tier="free")}
 
@@ -148,16 +139,14 @@ class TestPostDraftThread:
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
 
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
 
         decision = Decision(
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -174,8 +163,10 @@ class TestPostDraftThread:
 
         config = MagicMock()
         config.env = {
-            "X_API_KEY": "k", "X_API_SECRET": "s",
-            "X_ACCESS_TOKEN": "t", "X_ACCESS_TOKEN_SECRET": "ts",
+            "X_API_KEY": "k",
+            "X_API_SECRET": "s",
+            "X_ACCESS_TOKEN": "t",
+            "X_ACCESS_TOKEN_SECRET": "ts",
         }
         config.platforms = {"x": MagicMock(account_tier="free")}
 
@@ -198,16 +189,14 @@ class TestPostDraftThread:
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
 
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
 
         decision = Decision(
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -253,16 +242,14 @@ class TestPostDraftThread:
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
 
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
 
         decision = Decision(
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -284,8 +271,10 @@ class TestPostDraftThread:
 
         config = MagicMock()
         config.env = {
-            "X_API_KEY": "k", "X_API_SECRET": "s",
-            "X_ACCESS_TOKEN": "t", "X_ACCESS_TOKEN_SECRET": "ts",
+            "X_API_KEY": "k",
+            "X_API_SECRET": "s",
+            "X_ACCESS_TOKEN": "t",
+            "X_ACCESS_TOKEN_SECRET": "ts",
         }
         config.platforms = {"x": MagicMock(account_tier="premium")}
 
@@ -307,7 +296,7 @@ class TestUpdateDraftTweet:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="t",
         )
         insert_decision(temp_db, decision)
@@ -328,7 +317,8 @@ class TestUpdateDraftTweet:
         insert_draft_tweet(temp_db, tweet)
 
         updated = update_draft_tweet(
-            temp_db, tweet.id,
+            temp_db,
+            tweet.id,
             external_id="ext_123",
             posted_at="2026-01-01T00:00:00",
         )
@@ -348,7 +338,7 @@ class TestUpdateDraftTweet:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="t",
         )
         insert_decision(temp_db, decision)

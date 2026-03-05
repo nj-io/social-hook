@@ -1,15 +1,13 @@
 """Tests for OpenAICompatClient."""
 
-import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from social_hook.errors import ConfigError, MalformedResponseError
-from social_hook.llm.base import NormalizedResponse, NormalizedToolCall, NormalizedUsage
+from social_hook.llm.base import NormalizedResponse, NormalizedToolCall
 from social_hook.llm.openai_compat import OpenAICompatClient, _convert_tool_schema
-
 
 SAMPLE_TOOL = {
     "name": "log_decision",
@@ -85,9 +83,11 @@ class TestOpenAICompatClientInit:
 
     def test_missing_openai_package_raises_config_error(self):
         """When openai is not installed (OpenAI is None), ConfigError is raised."""
-        with patch("social_hook.llm.openai_compat.OpenAI", None):
-            with pytest.raises(ConfigError, match="openai package required"):
-                OpenAICompatClient(api_key="sk-test", model="gpt-4o")
+        with (
+            patch("social_hook.llm.openai_compat.OpenAI", None),
+            pytest.raises(ConfigError, match="openai package required"),
+        ):
+            OpenAICompatClient(api_key="sk-test", model="gpt-4o")
 
 
 class TestComplete:
@@ -224,55 +224,3 @@ class TestComplete:
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
         assert resp.raw is mock_response
-
-
-class TestUsageLogging:
-    @patch("social_hook.llm.openai_compat.OpenAI")
-    def test_usage_logged_with_db(self, mock_openai_cls):
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = _make_mock_openai_response()
-        mock_openai_cls.return_value = mock_client
-
-        client = OpenAICompatClient(api_key="sk-test", model="gpt-4o")
-        mock_db = MagicMock()
-        mock_db.insert_usage = MagicMock()
-
-        client.complete(
-            SAMPLE_MESSAGES,
-            [SAMPLE_TOOL],
-            operation_type="evaluate",
-            db=mock_db,
-            project_id="proj-123",
-            commit_hash="abc123",
-        )
-
-        mock_db.insert_usage.assert_called_once()
-        usage_log = mock_db.insert_usage.call_args[0][0]
-        assert usage_log.model == "openai/gpt-4o"
-        assert usage_log.input_tokens == 100
-        assert usage_log.output_tokens == 50
-        assert usage_log.cost_cents == 0.0
-        assert usage_log.project_id == "proj-123"
-
-    @patch("social_hook.llm.openai_compat.OpenAI")
-    def test_no_logging_without_db(self, mock_openai_cls):
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = _make_mock_openai_response()
-        mock_openai_cls.return_value = mock_client
-
-        client = OpenAICompatClient(api_key="sk-test", model="gpt-4o")
-        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL], operation_type="evaluate")
-        assert resp is not None
-
-    @patch("social_hook.llm.openai_compat.OpenAI")
-    def test_no_logging_without_operation_type(self, mock_openai_cls):
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = _make_mock_openai_response()
-        mock_openai_cls.return_value = mock_client
-
-        client = OpenAICompatClient(api_key="sk-test", model="gpt-4o")
-        mock_db = MagicMock()
-        mock_db.insert_usage = MagicMock()
-
-        client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL], db=mock_db)
-        mock_db.insert_usage.assert_not_called()

@@ -3,8 +3,6 @@
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
-
 from zoneinfo import ZoneInfo
 
 from social_hook.db import operations as ops
@@ -23,21 +21,26 @@ class ScheduleResult:
 
 # Day name to weekday number mapping (Monday=0)
 _DAY_MAP = {
-    "Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
-    "Fri": 4, "Sat": 5, "Sun": 6,
+    "Mon": 0,
+    "Tue": 1,
+    "Wed": 2,
+    "Thu": 3,
+    "Fri": 4,
+    "Sat": 5,
+    "Sun": 6,
 }
 
 
 def calculate_optimal_time(
     conn: sqlite3.Connection,
     project_id: str,
-    platform: Optional[str] = None,
+    platform: str | None = None,
     tz: str = "UTC",
     max_posts_per_day: int = 3,
     min_gap_minutes: int = 30,
-    optimal_days: Optional[list[str]] = None,
-    optimal_hours: Optional[list[int]] = None,
-    max_per_week: Optional[int] = None,
+    optimal_days: list[str] | None = None,
+    optimal_hours: list[int] | None = None,
+    max_per_week: int | None = None,
 ) -> ScheduleResult:
     """Calculate the optimal time to post.
 
@@ -97,9 +100,7 @@ def calculate_optimal_time(
     today_start_utc = today_start_local.astimezone(timezone.utc)
 
     # Count today's posts (filter by platform when provided)
-    today_posts = ops.get_all_recent_posts(
-        conn, today_start_utc.strftime("%Y-%m-%d %H:%M:%S")
-    )
+    today_posts = ops.get_all_recent_posts(conn, today_start_utc.strftime("%Y-%m-%d %H:%M:%S"))
     if platform:
         today_posts = [p for p in today_posts if p.platform == platform]
     posts_today_count = len(today_posts)
@@ -118,7 +119,7 @@ def calculate_optimal_time(
                 last_post_time = last_post_time.replace(tzinfo=timezone.utc)
 
     # Also check scheduled drafts that haven't posted yet
-    due_drafts = ops.get_due_drafts(conn)
+    ops.get_due_drafts(conn)
     all_pending = ops.get_all_pending_drafts(conn)
     scheduled_times = []
     for d in all_pending:
@@ -154,9 +155,7 @@ def calculate_optimal_time(
         # Try each optimal hour
         sorted_hours = sorted(optimal_hours)
         for hour in sorted_hours:
-            candidate = candidate_date.replace(
-                hour=hour, minute=0, second=0, microsecond=0
-            )
+            candidate = candidate_date.replace(hour=hour, minute=0, second=0, microsecond=0)
 
             # Skip if in the past
             if candidate <= now_local:
@@ -165,7 +164,9 @@ def calculate_optimal_time(
             candidate_utc = candidate.astimezone(timezone.utc)
 
             # Check min gap
-            if last_post_time and (candidate_utc - last_post_time) < timedelta(minutes=min_gap_minutes):
+            if last_post_time and (candidate_utc - last_post_time) < timedelta(
+                minutes=min_gap_minutes
+            ):
                 continue
 
             # Check against already-scheduled times

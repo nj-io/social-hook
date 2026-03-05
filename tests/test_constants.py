@@ -8,13 +8,12 @@ from social_hook.constants import (
     CONFIG_DIR_NAME,
     DB_FILENAME,
     MODULE_NAME,
-    PROJECT_NAME,
     PROJECT_SLUG,
 )
 
 
 def test_slug_is_lowercase_hyphenated():
-    assert PROJECT_SLUG == PROJECT_SLUG.lower()
+    assert PROJECT_SLUG.lower() == PROJECT_SLUG
     assert " " not in PROJECT_SLUG
 
 
@@ -36,8 +35,7 @@ def test_no_internal_imports():
     source_path = Path(importlib.util.find_spec("social_hook.constants").origin)
     tree = ast.parse(source_path.read_text())
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("social_hook"), (
-                    f"constants.py must not import from social_hook: {node.module}"
-                )
+        if isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith("social_hook"), (
+                f"constants.py must not import from social_hook: {node.module}"
+            )

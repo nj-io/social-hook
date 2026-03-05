@@ -77,6 +77,12 @@ Based on the Evaluator's episode_type:
 - **launch**: Clear value prop. Who is this for? What does it do?
 - **synthesis**: Zoom out. Frame the bigger story across recent work.
 
+## Post Context
+
+When arc context includes previous posts with IDs and URLs, write content
+that naturally references or builds on them. If this draft consolidates
+multiple commits, ensure the content cohesively covers all the work.
+
 ## Media Selection
 
 Refer to the "Media Tool Guide" section below for available tools, usage guidance, and prompt examples. If no Media Tool Guide section is present, use your best judgment.

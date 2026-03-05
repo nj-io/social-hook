@@ -14,7 +14,7 @@ from pathlib import Path
 def verify_tier_config():
     """Verify X tier configuration."""
     print("--- Tier Configuration ---")
-    from social_hook.config.yaml import VALID_TIERS, TIER_CHAR_LIMITS
+    from social_hook.config.yaml import TIER_CHAR_LIMITS, VALID_TIERS
 
     assert "free" in VALID_TIERS
     assert "basic" in VALID_TIERS
@@ -26,7 +26,7 @@ def verify_tier_config():
     assert TIER_CHAR_LIMITS["basic"] == 25_000
     assert TIER_CHAR_LIMITS["premium"] == 25_000
     assert TIER_CHAR_LIMITS["premium_plus"] == 25_000
-    print(f"  OK  TIER_CHAR_LIMITS correct")
+    print("  OK  TIER_CHAR_LIMITS correct")
     print()
     return True
 
@@ -37,27 +37,52 @@ def verify_imports():
     modules = [
         ("social_hook.trigger", ["run_trigger", "parse_commit_info", "git_remote_origin"]),
         ("social_hook.scheduling", ["calculate_optimal_time", "ScheduleResult"]),
-        ("social_hook.scheduler", ["scheduler_tick", "acquire_lock", "release_lock", "is_lock_stale", "get_lock_pid"]),
+        (
+            "social_hook.scheduler",
+            ["scheduler_tick", "acquire_lock", "release_lock", "is_lock_stale", "get_lock_pid"],
+        ),
         ("social_hook.bot.daemon", ["BotDaemon", "create_bot"]),
-        ("social_hook.bot.process", ["get_pid_file", "write_pid", "read_pid", "is_pid_alive", "is_running", "stop_bot"]),
+        (
+            "social_hook.bot.process",
+            ["get_pid_file", "write_pid", "read_pid", "is_pid_alive", "is_running", "stop_bot"],
+        ),
         ("social_hook.bot.commands", ["handle_command", "handle_message"]),
         ("social_hook.bot.buttons", ["handle_callback"]),
-        ("social_hook.bot.notifications", [
-            "send_notification", "send_notification_with_buttons",
-            "format_draft_review", "format_post_confirmation",
-            "format_error_notification", "get_review_buttons",
-        ]),
+        (
+            "social_hook.bot.notifications",
+            [
+                "send_notification",
+                "send_notification_with_buttons",
+                "format_draft_review",
+                "format_post_confirmation",
+                "format_error_notification",
+                "get_review_buttons",
+            ],
+        ),
         ("social_hook.setup.wizard", ["run_wizard"]),
-        ("social_hook.setup.validation", [
-            "validate_anthropic_key", "validate_telegram_bot",
-            "validate_x_api", "get_linkedin_auth_url",
-            "validate_media_gen",
-        ]),
-        ("social_hook.setup.install", [
-            "install_hook", "uninstall_hook", "check_hook_installed",
-            "install_cron", "uninstall_cron", "check_cron_installed",
-            "OUR_HOOK", "CRON_MARKER",
-        ]),
+        (
+            "social_hook.setup.validation",
+            [
+                "validate_anthropic_key",
+                "validate_telegram_bot",
+                "validate_x_api",
+                "get_linkedin_auth_url",
+                "validate_media_gen",
+            ],
+        ),
+        (
+            "social_hook.setup.install",
+            [
+                "install_hook",
+                "uninstall_hook",
+                "check_hook_installed",
+                "install_cron",
+                "uninstall_cron",
+                "check_cron_installed",
+                "OUR_HOOK",
+                "CRON_MARKER",
+            ],
+        ),
         ("social_hook.cli.project", ["app"]),
         ("social_hook.cli.manual", ["app"]),
         ("social_hook.cli.inspect", ["app"]),
@@ -80,7 +105,7 @@ def verify_imports():
     if errors:
         print(f"\n{len(errors)} import error(s)")
         return False
-    print(f"  All imports OK\n")
+    print("  All imports OK\n")
     return True
 
 
@@ -88,15 +113,15 @@ def verify_db_operations():
     """Verify WS4-specific DB operations."""
     print("--- DB Operations ---")
     import tempfile
+
     from social_hook.db import (
+        delete_project,
+        get_all_recent_decisions,
+        get_due_drafts,
+        get_project_by_origin,
+        get_project_by_path,
         init_database,
         insert_project,
-        get_project_by_path,
-        get_project_by_origin,
-        delete_project,
-        get_due_drafts,
-        get_all_recent_decisions,
-        get_all_recent_posts,
     )
     from social_hook.filesystem import generate_id
     from social_hook.models import Project
@@ -150,9 +175,10 @@ def verify_scheduling():
     """Verify scheduling algorithm."""
     print("--- Scheduling ---")
     import tempfile
+
     from social_hook.db import init_database
-    from social_hook.scheduling import calculate_optimal_time, ScheduleResult
     from social_hook.filesystem import generate_id
+    from social_hook.scheduling import ScheduleResult, calculate_optimal_time
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
@@ -177,8 +203,8 @@ def verify_hook_installer():
     """Verify hook installer."""
     print("--- Hook Installer ---")
     import tempfile
-    import json
-    from social_hook.setup.install import install_hook, check_hook_installed, uninstall_hook
+
+    from social_hook.setup.install import check_hook_installed, install_hook, uninstall_hook
 
     with tempfile.TemporaryDirectory() as tmpdir:
         hooks_file = Path(tmpdir) / "hooks.json"
@@ -210,11 +236,13 @@ def verify_bot_components():
     """Verify bot components."""
     print("--- Bot Components ---")
     from social_hook.bot.daemon import BotDaemon
-    from social_hook.bot.process import get_pid_file, is_running
     from social_hook.bot.notifications import (
-        format_draft_review, format_post_confirmation,
-        format_error_notification, get_review_buttons,
+        format_draft_review,
+        format_error_notification,
+        format_post_confirmation,
+        get_review_buttons,
     )
+    from social_hook.bot.process import get_pid_file, is_running
 
     # PID file
     pid_file = get_pid_file()
@@ -274,6 +302,7 @@ def verify_cli():
     """Verify CLI structure."""
     print("--- CLI ---")
     from typer.testing import CliRunner
+
     from social_hook.cli import app
 
     runner = CliRunner()
@@ -306,7 +335,7 @@ def main():
     parser = argparse.ArgumentParser(description="WS4 Drivers verification")
     parser.add_argument("--dry-run", action="store_true", help="No real API calls")
     parser.add_argument("--live", action="store_true", help="Real API calls")
-    args = parser.parse_args()
+    parser.parse_args()
 
     print("=" * 50)
     print("WS4 Drivers Verification")

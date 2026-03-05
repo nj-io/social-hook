@@ -2,7 +2,6 @@
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 from social_hook.db.schema import apply_migrations, create_schema
 from social_hook.errors import DatabaseError
@@ -43,7 +42,9 @@ def get_connection(db_path: str | Path) -> sqlite3.Connection:
         raise DatabaseError(f"Failed to connect to database: {e}") from e
 
 
-def init_database(db_path: str | Path, conn: Optional[sqlite3.Connection] = None) -> sqlite3.Connection:
+def init_database(
+    db_path: str | Path, conn: sqlite3.Connection | None = None
+) -> sqlite3.Connection:
     """Initialize the database with schema and apply pending migrations.
 
     Args:

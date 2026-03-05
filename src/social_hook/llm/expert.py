@@ -1,10 +1,11 @@
 """Expert agent: handles escalated requests from Gatekeeper (T16)."""
 
-from typing import Any, Optional
+from typing import Any
 
-from social_hook.llm.base import LLMClient
+from social_hook.llm._usage_logger import log_usage
+from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.prompts import assemble_expert_prompt, load_prompt
-from social_hook.llm.schemas import ExpertResponseInput, extract_tool_call
+from social_hook.llm.schemas import ExpertResponseInput
 
 
 class Expert:
@@ -25,10 +26,10 @@ class Expert:
         draft: Any,
         user_message: str,
         escalation_reason: str,
-        escalation_context: Optional[str] = None,
-        project_summary: Optional[str] = None,
-        db: Optional[Any] = None,
-        project_id: Optional[str] = None,
+        escalation_context: str | None = None,
+        project_summary: str | None = None,
+        db: Any | None = None,
+        project_id: str | None = None,
     ) -> ExpertResponseInput:
         """Handle an escalated request.
 
@@ -47,8 +48,11 @@ class Expert:
         prompt = load_prompt("drafter")  # Expert shares Drafter's prompt
 
         system = assemble_expert_prompt(
-            prompt, draft, user_message,
-            escalation_reason, escalation_context,
+            prompt,
+            draft,
+            user_message,
+            escalation_reason,
+            escalation_context,
             project_summary,
         )
 
@@ -56,9 +60,9 @@ class Expert:
             messages=[{"role": "user", "content": user_message}],
             tools=[ExpertResponseInput.to_tool_schema()],
             system=system,
-            operation_type="expert",
-            db=db,
-            project_id=project_id,
+        )
+        log_usage(
+            db, "expert", getattr(self.client, "full_id", "unknown"), response.usage, project_id
         )
 
         tool_input = extract_tool_call(response, "expert_response")

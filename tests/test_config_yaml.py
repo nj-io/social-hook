@@ -3,9 +3,7 @@
 import pytest
 
 from social_hook.config.yaml import (
-    ChannelConfig,
     Config,
-    KNOWN_CHANNELS,
     MediaGenerationConfig,
     SchedulingConfig,
     _deep_merge,
@@ -13,7 +11,6 @@ from social_hook.config.yaml import (
     save_config,
     validate_config,
 )
-from social_hook.config.platforms import OutputPlatformConfig
 from social_hook.errors import ConfigError
 
 
@@ -110,18 +107,14 @@ platforms:
     def test_platforms_is_dict(self, temp_dir):
         """config.platforms is a dict, not a dataclass."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x:\n    enabled: true\n    account_tier: free\n"
-        )
+        config_path.write_text("platforms:\n  x:\n    enabled: true\n    account_tier: free\n")
         config = load_config(config_path)
         assert isinstance(config.platforms, dict)
 
     def test_unknown_platform_name_auto_custom(self, temp_dir):
         """Unknown platform names default to type=custom."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  mastodon:\n    enabled: true\n"
-        )
+        config_path.write_text("platforms:\n  mastodon:\n    enabled: true\n")
         config = load_config(config_path)
         assert config.platforms["mastodon"].type == "custom"
 
@@ -138,36 +131,28 @@ platforms:
     def test_invalid_priority_raises(self, temp_dir):
         """Invalid priority value raises ConfigError."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x:\n    enabled: true\n    priority: tertiary\n"
-        )
+        config_path.write_text("platforms:\n  x:\n    enabled: true\n    priority: tertiary\n")
         with pytest.raises(ConfigError, match="Invalid priority"):
             load_config(config_path)
 
     def test_invalid_filter_raises(self, temp_dir):
         """Invalid filter value raises ConfigError."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x:\n    enabled: true\n    filter: extreme\n"
-        )
+        config_path.write_text("platforms:\n  x:\n    enabled: true\n    filter: extreme\n")
         with pytest.raises(ConfigError, match="Invalid filter"):
             load_config(config_path)
 
     def test_invalid_frequency_raises(self, temp_dir):
         """Invalid frequency value raises ConfigError."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x:\n    enabled: true\n    frequency: ultra\n"
-        )
+        config_path.write_text("platforms:\n  x:\n    enabled: true\n    frequency: ultra\n")
         with pytest.raises(ConfigError, match="Invalid frequency"):
             load_config(config_path)
 
     def test_platform_not_dict_raises(self, temp_dir):
         """Non-dict platform value raises ConfigError."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "platforms:\n  x: true\n"
-        )
+        config_path.write_text("platforms:\n  x: true\n")
         with pytest.raises(ConfigError, match="must be a dict"):
             load_config(config_path)
 
@@ -223,18 +208,14 @@ media_generation:
     def test_disabled_media_generation(self, temp_dir):
         """media_generation.enabled: false disables all media generation."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "media_generation:\n  enabled: false\n"
-        )
+        config_path.write_text("media_generation:\n  enabled: false\n")
         config = load_config(config_path)
         assert config.media_generation.enabled is False
 
     def test_empty_media_generation_uses_defaults(self, temp_dir):
         """Empty media_generation section uses all defaults."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "media_generation: {}\n"
-        )
+        config_path.write_text("media_generation: {}\n")
         config = load_config(config_path)
         assert config.media_generation.enabled is True
         assert len(config.media_generation.tools) == 4
@@ -268,9 +249,7 @@ scheduling:
     def test_partial_override_keeps_defaults(self, temp_dir):
         """Override only max_per_week, thread_min_tweets keeps default."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(
-            "scheduling:\n  max_per_week: 20\n"
-        )
+        config_path.write_text("scheduling:\n  max_per_week: 20\n")
         config = load_config(config_path)
         assert config.scheduling.max_per_week == 20
         assert config.scheduling.thread_min_tweets == 4  # default
@@ -375,14 +354,18 @@ class TestChannelConfigParsing:
     def test_channel_chat_ids_not_list_raises(self, temp_dir):
         """Non-list allowed_chat_ids raises ConfigError."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text("channels:\n  telegram:\n    enabled: true\n    allowed_chat_ids: '123'\n")
+        config_path.write_text(
+            "channels:\n  telegram:\n    enabled: true\n    allowed_chat_ids: '123'\n"
+        )
         with pytest.raises(ConfigError, match="must be a list"):
             load_config(config_path)
 
     def test_channel_chat_ids_coerced_to_str(self, temp_dir):
         """Integer chat IDs are coerced to strings."""
         config_path = temp_dir / "config.yaml"
-        config_path.write_text("channels:\n  telegram:\n    enabled: true\n    allowed_chat_ids:\n      - 123\n      - 456\n")
+        config_path.write_text(
+            "channels:\n  telegram:\n    enabled: true\n    allowed_chat_ids:\n      - 123\n      - 456\n"
+        )
         config = load_config(config_path)
         assert config.channels["telegram"].allowed_chat_ids == ["123", "456"]
 
@@ -501,10 +484,17 @@ class TestSaveConfig:
     def test_save_config_shallow_merge(self, temp_dir):
         """Shallow merge preserves existing platforms when adding scheduling."""
         import yaml
+
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(yaml.dump({
-            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
-        }))
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "platforms": {
+                        "x": {"enabled": True, "priority": "primary", "account_tier": "free"}
+                    },
+                }
+            )
+        )
         merged, _ = save_config(
             {"scheduling": {"timezone": "US/Eastern"}},
             config_path=config_path,
@@ -515,10 +505,17 @@ class TestSaveConfig:
     def test_save_config_deep_merge(self, temp_dir):
         """Deep merge updates nested key without clobbering siblings."""
         import yaml
+
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(yaml.dump({
-            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
-        }))
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "platforms": {
+                        "x": {"enabled": True, "priority": "primary", "account_tier": "free"}
+                    },
+                }
+            )
+        )
         merged, _ = save_config(
             {"platforms": {"x": {"account_tier": "premium"}}},
             config_path=config_path,
@@ -530,8 +527,11 @@ class TestSaveConfig:
     def test_save_config_validation_error(self, temp_dir):
         """Invalid config raises ConfigError and file is not changed."""
         import yaml
+
         config_path = temp_dir / "config.yaml"
-        original = {"platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}}}
+        original = {
+            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}}
+        }
         config_path.write_text(yaml.dump(original))
         with pytest.raises(ConfigError):
             save_config(
@@ -540,17 +540,30 @@ class TestSaveConfig:
             )
         # File should still have original content
         current = yaml.safe_load(config_path.read_text())
-        assert "models" not in current or current.get("models", {}).get("evaluator") != "invalid_no_slash"
+        assert (
+            "models" not in current
+            or current.get("models", {}).get("evaluator") != "invalid_no_slash"
+        )
 
     def test_save_config_journey_hook(self, temp_dir):
         """Journey capture hook is triggered when journey_capture is in updates."""
-        import yaml
         from unittest.mock import patch
+
+        import yaml
+
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(yaml.dump({
-            "platforms": {"x": {"enabled": True, "priority": "primary", "account_tier": "free"}},
-        }))
-        with patch("social_hook.setup.install.install_narrative_hook", return_value=(True, "ok")) as mock_install:
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "platforms": {
+                        "x": {"enabled": True, "priority": "primary", "account_tier": "free"}
+                    },
+                }
+            )
+        )
+        with patch(
+            "social_hook.setup.install.install_narrative_hook", return_value=(True, "ok")
+        ) as mock_install:
             save_config(
                 {"journey_capture": {"enabled": True}},
                 config_path=config_path,

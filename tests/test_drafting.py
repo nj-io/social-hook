@@ -1,17 +1,13 @@
 """Tests for the shared drafting pipeline (draft_for_platforms)."""
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from social_hook.db.connection import init_database
 from social_hook.db import operations as ops
+from social_hook.db.connection import init_database
 from social_hook.drafting import DraftResult, draft_for_platforms
 from social_hook.filesystem import generate_id
 from social_hook.models import CommitInfo, Project
-
 
 # =============================================================================
 # Helpers
@@ -41,7 +37,7 @@ def _make_commit() -> CommitInfo:
 def _make_evaluation():
     """Build a minimal evaluation mock."""
     eval_mock = MagicMock()
-    eval_mock.decision = "post_worthy"
+    eval_mock.decision = "draft"
     eval_mock.reasoning = "Interesting feature"
     eval_mock.angle = "test angle"
     eval_mock.episode_type = "milestone"
@@ -125,8 +121,14 @@ class TestDraftForPlatformsNoEnabledPlatforms:
 
         # With explicit target_platform_names, no preview fallback
         results = draft_for_platforms(
-            config, conn, db, project, decision_id="decision-001",
-            evaluation=evaluation, context=context, commit=commit,
+            config,
+            conn,
+            db,
+            project,
+            decision_id="decision-001",
+            evaluation=evaluation,
+            context=context,
+            commit=commit,
             target_platform_names=["x"],
         )
 
@@ -142,7 +144,12 @@ class TestDraftForPlatformsTargetFilter:
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_target_filter_excludes_unspecified(
-        self, mock_schedule, mock_create, mock_filter, mock_resolve, tmp_path,
+        self,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
     ):
         db_path = tmp_path / "test.db"
         conn = init_database(db_path)
@@ -153,10 +160,12 @@ class TestDraftForPlatformsTargetFilter:
         db = DryRunContext(conn, dry_run=True)
 
         # Two enabled platforms
-        config = _make_config(platforms={
-            "x": _make_platform_config("x"),
-            "linkedin": _make_platform_config("linkedin"),
-        })
+        config = _make_config(
+            platforms={
+                "x": _make_platform_config("x"),
+                "linkedin": _make_platform_config("linkedin"),
+            }
+        )
 
         # resolve_platform returns something with a filter that passes "all"
         resolved = MagicMock()
@@ -194,8 +203,14 @@ class TestDraftForPlatformsTargetFilter:
         with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
             # Only target "linkedin" -- "x" should be excluded
             results = draft_for_platforms(
-                config, conn, db, project, decision_id="decision-001",
-                evaluation=evaluation, context=context, commit=commit,
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-001",
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
                 target_platform_names=["linkedin"],
             )
 
@@ -219,9 +234,11 @@ class TestDraftForPlatformsContentFilterExcludes:
 
         db = DryRunContext(conn, dry_run=True)
 
-        config = _make_config(platforms={
-            "x": _make_platform_config("x"),
-        })
+        config = _make_config(
+            platforms={
+                "x": _make_platform_config("x"),
+            }
+        )
         resolved = MagicMock()
         resolved.filter = "significant"
         mock_resolve.return_value = resolved
@@ -231,8 +248,14 @@ class TestDraftForPlatformsContentFilterExcludes:
         context = _make_context(project)
 
         results = draft_for_platforms(
-            config, conn, db, project, decision_id="decision-001",
-            evaluation=evaluation, context=context, commit=commit,
+            config,
+            conn,
+            db,
+            project,
+            decision_id="decision-001",
+            evaluation=evaluation,
+            context=context,
+            commit=commit,
         )
 
         assert results == []
@@ -247,7 +270,12 @@ class TestDraftForPlatformsProjectConfigNone:
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_none_project_config(
-        self, mock_schedule, mock_create, mock_filter, mock_resolve, tmp_path,
+        self,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
     ):
         db_path = tmp_path / "test.db"
         conn = init_database(db_path)
@@ -257,9 +285,11 @@ class TestDraftForPlatformsProjectConfigNone:
 
         db = DryRunContext(conn, dry_run=True)
 
-        config = _make_config(platforms={
-            "linkedin": _make_platform_config("linkedin"),
-        })
+        config = _make_config(
+            platforms={
+                "linkedin": _make_platform_config("linkedin"),
+            }
+        )
 
         resolved = MagicMock()
         resolved.filter = "all"
@@ -291,8 +321,13 @@ class TestDraftForPlatformsProjectConfigNone:
             )
 
             results = draft_for_platforms(
-                config, conn, db, project, decision_id="decision-001",
-                evaluation=_make_evaluation(), context=_make_context(project),
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-001",
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
                 commit=_make_commit(),
                 project_config=None,  # Explicitly None
             )
@@ -314,7 +349,12 @@ class TestDraftForPlatformsPerPlatformError:
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_error_skips_platform(
-        self, mock_schedule, mock_create, mock_filter, mock_resolve, tmp_path,
+        self,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
     ):
         db_path = tmp_path / "test.db"
         conn = init_database(db_path)
@@ -324,10 +364,12 @@ class TestDraftForPlatformsPerPlatformError:
 
         db = DryRunContext(conn, dry_run=True)
 
-        config = _make_config(platforms={
-            "x": _make_platform_config("x"),
-            "linkedin": _make_platform_config("linkedin"),
-        })
+        config = _make_config(
+            platforms={
+                "x": _make_platform_config("x"),
+                "linkedin": _make_platform_config("linkedin"),
+            }
+        )
 
         resolved = MagicMock()
         resolved.filter = "all"
@@ -368,8 +410,13 @@ class TestDraftForPlatformsPerPlatformError:
             )
 
             results = draft_for_platforms(
-                config, conn, db, project, decision_id="decision-001",
-                evaluation=_make_evaluation(), context=_make_context(project),
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-001",
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
                 commit=_make_commit(),
                 project_config=None,
             )
@@ -388,7 +435,12 @@ class TestDraftResultDecisionId:
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_decision_id_propagated(
-        self, mock_schedule, mock_create, mock_filter, mock_resolve, tmp_path,
+        self,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
     ):
         db_path = tmp_path / "test.db"
         conn = init_database(db_path)
@@ -398,9 +450,11 @@ class TestDraftResultDecisionId:
 
         db = DryRunContext(conn, dry_run=True)
 
-        config = _make_config(platforms={
-            "x": _make_platform_config("x"),
-        })
+        config = _make_config(
+            platforms={
+                "x": _make_platform_config("x"),
+            }
+        )
 
         resolved = MagicMock()
         resolved.filter = "all"
@@ -432,8 +486,13 @@ class TestDraftResultDecisionId:
 
             custom_decision_id = "decision-custom-42"
             results = draft_for_platforms(
-                config, conn, db, project, decision_id=custom_decision_id,
-                evaluation=_make_evaluation(), context=_make_context(project),
+                config,
+                conn,
+                db,
+                project,
+                decision_id=custom_decision_id,
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
                 commit=_make_commit(),
                 project_config=None,
             )
