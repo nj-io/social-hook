@@ -1,12 +1,20 @@
 """Tests for CLI module (T21)."""
 
 import json
+import re
 from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
 from social_hook.cli import app
 from social_hook.constants import PROJECT_NAME, PROJECT_SLUG
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
 
 runner = CliRunner()
 
@@ -40,8 +48,9 @@ class TestTrigger:
     def test_trigger_help(self):
         result = runner.invoke(app, ["trigger", "--help"])
         assert result.exit_code == 0
-        assert "--commit" in result.output
-        assert "--repo" in result.output
+        output = strip_ansi(result.output)
+        assert "--commit" in output
+        assert "--repo" in output
 
 
 class TestSchedulerTick:
@@ -96,19 +105,19 @@ class TestGlobalOptions:
 
     def test_dry_run_flag(self):
         result = runner.invoke(app, ["--help"])
-        assert "--dry-run" in result.output
+        assert "--dry-run" in strip_ansi(result.output)
 
     def test_verbose_flag(self):
         result = runner.invoke(app, ["--help"])
-        assert "--verbose" in result.output
+        assert "--verbose" in strip_ansi(result.output)
 
     def test_json_flag(self):
         result = runner.invoke(app, ["--help"])
-        assert "--json" in result.output
+        assert "--json" in strip_ansi(result.output)
 
     def test_config_flag(self):
         result = runner.invoke(app, ["--help"])
-        assert "--config" in result.output
+        assert "--config" in strip_ansi(result.output)
 
 
 class TestLogsCommand:
@@ -232,9 +241,10 @@ class TestTestCmdRange:
 
     def test_from_to_help_text(self):
         result = runner.invoke(app, ["test", "--help"])
-        assert "--from" in result.output
-        assert "--to" in result.output
-        assert "--compare" in result.output
+        output = strip_ansi(result.output)
+        assert "--from" in output
+        assert "--to" in output
+        assert "--compare" in output
 
     def test_no_args_shows_error(self):
         result = runner.invoke(app, ["test", "--repo", "/tmp/fake"])

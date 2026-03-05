@@ -1,6 +1,7 @@
 """Tests for CLI draft subcommand."""
 
 import json
+import re
 import sqlite3
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +9,13 @@ import pytest
 from typer.testing import CliRunner
 
 from social_hook.cli import app
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
 
 runner = CliRunner()
 
@@ -447,12 +455,12 @@ class TestHelpJson:
     def test_help_subcommand(self):
         result = runner.invoke(app, ["help", "draft", "approve"])
         assert result.exit_code == 0
-        assert "DRAFT_ID" in result.output
+        assert "DRAFT_ID" in strip_ansi(result.output)
 
     def test_help_subcommand_with_options(self):
         result = runner.invoke(app, ["help", "draft", "schedule"])
         assert result.exit_code == 0
-        assert "--time" in result.output
+        assert "--time" in strip_ansi(result.output)
 
     def test_help_json_group(self):
         result = runner.invoke(app, ["help", "--json", "draft"])
