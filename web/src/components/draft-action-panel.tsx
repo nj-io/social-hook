@@ -202,7 +202,7 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
               label="Regenerate media"
               action="media_regen"
               pending={actionPending}
-              disabled={isDisabled}
+              disabled={isDisabled || draft.media_spec === draft.media_spec_used}
               onClick={handleAction}
               variant="neutral-outline"
             />

@@ -98,6 +98,7 @@ export interface Draft {
   media_paths?: string;
   media_type?: string;
   media_spec?: string;
+  media_spec_used?: string;
   reasoning?: string;
   last_error?: string;
   retry_count?: number;

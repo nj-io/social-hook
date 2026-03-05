@@ -637,13 +637,12 @@ def _handle_expert_escalation(
                     return msg
             finally:
                 conn.close()
-        elif action == "refine_draft" and result.refined_content:
-            # Fix 4: Save refined content to DB if we have draft context
+        elif action == "refine_draft" and (result.refined_content or result.refined_media_spec):
             if not draft:
-                msg = (
-                    f"*Refined draft (no active draft to update):*\n\n"
-                    f"```\n{result.refined_content[:500]}\n```"
+                display_text = (
+                    result.refined_content[:500] if result.refined_content else result.reasoning
                 )
+                msg = f"*Refined draft (no active draft to update):*\n\n```\n{display_text}\n```"
                 _send(adapter, chat_id, msg)
                 return msg
 
@@ -653,23 +652,70 @@ def _handle_expert_escalation(
 
             conn = _get_conn()
             try:
-                old_content = draft.content
-                update_draft(conn, draft.id, content=result.refined_content)
+                if result.refined_content:
+                    old_content = draft.content
+                    update_draft(conn, draft.id, content=result.refined_content)
 
-                change = DraftChange(
-                    id=generate_id("change"),
-                    draft_id=draft.id,
-                    field="content",
-                    old_value=old_content[:200],
-                    new_value=result.refined_content[:200],
-                    changed_by="expert",
-                )
-                insert_draft_change(conn, change)
+                    change = DraftChange(
+                        id=generate_id("change"),
+                        draft_id=draft.id,
+                        field="content",
+                        old_value=old_content[:200],
+                        new_value=result.refined_content[:200],
+                        changed_by="expert",
+                    )
+                    insert_draft_change(conn, change)
 
-                msg = (
-                    f"Draft `{draft.id[:12]}` updated by Expert.\n\n"
-                    f"```\n{result.refined_content[:500]}\n```"
-                )
+                # If expert refined the media spec, update it and auto-regenerate
+                if result.refined_media_spec:
+                    import json as json_mod
+
+                    update_draft(conn, draft.id, media_spec=result.refined_media_spec)
+                    insert_draft_change(
+                        conn,
+                        DraftChange(
+                            id=generate_id("change"),
+                            draft_id=draft.id,
+                            field="media_spec",
+                            old_value=json_mod.dumps(draft.media_spec)[:200]
+                            if draft.media_spec
+                            else "null",
+                            new_value=json_mod.dumps(result.refined_media_spec)[:200],
+                            changed_by="expert",
+                        ),
+                    )
+
+                    # Auto-regenerate media with new spec
+                    if draft.media_type:
+                        try:
+                            from social_hook.drafting import _generate_media
+
+                            media_paths, _, _ = _generate_media(
+                                config,
+                                draft.media_type,
+                                result.refined_media_spec,
+                                project_config=None,
+                            )
+                            if media_paths:
+                                update_draft(
+                                    conn,
+                                    draft.id,
+                                    media_paths=media_paths,
+                                    media_spec_used=result.refined_media_spec,
+                                )
+                        except Exception as e:
+                            logger.warning(f"Auto-regeneration after expert refine failed: {e}")
+
+                parts = []
+                if result.refined_content:
+                    parts.append(f"```\n{result.refined_content[:500]}\n```")
+                if result.refined_media_spec:
+                    import json as json_mod
+
+                    parts.append(
+                        f"Media spec updated: {json_mod.dumps(result.refined_media_spec)[:200]}"
+                    )
+                msg = f"Draft `{draft.id[:12]}` updated by Expert.\n\n" + "\n".join(parts)
                 buttons = get_review_buttons_normalized(draft.id)
                 adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
                 return msg

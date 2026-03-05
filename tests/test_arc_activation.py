@@ -477,10 +477,8 @@ class TestDraftingArcContext:
     """Tests that draft_for_platforms() passes arc_context to drafter."""
 
     @patch("social_hook.drafting.calculate_optimal_time")
-    @patch("social_hook.drafting._generate_media", return_value=([], None, None))
     def test_arc_context_passed_when_arc_id_set(
         self,
-        mock_media,
         mock_schedule,
         temp_db,
     ):
@@ -584,10 +582,8 @@ class TestDraftingArcContext:
             assert isinstance(arc_ctx["posts"], list)
 
     @patch("social_hook.drafting.calculate_optimal_time")
-    @patch("social_hook.drafting._generate_media", return_value=([], None, None))
     def test_arc_context_none_when_no_arc_id(
         self,
-        mock_media,
         mock_schedule,
         temp_db,
     ):

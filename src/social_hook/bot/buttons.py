@@ -477,6 +477,13 @@ def btn_media_regen(
             _send(adapter, chat_id, "No media spec available for regeneration.")
             return
 
+        # Guard: refuse if spec unchanged since last generation
+        if draft.media_spec == draft.media_spec_used:
+            _send(
+                adapter, chat_id, "Media spec unchanged — edit the spec first before regenerating."
+            )
+            return
+
         api_key = None
         if draft.media_type == "nano_banana_pro":
             api_key = config.env.get("GEMINI_API_KEY") if config else None
@@ -506,7 +513,9 @@ def btn_media_regen(
 
         if result.success and result.file_path:
             old_paths = draft.media_paths
-            update_draft(conn, draft_id, media_paths=[result.file_path])
+            update_draft(
+                conn, draft_id, media_paths=[result.file_path], media_spec_used=draft.media_spec
+            )
 
             insert_draft_change(
                 conn,

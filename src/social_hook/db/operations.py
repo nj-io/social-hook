@@ -367,9 +367,9 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
     conn.execute(
         """
         INSERT INTO drafts (id, project_id, decision_id, platform, status, content,
-            media_paths, media_type, media_spec, suggested_time, scheduled_time,
+            media_paths, media_type, media_spec, media_spec_used, suggested_time, scheduled_time,
             reasoning, superseded_by, retry_count, last_error, is_intro, post_format, reference_post_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         draft.to_row(),
     )
@@ -396,6 +396,7 @@ def update_draft(
     media_paths: list[str] | None = None,
     media_type: str | None = None,
     media_spec: dict | None = None,
+    media_spec_used: dict | None = None,
     is_intro: bool | None = None,
     post_format: str | None = None,
     reference_post_id: str | None = None,
@@ -431,6 +432,9 @@ def update_draft(
     if media_spec is not None:
         updates.append("media_spec = ?")
         params.append(json.dumps(media_spec))
+    if media_spec_used is not None:
+        updates.append("media_spec_used = ?")
+        params.append(json.dumps(media_spec_used))
     if is_intro is not None:
         updates.append("is_intro = ?")
         params.append(1 if is_intro else 0)

@@ -178,7 +178,10 @@ def edit(
     draft_id: str = typer.Argument(..., help="Draft ID to edit"),
     content: str = typer.Option(..., "--content", "-c", help="New content"),
 ):
-    """Edit draft content."""
+    """Edit draft content.
+
+    Example: social-hook draft edit draft-abc123 --content "Updated post text here"
+    """
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
     from social_hook.models import DraftChange
@@ -250,7 +253,10 @@ def media_regen(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to regenerate media for"),
 ):
-    """Regenerate media for a draft."""
+    """Regenerate media for a draft using its stored media spec.
+
+    Example: social-hook draft media-regen draft-abc123
+    """
     from social_hook.adapters.registry import get_media_adapter
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
@@ -260,6 +266,9 @@ def media_regen(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
+        if draft.media_spec and draft.media_spec == draft.media_spec_used:
+            typer.echo("Media spec unchanged — edit the spec first (social-hook draft media-edit).")
+            raise typer.Exit(1)
         if not draft.media_type or not draft.media_spec:
             typer.echo("No media spec available for regeneration.")
             raise typer.Exit(1)
@@ -284,7 +293,9 @@ def media_regen(
 
         if result.success and result.file_path:
             old_paths = draft.media_paths
-            ops.update_draft(conn, draft_id, media_paths=[result.file_path])
+            ops.update_draft(
+                conn, draft_id, media_paths=[result.file_path], media_spec_used=draft.media_spec
+            )
             ops.insert_draft_change(
                 conn,
                 DraftChange(
@@ -310,7 +321,10 @@ def media_remove(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to remove media from"),
 ):
-    """Remove media from a draft."""
+    """Remove media from a draft.
+
+    Example: social-hook draft media-remove draft-abc123
+    """
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
     from social_hook.models import DraftChange
@@ -333,6 +347,49 @@ def media_remove(
         )
         ops.emit_data_event(conn, "draft", "media_removed", draft_id, draft.project_id)
         typer.echo(f"Media removed from draft {draft_id}.")
+    finally:
+        conn.close()
+
+
+@app.command("media-edit")
+def media_edit(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to edit media spec for"),
+    spec: str = typer.Option(..., "--spec", "-s", help="New media spec as JSON string"),
+):
+    """Edit the media spec for a draft.
+
+    Example: social-hook draft media-edit draft-abc123 --spec '{"code": "print(42)", "language": "python"}'
+    """
+    from social_hook.db import operations as ops
+    from social_hook.filesystem import generate_id
+    from social_hook.models import DraftChange
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+
+        try:
+            parsed_spec = json_mod.loads(spec)
+        except json_mod.JSONDecodeError as e:
+            typer.echo(f"Invalid JSON: {e}")
+            raise typer.Exit(1) from None
+
+        old_spec = draft.media_spec
+        ops.update_draft(conn, draft_id, media_spec=parsed_spec)
+        ops.insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft_id,
+                field="media_spec",
+                old_value=json_mod.dumps(old_spec)[:200] if old_spec else "null",
+                new_value=json_mod.dumps(parsed_spec)[:200],
+                changed_by="human",
+            ),
+        )
+        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
+        typer.echo(f"Draft {draft_id} media spec updated.")
     finally:
         conn.close()
 
@@ -385,7 +442,10 @@ def show(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to show"),
 ):
-    """Show full detail for a draft."""
+    """Show full detail for a draft including media spec and change history.
+
+    Example: social-hook draft show draft-abc123
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -416,6 +476,8 @@ def show(
             typer.echo(f"Media type: {draft.media_type}")
         if draft.media_paths:
             typer.echo(f"Media:      {', '.join(draft.media_paths)}")
+        if draft.media_spec:
+            typer.echo(f"Media spec: {json_mod.dumps(draft.media_spec, indent=2)}")
         if draft.last_error:
             typer.echo(f"Error:      {draft.last_error}")
         typer.echo(f"\nContent:\n{draft.content}")

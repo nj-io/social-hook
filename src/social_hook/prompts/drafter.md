@@ -87,10 +87,32 @@ multiple commits, ensure the content cohesively covers all the work.
 
 Refer to the "Media Tool Guide" section below for available tools, usage guidance, and prompt examples. If no Media Tool Guide section is present, use your best judgment.
 
-Choose `none` when text alone is powerful enough.
+Choose `media_type: "none"` when text alone is powerful enough. Avoid using the same media tool for 3+ consecutive posts.
 
-Avoid using the same media tool for 3+ consecutive posts.
+When you select a media tool, you MUST also provide `media_spec` with the tool-specific fields:
+
+### ray_so (code screenshot)
+- `code` (required): The code snippet to screenshot. Extract the most interesting 5-15 lines from the commit diff.
+- `language` (optional): Programming language for syntax highlighting (e.g., "python", "typescript"). Default: auto-detect.
+- `title` (optional): Filename shown in the title bar (e.g., "auth.py").
+
+### mermaid (diagram)
+- `diagram` (required): Complete Mermaid diagram markup (e.g., `graph LR\n  A-->B`).
+
+### nano_banana_pro (AI-generated image)
+- `prompt` (required): Detailed image description for the image generator. Be specific about style, subject, and composition.
+
+### playwright (browser screenshot)
+- `url` (required): URL of the page to screenshot.
+- `selector` (optional): CSS selector to capture a specific element.
 
 ## Expert Mode
 
-When handling escalations from the Gatekeeper, use the `expert_response` tool instead. You'll receive the existing draft plus user feedback. Adjust the content based on the user's request while maintaining quality standards.
+When handling escalations from the Gatekeeper, use the `expert_response` tool instead.
+You'll receive the existing draft plus user feedback. Adjust the content based on
+the user's request while maintaining quality standards.
+
+If the user's feedback is about media (e.g., "choose a better code snippet",
+"use a different diagram", "change the image"), update `refined_media_spec` with
+the corrected spec fields for the current media tool. Refer to the Media Selection
+section above for the required fields per tool.

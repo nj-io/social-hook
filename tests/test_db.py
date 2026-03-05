@@ -125,9 +125,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 13."""
+        """Check schema version returns 14."""
         version = get_schema_version(temp_db)
-        assert version == 13
+        assert version == 14
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent.
@@ -1295,9 +1295,9 @@ class TestDraftMediaFields:
             media_spec={"prompt": "test prompt", "width": 1024},
         )
 
-        # Verify to_row returns exactly 18 elements
+        # Verify to_row returns exactly 19 elements
         row = draft.to_row()
-        assert len(row) == 18
+        assert len(row) == 19
 
         # Verify round-trip via to_dict/from_dict
         d = draft.to_dict()

@@ -1502,10 +1502,9 @@ class TestGenerateMediaPerTool:
         cfg.media_generation.enabled = True
         cfg.media_generation.tools = {"mermaid": False, "nano_banana_pro": True}
 
-        evaluation = MagicMock()
-        evaluation.media_tool = "mermaid"
-
-        paths, mtype, spec = _generate_media(cfg, evaluation, dry_run=False)
+        paths, mtype, spec = _generate_media(
+            cfg, "mermaid", {"diagram": "graph LR\n  A-->B"}, dry_run=False
+        )
         assert paths == []
         assert mtype is None
         assert spec is None
@@ -1518,10 +1517,7 @@ class TestGenerateMediaPerTool:
         cfg.media_generation.enabled = False
         cfg.media_generation.tools = {"mermaid": True}
 
-        evaluation = MagicMock()
-        evaluation.media_tool = "mermaid"
-
-        paths, mtype, spec = _generate_media(cfg, evaluation, dry_run=False)
+        paths, mtype, spec = _generate_media(cfg, "ray_so", {"code": "x=1"}, dry_run=False)
         assert paths == []
         assert mtype is None
         assert spec is None
@@ -1534,17 +1530,140 @@ class TestGenerateMediaPerTool:
         cfg.media_generation.enabled = True
         cfg.media_generation.tools = {"mermaid": True}
 
-        evaluation = MagicMock()
-        evaluation.media_tool = "mermaid"
-
         project_config = MagicMock()
         guidance = MagicMock()
         guidance.enabled = False
         project_config.media_guidance.get.return_value = guidance
 
         paths, mtype, spec = _generate_media(
-            cfg, evaluation, dry_run=False, project_config=project_config
+            cfg,
+            "mermaid",
+            {"diagram": "graph LR\n  A-->B"},
+            dry_run=False,
+            project_config=project_config,
         )
+        assert paths == []
+        assert mtype is None
+        assert spec is None
+
+    @patch("social_hook.adapters.registry.get_media_adapter")
+    def test_rayso_valid_spec_calls_adapter(self, mock_get_adapter):
+        """Valid ray_so spec passes through to adapter and returns media path."""
+        from social_hook.trigger import _generate_media
+
+        cfg = MagicMock()
+        cfg.media_generation.enabled = True
+        cfg.media_generation.tools = {"ray_so": True}
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate.return_value = MagicMock(
+            success=True, file_path="/tmp/media/code.png"
+        )
+        mock_get_adapter.return_value = mock_adapter
+
+        spec = {"code": "print('hello')", "language": "python", "title": "example.py"}
+        paths, mtype, returned_spec = _generate_media(cfg, "ray_so", spec, dry_run=False)
+
+        assert paths == ["/tmp/media/code.png"]
+        assert mtype == "ray_so"
+        mock_adapter.generate.assert_called_once()
+        call_kwargs = mock_adapter.generate.call_args
+        assert call_kwargs[1]["spec"] == spec
+
+    @patch("social_hook.adapters.registry.get_media_adapter")
+    def test_mermaid_valid_spec_calls_adapter(self, mock_get_adapter):
+        """Valid mermaid spec passes through to adapter and returns media path."""
+        from social_hook.trigger import _generate_media
+
+        cfg = MagicMock()
+        cfg.media_generation.enabled = True
+        cfg.media_generation.tools = {"mermaid": True}
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate.return_value = MagicMock(
+            success=True, file_path="/tmp/media/diagram.png"
+        )
+        mock_get_adapter.return_value = mock_adapter
+
+        spec = {"diagram": "graph LR\n  A-->B"}
+        paths, mtype, returned_spec = _generate_media(cfg, "mermaid", spec, dry_run=False)
+
+        assert paths == ["/tmp/media/diagram.png"]
+        assert mtype == "mermaid"
+        mock_adapter.generate.assert_called_once()
+        call_kwargs = mock_adapter.generate.call_args
+        assert call_kwargs[1]["spec"] == spec
+
+    @patch("social_hook.adapters.registry.get_media_adapter")
+    def test_nanabananapro_valid_spec_calls_adapter(self, mock_get_adapter):
+        """Valid nano_banana_pro spec passes through to adapter and returns media path."""
+        from social_hook.trigger import _generate_media
+
+        cfg = MagicMock()
+        cfg.media_generation.enabled = True
+        cfg.media_generation.tools = {"nano_banana_pro": True}
+        cfg.env.get.return_value = "fake-gemini-key"
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate.return_value = MagicMock(
+            success=True, file_path="/tmp/media/visual.png"
+        )
+        mock_get_adapter.return_value = mock_adapter
+
+        spec = {"prompt": "abstract code visualization"}
+        paths, mtype, returned_spec = _generate_media(cfg, "nano_banana_pro", spec, dry_run=False)
+
+        assert paths == ["/tmp/media/visual.png"]
+        assert mtype == "nano_banana_pro"
+        mock_adapter.generate.assert_called_once()
+        mock_get_adapter.assert_called_once_with("nano_banana_pro", api_key="fake-gemini-key")
+
+    @patch("social_hook.adapters.registry.get_media_adapter")
+    def test_playwright_valid_spec_calls_adapter(self, mock_get_adapter):
+        """Valid playwright spec passes through to adapter and returns media path."""
+        from social_hook.trigger import _generate_media
+
+        cfg = MagicMock()
+        cfg.media_generation.enabled = True
+        cfg.media_generation.tools = {"playwright": True}
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate.return_value = MagicMock(
+            success=True, file_path="/tmp/media/screenshot.png"
+        )
+        mock_get_adapter.return_value = mock_adapter
+
+        spec = {"url": "https://example.com", "selector": "#main"}
+        paths, mtype, returned_spec = _generate_media(cfg, "playwright", spec, dry_run=False)
+
+        assert paths == ["/tmp/media/screenshot.png"]
+        assert mtype == "playwright"
+        mock_adapter.generate.assert_called_once()
+        call_kwargs = mock_adapter.generate.call_args
+        assert call_kwargs[1]["spec"] == spec
+
+    def test_empty_spec_returns_empty(self):
+        """Empty media_spec_dict returns ([], None, None) as defense-in-depth."""
+        from social_hook.trigger import _generate_media
+
+        cfg = MagicMock()
+        cfg.media_generation.enabled = True
+        cfg.media_generation.tools = {"ray_so": True}
+
+        paths, mtype, spec = _generate_media(cfg, "ray_so", {}, dry_run=False)
+        assert paths == []
+        assert mtype is None
+        assert spec is None
+
+    def test_none_spec_returns_empty(self):
+        """None media_spec_dict returns ([], None, None) as defense-in-depth."""
+        from social_hook.trigger import _generate_media
+
+        cfg = MagicMock()
+        cfg.media_generation.enabled = True
+        cfg.media_generation.tools = {"ray_so": True}
+
+        paths, mtype, spec = _generate_media(cfg, "ray_so", None, dry_run=False)
         assert paths == []
         assert mtype is None
         assert spec is None

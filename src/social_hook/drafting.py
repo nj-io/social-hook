@@ -137,14 +137,9 @@ def draft_for_platforms(
 
     drafter = Drafter(drafter_client)
 
-    # 4. Generate media once (shared across platforms)
-    media_paths, media_type_str, media_spec_dict = _generate_media(
-        config,
-        evaluation,
-        dry_run=dry_run,
-        verbose=verbose,
-        project_config=project_config,
-    )
+    # 4. Media will be generated after first successful draft (drafter produces spec)
+    media_paths, media_type_str, media_spec_dict = [], None, None
+    media_generated = False
 
     # 4b. Assemble arc context if this is an arc post
     arc_context = None
@@ -181,6 +176,30 @@ def draft_for_platforms(
 
             # Override platform: LLM may return any string for unconstrained field
             draft_result.platform = pname
+
+            # Generate media once after first successful draft
+            if not media_generated:
+                _mt = getattr(draft_result, "media_type", None)
+                if _mt is not None and hasattr(_mt, "value"):
+                    _mt = _mt.value
+                _ms = getattr(draft_result, "media_spec", None)
+                if _mt and _mt != "none":
+                    if not _ms:
+                        logger.warning(
+                            "Drafter selected media_type=%s but media_spec is empty — skipping media generation",
+                            _mt,
+                        )
+                        _mt = None
+                    else:
+                        media_paths, media_type_str, media_spec_dict = _generate_media(
+                            config,
+                            _mt,
+                            _ms,
+                            dry_run=dry_run,
+                            verbose=verbose,
+                            project_config=project_config,
+                        )
+                media_generated = True
 
             use_thread = _needs_thread(
                 draft_result,
@@ -236,6 +255,7 @@ def draft_for_platforms(
                 media_paths=media_paths,
                 media_type=media_type_str,
                 media_spec=media_spec_dict,
+                media_spec_used=media_spec_dict if media_paths else None,
                 suggested_time=schedule.datetime,
                 reasoning=draft_reasoning,
             )
@@ -277,15 +297,18 @@ def draft_for_platforms(
     return results
 
 
-def _generate_media(config, evaluation, dry_run=False, verbose=False, project_config=None):
-    """Generate media based on evaluator's recommendation.
+def _generate_media(
+    config, media_type_str, media_spec_dict, dry_run=False, verbose=False, project_config=None
+):
+    """Generate media using the drafter's spec.
 
-    Called ONCE before the per-platform drafting loop.
-    Uses only evaluation.media_tool (not draft_result).
+    Called ONCE after the first successful draft in the per-platform loop.
+    Callers validate that media_spec_dict is non-empty before calling.
 
     Args:
         config: Global Config object.
-        evaluation: Evaluator result.
+        media_type_str: Media tool name (e.g., "ray_so", "mermaid").
+        media_spec_dict: Spec dict with tool-specific fields.
         dry_run: If True, skip real generation.
         verbose: If True, print details.
         project_config: Optional ProjectConfig for per-tool overrides.
@@ -293,60 +316,63 @@ def _generate_media(config, evaluation, dry_run=False, verbose=False, project_co
     Returns:
         Tuple of (media_paths, media_type_str, media_spec_dict)
     """
+    if not config.media_generation.enabled:
+        if verbose:
+            print("Media generation disabled globally, skipping")
+        return [], None, None
+
+    if not media_type_str or media_type_str == "none":
+        return [], None, None
+
+    # Per-tool check: global toggle (config.yaml)
+    tool_enabled = config.media_generation.tools.get(media_type_str, True)
+    # Project-level override (content-config.yaml) -- can only DISABLE, not re-enable
+    if tool_enabled:
+        guidance = project_config.media_guidance.get(media_type_str) if project_config else None
+        if guidance and guidance.enabled is not None:
+            tool_enabled = guidance.enabled
+    if not tool_enabled:
+        if verbose:
+            print(f"Media tool {media_type_str} is disabled, skipping")
+        return [], None, None
+
+    # Defense-in-depth: reject empty spec even if caller didn't validate
+    if not media_spec_dict:
+        logger.warning(
+            "media_spec_dict is empty for media_type=%s — skipping media generation",
+            media_type_str,
+        )
+        return [], None, None
+
     media_paths = []
-    media_type_str = None
-    media_spec_dict = None
 
-    _evaluator_media = getattr(evaluation, "media_tool", None) and evaluation.media_tool != "none"
+    try:
+        from social_hook.adapters.registry import get_media_adapter
 
-    if config.media_generation.enabled and _evaluator_media:
-        media_type_str = evaluation.media_tool
-        # Handle enum values
-        if hasattr(media_type_str, "value"):
-            media_type_str = media_type_str.value
+        api_key = None
+        if media_type_str == "nano_banana_pro":
+            api_key = config.env.get("GEMINI_API_KEY")
+            if not api_key:
+                logger.warning("nano_banana_pro requested but GEMINI_API_KEY not set")
+                return [], None, None
 
-        # Per-tool check: global toggle (config.yaml)
-        tool_enabled = config.media_generation.tools.get(media_type_str, True)
-        # Project-level override (content-config.yaml) -- can only DISABLE, not re-enable
-        if tool_enabled:
-            guidance = project_config.media_guidance.get(media_type_str) if project_config else None
-            if guidance and guidance.enabled is not None:
-                tool_enabled = guidance.enabled
-        if not tool_enabled:
-            if verbose:
-                print(f"Media tool {media_type_str} is disabled, skipping")
-            return [], None, None
-
-        media_spec_dict = {}
-
-        try:
-            from social_hook.adapters.registry import get_media_adapter
-
-            api_key = None
-            if media_type_str == "nano_banana_pro":
-                api_key = config.env.get("GEMINI_API_KEY")
-                if not api_key:
-                    logger.warning("nano_banana_pro requested but GEMINI_API_KEY not set")
-                    media_type_str = None
-
-            if media_type_str:
-                media_adapter = get_media_adapter(media_type_str, api_key=api_key)
-                if media_adapter:
-                    draft_id = generate_id("draft")
-                    output_dir = str(get_base_path() / "media-cache" / draft_id)
-                    result = media_adapter.generate(
-                        spec=media_spec_dict,
-                        output_dir=output_dir,
-                        dry_run=dry_run,
-                    )
-                    if result.success and result.file_path:
-                        media_paths = [result.file_path]
-                        if verbose:
-                            print(f"Media generated: {result.file_path}")
-                    else:
-                        logger.warning(f"Media generation failed: {result.error}")
-        except Exception as e:
-            logger.warning(f"Media generation error (non-fatal): {e}")
+        media_adapter = get_media_adapter(media_type_str, api_key=api_key)
+        if media_adapter:
+            draft_id = generate_id("draft")
+            output_dir = str(get_base_path() / "media-cache" / draft_id)
+            result = media_adapter.generate(
+                spec=media_spec_dict,
+                output_dir=output_dir,
+                dry_run=dry_run,
+            )
+            if result.success and result.file_path:
+                media_paths = [result.file_path]
+                if verbose:
+                    print(f"Media generated: {result.file_path}")
+            else:
+                logger.warning(f"Media generation failed: {result.error}")
+    except Exception as e:
+        logger.warning(f"Media generation error (non-fatal): {e}")
 
     return media_paths, media_type_str, media_spec_dict
 

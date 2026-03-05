@@ -327,6 +327,7 @@ class Draft:
     media_paths: list[str] = field(default_factory=list)
     media_type: str | None = None
     media_spec: dict | None = None
+    media_spec_used: dict | None = None
     suggested_time: datetime | None = None
     scheduled_time: datetime | None = None
     reasoning: str | None = None
@@ -355,6 +356,7 @@ class Draft:
             "media_paths": self.media_paths,
             "media_type": self.media_type,
             "media_spec": self.media_spec,
+            "media_spec_used": self.media_spec_used,
             "suggested_time": _to_iso(self.suggested_time),
             "scheduled_time": _to_iso(self.scheduled_time),
             "reasoning": self.reasoning,
@@ -380,6 +382,11 @@ class Draft:
             media_spec = json.loads(media_spec_raw) if media_spec_raw else None
         else:
             media_spec = media_spec_raw
+        media_spec_used_raw = d.get("media_spec_used")
+        if isinstance(media_spec_used_raw, str):
+            media_spec_used = json.loads(media_spec_used_raw) if media_spec_used_raw else None
+        else:
+            media_spec_used = media_spec_used_raw
         return cls(
             id=d["id"],
             project_id=d["project_id"],
@@ -390,6 +397,7 @@ class Draft:
             media_paths=media_paths,
             media_type=d.get("media_type"),
             media_spec=media_spec,
+            media_spec_used=media_spec_used,
             suggested_time=_from_iso(d.get("suggested_time")),
             scheduled_time=_from_iso(d.get("scheduled_time")),
             reasoning=d.get("reasoning"),
@@ -404,7 +412,7 @@ class Draft:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (18 columns)."""
+        """Return tuple for INSERT (19 columns)."""
         import json
 
         return (
@@ -417,6 +425,7 @@ class Draft:
             json.dumps(self.media_paths),
             self.media_type,
             json.dumps(self.media_spec) if self.media_spec else None,
+            json.dumps(self.media_spec_used) if self.media_spec_used else None,
             _to_iso(self.suggested_time),
             _to_iso(self.scheduled_time),
             self.reasoning,

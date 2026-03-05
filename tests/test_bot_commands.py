@@ -1201,6 +1201,7 @@ class TestExpertRefineSaves:
         expert_result = MagicMock()
         expert_result.action.value = "refine_draft"
         expert_result.refined_content = "Punchy improved content"
+        expert_result.refined_media_spec = None
         expert_result.context_note = None
         expert_result.answer = None
         expert_result.reasoning = "Made it punchier"

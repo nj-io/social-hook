@@ -565,12 +565,31 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
         raise HTTPException(status_code=400, detail="media_spec is required")
     conn = _get_conn()
     try:
-        updated = ops.update_draft(conn, draft_id, media_spec=media_spec)
-        if not updated:
+        # Get old spec for audit trail
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
             raise HTTPException(status_code=404, detail="Draft not found")
-        row = conn.execute("SELECT project_id FROM drafts WHERE id = ?", (draft_id,)).fetchone()
-        if row:
-            ops.emit_data_event(conn, "draft", "updated", draft_id, row["project_id"])
+        old_spec = draft.media_spec
+
+        ops.update_draft(conn, draft_id, media_spec=media_spec)
+
+        # Audit: create DraftChange record
+        from social_hook.filesystem import generate_id
+        from social_hook.models import DraftChange
+
+        ops.insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft_id,
+                field="media_spec",
+                old_value=json.dumps(old_spec)[:200] if old_spec else "null",
+                new_value=json.dumps(media_spec)[:200],
+                changed_by="human",
+            ),
+        )
+
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
         return {"status": "updated"}
     finally:
         conn.close()

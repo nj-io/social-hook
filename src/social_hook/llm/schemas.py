@@ -280,7 +280,12 @@ class CreateDraftInput(BaseModel):
                     },
                     "media_spec": {
                         "type": "object",
-                        "description": "Specification for media generation",
+                        "description": (
+                            "Specification for media generation. Required when media_type is not 'none'. "
+                            "Fields depend on tool: ray_so needs {code, language?, title?}, "
+                            "mermaid needs {diagram}, nano_banana_pro needs {prompt}, "
+                            "playwright needs {url, selector?}."
+                        ),
                     },
                     "reasoning": {
                         "type": "string",
@@ -455,6 +460,7 @@ class ExpertResponseInput(BaseModel):
     action: ExpertAction
     reasoning: str
     refined_content: str | None = None
+    refined_media_spec: dict[str, Any] | None = None
     answer: str | None = None
     context_note: str | None = None
 
@@ -474,6 +480,16 @@ class ExpertResponseInput(BaseModel):
                     "refined_content": {
                         "type": "string",
                         "description": "For refine_draft: the new draft content",
+                    },
+                    "refined_media_spec": {
+                        "type": "object",
+                        "description": (
+                            "For refine_draft: updated media spec. Use when user feedback "
+                            "is about the media (code snippet, diagram, image). "
+                            "Fields depend on tool: ray_so needs {code, language?, title?}, "
+                            "mermaid needs {diagram}, nano_banana_pro needs {prompt}, "
+                            "playwright needs {url, selector?}."
+                        ),
                     },
                     "answer": {
                         "type": "string",

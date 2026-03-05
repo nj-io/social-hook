@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     media_paths     TEXT NOT NULL DEFAULT '[]',
     media_type      TEXT,
     media_spec      TEXT DEFAULT '{}',
+    media_spec_used TEXT,
     suggested_time  TEXT,
     scheduled_time  TEXT,
     reasoning       TEXT,
