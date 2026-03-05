@@ -48,10 +48,12 @@ slack = ["slack-bolt>=1.18.0"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "pytest-asyncio>=0.21",
     "ruff>=0.15,<0.16",
     "mypy>=1.15,<1.16",
     "pre-commit>=3.0",
     "types-PyYAML>=6.0",
+    "types-requests>=2.28",
 ]
 
 [project.scripts]

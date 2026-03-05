@@ -81,7 +81,7 @@ class TestParseCommitInfo:
         assert commit.timestamp is not None
         # ISO 8601 with timezone offset
         assert "T" in commit.timestamp
-        assert "+" in commit.timestamp or "-" in commit.timestamp[11:]
+        assert "+" in commit.timestamp or "Z" in commit.timestamp or "-" in commit.timestamp[11:]
 
     def test_first_commit_has_no_parent_timestamp(self, temp_dir):
         """First commit in a repo has parent_timestamp=None."""
