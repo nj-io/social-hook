@@ -63,7 +63,7 @@ class TestCalculateOptimalTime:
                 id=generate_id("decision"),
                 project_id=project.id,
                 commit_hash=f"hash{i}",
-                decision="post_worthy",
+                decision="draft",
                 reasoning="test",
             )
             insert_decision(temp_db, d)
@@ -135,7 +135,7 @@ class TestCalculateOptimalTime:
                 id=generate_id("decision"),
                 project_id=p2.id,
                 commit_hash=f"hash{i}",
-                decision="post_worthy",
+                decision="draft",
                 reasoning="test",
             )
             insert_decision(temp_db, d)
@@ -185,7 +185,7 @@ class TestPlatformFilter:
                 id=generate_id("decision"),
                 project_id=project.id,
                 commit_hash=f"hash{i}",
-                decision="post_worthy",
+                decision="draft",
                 reasoning="test",
             )
             insert_decision(temp_db, d)
@@ -251,7 +251,7 @@ class TestMaxPerWeekDeferral:
                 id=generate_id("decision"),
                 project_id=project.id,
                 commit_hash=f"hash{i}",
-                decision="post_worthy",
+                decision="draft",
                 reasoning="test",
             )
             insert_decision(temp_db, d)

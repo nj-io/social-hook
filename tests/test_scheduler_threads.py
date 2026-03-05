@@ -52,7 +52,7 @@ class TestPostDraftThread:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -157,7 +157,7 @@ class TestPostDraftThread:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -207,7 +207,7 @@ class TestPostDraftThread:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -262,7 +262,7 @@ class TestPostDraftThread:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -307,7 +307,7 @@ class TestUpdateDraftTweet:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="t",
         )
         insert_decision(temp_db, decision)
@@ -348,7 +348,7 @@ class TestUpdateDraftTweet:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="t",
         )
         insert_decision(temp_db, decision)

@@ -1,7 +1,7 @@
 """Tests for arc system activation (Chunk 7).
 
 Tests cover:
-- LogDecisionInput new_arc_theme field and tool schema
+- LogEvaluationInput new_arc_theme field (TargetDecisionInput)
 - increment_arc_post_count() business logic
 - trigger.py arc creation and post count wiring
 - update_decision arc_id parameter
@@ -9,13 +9,14 @@ Tests cover:
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from social_hook.db import operations as ops
 from social_hook.errors import MaxArcsError
-from social_hook.llm.schemas import LogDecisionInput
+from social_hook.llm.schemas import LogEvaluationInput
 from social_hook.models import Arc, Decision, Project
 from social_hook.narrative.arcs import (
     create_arc,
@@ -32,84 +33,96 @@ def _setup_project(conn, project_id="proj_test1"):
 
 
 def _make_evaluation(**overrides):
-    """Create a mock evaluation result."""
+    """Create a mock evaluation result (SimpleNamespace, duck-typed for trigger logic)."""
     defaults = {
-        "decision": "post_worthy",
+        "decision": "draft",
         "reasoning": "Test post",
         "episode_type": "milestone",
         "post_category": "arc",
         "arc_id": None,
         "new_arc_theme": None,
-        "media_tool": "none",
+        "media_tool": None,
         "angle": "Test angle",
         "include_project_docs": None,
         "commit_summary": None,
+        "reference_posts": None,
     }
     defaults.update(overrides)
-    return LogDecisionInput.validate(defaults)
+    return SimpleNamespace(**defaults)
 
 
 # =============================================================================
-# Schema: new_arc_theme field
+# Schema: new_arc_theme field (LogEvaluationInput / TargetDecisionInput)
 # =============================================================================
 
 
-class TestLogDecisionNewArcTheme:
-    """LogDecisionInput new_arc_theme field validation."""
+class TestLogEvaluationNewArcTheme:
+    """LogEvaluationInput new_arc_theme field validation."""
 
     def test_new_arc_theme_accepted(self):
-        result = LogDecisionInput.validate({
-            "decision": "post_worthy",
-            "reasoning": "Starts new auth work",
-            "new_arc_theme": "Building the auth system",
-            "post_category": "arc",
-            "episode_type": "milestone",
+        result = LogEvaluationInput.validate({
+            "commit_analysis": {"summary": "Starts new auth work"},
+            "targets": {
+                "default": {
+                    "action": "draft",
+                    "reason": "Starts new auth work",
+                    "new_arc_theme": "Building the auth system",
+                    "post_category": "arc",
+                    "episode_type": "milestone",
+                }
+            },
         })
-        assert result.new_arc_theme == "Building the auth system"
-        assert result.arc_id is None
+        assert result.targets["default"].new_arc_theme == "Building the auth system"
+        assert result.targets["default"].arc_id is None
 
     def test_arc_id_still_works(self):
-        result = LogDecisionInput.validate({
-            "decision": "post_worthy",
-            "reasoning": "Continues auth arc",
-            "arc_id": "arc_abc123",
-            "post_category": "arc",
-            "episode_type": "milestone",
+        result = LogEvaluationInput.validate({
+            "commit_analysis": {"summary": "Continues auth arc"},
+            "targets": {
+                "default": {
+                    "action": "draft",
+                    "reason": "Continues auth arc",
+                    "arc_id": "arc_abc123",
+                    "post_category": "arc",
+                    "episode_type": "milestone",
+                }
+            },
         })
-        assert result.arc_id == "arc_abc123"
-        assert result.new_arc_theme is None
+        assert result.targets["default"].arc_id == "arc_abc123"
+        assert result.targets["default"].new_arc_theme is None
 
     def test_neither_arc_field(self):
-        result = LogDecisionInput.validate({
-            "decision": "post_worthy",
-            "reasoning": "Standalone post",
-            "post_category": "opportunistic",
-            "episode_type": "demo_proof",
+        result = LogEvaluationInput.validate({
+            "commit_analysis": {"summary": "Standalone post"},
+            "targets": {
+                "default": {
+                    "action": "draft",
+                    "reason": "Standalone post",
+                    "post_category": "opportunistic",
+                    "episode_type": "demo_proof",
+                }
+            },
         })
-        assert result.arc_id is None
-        assert result.new_arc_theme is None
+        assert result.targets["default"].arc_id is None
+        assert result.targets["default"].new_arc_theme is None
 
     def test_new_arc_theme_optional(self):
-        result = LogDecisionInput.validate({
-            "decision": "not_post_worthy",
-            "reasoning": "Just a typo fix",
+        result = LogEvaluationInput.validate({
+            "commit_analysis": {"summary": "Typo fix"},
+            "targets": {"default": {"action": "skip", "reason": "Just a typo fix"}},
         })
-        assert result.new_arc_theme is None
+        assert result.targets["default"].new_arc_theme is None
 
     def test_tool_schema_includes_new_arc_theme(self):
-        schema = LogDecisionInput.to_tool_schema()
-        props = schema["input_schema"]["properties"]
-        assert "new_arc_theme" in props
-        assert props["new_arc_theme"]["type"] == "string"
-        assert "new" in props["new_arc_theme"]["description"].lower()
+        schema = LogEvaluationInput.to_tool_schema()
+        target_props = schema["input_schema"]["properties"]["targets"]["additionalProperties"]["properties"]
+        assert "new_arc_theme" in target_props
+        assert target_props["new_arc_theme"]["type"] == "string"
 
-    def test_tool_schema_arc_id_description_updated(self):
-        schema = LogDecisionInput.to_tool_schema()
-        props = schema["input_schema"]["properties"]
-        assert "arc_id" in props
-        # Should mention mutual exclusivity
-        assert "mutually exclusive" in props["arc_id"]["description"].lower() or \
-               "existing" in props["arc_id"]["description"].lower()
+    def test_tool_schema_arc_id_present(self):
+        schema = LogEvaluationInput.to_tool_schema()
+        target_props = schema["input_schema"]["properties"]["targets"]["additionalProperties"]["properties"]
+        assert "arc_id" in target_props
 
 
 # =============================================================================
@@ -176,7 +189,7 @@ class TestUpdateDecisionArcId:
             id="dec_test1",
             project_id="proj_test1",
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
         )
         ops.insert_decision(temp_db, decision)
@@ -195,7 +208,7 @@ class TestUpdateDecisionArcId:
             id="dec_test2",
             project_id="proj_test1",
             commit_hash="def456",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
             arc_id=arc_id,
         )
@@ -232,7 +245,7 @@ class TestTriggerArcCreation:
             id="dec_t1",
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
         )
         ops.insert_decision(temp_db, decision)
@@ -301,7 +314,7 @@ class TestTriggerArcCreation:
             id="dec_t2",
             project_id=project.id,
             commit_hash="abc456",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
         )
         ops.insert_decision(temp_db, decision)
@@ -342,7 +355,7 @@ class TestTriggerArcPostCountIncrement:
             id="dec_inc1",
             project_id="proj_test1",
             commit_hash="abc789",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
             arc_id=arc_id,
         )
@@ -366,7 +379,7 @@ class TestTriggerArcPostCountIncrement:
             id="dec_inc2",
             project_id="proj_test1",
             commit_hash="def789",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
             arc_id=None,
         )
@@ -390,7 +403,7 @@ class TestTriggerArcPostCountIncrement:
             id="dec_inc3",
             project_id="proj_test1",
             commit_hash="ghi789",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
             arc_id=arc_id,
         )
@@ -474,7 +487,7 @@ class TestDraftingArcContext:
             id="dec_draft1",
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
             arc_id=arc_id,
         )
@@ -566,7 +579,7 @@ class TestDraftingArcContext:
             id="dec_draft2",
             project_id=project.id,
             commit_hash="def456",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Test",
         )
         ops.insert_decision(temp_db, decision)

@@ -114,7 +114,7 @@ def _create_test_draft(conn, status="draft"):
         id=generate_id("decision"),
         project_id=project.id,
         commit_hash="abc",
-        decision="post_worthy",
+        decision="draft",
         reasoning="test",
     )
     insert_decision(conn, decision)

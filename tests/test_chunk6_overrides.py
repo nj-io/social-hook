@@ -195,7 +195,7 @@ def client(tmp_env):
         yield TestClient(app)
 
 
-def _seed_project_and_decision(db_path, decision="post_worthy"):
+def _seed_project_and_decision(db_path, decision="draft"):
     """Seed a project and a decision."""
     conn = sqlite3.connect(str(db_path))
     conn.execute(

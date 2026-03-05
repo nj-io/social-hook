@@ -1,6 +1,7 @@
 """Platform adapters for social media posting."""
 
 from social_hook.adapters.platform.base import PlatformAdapter
+from social_hook.adapters.platform.factory import create_adapter
 
 # Lazy imports to avoid requiring all dependencies at import time
 # Import XAdapter or LinkedInAdapter directly when needed:
@@ -9,4 +10,5 @@ from social_hook.adapters.platform.base import PlatformAdapter
 
 __all__ = [
     "PlatformAdapter",
+    "create_adapter",
 ]

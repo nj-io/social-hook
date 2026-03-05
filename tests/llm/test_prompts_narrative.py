@@ -61,7 +61,7 @@ def sample_project_context():
         recent_decisions=[
             Decision(
                 id="dec_1", project_id="proj_test1", commit_hash="prev123",
-                decision="post_worthy", reasoning="Added logging system",
+                decision="draft", reasoning="Added logging system",
             ),
         ],
         recent_posts=[
@@ -297,7 +297,7 @@ class TestDrafterPromptNarrative:
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
         decision = Decision(
             id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Added auth",
+            decision="draft", reasoning="Added auth",
         )
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
@@ -309,7 +309,7 @@ class TestDrafterPromptNarrative:
         sample_project_context.session_narratives = []
         decision = Decision(
             id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Added auth",
+            decision="draft", reasoning="Added auth",
         )
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
@@ -321,7 +321,7 @@ class TestDrafterPromptNarrative:
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
         decision = Decision(
             id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Added auth",
+            decision="draft", reasoning="Added auth",
         )
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
@@ -333,7 +333,7 @@ class TestDrafterPromptNarrative:
 
     def test_dict_decision_with_narratives(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
-        decision = {"decision": "post_worthy", "reasoning": "Test"}
+        decision = {"decision": "draft", "reasoning": "Test"}
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
             [], sample_commit,

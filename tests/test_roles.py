@@ -1,6 +1,7 @@
 """Tests for LLM agent roles: Evaluator, Drafter, Gatekeeper, Expert (T13-T16)."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,7 +18,7 @@ from social_hook.llm.schemas import (
     CreateDraftInput,
     ExpertResponseInput,
     GatekeeperOperation,
-    LogDecisionInput,
+    LogEvaluationInput,
     RouteAction,
     RouteActionInput,
 )
@@ -145,12 +146,17 @@ class TestEvaluator:
     def test_evaluate_post_worthy(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_decision", {
-            "decision": "post_worthy",
-            "reasoning": "Major new feature",
-            "episode_type": "milestone",
-            "post_category": "opportunistic",
-            "media_tool": "ray_so",
+        mock_client.complete.return_value = _mock_response("log_evaluation", {
+            "commit_analysis": {"summary": "Added authentication"},
+            "targets": {
+                "default": {
+                    "action": "draft",
+                    "reason": "Major new feature",
+                    "episode_type": "milestone",
+                    "post_category": "opportunistic",
+                    "media_tool": "ray_so",
+                },
+            },
         })
 
         with patch("social_hook.llm.prompts.Path.home",
@@ -158,18 +164,23 @@ class TestEvaluator:
             evaluator = Evaluator(mock_client)
             result = evaluator.evaluate(sample_commit, sample_context, mock_db)
 
-        assert isinstance(result, LogDecisionInput)
-        assert result.decision.value == "post_worthy"
-        assert result.episode_type.value == "milestone"
-        assert result.post_category.value == "opportunistic"
+        assert isinstance(result, LogEvaluationInput)
+        assert result.targets["default"].action.value == "draft"
+        assert result.targets["default"].episode_type.value == "milestone"
+        assert result.targets["default"].post_category.value == "opportunistic"
         mock_client.complete.assert_called_once()
 
     def test_evaluate_not_post_worthy(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_decision", {
-            "decision": "not_post_worthy",
-            "reasoning": "Minor formatting fix",
+        mock_client.complete.return_value = _mock_response("log_evaluation", {
+            "commit_analysis": {"summary": "Minor formatting fix"},
+            "targets": {
+                "default": {
+                    "action": "skip",
+                    "reason": "Minor formatting fix",
+                },
+            },
         })
 
         with patch("social_hook.llm.prompts.Path.home",
@@ -177,15 +188,20 @@ class TestEvaluator:
             evaluator = Evaluator(mock_client)
             result = evaluator.evaluate(sample_commit, sample_context, mock_db)
 
-        assert result.decision.value == "not_post_worthy"
-        assert "formatting" in result.reasoning
+        assert result.targets["default"].action.value == "skip"
+        assert "formatting" in result.targets["default"].reason
 
     def test_evaluate_consolidate(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_decision", {
-            "decision": "consolidate",
-            "reasoning": "Part of a larger auth change",
+        mock_client.complete.return_value = _mock_response("log_evaluation", {
+            "commit_analysis": {"summary": "Part of auth change"},
+            "targets": {
+                "default": {
+                    "action": "hold",
+                    "reason": "Part of a larger auth change",
+                },
+            },
         })
 
         with patch("social_hook.llm.prompts.Path.home",
@@ -193,7 +209,7 @@ class TestEvaluator:
             evaluator = Evaluator(mock_client)
             result = evaluator.evaluate(sample_commit, sample_context, mock_db)
 
-        assert result.decision.value == "consolidate"
+        assert result.targets["default"].action.value == "hold"
 
     def test_evaluate_no_tool_call_raises(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
@@ -209,9 +225,14 @@ class TestEvaluator:
     def test_evaluate_invalid_response_raises(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_decision", {
-            "decision": "invalid_value",
-            "reasoning": "test",
+        mock_client.complete.return_value = _mock_response("log_evaluation", {
+            "commit_analysis": {"summary": "test"},
+            "targets": {
+                "default": {
+                    "action": "invalid_value",
+                    "reason": "test",
+                },
+            },
         })
 
         with patch("social_hook.llm.prompts.Path.home",
@@ -223,9 +244,11 @@ class TestEvaluator:
     def test_evaluate_passes_usage_tracking(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_decision", {
-            "decision": "post_worthy",
-            "reasoning": "Test",
+        mock_client.complete.return_value = _mock_response("log_evaluation", {
+            "commit_analysis": {"summary": "Test"},
+            "targets": {
+                "default": {"action": "draft", "reason": "Test"},
+            },
         })
 
         with patch("social_hook.llm.prompts.Path.home",
@@ -245,9 +268,11 @@ class TestEvaluator:
             "commits_since_summary": 12,
             "days_since_summary": 7,
         }
-        mock_client.complete.return_value = _mock_response("log_decision", {
-            "decision": "post_worthy",
-            "reasoning": "Test",
+        mock_client.complete.return_value = _mock_response("log_evaluation", {
+            "commit_analysis": {"summary": "Test"},
+            "targets": {
+                "default": {"action": "draft", "reason": "Test"},
+            },
         })
 
         with patch("social_hook.llm.prompts.Path.home",
@@ -265,9 +290,11 @@ class TestEvaluator:
     ):
         """T20a: Evaluator works without freshness data."""
         mock_db.get_summary_freshness.return_value = None
-        mock_client.complete.return_value = _mock_response("log_decision", {
-            "decision": "post_worthy",
-            "reasoning": "Test",
+        mock_client.complete.return_value = _mock_response("log_evaluation", {
+            "commit_analysis": {"summary": "Test"},
+            "targets": {
+                "default": {"action": "draft", "reason": "Test"},
+            },
         })
 
         with patch("social_hook.llm.prompts.Path.home",
@@ -297,11 +324,19 @@ class TestDrafter:
             "reasoning": "Milestone worth sharing",
         })
 
-        decision = LogDecisionInput.validate({
-            "decision": "post_worthy",
-            "reasoning": "Major feature",
-            "episode_type": "milestone",
-        })
+        decision = SimpleNamespace(
+            decision="draft",
+            reasoning="Major feature",
+            episode_type="milestone",
+            post_category=None,
+            arc_id=None,
+            new_arc_theme=None,
+            media_tool=None,
+            reference_posts=None,
+            angle=None,
+            include_project_docs=None,
+            commit_summary=None,
+        )
 
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
@@ -323,9 +358,12 @@ class TestDrafter:
             "reasoning": "Professional audience",
         })
 
-        decision = LogDecisionInput.validate({
-            "decision": "post_worthy", "reasoning": "Test",
-        })
+        decision = SimpleNamespace(
+            decision="draft", reasoning="Test",
+            episode_type=None, post_category=None, arc_id=None,
+            new_arc_theme=None, media_tool=None, reference_posts=None,
+            angle=None, include_project_docs=None, commit_summary=None,
+        )
 
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
@@ -348,10 +386,12 @@ class TestDrafter:
             "media_spec": {"diagram": "graph LR; A-->B"},
         })
 
-        decision = LogDecisionInput.validate({
-            "decision": "post_worthy", "reasoning": "Test",
-            "media_tool": "mermaid",
-        })
+        decision = SimpleNamespace(
+            decision="draft", reasoning="Test",
+            episode_type=None, post_category=None, arc_id=None,
+            new_arc_theme=None, media_tool="mermaid", reference_posts=None,
+            angle=None, include_project_docs=None, commit_summary=None,
+        )
 
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
@@ -377,9 +417,12 @@ class TestDrafter:
             "reasoning": "Complex topic needs thread",
         })
 
-        decision = LogDecisionInput.validate({
-            "decision": "post_worthy", "reasoning": "Test",
-        })
+        decision = SimpleNamespace(
+            decision="draft", reasoning="Test",
+            episode_type=None, post_category=None, arc_id=None,
+            new_arc_theme=None, media_tool=None, reference_posts=None,
+            angle=None, include_project_docs=None, commit_summary=None,
+        )
 
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
@@ -404,9 +447,12 @@ class TestDrafter:
             "reasoning": "Test",
         })
 
-        decision = LogDecisionInput.validate({
-            "decision": "post_worthy", "reasoning": "Test",
-        })
+        decision = SimpleNamespace(
+            decision="draft", reasoning="Test",
+            episode_type=None, post_category=None, arc_id=None,
+            new_arc_theme=None, media_tool=None, reference_posts=None,
+            angle=None, include_project_docs=None, commit_summary=None,
+        )
 
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
@@ -425,9 +471,12 @@ class TestDrafter:
     ):
         mock_client.complete.return_value = _mock_response_no_tool()
 
-        decision = LogDecisionInput.validate({
-            "decision": "post_worthy", "reasoning": "Test",
-        })
+        decision = SimpleNamespace(
+            decision="draft", reasoning="Test",
+            episode_type=None, post_category=None, arc_id=None,
+            new_arc_theme=None, media_tool=None, reference_posts=None,
+            angle=None, include_project_docs=None, commit_summary=None,
+        )
 
         with patch("social_hook.llm.prompts.Path.home",
                     return_value=prompts_dir.parent.parent):
@@ -447,10 +496,12 @@ class TestDrafter:
             "reasoning": "Advances auth arc",
         })
 
-        decision = LogDecisionInput.validate({
-            "decision": "post_worthy", "reasoning": "Arc post",
-            "post_category": "arc", "arc_id": "arc_1",
-        })
+        decision = SimpleNamespace(
+            decision="draft", reasoning="Arc post",
+            episode_type=None, post_category="arc", arc_id="arc_1",
+            new_arc_theme=None, media_tool=None, reference_posts=None,
+            angle=None, include_project_docs=None, commit_summary=None,
+        )
 
         arc = Arc(id="arc_1", project_id="proj_test1", theme="Auth arc", post_count=3)
         arc_ctx = {

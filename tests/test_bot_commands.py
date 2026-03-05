@@ -184,7 +184,7 @@ class TestCmdPending:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -302,7 +302,7 @@ class TestCmdApprove:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -344,7 +344,7 @@ class TestCmdApprove:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -386,7 +386,7 @@ class TestCmdReject:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -424,7 +424,7 @@ class TestCmdSchedule:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -465,7 +465,7 @@ class TestCmdCancel:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -503,7 +503,7 @@ class TestCmdRetry:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -534,7 +534,7 @@ class TestCmdRetry:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -669,7 +669,7 @@ class TestCmdReview:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc12345", decision="post_worthy", reasoning="Good commit",
+            commit_hash="abc12345", decision="draft", reasoning="Good commit",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -742,7 +742,7 @@ class TestCmdRejectReason:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -844,7 +844,7 @@ class TestPendingEditSaves:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -890,7 +890,7 @@ class TestPendingEditSaves:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -953,7 +953,7 @@ class TestSubstituteHandler:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -995,7 +995,7 @@ class TestSubstituteHandler:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -1054,7 +1054,7 @@ class TestReviewEvaluatorContext:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc12345", decision="post_worthy",
+            commit_hash="abc12345", decision="draft",
             reasoning="Strong commit with clear narrative",
             episode_type="launch",
             post_category="arc",
@@ -1096,7 +1096,7 @@ class TestExpertRefineSaves:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -1253,7 +1253,7 @@ class TestHandleMessageContext:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -1310,7 +1310,7 @@ class TestBuildSystemSnapshot:
 
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc123", decision="post_worthy", reasoning="test",
+            commit_hash="abc123", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
@@ -1394,7 +1394,7 @@ class TestBuildSystemSnapshot:
 
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="test",
+            commit_hash="abc", decision="draft", reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(

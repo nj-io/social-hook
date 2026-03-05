@@ -1512,7 +1512,7 @@ def _mock_create_draft_patches():
 
 
 def _seed_project_and_decision(db_path, decision_id="dec_1", project_id="proj_1",
-                                decision="post_worthy"):
+                                decision="draft"):
     """Seed a project and a decision."""
     conn = sqlite3.connect(str(db_path))
     # Only insert project if not exists
@@ -1576,7 +1576,7 @@ class TestCreateDraftEndpoint:
 
     def test_create_draft_not_post_worthy_override(self, client, tmp_env):
         """POST /api/decisions/{id}/create-draft works for not_post_worthy decisions."""
-        _seed_project_and_decision(tmp_env["db_path"], decision="not_post_worthy")
+        _seed_project_and_decision(tmp_env["db_path"], decision="skip")
 
         mock_result = _make_draft_result()
         p1, p2, p3 = _mock_create_draft_patches()
@@ -1644,12 +1644,12 @@ class TestConsolidateEndpoint:
         conn.execute(
             "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("dec_a", "proj_1", "aaa", "post_worthy", "reason"),
+            ("dec_a", "proj_1", "aaa", "draft", "reason"),
         )
         conn.execute(
             "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning) "
             "VALUES (?, ?, ?, ?, ?)",
-            ("dec_b", "proj_2", "bbb", "post_worthy", "reason"),
+            ("dec_b", "proj_2", "bbb", "draft", "reason"),
         )
         conn.commit()
         conn.close()

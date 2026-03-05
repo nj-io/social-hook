@@ -255,7 +255,15 @@ def btn_reject(
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         update_draft(conn, draft_id, status="rejected")
-        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` rejected.")
+
+        # Cascade re-draft if this was an intro draft
+        from social_hook.intro_lifecycle import on_intro_rejected
+        cascade_msg = on_intro_rejected(conn, draft, draft.project_id, verbose=False)
+
+        reject_msg = f"Draft `{draft_id[:12]}` rejected."
+        if cascade_msg:
+            reject_msg += f"\n{cascade_msg}"
+        _send(adapter, chat_id, reject_msg)
     finally:
         conn.close()
 

@@ -5,12 +5,10 @@ import pytest
 from social_hook.errors import MalformedResponseError
 from social_hook.llm.schemas import (
     CreateDraftInput,
-    DecisionTypeSchema,
     EpisodeTypeSchema,
     ExpertAction,
     ExpertResponseInput,
     GatekeeperOperation,
-    LogDecisionInput,
     MediaTool,
     PostCategorySchema,
     RouteAction,
@@ -26,12 +24,6 @@ from social_hook.llm.schemas import (
 
 class TestSchemaEnums:
     """T12: Verify schema enums have correct values."""
-
-    def test_decision_type_schema_values(self):
-        assert DecisionTypeSchema.post_worthy.value == "post_worthy"
-        assert DecisionTypeSchema.not_post_worthy.value == "not_post_worthy"
-        assert DecisionTypeSchema.consolidate.value == "consolidate"
-        assert DecisionTypeSchema.deferred.value == "deferred"
 
     def test_episode_type_schema_values(self):
         assert EpisodeTypeSchema.decision.value == "decision"
@@ -60,82 +52,6 @@ class TestSchemaEnums:
         assert ExpertAction.refine_draft.value == "refine_draft"
         assert ExpertAction.answer_question.value == "answer_question"
         assert ExpertAction.save_context_note.value == "save_context_note"
-
-
-# =============================================================================
-# T12: LogDecisionInput Tests
-# =============================================================================
-
-
-class TestLogDecisionInput:
-    """T12: Evaluator schema validation."""
-
-    def test_valid_minimal(self):
-        result = LogDecisionInput.validate({
-            "decision": "post_worthy",
-            "reasoning": "Important feature added",
-        })
-        assert result.decision == DecisionTypeSchema.post_worthy
-        assert result.reasoning == "Important feature added"
-        assert result.episode_type is None
-
-    def test_valid_full(self):
-        result = LogDecisionInput.validate({
-            "decision": "post_worthy",
-            "reasoning": "Major architecture change",
-            "episode_type": "decision",
-            "post_category": "arc",
-            "arc_id": "arc_123",
-            "media_tool": "mermaid",
-        })
-        assert result.episode_type == EpisodeTypeSchema.decision
-        assert result.post_category == PostCategorySchema.arc
-        assert result.arc_id == "arc_123"
-        assert result.media_tool == MediaTool.mermaid
-
-    def test_invalid_decision_type(self):
-        with pytest.raises(MalformedResponseError):
-            LogDecisionInput.validate({
-                "decision": "invalid_type",
-                "reasoning": "Test",
-            })
-
-    def test_missing_required_field(self):
-        with pytest.raises(MalformedResponseError):
-            LogDecisionInput.validate({
-                "decision": "post_worthy",
-                # missing reasoning
-            })
-
-    def test_invalid_episode_type(self):
-        with pytest.raises(MalformedResponseError):
-            LogDecisionInput.validate({
-                "decision": "post_worthy",
-                "reasoning": "Test",
-                "episode_type": "invalid_episode",
-            })
-
-    def test_invalid_media_type(self):
-        with pytest.raises(MalformedResponseError):
-            LogDecisionInput.validate({
-                "decision": "post_worthy",
-                "reasoning": "Test",
-                "media_tool": "photoshop",
-            })
-
-    def test_tool_schema_structure(self):
-        schema = LogDecisionInput.to_tool_schema()
-        assert schema["name"] == "log_decision"
-        assert "input_schema" in schema
-        assert "decision" in schema["input_schema"]["properties"]
-        assert schema["input_schema"]["required"] == ["decision", "reasoning"]
-
-    def test_not_post_worthy_minimal(self):
-        result = LogDecisionInput.validate({
-            "decision": "not_post_worthy",
-            "reasoning": "Minor typo fix",
-        })
-        assert result.decision == DecisionTypeSchema.not_post_worthy
 
 
 # =============================================================================
@@ -339,14 +255,14 @@ class TestExtractToolCall:
         response = _MockResponse([
             _MockContent("text"),
         ])
-        with pytest.raises(MalformedResponseError, match="No log_decision"):
+        with pytest.raises(MalformedResponseError, match="log_decision"):
             extract_tool_call(response, "log_decision")
 
     def test_wrong_tool_name_raises(self):
         response = _MockResponse([
             _MockContent("tool_use", "create_draft", {"content": "test"}),
         ])
-        with pytest.raises(MalformedResponseError, match="No log_decision"):
+        with pytest.raises(MalformedResponseError, match="log_decision"):
             extract_tool_call(response, "log_decision")
 
     def test_extracts_first_matching_tool(self):

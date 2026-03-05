@@ -18,7 +18,7 @@ class TestGetDecision:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Great commit",
             episode_type="milestone",
         )

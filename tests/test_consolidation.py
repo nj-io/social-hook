@@ -33,7 +33,7 @@ def _make_project(conn: sqlite3.Connection, name: str = "test-project") -> Proje
 def _make_decision(
     conn: sqlite3.Connection,
     project_id: str,
-    decision_type: str = "consolidate",
+    decision_type: str = "hold",
     commit_hash: str = None,
     commit_summary: str = None,
 ) -> Decision:
@@ -80,15 +80,15 @@ class TestConsolidationDBOps:
         yield c
         c.close()
 
-    def test_get_unprocessed_returns_consolidate_decisions(self, conn):
+    def test_get_unprocessed_returns_hold_decisions(self, conn):
         project = _make_project(conn)
-        d1 = _make_decision(conn, project.id, "consolidate")
-        d2 = _make_decision(conn, project.id, "deferred")
-        # post_worthy should NOT be returned
-        _make_decision(conn, project.id, "not_post_worthy",
+        d1 = _make_decision(conn, project.id, "hold")
+        d2 = _make_decision(conn, project.id, "hold")
+        # skip should NOT be returned
+        _make_decision(conn, project.id, "skip",
                        commit_hash=generate_id("c")[:12], commit_summary=None)
 
-        results = ops.get_unprocessed_consolidation_decisions(conn, project.id)
+        results = ops.get_held_decisions(conn, project.id)
         ids = [r.id for r in results]
         assert d1.id in ids
         assert d2.id in ids
@@ -99,7 +99,7 @@ class TestConsolidationDBOps:
         for _ in range(5):
             _make_decision(conn, project.id)
 
-        results = ops.get_unprocessed_consolidation_decisions(conn, project.id, limit=3)
+        results = ops.get_held_decisions(conn, project.id, limit=3)
         assert len(results) == 3
 
     def test_get_unprocessed_excludes_processed(self, conn):
@@ -109,7 +109,7 @@ class TestConsolidationDBOps:
 
         ops.mark_decisions_processed(conn, [d1.id], "batch-001")
 
-        results = ops.get_unprocessed_consolidation_decisions(conn, project.id)
+        results = ops.get_held_decisions(conn, project.id)
         assert len(results) == 1
         assert results[0].id == d2.id
 
@@ -140,8 +140,8 @@ class TestConsolidationDBOps:
 
         updated = ops.update_decision(
             conn, d.id,
-            decision="post_worthy",
-            reasoning="Re-evaluated as post worthy",
+            decision="draft",
+            reasoning="Re-evaluated as draftable",
             angle="New angle",
             episode_type="milestone",
         )
@@ -151,8 +151,8 @@ class TestConsolidationDBOps:
             "SELECT decision, reasoning, angle, episode_type FROM decisions WHERE id = ?",
             (d.id,),
         ).fetchone()
-        assert row[0] == "post_worthy"
-        assert row[1] == "Re-evaluated as post worthy"
+        assert row[0] == "draft"
+        assert row[1] == "Re-evaluated as draftable"
         assert row[2] == "New angle"
         assert row[3] == "milestone"
 
@@ -208,8 +208,8 @@ class TestConsolidationNotifyOnly:
         mock_config.return_value = config
 
         project = _make_project(conn)
-        _make_decision(conn, project.id, "consolidate", commit_summary="Added logging")
-        _make_decision(conn, project.id, "deferred", commit_summary="Fixed typo")
+        _make_decision(conn, project.id, "hold", commit_summary="Added logging")
+        _make_decision(conn, project.id, "hold", commit_summary="Fixed typo")
 
         # Return a fresh connection each call (consolidation_tick closes it)
         mock_init_db.return_value = init_database(db_path)
@@ -219,7 +219,7 @@ class TestConsolidationNotifyOnly:
         mock_notify.assert_called_once()
 
         # Verify decisions are marked processed (use original conn which is still open)
-        unprocessed = ops.get_unprocessed_consolidation_decisions(conn, project.id)
+        unprocessed = ops.get_held_decisions(conn, project.id)
         assert len(unprocessed) == 0
 
         conn.close()
@@ -266,7 +266,7 @@ class TestConsolidationIdempotent:
         mock_config.return_value = config
 
         project = _make_project(setup_conn)
-        _make_decision(setup_conn, project.id, "consolidate")
+        _make_decision(setup_conn, project.id, "hold")
         setup_conn.close()
 
         # First run - provide fresh conn
@@ -293,7 +293,7 @@ class TestDecisionCommitSummary:
     def test_to_dict_includes_commit_summary(self):
         d = Decision(
             id="d1", project_id="p1", commit_hash="abc",
-            decision="consolidate", reasoning="test",
+            decision="hold", reasoning="test",
             commit_summary="Added logging feature",
         )
         data = d.to_dict()
@@ -305,7 +305,7 @@ class TestDecisionCommitSummary:
     def test_from_dict_parses_commit_summary(self):
         data = {
             "id": "d1", "project_id": "p1", "commit_hash": "abc",
-            "decision": "consolidate", "reasoning": "test",
+            "decision": "hold", "reasoning": "test",
             "commit_summary": "Fixed bug",
             "processed": 1,
             "batch_id": "batch-001",
@@ -318,10 +318,10 @@ class TestDecisionCommitSummary:
     def test_to_row_includes_commit_summary(self):
         d = Decision(
             id="d1", project_id="p1", commit_hash="abc",
-            decision="consolidate", reasoning="test",
+            decision="hold", reasoning="test",
             commit_summary="New feature",
         )
         row = d.to_row()
-        # 13th element (index 12) is commit_summary
-        assert len(row) == 13
-        assert row[12] == "New feature"
+        # 16-element tuple; commit_summary is at index 14
+        assert len(row) == 16
+        assert row[14] == "New feature"

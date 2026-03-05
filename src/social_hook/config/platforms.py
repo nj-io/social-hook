@@ -16,7 +16,7 @@ VALID_PLATFORM_TYPES = ("builtin", "custom")
 
 # Content filter: which episode_types pass
 FILTER_EPISODE_TYPES: dict[str, Optional[set[str]]] = {
-    "all": None,  # All post_worthy pass
+    "all": None,  # All drafts pass
     "notable": {"milestone", "launch", "synthesis", "demo_proof", "before_after", "postmortem"},
     "significant": {"milestone", "launch", "synthesis"},
 }

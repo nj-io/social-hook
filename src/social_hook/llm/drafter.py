@@ -42,7 +42,7 @@ class Drafter:
         """Create a draft post for a post-worthy commit.
 
         Args:
-            decision: Evaluation decision (LogDecisionInput)
+            decision: Evaluation decision (evaluation result)
             project_context: Assembled project state
             commit: Git commit information
             db: Database context for usage logging

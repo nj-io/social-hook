@@ -314,7 +314,7 @@ class TestDryRunContext:
         db = DryRunContext(temp_db, dry_run=True)
         decision = Decision(
             id="dec_test1", project_id="proj_test1",
-            commit_hash="abc123", decision="post_worthy",
+            commit_hash="abc123", decision="draft",
             reasoning="Test",
         )
         result = db.insert_decision(decision)
@@ -406,7 +406,7 @@ class TestDryRunContext:
         db = DryRunContext(temp_db, dry_run=False)
         decision = Decision(
             id="dec_test1", project_id="proj_test1",
-            commit_hash="abc123", decision="post_worthy",
+            commit_hash="abc123", decision="draft",
             reasoning="Test",
         )
         result = db.insert_decision(decision)

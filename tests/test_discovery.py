@@ -359,7 +359,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
 
         commit = CommitInfo(hash="abc123", message="test", diff="")
 
-        decision = {"decision": "post_worthy", "reasoning": "test"}
+        decision = {"decision": "draft", "reasoning": "test"}
 
         result = assemble_drafter_prompt(
             prompt="You are a drafter.",
@@ -397,7 +397,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
         )
 
         commit = CommitInfo(hash="abc123", message="test", diff="")
-        decision = {"decision": "post_worthy", "reasoning": "test"}
+        decision = {"decision": "draft", "reasoning": "test"}
 
         result = assemble_drafter_prompt(
             prompt="You are a drafter.",
@@ -437,7 +437,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
 
         commit = CommitInfo(hash="abc123", message="test", diff="")
         # Decision explicitly requests project docs
-        decision = {"decision": "post_worthy", "reasoning": "test", "include_project_docs": True}
+        decision = {"decision": "draft", "reasoning": "test", "include_project_docs": True}
 
         result = assemble_drafter_prompt(
             prompt="You are a drafter.",

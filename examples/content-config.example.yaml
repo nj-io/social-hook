@@ -11,6 +11,9 @@
 # Changelog
 # | Date       | Change                                                       |
 # |------------|--------------------------------------------------------------|
+# | 2026-03-04 | Added evaluator rework context fields:                       |
+# |            | pending_draft_detail, arc_context_chars,                     |
+# |            | pending_drafts_cap, max_hold_count.                          |
 # | 2026-02-24 | This file is now the source of truth for media tool          |
 # |            | guidance defaults (use_when, constraints, prompt_example).   |
 # |            | Python DEFAULT_MEDIA_GUIDANCE is structural-only.            |
@@ -135,6 +138,14 @@ context:
   include_readme: true        # Include README.md
   include_claude_md: true     # Include CLAUDE.md if present
   max_doc_tokens: 10000       # Max tokens allocated to project docs
+
+  # Pending draft context in evaluator prompts
+  pending_draft_detail: full_content  # "full_content" or "summary" (default: full_content)
+  arc_context_chars: 500              # Max chars of arc context per pending draft (default: 500)
+  pending_drafts_cap: 10              # Max pending drafts included in context (default: 10)
+
+  # Hold mechanism
+  max_hold_count: 5           # Max held decisions before forcing skip (default: 5)
 
   # Project discovery: glob patterns for priority files to always include
   # during two-pass project discovery. These files get loaded first within

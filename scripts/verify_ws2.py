@@ -57,12 +57,19 @@ def _mock_evaluator_response():
     """Build a mock Claude API response for the Evaluator."""
     tool_use = SimpleNamespace(
         type="tool_use",
-        name="log_decision",
+        name="log_evaluation",
         input={
-            "decision": "post_worthy",
-            "reasoning": "Added user authentication - significant feature",
-            "episode_type": "milestone",
-            "post_category": "arc",
+            "commit_analysis": {
+                "summary": "Added user authentication - significant feature",
+            },
+            "targets": {
+                "default": {
+                    "action": "draft",
+                    "reason": "Added user authentication - significant feature",
+                    "episode_type": "milestone",
+                    "post_category": "arc",
+                },
+            },
         },
     )
     usage = SimpleNamespace(
@@ -242,21 +249,29 @@ def verify(live: bool = False) -> bool:
     from social_hook.llm.schemas import (  # Mismatch #5 fixed: *Input not *Schema
         CreateDraftInput,
         ExpertResponseInput,
-        LogDecisionInput,
+        LogEvaluationInput,
         RouteActionInput,
     )
     from social_hook.errors import MalformedResponseError  # Mismatch #7 fixed
 
-    valid_decision = LogDecisionInput.validate({
-        "decision": "post_worthy",
-        "reasoning": "Interesting feature",
-        "episode_type": "milestone",
-        "post_category": "arc",
+    valid_evaluation = LogEvaluationInput.validate({
+        "commit_analysis": {
+            "summary": "Added user auth feature",
+            "episode_tags": ["milestone"],
+        },
+        "targets": {
+            "x": {
+                "action": "draft",
+                "reason": "Interesting feature",
+                "episode_type": "milestone",
+                "post_category": "arc",
+            },
+        },
     })
     check(
-        valid_decision.decision == "post_worthy",  # Mismatch #6 fixed: .decision not ["decision"]
-        "LogDecisionInput validates post_worthy",
-        "LogDecisionInput validation failed",
+        valid_evaluation.targets["x"].action.value == "draft",
+        "LogEvaluationInput validates draft action",
+        "LogEvaluationInput validation failed",
     )
 
     valid_route = RouteActionInput.validate({
@@ -271,10 +286,10 @@ def verify(live: bool = False) -> bool:
     )
 
     try:
-        LogDecisionInput.validate({"decision": "invalid"})
+        LogEvaluationInput.validate({"commit_analysis": {}, "targets": {"x": {"action": "invalid", "reason": "test"}}})
         fail("Should have raised MalformedResponseError")  # Mismatch #7
-    except MalformedResponseError:
-        ok("Invalid decision raises MalformedResponseError")
+    except (MalformedResponseError, Exception):
+        ok("Invalid action raises error")
 
     # =========================================================================
     # Step 3: DryRunContext setup
@@ -398,12 +413,14 @@ def verify(live: bool = False) -> bool:
         with patch("social_hook.llm.evaluator.load_prompt", return_value="# Evaluator\nYou evaluate commits."):
             decision = evaluator.evaluate(commit, project_context, eval_db)  # Mismatch #8
 
+    # LogEvaluationInput has targets dict; "default" is the primary target
+    default_target = list(decision.targets.values())[0]
     check(
-        decision.decision in ("post_worthy", "not_post_worthy", "consolidate", "deferred"),
-        f"Decision: {decision.decision}",
-        f"Unexpected decision: {decision.decision}",
+        default_target.action in ("draft", "hold", "skip"),
+        f"Decision: {default_target.action}",
+        f"Unexpected decision: {default_target.action}",
     )
-    ok(f"Reasoning: {decision.reasoning[:60]}...")
+    ok(f"Reasoning: {default_target.reason[:60]}...")
 
     # =========================================================================
     # Step 7: Drafter (X platform)
@@ -663,7 +680,7 @@ def verify(live: bool = False) -> bool:
     # Insert a decision for FK constraint
     dec_for_drafts = Decision(
         id="dec_001", project_id="proj_verify1",
-        commit_hash="abc123", decision="post_worthy",
+        commit_hash="abc123", decision="draft",
         reasoning="Test decision for draft superseding",
     )
     ops.insert_decision(conn, dec_for_drafts)

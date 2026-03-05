@@ -66,7 +66,7 @@ def consolidation_tick(
             if project.paused:
                 continue
 
-            decisions = ops.get_unprocessed_consolidation_decisions(
+            decisions = ops.get_held_decisions(
                 conn, project.id, limit=config.consolidation.batch_size,
             )
             if not decisions:
@@ -88,6 +88,13 @@ def consolidation_tick(
                 ops.emit_data_event(conn, "decision", "updated", project_id=project.id)
 
             total_processed += len(decisions)
+
+        # Phase 2: Auto-consolidate drafts in time window
+        for project in projects:
+            if project.paused:
+                continue
+            if config.consolidation.auto_consolidate_drafts:
+                _auto_consolidate_drafts(config, conn, project, dry_run)
 
         conn.close()
         return total_processed
@@ -176,33 +183,43 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
         logger.error(f"LLM API error during consolidation re-evaluation: {e}")
         return
 
-    if evaluation.decision != "post_worthy":
+    target = evaluation.targets.get("default")
+    if not target:
+        logger.info(f"Consolidation re-evaluation for {project.name}: no default target")
+        return
+
+    def _val(x):
+        return x.value if hasattr(x, "value") else x
+
+    if _val(target.action) != "draft":
         logger.info(
-            f"Consolidation re-evaluation for {project.name}: {evaluation.decision}"
+            f"Consolidation re-evaluation for {project.name}: {_val(target.action)}"
         )
         return
 
-    # Post-worthy: update the most recent decision in the batch
+    # Draftable: update the most recent decision in the batch
     most_recent = decisions[-1]
     if not dry_run:
         ops.update_decision(
             conn,
             most_recent.id,
-            decision="post_worthy",
-            reasoning=evaluation.reasoning,
-            angle=getattr(evaluation, "angle", None),
-            episode_type=getattr(evaluation, "episode_type", None),
-            post_category=getattr(evaluation, "post_category", None),
-            media_tool=getattr(evaluation, "media_tool", None),
+            decision="draft",
+            reasoning=target.reason,
+            angle=target.angle,
+            episode_type=_val(target.episode_type),
+            post_category=_val(target.post_category),
+            media_tool=_val(target.media_tool),
         )
         ops.emit_data_event(conn, "decision", "updated", most_recent.id, project.id)
 
     # Create drafts per platform via shared pipeline
+    from social_hook.compat import make_eval_compat
     from social_hook.drafting import draft_for_platforms
 
+    eval_compat = make_eval_compat(evaluation, "draft")
     draft_results = draft_for_platforms(
         config, conn, db, project, decision_id=most_recent.id,
-        evaluation=evaluation, context=context, commit=commit,
+        evaluation=eval_compat, context=context, commit=commit,
         project_config=project_config, dry_run=dry_run,
     )
 
@@ -214,8 +231,55 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
         message = (
             f"*Consolidation re-evaluation* `{batch_id[:12]}`\n"
             f"Project: {project.name}\n"
-            f"Result: post_worthy\n"
+            f"Result: draft\n"
             f"Drafts created for: {platform_list}\n"
             f"Batched {len(decisions)} decisions"
+        )
+        send_notification(config, message, dry_run=dry_run)
+
+
+def _auto_consolidate_drafts(config, conn, project, dry_run):
+    """Phase 2: Auto-consolidate drafts within a time window.
+
+    Safety net -- fires rarely when evaluator is managing consolidation well.
+    Groups pending drafts by platform and notifies if count exceeds threshold.
+    """
+    from collections import defaultdict
+
+    time_window = config.consolidation.time_window_hours
+    max_drafts = config.consolidation.time_window_max_drafts
+
+    drafts = ops.get_drafts_in_time_window(conn, project.id, time_window)
+
+    # Only consider non-approved unless consolidate_approved is True
+    if not config.consolidation.consolidate_approved:
+        drafts = [d for d in drafts if d.status == "draft"]
+
+    # Group by platform
+    by_platform = defaultdict(list)
+    for d in drafts:
+        by_platform[d.platform].append(d)
+
+    for platform, platform_drafts in by_platform.items():
+        if len(platform_drafts) <= max_drafts:
+            continue
+
+        logger.info(
+            f"Auto-consolidation: {len(platform_drafts)} {platform} drafts in "
+            f"{time_window}h window (threshold: {max_drafts})"
+        )
+
+        if dry_run:
+            continue
+
+        from social_hook.notifications import send_notification
+
+        message = (
+            f"*Auto-consolidation alert*\n"
+            f"Project: {project.name}\n"
+            f"Platform: {platform}\n"
+            f"{len(platform_drafts)} drafts in {time_window}h window "
+            f"(threshold: {max_drafts})\n"
+            f"Consider reviewing and consolidating manually."
         )
         send_notification(config, message, dry_run=dry_run)

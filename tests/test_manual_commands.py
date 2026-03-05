@@ -61,7 +61,7 @@ class TestDraftCommand:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="not_post_worthy", reasoning="boring",
+            commit_hash="abc", decision="skip", reasoning="boring",
         )
         insert_decision(conn, decision)
         conn.close()
@@ -155,11 +155,11 @@ class TestConsolidateCommand:
 
         d1 = Decision(
             id=generate_id("decision"), project_id=proj1.id,
-            commit_hash="aaa", decision="not_post_worthy", reasoning="r1",
+            commit_hash="aaa", decision="skip", reasoning="r1",
         )
         d2 = Decision(
             id=generate_id("decision"), project_id=proj2.id,
-            commit_hash="bbb", decision="not_post_worthy", reasoning="r2",
+            commit_hash="bbb", decision="skip", reasoning="r2",
         )
         insert_decision(conn, d1)
         insert_decision(conn, d2)
@@ -221,7 +221,7 @@ class TestPostCommand:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="post_worthy", reasoning="good",
+            commit_hash="abc", decision="draft", reasoning="good",
         )
         insert_decision(conn, decision)
         draft = Draft(

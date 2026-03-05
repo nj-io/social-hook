@@ -22,6 +22,10 @@ class ContextConfig:
     include_claude_md: bool = True
     max_doc_tokens: int = 10000
     project_docs: list[str] = field(default_factory=list)
+    pending_draft_detail: str = "full_content"
+    arc_context_chars: int = 500
+    pending_drafts_cap: int = 10
+    max_hold_count: int = 5
 
 
 @dataclass
@@ -195,6 +199,10 @@ def _parse_context_config(data: dict) -> ContextConfig:
         include_claude_md=data.get("include_claude_md", True),
         max_doc_tokens=data.get("max_doc_tokens", 10000),
         project_docs=data.get("project_docs", []),
+        pending_draft_detail=data.get("pending_draft_detail", "full_content"),
+        arc_context_chars=data.get("arc_context_chars", 500),
+        pending_drafts_cap=data.get("pending_drafts_cap", 10),
+        max_hold_count=data.get("max_hold_count", 5),
     )
 
 

@@ -50,7 +50,7 @@ def _make_drafter_mocks():
     project_context.recent_decisions = []
 
     decision = MagicMock()
-    decision.decision = "post_worthy"
+    decision.decision = "draft"
     decision.reasoning = "Good commit"
     decision.angle = "feature"
     decision.episode_type = "milestone"

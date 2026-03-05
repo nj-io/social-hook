@@ -39,7 +39,7 @@ def sample_decisions():
             id="dec_1",
             project_id="proj_gk1",
             commit_hash="abc12345deadbeef",
-            decision="post_worthy",
+            decision="draft",
             reasoning="First commit on registered project with substantial feature",
             commit_message="Add WebSocket gateway for real-time updates",
             angle="Introducing Social Hook",
@@ -48,7 +48,7 @@ def sample_decisions():
             id="dec_2",
             project_id="proj_gk1",
             commit_hash="def67890abcd1234",
-            decision="not_post_worthy",
+            decision="skip",
             reasoning="Minor typo fix, not interesting for audience",
             commit_message="Fixed typo in README",
         ),
@@ -93,7 +93,7 @@ def sample_linked_decision():
         id="dec_linked",
         project_id="proj_gk1",
         commit_hash="linked123abc",
-        decision="post_worthy",
+        decision="draft",
         reasoning="First commit on registered project with substantial WebSocket feature",
         angle="Introducing Social Hook",
         episode_type="launch",
@@ -184,8 +184,8 @@ class TestGatekeeperRecentDecisions:
             recent_decisions=sample_decisions,
         )
         assert "## Recent Decisions (last 2)" in result
-        assert "[post_worthy] abc12345" in result
-        assert "[not_post_worthy] def67890" in result
+        assert "[draft] abc12345" in result
+        assert "[skip] def67890" in result
         assert "Add WebSocket gateway" in result
 
     def test_no_decisions_no_section(self, sample_draft):
@@ -241,7 +241,7 @@ class TestGatekeeperLinkedDecision:
             id="dec_no_angle",
             project_id="proj_gk1",
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="Simple feature addition",
         )
         result = assemble_gatekeeper_prompt(
@@ -492,7 +492,7 @@ class TestHandleMessageEnrichedContext:
 
         decision = Decision(
             id="dec_hm1", project_id="proj_hm1", commit_hash="abc12345",
-            decision="post_worthy", reasoning="Added auth feature",
+            decision="draft", reasoning="Added auth feature",
             commit_message="Add authentication module",
         )
         ops.insert_decision(temp_db, decision)

@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -37,15 +37,18 @@ CREATE TABLE IF NOT EXISTS decisions (
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
     commit_message TEXT,
-    decision      TEXT NOT NULL CHECK (decision IN ('post_worthy', 'not_post_worthy', 'consolidate', 'deferred')),
+    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
     episode_type  TEXT CHECK (episode_type IN ('decision', 'before_after', 'demo_proof', 'milestone', 'postmortem', 'launch', 'synthesis')),
+    episode_tags  TEXT DEFAULT '[]',
     post_category TEXT CHECK (post_category IN ('arc', 'opportunistic', 'experiment')),
     arc_id        TEXT REFERENCES arcs(id),
     media_tool    TEXT,
     platforms     TEXT NOT NULL DEFAULT '{}',
+    targets       TEXT NOT NULL DEFAULT '{}',
     commit_summary TEXT,
+    consolidate_with TEXT,
     processed     INTEGER NOT NULL DEFAULT 0,
     processed_at  TEXT,
     batch_id      TEXT,
@@ -58,7 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_decisions_project_time ON decisions(project_id, c
 CREATE INDEX IF NOT EXISTS idx_decisions_commit ON decisions(project_id, commit_hash);
 CREATE INDEX IF NOT EXISTS idx_decisions_arc ON decisions(arc_id) WHERE arc_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_decisions_unprocessed ON decisions(project_id, created_at)
-    WHERE decision IN ('consolidate', 'deferred') AND processed = 0;
+    WHERE decision = 'hold' AND processed = 0;
 
 -- Drafts
 CREATE TABLE IF NOT EXISTS drafts (
@@ -77,12 +80,17 @@ CREATE TABLE IF NOT EXISTS drafts (
     superseded_by   TEXT REFERENCES drafts(id),
     retry_count     INTEGER NOT NULL DEFAULT 0,
     last_error      TEXT,
+    is_intro        INTEGER NOT NULL DEFAULT 0,
+    post_format     TEXT DEFAULT NULL CHECK (post_format IN ('single', 'thread', 'quote', 'reply')),
+    reference_post_id TEXT DEFAULT NULL REFERENCES posts(id),
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_drafts_scheduled ON drafts(status, scheduled_time) WHERE status = 'scheduled';
+CREATE INDEX IF NOT EXISTS idx_drafts_intro ON drafts(project_id) WHERE is_intro = 1;
+CREATE INDEX IF NOT EXISTS idx_drafts_reference_post ON drafts(reference_post_id) WHERE reference_post_id IS NOT NULL;
 
 -- Draft Tweets (Thread Support)
 CREATE TABLE IF NOT EXISTS draft_tweets (
@@ -127,6 +135,7 @@ CREATE TABLE IF NOT EXISTS posts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_posts_project_time ON posts(project_id, posted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_draft_id ON posts(draft_id);
 
 -- Lifecycles
 CREATE TABLE IF NOT EXISTS lifecycles (
@@ -241,6 +250,41 @@ def create_schema(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _apply_pragma_migration(conn: sqlite3.Connection, sql: str) -> None:
+    """Apply a migration containing PRAGMA statements.
+
+    PRAGMA statements must execute outside transactions. This splits them
+    from DDL/DML statements and handles each appropriately.
+    """
+    pragmas_before: list[str] = []
+    pragmas_after: list[str] = []
+    other_lines: list[str] = []
+
+    for line in sql.split("\n"):
+        stripped = line.strip()
+        if stripped.upper().startswith("PRAGMA"):
+            # PRAGMAs before DDL go first, PRAGMAs after go last
+            if other_lines:
+                pragmas_after.append(stripped)
+            else:
+                pragmas_before.append(stripped)
+        else:
+            other_lines.append(line)
+
+    # Execute pre-DDL PRAGMAs outside transaction
+    for pragma in pragmas_before:
+        conn.execute(pragma)
+
+    # Execute DDL/DML as a script
+    ddl_sql = "\n".join(other_lines).strip()
+    if ddl_sql:
+        conn.executescript(ddl_sql)
+
+    # Execute post-DDL PRAGMAs outside transaction
+    for pragma in pragmas_after:
+        conn.execute(pragma)
+
+
 def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path) -> None:
     """Apply pending migrations from the migrations directory.
 
@@ -274,7 +318,13 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path) -> No
 
         if version > current:
             sql = migration_file.read_text()
-            conn.executescript(sql)
+
+            # Check if migration contains PRAGMA statements (table rebuild)
+            if "PRAGMA" in sql:
+                _apply_pragma_migration(conn, sql)
+            else:
+                conn.executescript(sql)
+
             conn.execute(
                 "INSERT INTO schema_version (version, description) VALUES (?, ?)",
                 (version, migration_file.stem),

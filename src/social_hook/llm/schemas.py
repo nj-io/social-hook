@@ -1,7 +1,7 @@
 """Pydantic models for LLM tool call validation."""
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ValidationError
 
@@ -11,15 +11,6 @@ from social_hook.errors import MalformedResponseError
 # =============================================================================
 # Schema-specific Enums (str enums for Pydantic JSON serialization)
 # =============================================================================
-
-
-class DecisionTypeSchema(str, Enum):
-    """Evaluator decision types."""
-
-    post_worthy = "post_worthy"
-    not_post_worthy = "not_post_worthy"
-    consolidate = "consolidate"
-    deferred = "deferred"
 
 
 class EpisodeTypeSchema(str, Enum):
@@ -83,81 +74,177 @@ class ExpertAction(str, Enum):
 # =============================================================================
 
 
-class LogDecisionInput(BaseModel):
-    """Evaluator tool call: log_decision."""
+class TargetAction(str, Enum):
+    """Actions the evaluator can assign per target."""
 
-    decision: DecisionTypeSchema
-    reasoning: str
+    skip = "skip"
+    draft = "draft"
+    hold = "hold"
+
+
+class CommitAnalysis(BaseModel):
+    """Structured analysis of a commit."""
+
+    summary: str
+    technical_detail: Optional[str] = None
+    episode_tags: list[str] = []
+
+
+class TargetDecisionInput(BaseModel):
+    """Per-target decision from the evaluator."""
+
+    action: TargetAction
+    reason: str
+    consolidate_with: Optional[list[str]] = None
+    arc_id: Optional[str] = None
+    new_arc_theme: Optional[str] = None
+    reference_posts: Optional[list[str]] = None
     angle: Optional[str] = None
     episode_type: Optional[EpisodeTypeSchema] = None
     post_category: Optional[PostCategorySchema] = None
-    arc_id: Optional[str] = None
-    new_arc_theme: Optional[str] = None
     media_tool: Optional[MediaTool] = None
     include_project_docs: Optional[bool] = None
-    commit_summary: Optional[str] = None
+
+
+class QueueAction(BaseModel):
+    """An action to take on a pending draft."""
+
+    action: Literal["supersede", "merge", "drop"]
+    draft_id: str
+    reason: str
+
+
+class LogEvaluationInput(BaseModel):
+    """Evaluator tool call: log_evaluation (multi-target format)."""
+
+    commit_analysis: CommitAnalysis
+    targets: dict[str, TargetDecisionInput]
+    queue_actions: Optional[dict[str, list[QueueAction]]] = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
         """Return JSON schema dict for Claude's tools parameter."""
         return {
-            "name": "log_decision",
-            "description": "Record the evaluation decision for a commit",
+            "name": "log_evaluation",
+            "description": "Record the evaluation for a commit with per-target decisions and optional queue management",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "decision": {
-                        "type": "string",
-                        "enum": [e.value for e in DecisionTypeSchema],
+                    "commit_analysis": {
+                        "type": "object",
+                        "description": "Structured analysis of the commit",
+                        "properties": {
+                            "summary": {
+                                "type": "string",
+                                "description": "1-2 sentence summary of what this commit does",
+                            },
+                            "technical_detail": {
+                                "type": "string",
+                                "description": "Optional deeper technical context",
+                            },
+                            "episode_tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Tags for categorizing this commit (e.g. 'refactor', 'feature', 'bugfix')",
+                            },
+                        },
+                        "required": ["summary"],
                     },
-                    "reasoning": {
-                        "type": "string",
-                        "description": "Explanation for the decision",
+                    "targets": {
+                        "type": "object",
+                        "description": "Per-target decisions. Use 'default' for the primary decision.",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "enum": ["skip", "draft", "hold"],
+                                    "description": "skip = not worth posting, draft = create content now, hold = save for consolidation later",
+                                },
+                                "reason": {
+                                    "type": "string",
+                                    "description": "Explanation for this decision",
+                                },
+                                "consolidate_with": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "IDs of held decisions to consolidate into this draft",
+                                },
+                                "arc_id": {
+                                    "type": "string",
+                                    "description": "ID of an existing active arc this commit continues",
+                                },
+                                "new_arc_theme": {
+                                    "type": "string",
+                                    "description": "Theme for a NEW narrative arc (mutually exclusive with arc_id)",
+                                },
+                                "reference_posts": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "IDs of previous posts to reference or build upon",
+                                },
+                                "angle": {
+                                    "type": "string",
+                                    "description": "The hook/angle for the post",
+                                },
+                                "episode_type": {
+                                    "type": "string",
+                                    "enum": [e.value for e in EpisodeTypeSchema],
+                                },
+                                "post_category": {
+                                    "type": "string",
+                                    "enum": [e.value for e in PostCategorySchema],
+                                },
+                                "media_tool": {
+                                    "type": "string",
+                                    "enum": [e.value for e in MediaTool],
+                                },
+                                "include_project_docs": {
+                                    "type": "boolean",
+                                    "description": "Set true when the Drafter needs project-level documentation",
+                                },
+                            },
+                            "required": ["action", "reason"],
+                        },
                     },
-                    "angle": {
-                        "type": "string",
-                        "description": "The hook/angle for the post (e.g. 'Introducing what this project does and why it matters')",
-                    },
-                    "include_project_docs": {
-                        "type": "boolean",
-                        "description": "Set true when the Drafter needs project-level documentation (README, CLAUDE.md) to write this post — e.g. introductions, synthesis, launches, or any post that needs to explain what the project is.",
-                    },
-                    "episode_type": {
-                        "type": "string",
-                        "enum": [e.value for e in EpisodeTypeSchema],
-                    },
-                    "post_category": {
-                        "type": "string",
-                        "enum": [e.value for e in PostCategorySchema],
-                    },
-                    "arc_id": {
-                        "type": "string",
-                        "description": "ID of an existing active arc this commit continues. Mutually exclusive with new_arc_theme.",
-                    },
-                    "new_arc_theme": {
-                        "type": "string",
-                        "description": "Theme for a NEW narrative arc this commit starts (e.g. 'Building the auth system'). Mutually exclusive with arc_id.",
-                    },
-                    "media_tool": {
-                        "type": "string",
-                        "enum": [e.value for e in MediaTool],
-                    },
-                    "commit_summary": {
-                        "type": "string",
-                        "description": "Brief 1-2 sentence summary of what this commit does, for consolidation batching.",
+                    "queue_actions": {
+                        "type": "object",
+                        "description": "Actions to take on pending drafts, keyed by target name",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": ["supersede", "merge", "drop"],
+                                        "description": "supersede = replace with new draft, merge = combine into new draft, drop = discard",
+                                    },
+                                    "draft_id": {
+                                        "type": "string",
+                                        "description": "ID of the pending draft to act on",
+                                    },
+                                    "reason": {
+                                        "type": "string",
+                                        "description": "Why this action is being taken",
+                                    },
+                                },
+                                "required": ["action", "draft_id", "reason"],
+                            },
+                        },
                     },
                 },
-                "required": ["decision", "reasoning"],
+                "required": ["commit_analysis", "targets"],
             },
         }
 
     @classmethod
-    def validate(cls, data: dict[str, Any]) -> "LogDecisionInput":
+    def validate(cls, data: dict[str, Any]) -> "LogEvaluationInput":
         """Validate tool call input data."""
         try:
             return cls.model_validate(data)
         except ValidationError as e:
-            raise MalformedResponseError(f"Invalid log_decision input: {e}") from e
+            raise MalformedResponseError(f"Invalid log_evaluation input: {e}") from e
 
 
 class CreateDraftInput(BaseModel):
@@ -424,7 +511,7 @@ def extract_tool_call(response: Any, expected_tool: str) -> dict[str, Any]:
 
     Args:
         response: Claude API response object
-        expected_tool: Expected tool name (e.g., "log_decision")
+        expected_tool: Expected tool name (e.g., "log_evaluation")
 
     Returns:
         Tool call input dict

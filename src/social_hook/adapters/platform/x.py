@@ -205,6 +205,14 @@ class XAdapter(PlatformAdapter):
 
         return ThreadResult(success=True, tweet_results=results)
 
+    def post_raw(self, body: dict) -> PostResult:
+        """Post with a pre-built request body.
+
+        Used for quote tweets and replies where the caller builds
+        the full request body including quote_tweet_id or reply fields.
+        """
+        return self._post_tweet(body)
+
     def delete(self, external_id: str) -> bool:
         """Delete a tweet by ID.
 
@@ -274,8 +282,8 @@ class XAdapter(PlatformAdapter):
                     )
 
                 try:
-                    body = response.json()
-                    error_detail = body.get("detail") or body.get("title") or response.text
+                    error_body = response.json()
+                    error_detail = error_body.get("detail") or error_body.get("title") or response.text
                 except Exception:
                     error_detail = response.text
                 logger.warning(f"Tweet failed: {error_type} - {error_detail}")

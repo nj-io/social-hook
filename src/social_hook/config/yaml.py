@@ -116,6 +116,10 @@ class ConsolidationConfig:
     enabled: bool = False
     mode: str = "notify_only"  # "notify_only" or "re_evaluate"
     batch_size: int = 20
+    auto_consolidate_drafts: bool = True
+    consolidate_approved: bool = False
+    time_window_hours: float = 4.0
+    time_window_max_drafts: int = 3
 
 
 @dataclass
@@ -385,6 +389,10 @@ def _parse_config(data: dict[str, Any]) -> Config:
         enabled=cons_data.get("enabled", False),
         mode=cons_mode,
         batch_size=cons_batch,
+        auto_consolidate_drafts=cons_data.get("auto_consolidate_drafts", True),
+        consolidate_approved=cons_data.get("consolidate_approved", False),
+        time_window_hours=float(cons_data.get("time_window_hours", 4.0)),
+        time_window_max_drafts=cons_data.get("time_window_max_drafts", 3),
     )
 
     # Channels

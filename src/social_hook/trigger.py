@@ -13,7 +13,7 @@ from social_hook.errors import ConfigError, DatabaseError
 from social_hook.filesystem import generate_id, get_db_path, get_base_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
-from social_hook.models import CommitInfo, Decision, Draft, DraftTweet, Post
+from social_hook.models import CommitInfo, Decision, Draft, DraftTweet, Post, is_draftable
 from social_hook.config.yaml import TIER_CHAR_LIMITS
 from social_hook.scheduling import calculate_optimal_time
 
@@ -307,36 +307,60 @@ def run_trigger(
         conn.close()
         return 3
 
-    # 8. Save decision
+    # 8. Map evaluation output to Decision
+    analysis = evaluation.commit_analysis
+    target = evaluation.targets.get("default")
+    if target is None:
+        logger.error("Evaluation missing 'default' target")
+        if verbose:
+            print("Error: evaluation missing 'default' target", file=sys.stderr)
+        conn.close()
+        return 3
+
+    def _val(x):
+        return x.value if hasattr(x, "value") else x
+
+    decision_type = _val(target.action)  # "draft", "hold", or "skip"
+
     decision = Decision(
         id=generate_id("decision"),
         project_id=project.id,
         commit_hash=commit_hash,
-        decision=evaluation.decision,
-        reasoning=evaluation.reasoning,
+        decision=decision_type,
+        reasoning=target.reason,
         commit_message=commit.message,
-        angle=getattr(evaluation, "angle", None),
-        episode_type=evaluation.episode_type,
-        post_category=evaluation.post_category,
-        arc_id=getattr(evaluation, "arc_id", None),
-        media_tool=getattr(evaluation, "media_tool", None),
-        platforms=getattr(evaluation, "platforms", {}),
-        commit_summary=getattr(evaluation, "commit_summary", None),
+        angle=target.angle,
+        episode_type=_val(target.episode_type),
+        episode_tags=analysis.episode_tags,
+        post_category=_val(target.post_category),
+        arc_id=target.arc_id,
+        media_tool=_val(target.media_tool),
+        targets={"default": target.model_dump()},
+        commit_summary=analysis.summary,
+        consolidate_with=target.consolidate_with,
     )
+
+    # Hold count enforcement
+    if decision_type == "hold":
+        max_hold = project_config.context.max_hold_count if project_config else 5
+        current_held = ops.get_held_decisions(conn, project.id)
+        if len(current_held) >= max_hold:
+            logger.warning(f"Hold limit reached ({max_hold}), forcing skip for {commit_hash[:8]}")
+            decision.decision = "skip"
+            decision_type = "skip"
+
     db.insert_decision(decision)
     db.emit_data_event("decision", "created", decision.id, project.id)
 
     # 8b. Arc activation: create new arc or link to existing
-    if evaluation.decision == "post_worthy":
-        _arc_id = getattr(evaluation, "arc_id", None)
-        _new_arc_theme = getattr(evaluation, "new_arc_theme", None)
+    if is_draftable(decision.decision):
+        _arc_id = target.arc_id
+        _new_arc_theme = target.new_arc_theme
 
         if _new_arc_theme and not _arc_id:
-            # Evaluator wants to start a new arc
             try:
                 from social_hook.narrative.arcs import create_arc as _create_arc
                 new_arc_id = _create_arc(db.conn, project.id, _new_arc_theme)
-                # Update decision with the new arc ID
                 db.update_decision(decision.id, arc_id=new_arc_id)
                 decision.arc_id = new_arc_id
                 if verbose:
@@ -346,27 +370,80 @@ def run_trigger(
                 if verbose:
                     print(f"Arc creation skipped: {e}", file=sys.stderr)
 
-    # 8c. Send decision notification for non-post_worthy decisions
-    if (
-        not dry_run
-        and config.notification_level == "all_decisions"
-        and evaluation.decision != "post_worthy"
-    ):
+    # 8c. Held decision absorption
+    if is_draftable(decision.decision) and target.consolidate_with:
+        valid_ids = [d.id for d in context.held_decisions]
+        absorbed = [cid for cid in target.consolidate_with if cid in valid_ids]
+        if absorbed and not dry_run:
+            batch_id = generate_id("batch")
+            ops.mark_decisions_processed(conn, absorbed, batch_id)
+
+    # 8d. Queue actions
+    if evaluation.queue_actions:
+        for target_name, actions in evaluation.queue_actions.items():
+            for qa in actions:
+                action_type = qa.action
+                if action_type == "merge":
+                    continue  # handled after draft creation
+                if not dry_run:
+                    draft_ref = ops.get_draft(conn, qa.draft_id)
+                    if not draft_ref or draft_ref.status not in ("draft", "approved", "scheduled"):
+                        if verbose:
+                            print(f"Queue action skipped: draft {qa.draft_id} not actionable")
+                        continue
+                    ops.execute_queue_action(conn, action_type, qa.draft_id, qa.reason)
+                if verbose:
+                    print(f"Queue action: {action_type} draft {qa.draft_id}")
+
+    # 8e. Send decision notification for non-draftable decisions
+    if not dry_run and config.notification_level == "all_decisions" and not is_draftable(decision.decision):
         _send_decision_notification(config, project, commit, decision)
 
     if verbose:
-        print(f"Decision: {evaluation.decision}")
-        print(f"Reasoning: {evaluation.reasoning}")
+        print(f"Decision: {decision_type}")
+        print(f"Reasoning: {target.reason}")
 
-    # 9. If post-worthy, create drafts per platform
-    if evaluation.decision == "post_worthy":
+    # 9. If draftable, create drafts per platform
+    if is_draftable(decision.decision):
         from social_hook.drafting import draft_for_platforms
+        from social_hook.compat import make_eval_compat
 
-        draft_results = draft_for_platforms(
-            config, conn, db, project, decision_id=decision.id,
-            evaluation=evaluation, context=context, commit=commit,
-            project_config=project_config, dry_run=dry_run, verbose=verbose,
-        )
+        eval_compat = make_eval_compat(evaluation, decision.decision)
+
+        # Duplicate intro check
+        draft_results = None
+        if not context.audience_introduced:
+            existing_intro = ops.get_intro_draft(conn, project.id)
+            if existing_intro:
+                if verbose:
+                    print("Intro draft already exists, skipping new draft creation")
+                draft_results = []
+
+        if draft_results is None:
+            draft_results = draft_for_platforms(
+                config, conn, db, project, decision_id=decision.id,
+                evaluation=eval_compat, context=context, commit=commit,
+                project_config=project_config, dry_run=dry_run, verbose=verbose,
+            )
+
+        # Audience introduced lifecycle
+        if draft_results and not context.audience_introduced:
+            for r in draft_results:
+                if not dry_run:
+                    ops.update_draft(conn, r.draft.id, is_intro=True)
+                r.draft.is_intro = True
+            if not dry_run:
+                ops.set_audience_introduced(conn, project.id, True)
+
+        # Merge queue actions — after draft creation
+        merge_actions = [
+            qa for actions in (evaluation.queue_actions or {}).values()
+            for qa in actions
+            if qa.action == "merge"
+        ]
+        if merge_actions and draft_results and not dry_run:
+            for qa in merge_actions:
+                ops.execute_queue_action(conn, "supersede", qa.draft_id, qa.reason)
 
         # Increment arc post count if drafts were created for an arc
         if draft_results and decision.arc_id:
@@ -383,7 +460,6 @@ def run_trigger(
             if draft_results:
                 _send_notifications(config, project, commit, draft_results)
             elif config.notification_level != "drafts_only":
-                # Post-worthy but no drafts (no enabled platforms) -- still notify
                 _send_decision_notification(config, project, commit, decision)
 
     conn.close()
@@ -453,8 +529,8 @@ def _send_notifications(config, project, commit, draft_results):
             from social_hook.messaging.telegram import TelegramAdapter
             adapter = TelegramAdapter(token=token)
             for chat_id in chat_ids:
-                result = adapter.send_message(chat_id, msg)
-                if not result.success:
+                send_result = adapter.send_message(chat_id, msg)
+                if not send_result.success:
                     logger.warning(f"Failed to send Telegram notification to {chat_id}")
             if draft.media_paths:
                 caps = adapter.get_capabilities()
@@ -471,8 +547,8 @@ def _send_notifications(config, project, commit, draft_results):
 def _send_decision_notification(config, project, commit, decision):
     """Send a notification for an evaluated decision to all configured channels.
 
-    Used for non-post_worthy decisions (when notification_level == all_decisions)
-    and for post_worthy decisions where no platforms produced drafts.
+    Used for non-draft decisions (when notification_level == all_decisions)
+    and for draft decisions where no platforms produced drafts.
     """
     from social_hook.messaging.base import OutboundMessage
 

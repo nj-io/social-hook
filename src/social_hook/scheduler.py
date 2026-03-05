@@ -231,23 +231,60 @@ def _post_draft(conn, draft, config):
         PostResult or ThreadResult
     """
     from social_hook.adapters.models import PostResult
+    from social_hook.adapters.platform.factory import create_adapter
 
+    # Create adapter via factory
+    try:
+        adapter = create_adapter(draft.platform, config)
+    except ConfigError as e:
+        return PostResult(success=False, error=str(e))
+
+    # Post format assignment: determine quote/reply for arc continuations
+    decision = None
+    if draft.decision_id:
+        decision = ops.get_decision(conn, draft.decision_id)
+
+    if decision and decision.arc_id and not draft.post_format:
+        prior = ops.get_most_recent_posted_for_arc(conn, decision.arc_id, draft.platform)
+        if prior:
+            all_arc_posts = ops.get_arc_posts(conn, decision.arc_id)
+            platform_posts = [p for p in all_arc_posts if p.platform == draft.platform]
+            if len(platform_posts) <= 1:
+                draft.post_format = "quote"
+            else:
+                draft.post_format = "reply"
+            draft.reference_post_id = prior.id
+            ops.update_draft(
+                conn, draft.id,
+                post_format=draft.post_format,
+                reference_post_id=draft.reference_post_id,
+            )
+
+    # Handle quote/reply posting for X platform
+    if (
+        draft.platform == "x"
+        and draft.post_format in ("quote", "reply")
+        and draft.reference_post_id
+    ):
+        ref_post = ops.get_post(conn, draft.reference_post_id)
+        if ref_post and ref_post.external_id:
+            from social_hook.adapters.platform.x import XAdapter
+
+            if isinstance(adapter, XAdapter):
+                if draft.post_format == "quote":
+                    return adapter.post_raw(
+                        {"text": draft.content, "quote_tweet_id": ref_post.external_id}
+                    )
+                else:  # reply
+                    return adapter.post_raw(
+                        {
+                            "text": draft.content,
+                            "reply": {"in_reply_to_tweet_id": ref_post.external_id},
+                        }
+                    )
+
+    # X-specific: check if this is a thread (has draft_tweets)
     if draft.platform == "x":
-        from social_hook.adapters.platform.x import XAdapter
-
-        api_key = config.env.get("X_API_KEY", "")
-        api_secret = config.env.get("X_API_SECRET", "")
-        access_token = config.env.get("X_ACCESS_TOKEN", "")
-        access_secret = config.env.get("X_ACCESS_TOKEN_SECRET", "")
-
-        if not all([api_key, api_secret, access_token, access_secret]):
-            return PostResult(success=False, error="Missing X API credentials")
-
-        x_config = config.platforms.get("x")
-        tier = (x_config.account_tier if x_config else None) or "free"
-        adapter = XAdapter(api_key, api_secret, access_token, access_secret, tier=tier)
-
-        # Check if this is a thread (has draft_tweets)
         tweets = ops.get_draft_tweets(conn, draft.id)
         if tweets:
             tweet_dicts = []
@@ -285,21 +322,8 @@ def _post_draft(conn, draft, config):
                 error=thread_result.error,
             )
 
-        return adapter.post(draft.content, media_paths=draft.media_paths or None)
-
-    elif draft.platform == "linkedin":
-        from social_hook.adapters.platform.linkedin import LinkedInAdapter
-
-        access_token = config.env.get("LINKEDIN_ACCESS_TOKEN", "")
-        if not access_token:
-            return PostResult(success=False, error="Missing LinkedIn access token")
-
-        adapter = LinkedInAdapter(access_token)
-        # LinkedIn doesn't support threads — always post single content
-        return adapter.post(draft.content, media_paths=draft.media_paths or None)
-
-    else:
-        return PostResult(success=False, error=f"Unsupported platform: {draft.platform}")
+    # Standard single-post (X, LinkedIn, or other)
+    return adapter.post(draft.content, media_paths=draft.media_paths or None)
 
 
 def _handle_post_failure(conn, draft, error_msg, config, dry_run):

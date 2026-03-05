@@ -29,7 +29,7 @@ def db_env(tmp_path):
     # Insert a test decision
     conn.execute(
         "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning) VALUES (?, ?, ?, ?, ?)",
-        ("dec_test1", "proj_test1", "abc123", "post_worthy", "Good commit"),
+        ("dec_test1", "proj_test1", "abc123", "draft", "Good commit"),
     )
 
     # Insert drafts in all 8 statuses

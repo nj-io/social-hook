@@ -49,7 +49,7 @@ def draft_for_platforms(
         db: DryRunContext wrapping conn.
         project: Project model instance.
         decision_id: ID of the decision that triggered drafting.
-        evaluation: Evaluator result (LogDecisionInput or similar).
+        evaluation: Evaluator result (evaluation result or similar).
         context: ProjectContext for drafter prompts.
         commit: CommitInfo for this commit.
         project_config: Optional ProjectConfig (per-project settings).

@@ -206,7 +206,7 @@ class TestDraftCommand:
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="not_post_worthy", reasoning="test",
+            commit_hash="abc", decision="skip", reasoning="test",
         )
         insert_decision(conn, decision)
         conn.close()

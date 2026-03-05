@@ -12,7 +12,6 @@ from social_hook.llm.prompts import assemble_evaluator_context
 from social_hook.llm.schemas import (
     CreateDraftInput,
     ExpertResponseInput,
-    LogDecisionInput,
     RouteActionInput,
     extract_tool_call,
 )
@@ -31,7 +30,6 @@ __all__ = [
     "Gatekeeper",
     "Expert",
     "assemble_evaluator_context",
-    "LogDecisionInput",
     "CreateDraftInput",
     "RouteActionInput",
     "ExpertResponseInput",

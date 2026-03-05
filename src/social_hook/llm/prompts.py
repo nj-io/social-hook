@@ -21,6 +21,28 @@ if TYPE_CHECKING:
     from social_hook.config.yaml import MediaGenerationConfig
 
 
+def _relative_time(dt) -> str:
+    """Format a datetime as a human-readable relative time string."""
+    if not dt:
+        return "unknown"
+    from datetime import datetime, timezone
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    delta = now - dt
+    days = delta.days
+    if days > 30:
+        return f"{days // 30}mo ago"
+    if days > 0:
+        return f"{days}d ago"
+    hours = delta.seconds // 3600
+    if hours > 0:
+        return f"{hours}h ago"
+    return "just now"
+
+
 def _render_narrative_sections(sections: list[str], narratives: list[dict]) -> None:
     """Append Development Narrative sections to the prompt if narratives exist."""
     if not narratives:
@@ -197,10 +219,29 @@ def assemble_evaluator_prompt(
         sections.append(f"- Active arcs: [{arc_summaries}]")
 
     if project_context.pending_drafts:
-        draft_summaries = ", ".join(
-            f"{d.platform}:{d.status}" for d in project_context.pending_drafts
-        )
-        sections.append(f"- Pending drafts: [{draft_summaries}]")
+        cap = getattr(config, 'pending_drafts_cap', 10)
+        to_show = project_context.pending_drafts[:cap]
+        overflow = len(project_context.pending_drafts) - cap
+        detail = getattr(config, 'pending_draft_detail', 'full_content')
+        if detail == "full_content":
+            sections.append("### Pending Drafts")
+            for d in to_show:
+                intro = " [INTRO]" if getattr(d, 'is_intro', False) else ""
+                sections.append(f"- [{d.platform}:{d.status}]{intro}: {d.content}")
+            if overflow > 0:
+                sections.append(f"  (+{overflow} older drafts)")
+        else:
+            summaries = ", ".join(f"{d.platform}:{d.status}" for d in to_show)
+            sections.append(f"- Pending drafts: [{summaries}]")
+
+    if project_context.held_decisions:
+        max_hold = config.max_hold_count if hasattr(config, 'max_hold_count') else 5
+        sections.append("\n---\n## Held Commits")
+        sections.append(f"Commits held for consolidation ({len(project_context.held_decisions)}/{max_hold} slots).")
+        sections.append("For each: consolidate into this draft via `consolidate_with`, keep holding, or let drop.")
+        for d in project_context.held_decisions:
+            summary = d.commit_summary or d.commit_message or d.commit_hash[:8]
+            sections.append(f"- [id={d.id}] {d.commit_hash[:8]}: {summary} (held {_relative_time(d.created_at)})")
 
     # Target platforms
     if platform_summaries:
@@ -242,9 +283,11 @@ def assemble_evaluator_prompt(
                 f"- [{d.decision}] {d.commit_hash[:8]} \"{d.commit_message or 'N/A'}\": {d.reasoning[:100]}"
             )
     if project_context.recent_posts:
-        sections.append("### Recent Posts")
+        sections.append("### Post History")
         for p in project_context.recent_posts[:config.recent_posts]:
-            sections.append(f"- [{p.platform}] {p.content[:100]}")
+            url_part = f", {p.external_url}" if p.external_url else ""
+            time_ago = _relative_time(p.posted_at)
+            sections.append(f"- {p.platform} [id={p.id}]: {p.content[:80]}... ({time_ago}{url_part})")
 
     # Project summary
     if project_context.project_summary:
@@ -368,7 +411,7 @@ def assemble_drafter_prompt(
 
     Args:
         prompt: Base drafter prompt template
-        decision: Evaluation decision (LogDecisionInput or dict)
+        decision: Evaluation decision (evaluation result or dict)
         project_context: Assembled project state
         recent_posts: Recent posts for voice consistency
         commit: Current commit information
@@ -529,8 +572,10 @@ def assemble_drafter_prompt(
                 sections.append(f"- Started: {arc.started_at}")
         if "posts" in arc_context:
             sections.append("### Previous Arc Posts")
-            for p in arc_context["posts"][:5]:  # Last 5 arc posts
-                sections.append(f"- [{p.platform}] {p.content[:100]}")
+            arc_char_limit = getattr(config, 'arc_context_chars', 500) if config else 500
+            for p in arc_context["posts"][:5]:
+                url_part = f" | url: {p.external_url}" if p.external_url else ""
+                sections.append(f"- [id={p.id}] [{p.platform}]{url_part}: {p.content[:arc_char_limit]}")
 
     # Recent posts
     if recent_posts:
@@ -764,6 +809,7 @@ def assemble_evaluator_context(
 
     audience_introduced = db.get_audience_introduced(project_id)
     pending_drafts = db.get_pending_drafts(project_id)
+    held_decisions = db.get_held_decisions(project_id, limit=20)
     recent_decisions = db.get_recent_decisions(project_id, limit=config.recent_decisions)
     recent_posts = db.get_recent_posts_for_context(project_id, limit=config.recent_posts)
     project_summary = db.get_project_summary(project_id)
@@ -806,6 +852,7 @@ def assemble_evaluator_context(
         milestone_summaries=milestone_summaries,
         context_notes=context_notes,
         session_narratives=session_narratives,
+        held_decisions=held_decisions,
     )
 
 

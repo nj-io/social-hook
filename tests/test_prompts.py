@@ -78,7 +78,7 @@ def sample_project_context():
         recent_decisions=[
             Decision(
                 id="dec_1", project_id="proj_test1", commit_hash="prev123",
-                decision="post_worthy", reasoning="Added logging system",
+                decision="draft", reasoning="Added logging system",
                 commit_message="Add structured logging module",
             ),
         ],
@@ -361,21 +361,21 @@ class TestAssembleDrafterPrompt:
     def test_includes_decision(self, sample_project_context, sample_commit):
         decision = Decision(
             id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Important feature",
+            decision="draft", reasoning="Important feature",
             episode_type="milestone",
         )
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
             sample_project_context.recent_posts, sample_commit,
         )
-        assert "post_worthy" in result
+        assert "draft" in result
         assert "Important feature" in result
         assert "milestone" in result
 
     def test_includes_arc_context(self, sample_project_context, sample_commit):
         decision = Decision(
             id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Test",
+            decision="draft", reasoning="Test",
             post_category="arc",
         )
         arc = Arc(id="arc_1", project_id="proj_test1", theme="Auth arc", post_count=3)
@@ -396,7 +396,7 @@ class TestAssembleDrafterPrompt:
     def test_no_arc_context_for_opportunistic(self, sample_project_context, sample_commit):
         decision = Decision(
             id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Test",
+            decision="draft", reasoning="Test",
             post_category="opportunistic",
         )
         result = assemble_drafter_prompt(
@@ -406,7 +406,7 @@ class TestAssembleDrafterPrompt:
         assert "## Arc Context" not in result
 
     def test_includes_memories(self, sample_project_context, sample_commit):
-        decision = {"decision": "post_worthy", "reasoning": "Test"}
+        decision = {"decision": "draft", "reasoning": "Test"}
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
             [], sample_commit,
@@ -658,7 +658,7 @@ class TestAssembleEvaluatorContext:
 
         decision = Decision(
             id="dec_ctx1", project_id="proj_ctx1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Added auth",
+            decision="draft", reasoning="Added auth",
         )
         ops.insert_decision(conn, decision)
 
@@ -792,7 +792,7 @@ class TestContextNotesInPrompts:
         ]
         decision = Decision(
             id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Added auth",
+            decision="draft", reasoning="Added auth",
         )
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
@@ -805,7 +805,7 @@ class TestContextNotesInPrompts:
         sample_project_context.context_notes = []
         decision = Decision(
             id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Added auth",
+            decision="draft", reasoning="Added auth",
         )
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
@@ -989,7 +989,7 @@ class TestDrafterMediaGuide:
         }
         decision = Decision(
             id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="post_worthy", reasoning="Test",
+            decision="draft", reasoning="Test",
         )
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
@@ -1016,7 +1016,7 @@ class TestDrafterMediaGuide:
                 prompt_example="Should not appear either",
             ),
         }
-        decision = {"decision": "post_worthy", "reasoning": "Test"}
+        decision = {"decision": "draft", "reasoning": "Test"}
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
             [], sample_commit,
@@ -1027,7 +1027,7 @@ class TestDrafterMediaGuide:
 
     def test_all_params_none_no_media_guide(self, sample_project_context, sample_commit):
         """Backward compat: no media params -> no Media Tool Guide section."""
-        decision = {"decision": "post_worthy", "reasoning": "Test"}
+        decision = {"decision": "draft", "reasoning": "Test"}
         result = assemble_drafter_prompt(
             "# Drafter", decision, sample_project_context,
             [], sample_commit,

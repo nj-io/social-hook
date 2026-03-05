@@ -90,7 +90,7 @@ class TestSchedulerTick:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -180,7 +180,7 @@ class TestSchedulerTick:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -338,7 +338,7 @@ class TestNotifications:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)
@@ -389,7 +389,7 @@ class TestNotifications:
             id=generate_id("decision"),
             project_id=project.id,
             commit_hash="abc123",
-            decision="post_worthy",
+            decision="draft",
             reasoning="test",
         )
         insert_decision(conn, decision)

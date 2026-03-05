@@ -69,7 +69,14 @@ def reject(
             kwargs["last_error"] = f"Rejected: {reason}"
         ops.update_draft(conn, draft_id, **kwargs)
         ops.emit_data_event(conn, "draft", "rejected", draft_id, draft.project_id)
+
+        # Cascade re-draft if this was an intro draft
+        from social_hook.intro_lifecycle import on_intro_rejected
+        cascade_msg = on_intro_rejected(conn, draft, draft.project_id, verbose=False)
+
         typer.echo(f"Draft {draft_id} rejected.")
+        if cascade_msg:
+            typer.echo(cascade_msg)
     finally:
         conn.close()
 
@@ -335,13 +342,19 @@ def list_cmd(
     ctx: typer.Context,
     status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status"),
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Filter by project ID"),
+    pending: bool = typer.Option(False, "--pending", help="Show only actionable drafts (draft/approved/scheduled)"),
 ):
-    """List drafts with optional filters."""
+    """List drafts with optional filters.
+
+    Example: social-hook draft list --pending --json
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
     try:
         drafts = ops.get_drafts_filtered(conn, status=status, project_id=project)
+        if pending:
+            drafts = [d for d in drafts if d.status in ("draft", "approved", "scheduled")]
         json_output = ctx.obj.get("json", False) if ctx.obj else False
 
         if json_output:
@@ -352,11 +365,13 @@ def list_cmd(
             typer.echo("No drafts found.")
             return
 
-        typer.echo(f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Content'}")
-        typer.echo("-" * 70)
+        typer.echo(f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Fmt':<8} {'Content'}")
+        typer.echo("-" * 80)
         for d in drafts:
             content_preview = d.content[:40].replace("\n", " ") if d.content else ""
-            typer.echo(f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {content_preview}")
+            intro = " [INTRO]" if getattr(d, 'is_intro', False) else ""
+            fmt = d.post_format or "single"
+            typer.echo(f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {fmt:<8} {content_preview}{intro}")
     finally:
         conn.close()
 

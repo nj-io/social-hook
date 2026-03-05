@@ -188,8 +188,10 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
     """
     conn.execute(
         """
-        INSERT INTO decisions (id, project_id, commit_hash, commit_message, decision, reasoning, angle, episode_type, post_category, arc_id, media_tool, platforms, commit_summary)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO decisions (id, project_id, commit_hash, commit_message,
+            decision, reasoning, angle, episode_type, episode_tags, post_category,
+            arc_id, media_tool, platforms, targets, commit_summary, consolidate_with)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )
@@ -241,10 +243,10 @@ def get_all_recent_decisions(
     return [Decision.from_dict(dict(row)) for row in rows]
 
 
-def get_unprocessed_consolidation_decisions(
+def get_held_decisions(
     conn: sqlite3.Connection, project_id: str, limit: int = 20
 ) -> list[Decision]:
-    """Get unprocessed consolidate/deferred decisions for a project.
+    """Get unprocessed hold/consolidate/deferred decisions for a project.
 
     Uses partial index idx_decisions_unprocessed for efficient lookup.
 
@@ -260,7 +262,7 @@ def get_unprocessed_consolidation_decisions(
         """
         SELECT * FROM decisions
         WHERE project_id = ?
-          AND decision IN ('consolidate', 'deferred')
+          AND decision = 'hold'
           AND processed = 0
         ORDER BY created_at ASC
         LIMIT ?
@@ -310,10 +312,13 @@ def update_decision(
     arc_id: Optional[str] = None,
     media_tool: Optional[str] = None,
     platforms: Optional[str] = None,
+    episode_tags: Optional[list[str]] = None,
+    targets: Optional[dict] = None,
+    consolidate_with: Optional[list[str]] = None,
 ) -> bool:
     """Update a decision row.
 
-    Used by consolidation re-evaluate to upgrade a decision to post_worthy.
+    Used by consolidation re-evaluate to upgrade a decision to draft.
 
     Returns True if a row was updated.
     """
@@ -344,6 +349,15 @@ def update_decision(
     if platforms is not None:
         updates.append("platforms = ?")
         params.append(platforms)
+    if episode_tags is not None:
+        updates.append("episode_tags = ?")
+        params.append(json.dumps(episode_tags))
+    if targets is not None:
+        updates.append("targets = ?")
+        params.append(json.dumps(targets))
+    if consolidate_with is not None:
+        updates.append("consolidate_with = ?")
+        params.append(json.dumps(consolidate_with))
 
     if not updates:
         return False
@@ -369,8 +383,10 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
     """
     conn.execute(
         """
-        INSERT INTO drafts (id, project_id, decision_id, platform, status, content, media_paths, media_type, media_spec, suggested_time, scheduled_time, reasoning, superseded_by, retry_count, last_error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO drafts (id, project_id, decision_id, platform, status, content,
+            media_paths, media_type, media_spec, suggested_time, scheduled_time,
+            reasoning, superseded_by, retry_count, last_error, is_intro, post_format, reference_post_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         draft.to_row(),
     )
@@ -397,6 +413,9 @@ def update_draft(
     media_paths: Optional[list[str]] = None,
     media_type: Optional[str] = None,
     media_spec: Optional[dict] = None,
+    is_intro: Optional[bool] = None,
+    post_format: Optional[str] = None,
+    reference_post_id: Optional[str] = None,
 ) -> bool:
     """Update a draft.
 
@@ -429,6 +448,15 @@ def update_draft(
     if media_spec is not None:
         updates.append("media_spec = ?")
         params.append(json.dumps(media_spec))
+    if is_intro is not None:
+        updates.append("is_intro = ?")
+        params.append(1 if is_intro else 0)
+    if post_format is not None:
+        updates.append("post_format = ?")
+        params.append(post_format)
+    if reference_post_id is not None:
+        updates.append("reference_post_id = ?")
+        params.append(reference_post_id)
 
     if not updates:
         return False
@@ -1310,6 +1338,95 @@ def cleanup_old_chat_messages(conn: sqlite3.Connection, days: int = 7) -> int:
     )
     conn.commit()
     return cursor.rowcount
+
+
+# =============================================================================
+# Data Events (WebSocket broadcast)
+# =============================================================================
+
+
+# =============================================================================
+# Evaluator Rework Operations
+# =============================================================================
+
+
+def get_post(conn: sqlite3.Connection, post_id: str) -> Optional[Post]:
+    """Get a single post by ID."""
+    row = conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
+    if row:
+        return Post.from_dict(dict(row))
+    return None
+
+
+def get_drafts_in_time_window(
+    conn: sqlite3.Connection, project_id: str, hours: float
+) -> list[Draft]:
+    """Get pending drafts created within the last N hours."""
+    rows = conn.execute(
+        """
+        SELECT * FROM drafts
+        WHERE project_id = ?
+          AND status IN ('draft', 'approved', 'scheduled')
+          AND created_at >= datetime('now', ?)
+        ORDER BY created_at DESC
+        """,
+        (project_id, f"-{hours} hours"),
+    ).fetchall()
+    return [Draft.from_dict(dict(row)) for row in rows]
+
+
+def get_intro_draft(conn: sqlite3.Connection, project_id: str) -> Optional[Draft]:
+    """Get the most recent active intro draft for a project."""
+    row = conn.execute(
+        """
+        SELECT * FROM drafts
+        WHERE project_id = ? AND is_intro = 1
+          AND status IN ('draft', 'approved', 'scheduled')
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        (project_id,),
+    ).fetchone()
+    if row:
+        return Draft.from_dict(dict(row))
+    return None
+
+
+def get_most_recent_posted_for_arc(
+    conn: sqlite3.Connection, arc_id: str, platform: str
+) -> Optional[Post]:
+    """Get the most recently posted content for an arc on a given platform.
+
+    Requires posts->drafts->decisions join since posts lacks arc_id.
+    """
+    row = conn.execute(
+        """
+        SELECT p.* FROM posts p
+        JOIN drafts dr ON p.draft_id = dr.id
+        JOIN decisions d ON dr.decision_id = d.id
+        WHERE d.arc_id = ? AND p.platform = ?
+        ORDER BY p.posted_at DESC LIMIT 1
+        """,
+        (arc_id, platform),
+    ).fetchone()
+    if row:
+        return Post.from_dict(dict(row))
+    return None
+
+
+def execute_queue_action(
+    conn: sqlite3.Connection, action_type: str, draft_id: str, reason: str
+) -> None:
+    """Execute an evaluator queue action on a draft.
+
+    supersede -> update status to 'superseded'
+    drop -> update status to 'cancelled' with reason
+    """
+    if action_type == "supersede":
+        update_draft(conn, draft_id, status="superseded")
+    elif action_type == "drop":
+        update_draft(conn, draft_id, status="cancelled", last_error=reason)
+    else:
+        raise ValueError(f"Unknown queue action: {action_type}")
 
 
 # =============================================================================

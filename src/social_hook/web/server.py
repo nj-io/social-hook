@@ -25,6 +25,7 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.db import operations as ops
+from social_hook.db.connection import init_database
 from social_hook.messaging.gateway import GatewayHub, GatewayEnvelope
 
 import logging
@@ -40,6 +41,9 @@ _hub = GatewayHub()
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
+    # Ensure DB schema exists before any endpoint or bridge loop runs.
+    # Safe on existing DBs (CREATE TABLE IF NOT EXISTS), required on fresh installs.
+    init_database(get_db_path())
     task = asyncio.create_task(_event_bridge_loop())
     yield
     task.cancel()
@@ -475,8 +479,8 @@ async def _event_bridge_loop():
 
 
 @app.get("/api/drafts")
-async def api_drafts(status: Optional[str] = None):
-    """List drafts, optionally filtered by status."""
+async def api_drafts(status: Optional[str] = None, pending: bool = False):
+    """List drafts, optionally filtered by status or pending flag."""
     conn = _get_conn()
     try:
         if status:
@@ -488,7 +492,10 @@ async def api_drafts(status: Optional[str] = None):
             rows = conn.execute(
                 "SELECT * FROM drafts ORDER BY created_at DESC"
             ).fetchall()
-        return {"drafts": [dict(row) for row in rows]}
+        drafts = [dict(row) for row in rows]
+        if pending:
+            drafts = [d for d in drafts if d.get("status") in ("draft", "approved", "scheduled")]
+        return {"drafts": drafts}
     finally:
         conn.close()
 
@@ -732,7 +739,7 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
     """Create a draft from an existing decision (decision override).
 
     Allows manually triggering draft creation for a decision that was
-    originally marked as not_post_worthy, consolidated, or deferred.
+    originally marked as skip or hold.
     Uses the shared drafting pipeline for real LLM-generated content.
 
     Body:
@@ -765,16 +772,18 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
 
     commit = parse_commit_info(decision.commit_hash, project.repo_path)
 
-    from social_hook.llm.schemas import LogDecisionInput
+    from types import SimpleNamespace
 
-    evaluation = LogDecisionInput(
-        decision="post_worthy",
+    evaluation = SimpleNamespace(
+        decision="draft",
         reasoning=decision.reasoning,
         angle=decision.angle,
         episode_type=decision.episode_type,
         post_category=decision.post_category,
         arc_id=decision.arc_id,
+        new_arc_theme=None,
         media_tool=decision.media_tool,
+        reference_posts=None,
         include_project_docs=True,
         commit_summary=decision.commit_summary,
     )
@@ -875,11 +884,11 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         files_changed=[],
     )
 
-    from social_hook.llm.schemas import LogDecisionInput
+    from types import SimpleNamespace
 
     anchor = decisions[-1]
-    evaluation = LogDecisionInput(
-        decision="post_worthy",
+    evaluation = SimpleNamespace(
+        decision="draft",
         reasoning=anchor.reasoning,
         angle=anchor.angle,
         episode_type=anchor.episode_type,

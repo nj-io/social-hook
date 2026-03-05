@@ -60,6 +60,7 @@ SECTION_MAP = {
     "multiprovider": "L",
     "journey": "M",
     "web": "N",
+    "queue": "Q",
 }
 
 # Provider presets: maps --provider flag to model configs
@@ -326,7 +327,7 @@ class E2EHarness:
             id=generate_id("decision"),
             project_id=project_id,
             commit_hash=f"seed_{generate_id('commit')[:12]}",  # unique per call
-            decision="post_worthy",
+            decision="draft",
             reasoning="E2E test decision",
             episode_type="milestone",
             post_category="arc",
@@ -693,13 +694,13 @@ def test_A_onboarding(harness: E2EHarness, runner: E2ERunner):
         d = decisions[0]
 
         # Structural check: decision is valid
-        valid_decisions = {"post_worthy", "not_post_worthy", "consolidate", "deferred"}
+        valid_decisions = {"draft", "hold", "skip"}
         assert d.decision in valid_decisions, f"Invalid decision: {d.decision}"
 
         detail = f"Decision: {d.decision}"
-        if d.decision == "post_worthy":
-            assert d.episode_type is not None, "episode_type is None for post_worthy"
-            assert d.post_category is not None, "post_category is None for post_worthy"
+        if d.decision == "draft":
+            assert d.episode_type is not None, "episode_type is None for draft"
+            assert d.post_category is not None, "post_category is None for draft"
             detail += f" ({d.episode_type})"
 
         # Add to review report
@@ -830,12 +831,12 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         assert len(decisions) > 0, "No decisions created"
         d = decisions[0]
 
-        valid_decisions = {"post_worthy", "not_post_worthy", "consolidate", "deferred"}
+        valid_decisions = {"draft", "hold", "skip"}
         assert d.decision in valid_decisions, f"Invalid decision: {d.decision}"
 
         detail = f"Commit: {COMMITS['significant']} Decision: {d.decision}"
 
-        if d.decision == "post_worthy":
+        if d.decision == "draft":
             valid_episodes = {"decision", "before_after", "demo_proof", "milestone",
                             "postmortem", "launch", "synthesis"}
             valid_categories = {"arc", "opportunistic", "experiment"}
@@ -843,7 +844,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
             assert d.post_category in valid_categories, f"Invalid post_category: {d.post_category}"
 
             drafts = get_pending_drafts(harness.conn, harness.project_id)
-            assert len(drafts) > 0, "No draft created for post_worthy decision"
+            assert len(drafts) > 0, "No draft created for draft decision"
             assert drafts[0].content, "Draft content is empty"
             detail += f" ({d.episode_type}), Draft: {len(drafts[0].content)} chars"
 
@@ -886,7 +887,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         )
         return f"Decision: {d.decision}"
 
-    runner.run_scenario("B2", "Docs-only commit → likely not_post_worthy", b2, llm_call=True, isolate=True)
+    runner.run_scenario("B2", "Docs-only commit → likely skip", b2, llm_call=True, isolate=True)
 
     # B3: Unregistered repo → silent exit
     def b3():
@@ -1008,9 +1009,9 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         decisions = get_recent_decisions(harness.conn, harness.project_id, limit=5)
         assert len(decisions) > 0, "No decisions"
         d = decisions[0]
-        valid = {"post_worthy", "not_post_worthy", "consolidate", "deferred"}
+        valid = {"draft", "hold", "skip"}
         assert d.decision in valid, f"Invalid decision: {d.decision}"
-        return f"Decision: {d.decision} (consolidate is valid outcome)"
+        return f"Decision: {d.decision} (hold is valid outcome)"
 
     runner.run_scenario("B8", "Consolidation context visible", b8, llm_call=True, isolate=True)
 
@@ -1027,11 +1028,11 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
                 d = dec
                 break
         assert d is not None, f"No decision for {COMMITS['docs_only_2']}"
-        valid = {"post_worthy", "not_post_worthy", "consolidate", "deferred"}
+        valid = {"draft", "hold", "skip"}
         assert d.decision in valid
-        return f"Decision: {d.decision} (deferred is valid)"
+        return f"Decision: {d.decision} (hold is valid)"
 
-    runner.run_scenario("B9", "Deferred/not_post_worthy for minor commit", b9, llm_call=True, isolate=True)
+    runner.run_scenario("B9", "Hold/skip for minor commit", b9, llm_call=True, isolate=True)
 
     # B10: Pipeline generates media when enabled
     def b10():
@@ -1052,7 +1053,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         runner.add_review_item(
             "B10",
             title="Pipeline with media generation enabled",
-            decision="post_worthy",
+            decision="draft",
             draft_content=draft.content,
             review_question="Does the generated media match the content?",
             media_type=draft.media_type,
@@ -1092,7 +1093,7 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
         runner.add_review_item(
             "B11",
             title="Per-tool media disable",
-            decision="post_worthy",
+            decision="draft",
             draft_content=draft.content,
             review_question="Were all media tools correctly skipped despite evaluator suggesting one?",
             media_type=draft.media_type,
@@ -1117,32 +1118,32 @@ def test_C_narrative(harness: E2EHarness, runner: E2ERunner):
     if not harness.project_id:
         harness.seed_project()
 
-    # C1: Episode type assigned on post_worthy decision
+    # C1: Episode type assigned on draft decision
     def c1():
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=20)
-        pw = [d for d in decisions if d.decision == "post_worthy"]
+        pw = [d for d in decisions if d.decision == "draft"]
         if not pw:
-            return "SKIP: No post_worthy decisions to check"
+            return "SKIP: No draft decisions to check"
         d = pw[0]
         valid_episodes = {"decision", "before_after", "demo_proof", "milestone",
                         "postmortem", "launch", "synthesis"}
         assert d.episode_type in valid_episodes, f"Invalid episode_type: {d.episode_type}"
         return f"Episode type: {d.episode_type}"
 
-    runner.run_scenario("C1", "Episode type assigned on post_worthy", c1)
+    runner.run_scenario("C1", "Episode type assigned on draft", c1)
 
-    # C2: Post category assigned on post_worthy decision
+    # C2: Post category assigned on draft decision
     def c2():
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=20)
-        pw = [d for d in decisions if d.decision == "post_worthy"]
+        pw = [d for d in decisions if d.decision == "draft"]
         if not pw:
-            return "SKIP: No post_worthy decisions to check"
+            return "SKIP: No draft decisions to check"
         d = pw[0]
         valid_categories = {"arc", "opportunistic", "experiment"}
         assert d.post_category in valid_categories, f"Invalid post_category: {d.post_category}"
         return f"Post category: {d.post_category}"
 
-    runner.run_scenario("C2", "Post category assigned on post_worthy", c2)
+    runner.run_scenario("C2", "Post category assigned on draft", c2)
 
     # C3: Arc created for arc-category post
     def c3():
@@ -1677,7 +1678,7 @@ def test_E_scheduler(harness: E2EHarness, runner: E2ERunner):
                 id=generate_id("decision"),
                 project_id=harness.project_id,
                 commit_hash=f"e5hash{i}",
-                decision="post_worthy",
+                decision="draft",
                 reasoning="test",
             )
             insert_decision(harness.conn, d)
@@ -1885,7 +1886,7 @@ def test_F_bot_commands(harness: E2EHarness, runner: E2ERunner, adapter: Capture
             id=generate_id("decision"),
             project_id=harness.project_id,
             commit_hash=COMMITS["significant"],
-            decision="post_worthy",
+            decision="draft",
             reasoning="Great feature launch with demo potential",
             episode_type="demo_proof",
             post_category="arc",
@@ -2588,7 +2589,7 @@ def test_K_crosscutting(harness: E2EHarness, runner: E2ERunner, adapter: Capture
 
         drafts = ops.get_pending_drafts(harness.conn, harness.project_id)
         if not drafts:
-            return "SKIP: No draft created (evaluator chose not_post_worthy)"
+            return "SKIP: No draft created (evaluator chose skip)"
 
         draft = drafts[0]
         adapter.clear()
@@ -3597,17 +3598,17 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
         new_drafts = after_drafts[: len(after_drafts) - before_count] if len(after_drafts) > before_count else after_drafts
 
         # We need at least 1 draft. With 2 platforms we expect 2, but the LLM
-        # might decide not_post_worthy. If post_worthy, check platforms differ.
+        # might decide skip. If draft, check platforms differ.
         decisions = ops.get_recent_decisions(harness.conn, harness.project_id, limit=5)
         d = decisions[0] if decisions else None
 
-        if d and d.decision == "post_worthy":
+        if d and d.decision == "draft":
             # Look for drafts with different platforms
             platforms_seen = set()
             for draft in after_drafts:
                 platforms_seen.add(draft.platform)
 
-            detail = f"Decision: post_worthy, platforms: {platforms_seen}"
+            detail = f"Decision: draft, platforms: {platforms_seen}"
             if len(platforms_seen) >= 2:
                 detail += " (multi-platform confirmed)"
             else:
@@ -3760,6 +3761,168 @@ def test_N_web_dashboard(harness: E2EHarness, runner: E2ERunner):
 
 
 # ---------------------------------------------------------------------------
+# Section Q: Queue / Evaluator Rework
+# ---------------------------------------------------------------------------
+
+def test_Q_queue_rework(harness: E2EHarness, runner: E2ERunner):
+    """Q8-Q12: Queue and evaluator rework scenarios.
+
+    These test DB-level operations and model correctness for the evaluator
+    rework (hold decisions, queue actions). No LLM calls required.
+    """
+    if not harness.project_id:
+        harness.seed_project()
+
+    # Q8: Decision type validation — only draft/hold/skip accepted
+    def q8():
+        from social_hook.models import Decision
+        import pytest
+
+        # 'draft' is valid
+        d = Decision(
+            id="test_q8", project_id=harness.project_id, commit_hash="abc123",
+            decision="draft", reasoning="test draft value"
+        )
+        assert d.decision == "draft"
+        row = d.to_row()
+        assert row[4] == "draft"  # Column 5 is decision
+
+        # 'hold' is valid
+        d2 = Decision(
+            id="test_q8b", project_id=harness.project_id, commit_hash="def456",
+            decision="hold", reasoning="test hold value"
+        )
+        assert d2.decision == "hold"
+
+        # 'skip' is valid
+        d3 = Decision(
+            id="test_q8c", project_id=harness.project_id, commit_hash="ghi789",
+            decision="skip", reasoning="test skip"
+        )
+        assert d3.decision == "skip"
+
+        # Old values like 'post_worthy' are rejected
+        try:
+            Decision(
+                id="test_q8d", project_id=harness.project_id, commit_hash="jkl012",
+                decision="post_worthy", reasoning="should fail"
+            )
+            assert False, "post_worthy should have raised ValueError"
+        except ValueError:
+            pass  # Expected
+
+        return "draft, hold, skip all parse correctly; old values rejected"
+
+    runner.run_scenario("Q8", "Decision type validation: only draft/hold/skip", q8, isolate=True)
+
+    # Q9: Hold decision stored and retrievable
+    def q9():
+        from social_hook.models import Decision
+        from social_hook.db import operations as ops
+
+        d = Decision(
+            id="test_q9", project_id=harness.project_id, commit_hash="hold123",
+            decision="hold", reasoning="Wait for related commits",
+            commit_summary="Added initial auth scaffolding",
+        )
+        ops.insert_decision(harness.conn, d)
+        harness.conn.commit()
+
+        held = ops.get_held_decisions(harness.conn, harness.project_id)
+        assert any(h.id == "test_q9" for h in held), \
+            f"test_q9 not found in held decisions: {[h.id for h in held]}"
+
+        # Verify the decision roundtrips correctly
+        found = [h for h in held if h.id == "test_q9"][0]
+        assert found.commit_summary == "Added initial auth scaffolding"
+        assert found.decision == "hold"
+
+        return f"Hold decision stored, {len(held)} held total"
+
+    runner.run_scenario("Q9", "Hold decision stored correctly", q9, isolate=True)
+
+    # Q10: is_held and is_draftable helper functions
+    def q10():
+        from social_hook.models import is_held, is_draftable
+
+        # Held decisions — only "hold" returns True
+        assert is_held("hold"), "hold should be held"
+        assert not is_held("draft"), "draft should not be held"
+        assert not is_held("skip"), "skip should not be held"
+        assert not is_held("consolidate"), "consolidate (old value) should not be held"
+
+        # Draftable decisions — only "draft" returns True
+        assert is_draftable("draft"), "draft should be draftable"
+        assert not is_draftable("skip"), "skip should not be draftable"
+        assert not is_draftable("hold"), "hold should not be draftable"
+        assert not is_draftable("post_worthy"), "post_worthy (old value) should not be draftable"
+
+        return "is_held and is_draftable correct for all decision types"
+
+    runner.run_scenario("Q10", "Hold/draftable helper functions", q10)
+
+    # Q11: Queue action — supersede
+    def q11():
+        from social_hook.models import Draft, Decision
+        from social_hook.db import operations as ops
+
+        d = Decision(
+            id="test_q11_dec", project_id=harness.project_id,
+            commit_hash="sup123", decision="draft", reasoning="test"
+        )
+        ops.insert_decision(harness.conn, d)
+
+        draft = Draft(
+            id="test_q11", project_id=harness.project_id,
+            decision_id="test_q11_dec", platform="x",
+            content="Original draft content", status="draft"
+        )
+        ops.insert_draft(harness.conn, draft)
+        harness.conn.commit()
+
+        ops.execute_queue_action(harness.conn, "supersede", "test_q11", "Replaced by newer commit")
+
+        updated = ops.get_draft(harness.conn, "test_q11")
+        assert updated is not None, "Draft not found after supersede"
+        assert updated.status == "superseded", f"Expected superseded, got {updated.status}"
+
+        return "Draft superseded successfully"
+
+    runner.run_scenario("Q11", "Queue action: supersede", q11, isolate=True)
+
+    # Q12: Queue action — drop
+    def q12():
+        from social_hook.models import Draft, Decision
+        from social_hook.db import operations as ops
+
+        d = Decision(
+            id="test_q12_dec", project_id=harness.project_id,
+            commit_hash="drop123", decision="draft", reasoning="test"
+        )
+        ops.insert_decision(harness.conn, d)
+
+        draft = Draft(
+            id="test_q12", project_id=harness.project_id,
+            decision_id="test_q12_dec", platform="x",
+            content="Stale draft content", status="draft"
+        )
+        ops.insert_draft(harness.conn, draft)
+        harness.conn.commit()
+
+        ops.execute_queue_action(harness.conn, "drop", "test_q12", "No longer relevant")
+
+        updated = ops.get_draft(harness.conn, "test_q12")
+        assert updated is not None, "Draft not found after drop"
+        assert updated.status == "cancelled", f"Expected cancelled, got {updated.status}"
+        assert "No longer relevant" in (updated.last_error or ""), \
+            f"Reason not in last_error: {updated.last_error}"
+
+        return "Draft dropped (cancelled) with reason"
+
+    runner.run_scenario("Q12", "Queue action: drop", q12, isolate=True)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -3770,7 +3933,7 @@ def main():
     parser.add_argument(
         "--only", type=str, default=None,
         help="Run only a specific section (onboarding, pipeline, narrative, draft, "
-             "scheduler, bot, setup, cli, crosscutting, multiprovider, journey, web) or scenario (A1, B1, etc.)"
+             "scheduler, bot, setup, cli, crosscutting, multiprovider, journey, web, queue) or scenario (A1, B1, etc.)"
     )
     parser.add_argument(
         "--skip-telegram", action="store_true",
@@ -3816,13 +3979,13 @@ def main():
                 print("  Invalid choice. Enter 1 or 2.")
 
     # Determine which sections to run
-    sections_to_run = set("ABCDEFGHIJKLMN")
+    sections_to_run = set("ABCDEFGHIJKLMNQ")
     only_scenario = None
     if args.only:
         only = args.only
         if only.lower() in SECTION_MAP:
             sections_to_run = set(SECTION_MAP[only.lower()])
-        elif only.upper()[0] in "ABCDEFGHIJKLMN":
+        elif only.upper()[0] in "ABCDEFGHIJKLMNQ":
             # Single scenario (e.g. "C13") — run the section, skip non-matching scenarios
             sections_to_run = {only.upper()[0]}
             if any(c.isdigit() for c in only):
@@ -3918,6 +4081,10 @@ def main():
         if "N" in sections_to_run:
             print("\n--- N. Web Dashboard + Per-Platform ---")
             test_N_web_dashboard(harness, runner)
+
+        if "Q" in sections_to_run:
+            print("\n--- Q. Queue / Evaluator Rework ---")
+            test_Q_queue_rework(harness, runner)
 
     except KeyboardInterrupt:
         print("\n\nInterrupted.")

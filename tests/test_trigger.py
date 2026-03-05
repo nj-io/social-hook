@@ -414,20 +414,18 @@ class TestTriggerUsesAdapter:
         commit.message = "Add feature"
         mock_parse.return_value = commit
 
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
 
-        # Evaluator says post-worthy
+        # Evaluator says draft-worthy
         evaluator_instance = MagicMock()
-        evaluation = MagicMock()
-        evaluation.decision = "post_worthy"
-        evaluation.reasoning = "Good commit"
-        evaluation.angle = "new feature"
-        evaluation.episode_type = "launch"
-        evaluation.post_category = "arc"
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
+        evaluation = _make_eval_mock(
+            action="draft",
+            reason="Good commit",
+            angle="new feature",
+            episode_type="launch",
+            post_category="arc",
+        )
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
@@ -461,6 +459,47 @@ class TestTriggerUsesAdapter:
         call_chat_ids = [c.args[0] for c in mock_adapter_send.call_args_list]
         assert "111" in call_chat_ids
         assert "222" in call_chat_ids
+
+
+def _make_eval_mock(
+    action="draft",
+    reason="Good commit",
+    angle="feature",
+    episode_type="milestone",
+    post_category="arc",
+    arc_id=None,
+    new_arc_theme=None,
+    media_tool=None,
+    consolidate_with=None,
+    queue_actions=None,
+):
+    """Build a LogEvaluationInput-shaped mock for trigger tests."""
+    from social_hook.llm.schemas import (
+        CommitAnalysis,
+        LogEvaluationInput,
+        TargetDecisionInput,
+        TargetAction,
+    )
+
+    target_data = {
+        "action": action,
+        "reason": reason,
+        "angle": angle,
+        "episode_type": episode_type,
+        "post_category": post_category,
+        "arc_id": arc_id,
+        "new_arc_theme": new_arc_theme,
+        "media_tool": media_tool,
+        "consolidate_with": consolidate_with,
+    }
+    # Remove None values so Pydantic uses defaults
+    target_data = {k: v for k, v in target_data.items() if v is not None}
+
+    return LogEvaluationInput.model_validate({
+        "commit_analysis": {"summary": "Test commit summary"},
+        "targets": {"default": target_data},
+        "queue_actions": queue_actions,
+    })
 
 
 def _make_trigger_mocks(
@@ -504,15 +543,14 @@ def _make_trigger_mocks(
     commit.hash = "abc12345"
     commit.message = "Add feature"
 
-    evaluation = MagicMock()
-    evaluation.decision = "post_worthy"
-    evaluation.reasoning = "Good commit"
-    evaluation.angle = "feature"
-    evaluation.episode_type = "milestone"
-    evaluation.post_category = "arc"
-    evaluation.arc_id = None
-    evaluation.media_tool = evaluator_media_tool
-    evaluation.platforms = {}
+    evaluation = _make_eval_mock(
+        action="draft",
+        reason="Good commit",
+        angle="feature",
+        episode_type="milestone",
+        post_category="arc",
+        media_tool=evaluator_media_tool,
+    )
 
     evaluator_instance = MagicMock()
     evaluator_instance.evaluate.return_value = evaluation
@@ -588,7 +626,7 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -638,7 +676,7 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -678,7 +716,7 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -722,7 +760,7 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -769,7 +807,7 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -815,7 +853,7 @@ class TestTriggerMedia:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -907,7 +945,7 @@ class TestTriggerSendsMediaNotification:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test-proj", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -963,15 +1001,13 @@ class TestPerPlatformPipeline:
         commit.hash = "abc12345"
         commit.message = "Add feature"
 
-        evaluation = MagicMock()
-        evaluation.decision = "post_worthy"
-        evaluation.reasoning = "Good commit"
-        evaluation.angle = "feature"
-        evaluation.episode_type = episode_type
-        evaluation.post_category = "arc"
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
+        evaluation = _make_eval_mock(
+            action="draft",
+            reason="Good commit",
+            angle="feature",
+            episode_type=episode_type,
+            post_category="arc",
+        )
 
         evaluator_instance = MagicMock()
         evaluator_instance.evaluate.return_value = evaluation
@@ -1030,7 +1066,7 @@ class TestPerPlatformPipeline:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -1093,7 +1129,7 @@ class TestPerPlatformPipeline:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -1168,7 +1204,7 @@ class TestPerPlatformPipeline:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -1217,7 +1253,7 @@ class TestPerPlatformPipeline:
         mock_db_path.return_value = Path("/tmp/test.db")
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
-        mock_context.return_value = {}
+        mock_context.return_value = MagicMock(held_decisions=[], audience_introduced=True, project_summary="test")
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
         mock_drafter_cls.return_value = mocks["drafter_instance"]
@@ -1401,16 +1437,10 @@ class TestDecisionNotification:
         mock_proj_config.return_value = MagicMock()
 
         evaluator_instance = MagicMock()
-        evaluation = MagicMock()
-        evaluation.decision = "not_post_worthy"
-        evaluation.reasoning = "Minor fix"
-        evaluation.angle = None
-        evaluation.episode_type = None
-        evaluation.post_category = None
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
-        evaluation.commit_summary = None
+        evaluation = _make_eval_mock(
+            action="skip",
+            reason="Minor fix",
+        )
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
@@ -1474,16 +1504,13 @@ class TestDecisionNotification:
         mock_proj_config.return_value = MagicMock()
 
         evaluator_instance = MagicMock()
-        evaluation = MagicMock()
-        evaluation.decision = "post_worthy"
-        evaluation.reasoning = "Great commit"
-        evaluation.angle = "feature"
-        evaluation.episode_type = "launch"
-        evaluation.post_category = "arc"
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
-        evaluation.commit_summary = None
+        evaluation = _make_eval_mock(
+            action="draft",
+            reason="Great commit",
+            angle="feature",
+            episode_type="launch",
+            post_category="arc",
+        )
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
@@ -1535,16 +1562,10 @@ class TestDecisionNotification:
         mock_proj_config.return_value = MagicMock()
 
         evaluator_instance = MagicMock()
-        evaluation = MagicMock()
-        evaluation.decision = "not_post_worthy"
-        evaluation.reasoning = "Minor fix"
-        evaluation.angle = None
-        evaluation.episode_type = None
-        evaluation.post_category = None
-        evaluation.arc_id = None
-        evaluation.media_tool = None
-        evaluation.platforms = {}
-        evaluation.commit_summary = None
+        evaluation = _make_eval_mock(
+            action="skip",
+            reason="Minor fix",
+        )
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
@@ -1568,7 +1589,7 @@ class TestDecisionNotification:
         commit.hash = "abc12345abcdef"
         commit.message = "Fix typo in README"
         decision = MagicMock()
-        decision.decision = "not_post_worthy"
+        decision.decision = "skip"
         decision.reasoning = "Minor documentation fix, not interesting"
 
         with patch("social_hook.messaging.web.WebAdapter") as mock_web:
@@ -1590,7 +1611,7 @@ class TestDecisionNotification:
         commit.hash = "abc12345abcdef"
         commit.message = "Fix typo"
         decision = MagicMock()
-        decision.decision = "not_post_worthy"
+        decision.decision = "skip"
         decision.reasoning = "Minor fix"
 
         with patch("social_hook.trigger.get_db_path", return_value=Path("/tmp/test.db")):
@@ -1600,6 +1621,6 @@ class TestDecisionNotification:
                 _send_decision_notification(cfg, project, commit, decision)
                 mock_adapter.send_message.assert_called_once()
                 msg = mock_adapter.send_message.call_args[0][1]
-                assert "not_post_worthy" in msg.text
+                assert "skip" in msg.text
                 assert "test-proj" in msg.text
                 assert "abc12345" in msg.text

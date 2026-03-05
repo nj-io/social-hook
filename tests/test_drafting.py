@@ -41,7 +41,7 @@ def _make_commit() -> CommitInfo:
 def _make_evaluation():
     """Build a minimal evaluation mock."""
     eval_mock = MagicMock()
-    eval_mock.decision = "post_worthy"
+    eval_mock.decision = "draft"
     eval_mock.reasoning = "Interesting feature"
     eval_mock.angle = "test angle"
     eval_mock.episode_type = "milestone"

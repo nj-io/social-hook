@@ -79,11 +79,12 @@ def draft(
         commit_info = parse_commit_info(decision.commit_hash, project.repo_path)
 
         # Assemble context
+        from types import SimpleNamespace
+
         from social_hook.config.project import ProjectConfig, load_project_config
         from social_hook.errors import ConfigError
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
-        from social_hook.llm.schemas import LogDecisionInput
 
         db = DryRunContext(conn, dry_run=dry_run)
         try:
@@ -97,9 +98,9 @@ def draft(
             parent_timestamp=commit_info.parent_timestamp,
         )
 
-        # Build evaluation from stored decision, forcing post_worthy for override
-        evaluation = LogDecisionInput(
-            decision="post_worthy",
+        # Build evaluation from stored decision, forcing draft for override
+        evaluation = SimpleNamespace(
+            decision="draft",
             reasoning=decision.reasoning,
             angle=decision.angle,
             episode_type=decision.episode_type,
@@ -190,11 +191,12 @@ def consolidate(
         )
 
         # Assemble context
+        from types import SimpleNamespace
+
         from social_hook.config.project import ProjectConfig, load_project_config
         from social_hook.errors import ConfigError
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
-        from social_hook.llm.schemas import LogDecisionInput
 
         db = DryRunContext(conn, dry_run=dry_run)
         try:
@@ -208,8 +210,8 @@ def consolidate(
 
         # Use most recent decision as anchor
         anchor = decisions[-1]
-        evaluation = LogDecisionInput(
-            decision="post_worthy",
+        evaluation = SimpleNamespace(
+            decision="draft",
             reasoning=anchor.reasoning,
             angle=anchor.angle,
             episode_type=anchor.episode_type,
