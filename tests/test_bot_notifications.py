@@ -212,12 +212,12 @@ class TestGetReviewButtonsNormalized:
     def test_button_labels(self):
         buttons = get_review_buttons_normalized("draft_abc")
         labels = [btn.label for row in buttons for btn in row.buttons]
-        assert labels == ["Approve", "Schedule", "Edit", "Reject"]
+        assert labels == ["Quick Approve", "Schedule", "Edit", "Reject"]
 
     def test_button_actions(self):
         buttons = get_review_buttons_normalized("draft_abc")
         actions = [btn.action for row in buttons for btn in row.buttons]
-        assert actions == ["approve", "schedule", "edit", "reject"]
+        assert actions == ["quick_approve", "schedule", "edit", "reject"]
 
     def test_button_payloads(self):
         buttons = get_review_buttons_normalized("draft_abc")

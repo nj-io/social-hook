@@ -284,13 +284,13 @@ def handle_message(
     if not text:
         return
 
-    # Check for pending edit FIRST (Fix 1)
-    from social_hook.bot.buttons import clear_pending_edit, get_pending_edit
+    # Check for pending reply FIRST (Fix 1)
+    from social_hook.bot.buttons import clear_pending_reply, get_pending_reply
 
-    pending_draft_id = get_pending_edit(chat_id)
-    if pending_draft_id:
-        _save_edit(adapter, chat_id, pending_draft_id, text)
-        clear_pending_edit(chat_id)
+    pending = get_pending_reply(chat_id)
+    if pending:
+        clear_pending_reply(chat_id)
+        _handle_pending_reply(adapter, chat_id, pending, text, config)
         return
 
     try:
@@ -456,6 +456,104 @@ def handle_message(
         _send(adapter, chat_id, f"Error processing message: {e}")
 
 
+def _handle_pending_reply(adapter, chat_id, pending, text, config):
+    """Dispatch a pending reply to the appropriate handler."""
+    if pending.type == "edit_text":
+        _save_edit(adapter, chat_id, pending.draft_id, text)
+    elif pending.type == "schedule_custom":
+        _save_custom_schedule(adapter, chat_id, pending.draft_id, text, config)
+    elif pending.type == "edit_angle":
+        _save_angle(adapter, chat_id, pending.draft_id, text)
+    elif pending.type == "reject_note":
+        _save_rejection_note(adapter, chat_id, pending.draft_id, text)
+
+
+def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
+    """Parse ISO datetime and schedule the draft."""
+    from datetime import datetime
+
+    from social_hook.db import get_draft, update_draft
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        try:
+            datetime.fromisoformat(text.strip())
+        except ValueError:
+            _send(
+                adapter,
+                chat_id,
+                "Invalid format. Send an ISO 8601 datetime, e.g. 2025-03-15T14:30:00",
+            )
+            # Re-set pending reply so user can try again
+            from social_hook.bot.buttons import PendingReply, _pending_replies
+
+            _pending_replies[chat_id] = PendingReply(
+                type="schedule_custom", draft_id=draft_id, timestamp=time.time()
+            )
+            return
+
+        update_draft(conn, draft_id, status="scheduled", scheduled_time=text.strip())
+        ops.emit_data_event(conn, "draft", "scheduled", draft_id, draft.project_id)
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` scheduled for {text.strip()}")
+    finally:
+        conn.close()
+
+
+def _save_rejection_note(adapter, chat_id, draft_id, text):
+    """Reject a draft with a user-provided note."""
+    from social_hook.db import get_draft, update_draft
+    from social_hook.db import operations as ops
+    from social_hook.intro_lifecycle import on_intro_rejected
+
+    conn = _get_conn()
+    try:
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        update_draft(conn, draft_id, status="rejected", last_error=f"Rejected: {text}")
+        ops.emit_data_event(conn, "draft", "rejected", draft_id, draft.project_id)
+
+        cascade_msg = on_intro_rejected(conn, draft, draft.project_id, verbose=False)
+
+        reject_msg = f"Draft `{draft_id[:12]}` rejected with note."
+        if cascade_msg:
+            reject_msg += f"\n{cascade_msg}"
+        _send(adapter, chat_id, reject_msg)
+    finally:
+        conn.close()
+
+
+def _save_angle(adapter, chat_id, draft_id, text):
+    """Store angle feedback on a draft."""
+    from social_hook.db import get_draft, update_draft
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        update_draft(conn, draft_id, last_error=f"Angle feedback: {text}")
+        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
+        _send(
+            adapter,
+            chat_id,
+            f"Angle feedback noted for `{draft_id[:12]}`. Use /review to see the current draft.",
+        )
+    finally:
+        conn.close()
+
+
 def _save_edit(
     adapter: MessagingAdapter,
     chat_id: str,
@@ -473,6 +571,7 @@ def _save_edit(
         changed_by: Who made the change (human, gatekeeper, expert)
     """
     from social_hook.db import get_draft, insert_draft_change, update_draft
+    from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
     from social_hook.models import DraftChange
 
@@ -495,6 +594,7 @@ def _save_edit(
             changed_by=changed_by,
         )
         insert_draft_change(conn, change)
+        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 

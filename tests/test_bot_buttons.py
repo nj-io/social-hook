@@ -6,10 +6,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from social_hook.bot.buttons import (
-    _EDIT_TTL_SECONDS,
-    _pending_edits,
+    _REPLY_TTL_SECONDS,
+    PendingReply,
+    _pending_replies,
     btn_approve,
     btn_cancel,
+    btn_edit_angle,
     btn_edit_media,
     btn_edit_submenu,
     btn_edit_text,
@@ -17,11 +19,13 @@ from social_hook.bot.buttons import (
     btn_media_remove,
     btn_quick_approve,
     btn_reject,
+    btn_reject_note,
     btn_reject_submenu,
+    btn_schedule_custom,
     btn_schedule_optimal,
     btn_schedule_submenu,
-    clear_pending_edit,
-    get_pending_edit,
+    clear_pending_reply,
+    get_pending_reply,
     handle_callback,
 )
 from social_hook.db import (
@@ -37,11 +41,11 @@ from social_hook.models import Decision, Draft, Project
 
 
 @pytest.fixture(autouse=True)
-def _clear_pending_edits():
-    """Clear pending edits state between tests."""
-    _pending_edits.clear()
+def _clear_pending_replies():
+    """Clear pending replies state between tests."""
+    _pending_replies.clear()
     yield
-    _pending_edits.clear()
+    _pending_replies.clear()
 
 
 @pytest.fixture
@@ -75,7 +79,9 @@ class TestHandleCallback:
     def test_routes_approve(self, mock_answer, mock_btn, mock_adapter):
         event = _make_callback_event("approve", "draft_123")
         handle_callback(event, mock_adapter)
-        mock_btn.assert_called_once_with(mock_adapter, "123", "cb1", "draft_123", None)
+        mock_btn.assert_called_once_with(
+            mock_adapter, "123", "cb1", "draft_123", None, message_id=None
+        )
 
     @patch("social_hook.bot.buttons.btn_schedule_optimal")
     @patch("social_hook.bot.buttons._answer_callback")
@@ -414,8 +420,8 @@ class TestBtnCancel:
         conn2.close()
 
 
-class TestPendingEdits:
-    """Tests for pending edit state tracking."""
+class TestPendingReplies:
+    """Tests for pending reply state tracking."""
 
     @patch("social_hook.bot.buttons._send")
     @patch("social_hook.bot.buttons._answer_callback")
@@ -423,7 +429,7 @@ class TestPendingEdits:
     def test_edit_text_sets_pending(
         self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
     ):
-        """Verify _pending_edits[chat_id] is (draft_id, timestamp) after btn_edit_text."""
+        """Verify _pending_replies[chat_id] is PendingReply after btn_edit_text."""
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
         mock_conn.return_value = conn
@@ -432,53 +438,62 @@ class TestPendingEdits:
 
         btn_edit_text(mock_adapter, "123", "cb1", draft.id, None)
 
-        assert "123" in _pending_edits
-        pending_draft_id, ts = _pending_edits["123"]
-        assert pending_draft_id == draft.id
-        assert time.time() - ts < 5  # Should be very recent
+        assert "123" in _pending_replies
+        pending = _pending_replies["123"]
+        assert pending.type == "edit_text"
+        assert pending.draft_id == draft.id
+        assert time.time() - pending.timestamp < 5
 
-    def test_get_pending_edit_returns_without_consuming(self):
-        """Verify get_pending_edit returns draft_id but entry persists (not popped)."""
-        _pending_edits["chat1"] = ("draft_abc", time.time())
+    def test_get_pending_reply_returns_without_consuming(self):
+        """Verify get_pending_reply returns PendingReply but entry persists."""
+        _pending_replies["chat1"] = PendingReply(
+            type="edit_text", draft_id="draft_abc", timestamp=time.time()
+        )
 
-        result = get_pending_edit("chat1")
-        assert result == "draft_abc"
+        result = get_pending_reply("chat1")
+        assert result.draft_id == "draft_abc"
 
-        # Entry should still exist
-        result2 = get_pending_edit("chat1")
-        assert result2 == "draft_abc"
+        result2 = get_pending_reply("chat1")
+        assert result2.draft_id == "draft_abc"
 
-    def test_clear_pending_edit_removes_entry(self):
-        """Verify clear_pending_edit removes the entry."""
-        _pending_edits["chat1"] = ("draft_abc", time.time())
+    def test_clear_pending_reply_removes_entry(self):
+        """Verify clear_pending_reply removes the entry."""
+        _pending_replies["chat1"] = PendingReply(
+            type="edit_text", draft_id="draft_abc", timestamp=time.time()
+        )
 
-        clear_pending_edit("chat1")
-        assert "chat1" not in _pending_edits
+        clear_pending_reply("chat1")
+        assert "chat1" not in _pending_replies
 
-    def test_get_pending_edit_missing(self):
+    def test_get_pending_reply_missing(self):
         """Verify returns None for unknown chat_id."""
-        assert get_pending_edit("unknown_chat") is None
+        assert get_pending_reply("unknown_chat") is None
 
-    def test_get_pending_edit_expired(self):
-        """Verify returns None when edit TTL has expired."""
-        _pending_edits["chat1"] = ("draft_abc", time.time() - _EDIT_TTL_SECONDS - 60)
+    def test_get_pending_reply_expired(self):
+        """Verify returns None when reply TTL has expired."""
+        _pending_replies["chat1"] = PendingReply(
+            type="edit_text", draft_id="draft_abc", timestamp=time.time() - _REPLY_TTL_SECONDS - 60
+        )
 
-        result = get_pending_edit("chat1")
+        result = get_pending_reply("chat1")
         assert result is None
-        # Entry should be cleaned up
-        assert "chat1" not in _pending_edits
+        assert "chat1" not in _pending_replies
 
-    def test_concurrent_pending_edits(self):
-        """Two different chat_ids should have independent pending edits."""
-        _pending_edits["chat1"] = ("draft_a", time.time())
-        _pending_edits["chat2"] = ("draft_b", time.time())
+    def test_concurrent_pending_replies(self):
+        """Two different chat_ids should have independent pending replies."""
+        _pending_replies["chat1"] = PendingReply(
+            type="edit_text", draft_id="draft_a", timestamp=time.time()
+        )
+        _pending_replies["chat2"] = PendingReply(
+            type="edit_text", draft_id="draft_b", timestamp=time.time()
+        )
 
-        assert get_pending_edit("chat1") == "draft_a"
-        assert get_pending_edit("chat2") == "draft_b"
+        assert get_pending_reply("chat1").draft_id == "draft_a"
+        assert get_pending_reply("chat2").draft_id == "draft_b"
 
-        clear_pending_edit("chat1")
-        assert get_pending_edit("chat1") is None
-        assert get_pending_edit("chat2") == "draft_b"
+        clear_pending_reply("chat1")
+        assert get_pending_reply("chat1") is None
+        assert get_pending_reply("chat2").draft_id == "draft_b"
 
     @patch("social_hook.bot.buttons._send")
     @patch("social_hook.bot.buttons._answer_callback")
@@ -504,7 +519,7 @@ class TestPendingEdits:
 
         # Edit draft A
         btn_edit_text(mock_adapter, "123", "cb1", draft_a.id, None)
-        assert _pending_edits["123"][0] == draft_a.id
+        assert _pending_replies["123"].draft_id == draft_a.id
 
         # Now edit draft B — should warn about switch
         mock_send.reset_mock()
@@ -514,8 +529,138 @@ class TestPendingEdits:
         # Should have warned about switching
         calls = [c[0][2] for c in mock_send.call_args_list]
         assert any("Switching edit" in c or "cancelled" in c for c in calls)
-        # Pending edit should now be draft B
-        assert _pending_edits["123"][0] == draft_b.id
+        # Pending reply should now be draft B
+        assert _pending_replies["123"].draft_id == draft_b.id
+
+    def test_schedule_custom_sets_pending_reply(self, mock_adapter):
+        """btn_schedule_custom should set a pending reply of type schedule_custom."""
+        btn_schedule_custom(mock_adapter, "123", "cb1", "draft_abc", None)
+        assert "123" in _pending_replies
+        pending = _pending_replies["123"]
+        assert pending.type == "schedule_custom"
+        assert pending.draft_id == "draft_abc"
+
+    def test_edit_angle_sets_pending_reply(self, mock_adapter):
+        """btn_edit_angle should set a pending reply of type edit_angle."""
+        btn_edit_angle(mock_adapter, "123", "cb1", "draft_abc", None)
+        assert "123" in _pending_replies
+        pending = _pending_replies["123"]
+        assert pending.type == "edit_angle"
+        assert pending.draft_id == "draft_abc"
+
+    def test_reject_note_sets_pending_reply(self, mock_adapter):
+        """btn_reject_note should set a pending reply of type reject_note."""
+        btn_reject_note(mock_adapter, "123", "cb1", "draft_abc", None)
+        assert "123" in _pending_replies
+        pending = _pending_replies["123"]
+        assert pending.type == "reject_note"
+        assert pending.draft_id == "draft_abc"
+
+
+class TestButtonClearing:
+    """Tests for clearing buttons from original notification messages."""
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_approve_clears_original_buttons(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
+        """Approve should call adapter.edit_message to clear buttons."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, _, draft = _create_test_draft(conn)
+        mock_adapter.edit_message.return_value = SendResult(success=True)
+
+        btn_approve(mock_adapter, "123", "cb1", draft.id, None, message_id="42")
+
+        mock_adapter.edit_message.assert_called_once()
+        call_args = mock_adapter.edit_message.call_args
+        assert call_args[0][0] == "123"
+        assert call_args[0][1] == "42"
+        assert "approved" in call_args[0][2].text
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_reject_clears_original_buttons(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
+        """Reject should call adapter.edit_message to clear buttons."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, _, draft = _create_test_draft(conn)
+        mock_adapter.edit_message.return_value = SendResult(success=True)
+
+        btn_reject(mock_adapter, "123", "cb1", draft.id, None, message_id="42")
+
+        mock_adapter.edit_message.assert_called_once()
+        assert "rejected" in mock_adapter.edit_message.call_args[0][2].text
+
+    def test_submenu_does_not_clear_buttons(self, mock_adapter):
+        """Submenus should NOT call edit_message."""
+        btn_schedule_submenu(mock_adapter, "123", "cb1", "draft_abc", None, message_id="42")
+        mock_adapter.edit_message.assert_not_called()
+
+        btn_edit_submenu(mock_adapter, "123", "cb1", "draft_abc", None, message_id="42")
+        mock_adapter.edit_message.assert_not_called()
+
+        btn_reject_submenu(mock_adapter, "123", "cb1", "draft_abc", None, message_id="42")
+        mock_adapter.edit_message.assert_not_called()
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_clear_buttons_skipped_when_no_message_id(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
+        """When message_id is None, edit_message should NOT be called."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, _, draft = _create_test_draft(conn)
+
+        btn_approve(mock_adapter, "123", "cb1", draft.id, None, message_id=None)
+
+        mock_adapter.edit_message.assert_not_called()
+
+
+class TestEmitDataEvent:
+    """Tests for emit_data_event calls in button handlers."""
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_approve_emits_data_event(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
+        """Approve should call ops.emit_data_event."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, _, draft = _create_test_draft(conn)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_approve(mock_adapter, "123", "cb1", draft.id, None)
+            mock_emit.assert_called_once_with(conn, "draft", "approved", draft.id, draft.project_id)
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_reject_emits_data_event(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
+        """Reject should call ops.emit_data_event."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, _, draft = _create_test_draft(conn)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_reject(mock_adapter, "123", "cb1", draft.id, None)
+            mock_emit.assert_called_once_with(conn, "draft", "rejected", draft.id, draft.project_id)
 
 
 class TestBtnEditMedia:
@@ -673,11 +818,15 @@ class TestMediaRouting:
     def test_routes_media_regen(self, mock_answer, mock_btn, mock_adapter):
         event = _make_callback_event("media_regen", "draft_123")
         handle_callback(event, mock_adapter)
-        mock_btn.assert_called_once_with(mock_adapter, "123", "cb1", "draft_123", None)
+        mock_btn.assert_called_once_with(
+            mock_adapter, "123", "cb1", "draft_123", None, message_id=None
+        )
 
     @patch("social_hook.bot.buttons.btn_media_remove")
     @patch("social_hook.bot.buttons._answer_callback")
     def test_routes_media_remove(self, mock_answer, mock_btn, mock_adapter):
         event = _make_callback_event("media_remove", "draft_456")
         handle_callback(event, mock_adapter)
-        mock_btn.assert_called_once_with(mock_adapter, "123", "cb1", "draft_456", None)
+        mock_btn.assert_called_once_with(
+            mock_adapter, "123", "cb1", "draft_456", None, message_id=None
+        )
