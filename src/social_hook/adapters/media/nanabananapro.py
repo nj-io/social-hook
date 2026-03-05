@@ -5,7 +5,6 @@ import logging
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
 
 import requests
 
@@ -16,7 +15,9 @@ from social_hook.adapters.models import MediaResult
 logger = logging.getLogger(__name__)
 
 # Gemini API endpoint for image generation
-GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+GEMINI_ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+)
 
 
 class NanaBananaAdapter(MediaAdapter):
@@ -35,7 +36,7 @@ class NanaBananaAdapter(MediaAdapter):
     def generate(
         self,
         spec: dict,
-        output_dir: Optional[str] = None,
+        output_dir: str | None = None,
         dry_run: bool = False,
     ) -> MediaResult:
         """Generate image from text prompt.
@@ -113,10 +114,7 @@ class NanaBananaAdapter(MediaAdapter):
                 # Decode and save image
                 image_bytes = base64.b64decode(image_data)
 
-                if output_dir:
-                    dir_path = Path(output_dir)
-                else:
-                    dir_path = Path(tempfile.gettempdir())
+                dir_path = Path(output_dir) if output_dir else Path(tempfile.gettempdir())
 
                 dir_path.mkdir(parents=True, exist_ok=True)
 

@@ -1,7 +1,6 @@
 """Abstract base class for platform adapters."""
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 from social_hook.adapters.models import PostResult, ThreadResult
 
@@ -13,7 +12,7 @@ class PlatformAdapter(ABC):
     def post(
         self,
         content: str,
-        media_paths: Optional[list[str]] = None,
+        media_paths: list[str] | None = None,
         dry_run: bool = False,
     ) -> PostResult:
         """Post single content item.
@@ -29,9 +28,7 @@ class PlatformAdapter(ABC):
         pass
 
     @abstractmethod
-    def post_thread(
-        self, tweets: list[dict], dry_run: bool = False
-    ) -> ThreadResult:
+    def post_thread(self, tweets: list[dict], dry_run: bool = False) -> ThreadResult:
         """Post a thread of connected posts.
 
         Args:

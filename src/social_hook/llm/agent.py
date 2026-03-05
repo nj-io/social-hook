@@ -1,12 +1,11 @@
 """Generic single-tool LLM agent base class. Reusable — zero project imports."""
 
-from abc import ABC
-from typing import Any, Optional, Union
+from typing import Any
 
 from social_hook.llm.base import LLMClient, NormalizedResponse, extract_tool_call
 
 
-class SingleToolAgent(ABC):
+class SingleToolAgent:
     """Base for agents that call one LLM tool and return a validated result."""
 
     def __init__(self, client: LLMClient) -> None:
@@ -16,9 +15,9 @@ class SingleToolAgent(ABC):
         self,
         messages: list[dict[str, Any]],
         tool_schema: dict[str, Any],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = 4096,
-        tool_name: Optional[Union[str, list[str]]] = None,
+        tool_name: str | list[str] | None = None,
     ) -> tuple[dict[str, Any], NormalizedResponse]:
         """Call LLM with a single tool and extract the result.
 

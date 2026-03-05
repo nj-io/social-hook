@@ -5,7 +5,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from social_hook.constants import CONFIG_DIR_NAME
 
@@ -41,20 +41,20 @@ class JsonFormatter(logging.Formatter):
 class ComponentLogger(logging.LoggerAdapter):
     """Logger adapter that includes component name and extra fields."""
 
-    def process(self, msg: str, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    def process(self, msg: str, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:  # type: ignore[override]
         # Move extra kwargs to the extra dict
         extra = kwargs.get("extra", {})
         for key in list(kwargs.keys()):
             if key not in ("exc_info", "stack_info", "stacklevel", "extra"):
                 extra[key] = kwargs.pop(key)
-        kwargs["extra"] = {**self.extra, **extra}
+        kwargs["extra"] = {**(self.extra or {}), **extra}  # type: ignore[arg-type]
         return msg, kwargs
 
 
 def setup_logging(
     component: str,
     level: int = logging.INFO,
-    log_dir: Optional[str | Path] = None,
+    log_dir: str | Path | None = None,
     force_new: bool = False,
 ) -> ComponentLogger:
     """Set up JSON logging for a component.
@@ -68,10 +68,7 @@ def setup_logging(
     Returns:
         Logger configured for JSON output to component-specific file
     """
-    if log_dir is None:
-        log_dir = Path.home() / CONFIG_DIR_NAME / "logs"
-    else:
-        log_dir = Path(log_dir)
+    log_dir = Path.home() / CONFIG_DIR_NAME / "logs" if log_dir is None else Path(log_dir)
 
     # Ensure log directory exists
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -87,10 +84,9 @@ def setup_logging(
     if not needs_setup:
         # Check if any existing file handler points to a different directory
         for handler in logger.handlers:
-            if isinstance(handler, logging.FileHandler):
-                if Path(handler.baseFilename) != log_file:
-                    needs_setup = True
-                    break
+            if isinstance(handler, logging.FileHandler) and Path(handler.baseFilename) != log_file:
+                needs_setup = True
+                break
 
     if needs_setup:
         # Clear existing handlers

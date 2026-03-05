@@ -5,10 +5,15 @@ from unittest.mock import patch
 import pytest
 
 from social_hook.errors import MalformedResponseError
-from social_hook.llm.base import NormalizedResponse, NormalizedToolCall, NormalizedUsage, ToolExtractionError, extract_tool_call
+from social_hook.llm.base import (
+    NormalizedResponse,
+    NormalizedToolCall,
+    NormalizedUsage,
+    ToolExtractionError,
+    extract_tool_call,
+)
 from social_hook.llm.schemas import ExtractNarrativeInput
 from social_hook.narrative.extractor import NarrativeExtractor
-
 
 # =============================================================================
 # Helpers

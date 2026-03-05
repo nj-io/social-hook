@@ -3,7 +3,6 @@
 import json as json_mod
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -14,13 +13,17 @@ app = typer.Typer(invoke_without_command=True)
 def test_commits(
     ctx: typer.Context,
     repo: str = typer.Option(..., "--repo", help="Repository path"),
-    commit: Optional[str] = typer.Option(None, "--commit", help="Single commit hash"),
+    commit: str | None = typer.Option(None, "--commit", help="Single commit hash"),
     last: int = typer.Option(0, "--last", help="Test N most recent commits"),
-    from_hash: Optional[str] = typer.Option(None, "--from", help="Start of commit range"),
-    to_hash: Optional[str] = typer.Option(None, "--to", help="End of commit range"),
-    compare: Optional[Path] = typer.Option(None, "--compare", help="Compare results to golden JSON file"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Save results to JSON file"),
-    show_prompt: bool = typer.Option(False, "--show-prompt", help="Print the full LLM prompt to stderr"),
+    from_hash: str | None = typer.Option(None, "--from", help="Start of commit range"),
+    to_hash: str | None = typer.Option(None, "--to", help="End of commit range"),
+    compare: Path | None = typer.Option(
+        None, "--compare", help="Compare results to golden JSON file"
+    ),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Save results to JSON file"),
+    show_prompt: bool = typer.Option(
+        False, "--show-prompt", help="Print the full LLM prompt to stderr"
+    ),
 ):
     """Test commit evaluation with real LLM calls, no DB writes."""
     from social_hook.trigger import run_trigger
@@ -97,9 +100,7 @@ def _compare_results(results: list[dict], golden_path: Path) -> None:
     for r in results:
         expected = golden_map.get(r["commit"])
         if expected is not None and expected != r["exit_code"]:
-            diffs.append(
-                f"  {r['commit'][:8]}: expected={expected}, got={r['exit_code']}"
-            )
+            diffs.append(f"  {r['commit'][:8]}: expected={expected}, got={r['exit_code']}")
 
     if diffs:
         typer.echo(f"\nDifferences from {golden_path.name}:")

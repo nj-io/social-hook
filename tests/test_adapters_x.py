@@ -10,10 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from social_hook.adapters.models import PostResult, ThreadResult
-from social_hook.adapters.platform.x import XAdapter, X_CHAR_LIMIT
+from social_hook.adapters.platform.x import XAdapter
 from social_hook.errors import ConfigError, ErrorType, classify_x_error
-
 
 # =============================================================================
 # Helpers: X API v2 response factories

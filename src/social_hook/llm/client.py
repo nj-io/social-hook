@@ -1,32 +1,31 @@
 """Claude API client wrapper with pricing calculation."""
 
-from typing import Any, Optional
+from typing import Any
 
 import anthropic
 
-from social_hook.errors import AuthError, MalformedResponseError
+from social_hook.errors import AuthError
 from social_hook.llm.base import LLMClient, NormalizedResponse, NormalizedToolCall, NormalizedUsage
-
 
 # Pricing per million tokens (in cents) for cost estimation
 # Source: https://docs.anthropic.com/en/docs/about-claude/pricing
 MODEL_PRICING = {
     "claude-opus-4-5": {
-        "input": 1500,       # $15 / 1M tokens
-        "output": 7500,      # $75 / 1M tokens
-        "cache_read": 150,   # $1.50 / 1M tokens
-        "cache_write": 1875, # $18.75 / 1M tokens
+        "input": 1500,  # $15 / 1M tokens
+        "output": 7500,  # $75 / 1M tokens
+        "cache_read": 150,  # $1.50 / 1M tokens
+        "cache_write": 1875,  # $18.75 / 1M tokens
     },
     "claude-sonnet-4-5": {
-        "input": 300,        # $3 / 1M tokens
-        "output": 1500,      # $15 / 1M tokens
-        "cache_read": 30,    # $0.30 / 1M tokens
+        "input": 300,  # $3 / 1M tokens
+        "output": 1500,  # $15 / 1M tokens
+        "cache_read": 30,  # $0.30 / 1M tokens
         "cache_write": 375,  # $3.75 / 1M tokens
     },
     "claude-haiku-4-5": {
-        "input": 80,         # $0.80 / 1M tokens
-        "output": 400,       # $4 / 1M tokens
-        "cache_read": 8,     # $0.08 / 1M tokens
+        "input": 80,  # $0.80 / 1M tokens
+        "output": 400,  # $4 / 1M tokens
+        "cache_read": 8,  # $0.08 / 1M tokens
         "cache_write": 100,  # $1 / 1M tokens
     },
 }
@@ -83,7 +82,7 @@ class ClaudeClient(LLMClient):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = 4096,
     ) -> NormalizedResponse:
         """Make a Claude API call with tool use.
@@ -125,8 +124,11 @@ class ClaudeClient(LLMClient):
         cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
 
         cost_cents = _calculate_cost_cents(
-            self.model, input_tokens, output_tokens,
-            cache_read_tokens, cache_creation_tokens,
+            self.model,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
         )
 
         # Wrap in NormalizedResponse

@@ -28,10 +28,12 @@ class TestButton:
 
 class TestButtonRow:
     def test_construction(self):
-        row = ButtonRow(buttons=[
-            Button(label="A", action="a"),
-            Button(label="B", action="b"),
-        ])
+        row = ButtonRow(
+            buttons=[
+                Button(label="A", action="a"),
+                Button(label="B", action="b"),
+            ]
+        )
         assert len(row.buttons) == 2
         assert row.buttons[0].label == "A"
         assert row.buttons[1].label == "B"

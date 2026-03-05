@@ -2,12 +2,13 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional, Union
+from typing import Any
 
 
 @dataclass
 class NormalizedUsage:
     """Normalized token usage across providers."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_input_tokens: int = 0
@@ -17,6 +18,7 @@ class NormalizedUsage:
 
 class ToolExtractionError(ValueError):
     """Raised when an expected tool call is not found in an LLM response."""
+
     pass
 
 
@@ -27,6 +29,7 @@ class NormalizedToolCall:
     Attributes match the content.type/content.name/content.input
     interface used by extract_tool_call().
     """
+
     type: str = "tool_use"
     name: str = ""
     input: dict = field(default_factory=dict)
@@ -40,6 +43,7 @@ class NormalizedResponse:
     usage: NormalizedUsage with token counts
     raw: Original provider response for debugging
     """
+
     content: list = field(default_factory=list)
     usage: NormalizedUsage = field(default_factory=NormalizedUsage)
     raw: Any = None
@@ -56,7 +60,7 @@ class LLMClient(ABC):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = 4096,
     ) -> NormalizedResponse:
         """Make an LLM API call with tool use.
@@ -73,7 +77,7 @@ class LLMClient(ABC):
         ...
 
 
-def extract_tool_call(response: Any, expected_tool: Union[str, list[str]]) -> dict:
+def extract_tool_call(response: Any, expected_tool: str | list[str]) -> dict:
     """Extract a named tool call from a response.
 
     Args:
@@ -86,12 +90,12 @@ def extract_tool_call(response: Any, expected_tool: Union[str, list[str]]) -> di
     Raises:
         ToolExtractionError: If no matching tool call found.
     """
-    if isinstance(expected_tool, str):
-        tool_names = [expected_tool]
-    else:
-        tool_names = expected_tool
+    tool_names = [expected_tool] if isinstance(expected_tool, str) else expected_tool
     for content in response.content:
-        if getattr(content, "type", None) == "tool_use" and getattr(content, "name", None) in tool_names:
-            return content.input
+        if (
+            getattr(content, "type", None) == "tool_use"
+            and getattr(content, "name", None) in tool_names
+        ):
+            return content.input  # type: ignore[no-any-return]
     label = tool_names[0] if len(tool_names) == 1 else str(tool_names)
     raise ToolExtractionError(f"No {label} tool call in response")

@@ -3,7 +3,7 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -32,10 +32,10 @@ class ContextConfig:
 class MediaToolGuidance:
     """Per-tool content guidance — when/how to use a media tool."""
 
-    enabled: Optional[bool] = None  # None = inherit global, True/False = project override
+    enabled: bool | None = None  # None = inherit global, True/False = project override
     use_when: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
-    prompt_example: Optional[str] = None
+    prompt_example: str | None = None
 
 
 DEFAULT_MEDIA_GUIDANCE: dict[str, MediaToolGuidance] = {
@@ -78,19 +78,19 @@ class ProjectConfig:
     """Per-project configuration loaded from project repository."""
 
     # social-context.md contents
-    social_context: Optional[str] = None
+    social_context: str | None = None
 
     # content-config.yaml parsed data
     content_config: dict[str, Any] = field(default_factory=dict)
 
     # memories.md contents
-    memories: Optional[str] = None
+    memories: str | None = None
 
     # context-notes.md contents
-    context_notes: Optional[str] = None
+    context_notes: str | None = None
 
     # Path to the project
-    repo_path: Optional[str] = None
+    repo_path: str | None = None
 
     # Typed config sections (parsed from content_config)
     context: ContextConfig = field(default_factory=ContextConfig)
@@ -103,7 +103,7 @@ class ProjectConfig:
 
 def load_project_config(
     repo_path: str | Path,
-    global_base: Optional[Path] = None,
+    global_base: Path | None = None,
 ) -> ProjectConfig:
     """Load per-project configuration with global fallback.
 
@@ -163,7 +163,7 @@ def load_project_config(
     return config
 
 
-def _load_with_fallback(project_path: Path, global_path: Path) -> Optional[str]:
+def _load_with_fallback(project_path: Path, global_path: Path) -> str | None:
     """Load text file with project → global fallback."""
     if project_path.exists():
         return project_path.read_text(encoding="utf-8")
@@ -297,12 +297,14 @@ def save_memory(
         memories = _parse_memories(content)
 
     # Add new memory
-    memories.append({
-        "date": date.today().isoformat(),
-        "context": context,
-        "feedback": feedback,
-        "draft_id": draft_id,
-    })
+    memories.append(
+        {
+            "date": date.today().isoformat(),
+            "context": context,
+            "feedback": feedback,
+            "draft_id": draft_id,
+        }
+    )
 
     # Keep only most recent 100
     if len(memories) > 100:
@@ -338,12 +340,14 @@ def _parse_memories(content: str) -> list[dict]:
             parts = [p.strip() for p in line.split("|")]
             # parts[0] is empty (before first |), parts[-1] is empty (after last |)
             if len(parts) >= 5:
-                memories.append({
-                    "date": parts[1],
-                    "context": parts[2].replace(_PIPE_REPLACEMENT, "|"),
-                    "feedback": parts[3].replace(_PIPE_REPLACEMENT, "|"),
-                    "draft_id": parts[4].replace(_PIPE_REPLACEMENT, "|"),
-                })
+                memories.append(
+                    {
+                        "date": parts[1],
+                        "context": parts[2].replace(_PIPE_REPLACEMENT, "|"),
+                        "feedback": parts[3].replace(_PIPE_REPLACEMENT, "|"),
+                        "draft_id": parts[4].replace(_PIPE_REPLACEMENT, "|"),
+                    }
+                )
 
     return memories
 
@@ -430,11 +434,13 @@ def save_context_note(
         content = notes_path.read_text(encoding="utf-8")
         notes = _parse_context_notes(content)
 
-    notes.append({
-        "date": date.today().isoformat(),
-        "note": note,
-        "source": source,
-    })
+    notes.append(
+        {
+            "date": date.today().isoformat(),
+            "note": note,
+            "source": source,
+        }
+    )
 
     # Cap at 50 notes (more focused than memories)
     if len(notes) > 50:
@@ -476,11 +482,13 @@ def _parse_context_notes(content: str) -> list[dict]:
         if in_table and line.startswith("|"):
             parts = [p.strip() for p in line.split("|")]
             if len(parts) >= 4:
-                notes.append({
-                    "date": parts[1],
-                    "note": parts[2],
-                    "source": parts[3],
-                })
+                notes.append(
+                    {
+                        "date": parts[1],
+                        "note": parts[2],
+                        "source": parts[3],
+                    }
+                )
 
     return notes
 

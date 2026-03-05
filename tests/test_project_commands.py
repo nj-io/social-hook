@@ -1,14 +1,9 @@
 """Tests for project CLI commands (T34)."""
 
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.db import (
-    get_all_projects,
-    get_project,
     init_database,
     insert_project,
 )
@@ -23,6 +18,7 @@ class TestRegisterCommand:
     @patch("social_hook.config.load_full_config")
     def test_register_git_repo(self, mock_config, mock_db_path, temp_dir):
         from typer.testing import CliRunner
+
         from social_hook.cli.project import app
 
         # Create a git repo
@@ -55,6 +51,7 @@ class TestRegisterCommand:
     @patch("social_hook.config.load_full_config")
     def test_register_non_git_dir(self, mock_config, mock_db_path, temp_dir):
         from typer.testing import CliRunner
+
         from social_hook.cli.project import app
 
         db_path = temp_dir / "test.db"
@@ -73,6 +70,7 @@ class TestUnregisterCommand:
     @patch("social_hook.filesystem.get_db_path")
     def test_unregister_with_force(self, mock_db_path, temp_dir):
         from typer.testing import CliRunner
+
         from social_hook.cli.project import app
 
         db_path = temp_dir / "test.db"
@@ -90,6 +88,7 @@ class TestUnregisterCommand:
     @patch("social_hook.filesystem.get_db_path")
     def test_unregister_not_found(self, mock_db_path, temp_dir):
         from typer.testing import CliRunner
+
         from social_hook.cli.project import app
 
         db_path = temp_dir / "test.db"
@@ -107,6 +106,7 @@ class TestListCommand:
     @patch("social_hook.filesystem.get_db_path")
     def test_list_empty(self, mock_db_path, temp_dir):
         from typer.testing import CliRunner
+
         from social_hook.cli.project import app
 
         db_path = temp_dir / "test.db"
@@ -120,6 +120,7 @@ class TestListCommand:
     @patch("social_hook.filesystem.get_db_path")
     def test_list_with_projects(self, mock_db_path, temp_dir):
         from typer.testing import CliRunner
+
         from social_hook.cli.project import app
 
         db_path = temp_dir / "test.db"

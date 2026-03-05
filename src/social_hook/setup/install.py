@@ -7,7 +7,6 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 from social_hook.constants import PROJECT_SLUG
 
@@ -43,12 +42,13 @@ def get_hooks_path() -> Path:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _read_settings(settings_file: Path) -> dict:
     """Read settings.json, returning empty dict on missing/invalid file."""
     if not settings_file.exists():
         return {}
     try:
-        return json.loads(settings_file.read_text())
+        return json.loads(settings_file.read_text())  # type: ignore[no-any-return]
     except (json.JSONDecodeError, OSError):
         return {}
 
@@ -57,9 +57,7 @@ def _write_settings_atomic(settings_file: Path, data: dict) -> None:
     """Write settings.json atomically (temp file + os.replace)."""
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps(data, indent=2) + "\n"
-    fd, tmp_path = tempfile.mkstemp(
-        dir=str(settings_file.parent), suffix=".tmp"
-    )
+    fd, tmp_path = tempfile.mkstemp(dir=str(settings_file.parent), suffix=".tmp")
     closed = False
     try:
         os.write(fd, content.encode())
@@ -74,9 +72,7 @@ def _write_settings_atomic(settings_file: Path, data: dict) -> None:
         raise
 
 
-def _find_our_rule_group(
-    rule_groups: list, command_str: str
-) -> Optional[int]:
+def _find_our_rule_group(rule_groups: list, command_str: str) -> int | None:
     """Find the index of our rule group by scanning nested hooks for command_str."""
     for i, group in enumerate(rule_groups):
         for hook in group.get("hooks", []):
@@ -89,8 +85,9 @@ def _find_our_rule_group(
 # Commit hook
 # ---------------------------------------------------------------------------
 
+
 def install_hook(
-    settings_file: Optional[Path] = None,
+    settings_file: Path | None = None,
 ) -> tuple[bool, str]:
     """Install the Claude Code post-commit hook.
 
@@ -138,7 +135,7 @@ def install_hook(
 
 
 def uninstall_hook(
-    settings_file: Optional[Path] = None,
+    settings_file: Path | None = None,
 ) -> tuple[bool, str]:
     """Remove the social-hook commit hook from Claude Code settings.
 
@@ -169,7 +166,7 @@ def uninstall_hook(
 
 
 def check_hook_installed(
-    settings_file: Optional[Path] = None,
+    settings_file: Path | None = None,
 ) -> bool:
     """Check if the social-hook commit hook is installed."""
     if settings_file is None:
@@ -187,8 +184,9 @@ def check_hook_installed(
 # Narrative hook
 # ---------------------------------------------------------------------------
 
+
 def install_narrative_hook(
-    settings_file: Optional[Path] = None,
+    settings_file: Path | None = None,
 ) -> tuple[bool, str]:
     """Install the PreCompact narrative-capture hook.
 
@@ -240,7 +238,7 @@ def install_narrative_hook(
 
 
 def uninstall_narrative_hook(
-    settings_file: Optional[Path] = None,
+    settings_file: Path | None = None,
 ) -> tuple[bool, str]:
     """Remove the narrative-capture hook from Claude Code settings.
 
@@ -271,7 +269,7 @@ def uninstall_narrative_hook(
 
 
 def check_narrative_hook_installed(
-    settings_file: Optional[Path] = None,
+    settings_file: Path | None = None,
 ) -> bool:
     """Check if the narrative-capture hook is installed."""
     if settings_file is None:
@@ -288,6 +286,7 @@ def check_narrative_hook_installed(
 # ---------------------------------------------------------------------------
 # Cron installer (unchanged)
 # ---------------------------------------------------------------------------
+
 
 def get_cron_entry() -> str:
     """Get the crontab entry for the scheduler.
@@ -361,10 +360,7 @@ def uninstall_cron() -> tuple[bool, str]:
             return True, "Cron job was not installed"
 
         # Remove our line
-        lines = [
-            line for line in existing.splitlines()
-            if CRON_MARKER not in line
-        ]
+        lines = [line for line in existing.splitlines() if CRON_MARKER not in line]
         new_crontab = "\n".join(lines) + "\n" if lines else ""
 
         process = subprocess.run(

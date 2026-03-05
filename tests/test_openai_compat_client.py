@@ -1,15 +1,13 @@
 """Tests for OpenAICompatClient."""
 
-import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from social_hook.errors import ConfigError, MalformedResponseError
-from social_hook.llm.base import NormalizedResponse, NormalizedToolCall, NormalizedUsage
+from social_hook.llm.base import NormalizedResponse, NormalizedToolCall
 from social_hook.llm.openai_compat import OpenAICompatClient, _convert_tool_schema
-
 
 SAMPLE_TOOL = {
     "name": "log_decision",
@@ -85,9 +83,11 @@ class TestOpenAICompatClientInit:
 
     def test_missing_openai_package_raises_config_error(self):
         """When openai is not installed (OpenAI is None), ConfigError is raised."""
-        with patch("social_hook.llm.openai_compat.OpenAI", None):
-            with pytest.raises(ConfigError, match="openai package required"):
-                OpenAICompatClient(api_key="sk-test", model="gpt-4o")
+        with (
+            patch("social_hook.llm.openai_compat.OpenAI", None),
+            pytest.raises(ConfigError, match="openai package required"),
+        ):
+            OpenAICompatClient(api_key="sk-test", model="gpt-4o")
 
 
 class TestComplete:
@@ -224,5 +224,3 @@ class TestComplete:
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
         assert resp.raw is mock_response
-
-

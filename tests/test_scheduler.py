@@ -1,19 +1,16 @@
 """Tests for scheduler tick (T31)."""
 
 import os
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.db import (
     get_connection,
+    get_draft,
     init_database,
     insert_decision,
     insert_draft,
     insert_project,
-    get_draft,
     update_draft,
 )
 from social_hook.filesystem import generate_id
@@ -21,7 +18,6 @@ from social_hook.models import Decision, Draft, Project
 from social_hook.notifications import send_notification
 from social_hook.scheduler import (
     acquire_lock,
-    get_lock_path,
     get_lock_pid,
     is_lock_stale,
     release_lock,
@@ -81,9 +77,7 @@ class TestSchedulerTick:
 
     def _setup_due_draft(self, conn):
         """Create a project with a due draft."""
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
 
         decision = Decision(
@@ -171,7 +165,9 @@ class TestSchedulerTick:
 
         # Create paused project with due draft
         project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test",
+            id=generate_id("project"),
+            name="test",
+            repo_path="/tmp/test",
             paused=True,
         )
         insert_project(conn, project)
@@ -205,7 +201,7 @@ class TestSchedulerTick:
         mock_init_db.return_value = conn
 
         lock_path = temp_dir / "scheduler.lock"
-        processed = scheduler_tick(dry_run=True, lock_path=lock_path)
+        scheduler_tick(dry_run=True, lock_path=lock_path)
 
         # Re-open connection (scheduler_tick closes it)
         conn2 = get_connection(db_path)
@@ -265,7 +261,9 @@ class TestSchedulerTick:
     @patch("social_hook.scheduler.init_database")
     @patch("social_hook.scheduler.get_db_path")
     @patch("social_hook.scheduler.load_full_config")
-    def test_max_retries_marks_failed(self, mock_config, mock_db_path, mock_init_db, mock_post, temp_dir):
+    def test_max_retries_marks_failed(
+        self, mock_config, mock_db_path, mock_init_db, mock_post, temp_dir
+    ):
         """Draft marked failed after 3 retries."""
         from social_hook.adapters.models import PostResult
 
@@ -282,7 +280,7 @@ class TestSchedulerTick:
         mock_post.return_value = PostResult(success=False, error="Persistent error")
 
         lock_path = temp_dir / "scheduler.lock"
-        processed = scheduler_tick(dry_run=False, lock_path=lock_path)
+        scheduler_tick(dry_run=False, lock_path=lock_path)
 
         # Re-open connection
         conn2 = get_connection(db_path)
@@ -325,14 +323,14 @@ class TestNotifications:
     @patch("social_hook.scheduler.init_database")
     @patch("social_hook.scheduler.get_db_path")
     @patch("social_hook.scheduler.load_full_config")
-    def test_scheduler_tick_success_notification(self, mock_config, mock_db_path, mock_init_db, mock_notify, temp_dir):
+    def test_scheduler_tick_success_notification(
+        self, mock_config, mock_db_path, mock_init_db, mock_notify, temp_dir
+    ):
         """Successful post triggers notification via send_notification."""
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
 
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"),
@@ -374,16 +372,16 @@ class TestNotifications:
     @patch("social_hook.scheduler.init_database")
     @patch("social_hook.scheduler.get_db_path")
     @patch("social_hook.scheduler.load_full_config")
-    def test_scheduler_tick_failure_notification(self, mock_config, mock_db_path, mock_init_db, mock_post, mock_notify, temp_dir):
+    def test_scheduler_tick_failure_notification(
+        self, mock_config, mock_db_path, mock_init_db, mock_post, mock_notify, temp_dir
+    ):
         """Failed post (max retries) triggers failure notification."""
         from social_hook.adapters.models import PostResult
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
 
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
             id=generate_id("decision"),

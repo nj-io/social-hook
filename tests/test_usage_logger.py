@@ -3,8 +3,6 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
 from social_hook.db import operations as ops
 from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.dry_run import DryRunContext
@@ -30,8 +28,14 @@ class TestLogUsage:
         mock_db.insert_usage = MagicMock()
         usage = _make_usage()
 
-        log_usage(mock_db, "evaluate", "anthropic/claude-opus-4-5", usage,
-                  project_id="proj-123", commit_hash="abc123")
+        log_usage(
+            mock_db,
+            "evaluate",
+            "anthropic/claude-opus-4-5",
+            usage,
+            project_id="proj-123",
+            commit_hash="abc123",
+        )
 
         mock_db.insert_usage.assert_called_once()
         usage_log = mock_db.insert_usage.call_args[0][0]
@@ -80,8 +84,7 @@ class TestLogUsage:
         db = DryRunContext(temp_db, dry_run=True)
         usage = _make_usage()
 
-        log_usage(db, "evaluate", "anthropic/claude-opus-4-5", usage,
-                  project_id="proj_test1")
+        log_usage(db, "evaluate", "anthropic/claude-opus-4-5", usage, project_id="proj_test1")
 
         summary = ops.get_usage_summary(temp_db)
         assert len(summary) == 0
@@ -94,8 +97,7 @@ class TestLogUsage:
         db = DryRunContext(temp_db, dry_run=False)
         usage = _make_usage()
 
-        log_usage(db, "evaluate", "anthropic/claude-opus-4-5", usage,
-                  project_id="proj_test1")
+        log_usage(db, "evaluate", "anthropic/claude-opus-4-5", usage, project_id="proj_test1")
 
         summary = ops.get_usage_summary(temp_db)
         assert len(summary) == 1
@@ -107,8 +109,7 @@ class TestLogUsage:
         ops.insert_project(temp_db, project)
 
         usage = _make_usage()
-        log_usage(temp_db, "evaluate", "anthropic/claude-opus-4-5", usage,
-                  project_id="proj_test1")
+        log_usage(temp_db, "evaluate", "anthropic/claude-opus-4-5", usage, project_id="proj_test1")
 
         summary = ops.get_usage_summary(temp_db)
         assert len(summary) == 1

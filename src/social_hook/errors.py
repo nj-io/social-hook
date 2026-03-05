@@ -86,9 +86,9 @@ def classify_x_error(response: Any) -> ErrorType:
     # Check for duplicate before invalid (duplicate may have invalid-request type URI)
     if "duplicate" in type_uri or "duplicate" in detail:
         return ErrorType.DUPLICATE
-    elif any(kw in type_uri for kw in ("invalid-request", "invalid")):
-        return ErrorType.CONTENT_INVALID
-    elif any(kw in detail for kw in ("too long", "character limit")):
+    elif any(kw in type_uri for kw in ("invalid-request", "invalid")) or any(
+        kw in detail for kw in ("too long", "character limit")
+    ):
         return ErrorType.CONTENT_INVALID
 
     return ErrorType.UNKNOWN

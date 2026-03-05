@@ -2,7 +2,6 @@
 
 import logging
 import subprocess
-from typing import Optional
 
 import requests
 
@@ -94,7 +93,7 @@ def validate_x_api(
         return False, f"Connection error: {e}"
 
 
-def capture_telegram_chat_id(token: str, timeout_seconds: int = 60) -> Optional[str]:
+def capture_telegram_chat_id(token: str, timeout_seconds: int = 60) -> str | None:
     """Poll for a message to capture the chat ID.
 
     Instructs user to send a message to the bot, then captures
@@ -171,24 +170,38 @@ def validate_media_gen(service: str, api_key: str) -> tuple[bool, str]:
 def validate_claude_cli() -> tuple[bool, str]:
     """Validate Claude CLI is installed and functional."""
     import os
+
     try:
         result = subprocess.run(
-            ["claude", "-p", "Reply with ok",
-             "--output-format", "json",
-             "--json-schema", '{"type":"object","properties":{"status":{"type":"string"}},"required":["status"]}',
-             "--tools", "",
-             "--no-session-persistence",
-             "--model", "haiku"],
-            capture_output=True, text=True, timeout=30,
+            [
+                "claude",
+                "-p",
+                "Reply with ok",
+                "--output-format",
+                "json",
+                "--json-schema",
+                '{"type":"object","properties":{"status":{"type":"string"}},"required":["status"]}',
+                "--tools",
+                "",
+                "--no-session-persistence",
+                "--model",
+                "haiku",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
             env={k: v for k, v in os.environ.items() if k != "CLAUDECODE"},
         )
         if result.returncode != 0:
             return False, f"Claude CLI error: {result.stderr.strip()}"
         import json
+
         raw = json.loads(result.stdout)
         # --output-format json returns a JSON array; find the result element
         if isinstance(raw, list):
-            envelope = next((el for el in raw if isinstance(el, dict) and el.get("type") == "result"), None)
+            envelope = next(
+                (el for el in raw if isinstance(el, dict) and el.get("type") == "result"), None
+            )
         elif isinstance(raw, dict):
             envelope = raw
         else:

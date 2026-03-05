@@ -1,8 +1,6 @@
 """Tests for get_decision DB operation (Phase A)."""
 
-import pytest
-
-from social_hook.db import get_decision, insert_decision, insert_project, init_database
+from social_hook.db import get_decision, insert_decision, insert_project
 from social_hook.filesystem import generate_id
 from social_hook.models import Decision, Project
 

@@ -1,7 +1,5 @@
 """Media adapter registry with lazy initialization."""
 
-from typing import Optional
-
 from social_hook.adapters.media.base import MediaAdapter
 
 # Lazy singleton cache
@@ -11,9 +9,7 @@ _adapter_cache: dict[str, MediaAdapter] = {}
 MEDIA_ADAPTER_NAMES = ["mermaid", "nano_banana_pro", "playwright", "ray_so"]
 
 
-def get_media_adapter(
-    name: str, api_key: Optional[str] = None
-) -> Optional[MediaAdapter]:
+def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | None:
     """Get media adapter by name with lazy initialization.
 
     Args:
@@ -29,7 +25,7 @@ def get_media_adapter(
     if name in _adapter_cache:
         return _adapter_cache[name]
 
-    adapter: Optional[MediaAdapter] = None
+    adapter: MediaAdapter | None = None
 
     if name == "mermaid":
         from social_hook.adapters.media.mermaid import MermaidAdapter

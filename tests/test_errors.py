@@ -10,18 +10,17 @@ WS3 must implement platform-specific classifiers:
 """
 
 from dataclasses import dataclass
-from typing import Any, Optional
 
 import pytest
 
-from social_hook.errors import ErrorType, classify_error, ConfigError, DatabaseError
+from social_hook.errors import ConfigError, DatabaseError, ErrorType, classify_error
 
 
 # Mock response class for testing
 @dataclass
 class MockResponse:
     status_code: int
-    _json: Optional[dict] = None
+    _json: dict | None = None
 
     def json(self) -> dict:
         return self._json or {}

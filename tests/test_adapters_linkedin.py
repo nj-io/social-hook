@@ -6,14 +6,9 @@ Source: WS3_ASSUMPTIONS.md A5-A6 (OAuth, endpoint)
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from social_hook.adapters.models import PostResult, ThreadResult
 from social_hook.adapters.platform.linkedin import (
-    LINKEDIN_CHAR_LIMIT,
     LinkedInAdapter,
 )
-
 
 # =============================================================================
 # Helpers: LinkedIn response factories

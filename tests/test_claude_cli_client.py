@@ -7,9 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from social_hook.errors import ConfigError, MalformedResponseError
+from social_hook.llm.base import NormalizedResponse, NormalizedToolCall
 from social_hook.llm.claude_cli import ClaudeCliClient, _extract_json
-from social_hook.llm.base import NormalizedResponse, NormalizedToolCall, NormalizedUsage
-
 
 SAMPLE_TOOL = {
     "name": "log_decision",
@@ -191,7 +190,8 @@ class TestCommandConstruction:
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
         mock_popen.return_value.communicate.assert_called_once_with(
-            input="Evaluate this commit", timeout=300,
+            input="Evaluate this commit",
+            timeout=300,
         )
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
@@ -343,5 +343,3 @@ class TestErrorHandling:
         client = ClaudeCliClient()
         with pytest.raises(MalformedResponseError, match="No result element"):
             client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
-
-

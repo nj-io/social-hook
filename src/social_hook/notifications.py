@@ -1,7 +1,6 @@
 """Shared notification helper for sending messages to all configured channels."""
 
 import logging
-from typing import Optional
 
 from social_hook.config.yaml import Config
 from social_hook.messaging.base import OutboundMessage
@@ -44,17 +43,22 @@ def send_notification(
     telegram_ch = channels.get("telegram")
     telegram_enabled = telegram_ch.enabled if telegram_ch else bool(token)
     chat_ids = (
-        telegram_ch.allowed_chat_ids if telegram_ch
-        else [c.strip() for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if c.strip()]
+        telegram_ch.allowed_chat_ids
+        if telegram_ch
+        else [
+            c.strip()
+            for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
+            if c.strip()
+        ]
     )
 
     if telegram_enabled and token and chat_ids:
         try:
             from social_hook.messaging.telegram import TelegramAdapter
 
-            adapter = TelegramAdapter(token=token)
+            tg_adapter = TelegramAdapter(token=token)
             for chat_id in chat_ids:
-                result = adapter.send_message(chat_id, msg)
+                result = tg_adapter.send_message(chat_id, msg)
                 if not result.success:
                     logger.warning(f"Telegram notification to {chat_id} failed: {result.error}")
         except Exception as e:

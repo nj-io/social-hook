@@ -24,7 +24,13 @@ from social_hook.bot.buttons import (
     get_pending_edit,
     handle_callback,
 )
-from social_hook.db import get_connection, init_database, insert_decision, insert_draft, insert_project
+from social_hook.db import (
+    get_connection,
+    init_database,
+    insert_decision,
+    insert_draft,
+    insert_project,
+)
 from social_hook.filesystem import generate_id
 from social_hook.messaging.base import CallbackEvent, MessagingAdapter, SendResult
 from social_hook.models import Decision, Draft, Project
@@ -49,7 +55,9 @@ def mock_adapter():
     return adapter
 
 
-def _make_callback_event(action: str, payload: str, chat_id: str = "123", callback_id: str = "cb1") -> CallbackEvent:
+def _make_callback_event(
+    action: str, payload: str, chat_id: str = "123", callback_id: str = "cb1"
+) -> CallbackEvent:
     """Helper to create a CallbackEvent."""
     return CallbackEvent(
         chat_id=chat_id,
@@ -371,7 +379,9 @@ class TestQuickApprove:
     @patch("social_hook.bot.buttons._send")
     @patch("social_hook.bot.buttons._answer_callback")
     @patch("social_hook.bot.buttons._get_conn")
-    def test_quick_approve_not_found(self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir):
+    def test_quick_approve_not_found(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
         mock_conn.return_value = conn
@@ -410,7 +420,9 @@ class TestPendingEdits:
     @patch("social_hook.bot.buttons._send")
     @patch("social_hook.bot.buttons._answer_callback")
     @patch("social_hook.bot.buttons._get_conn")
-    def test_edit_text_sets_pending(self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir):
+    def test_edit_text_sets_pending(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
         """Verify _pending_edits[chat_id] is (draft_id, timestamp) after btn_edit_text."""
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -516,7 +528,7 @@ class TestBtnEditMedia:
         self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
     ):
         """Draft with media_paths sends media via adapter and shows action buttons."""
-        from social_hook.db import get_draft, update_draft
+        from social_hook.db import update_draft
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -562,7 +574,9 @@ class TestBtnMediaRegen:
     @patch("social_hook.bot.buttons._send")
     @patch("social_hook.bot.buttons._answer_callback")
     @patch("social_hook.bot.buttons._get_conn")
-    def test_media_regen_calls_adapter(self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir):
+    def test_media_regen_calls_adapter(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
         """Regeneration calls get_media_adapter and updates draft."""
         from social_hook.adapters.models import MediaResult
         from social_hook.db import get_draft, update_draft
@@ -621,7 +635,9 @@ class TestBtnMediaRemove:
     @patch("social_hook.bot.buttons._send")
     @patch("social_hook.bot.buttons._answer_callback")
     @patch("social_hook.bot.buttons._get_conn")
-    def test_media_remove_clears_paths(self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir):
+    def test_media_remove_clears_paths(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
         """Removing media sets media_paths to [] and creates audit trail."""
         from social_hook.db import get_draft, update_draft
         from social_hook.db.operations import get_draft_changes

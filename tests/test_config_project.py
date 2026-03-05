@@ -20,7 +20,6 @@ def project_dir(tmp_path):
 
 
 class TestMemoryHelpers:
-
     def test_list_memories_existing(self, project_dir):
         """list_memories returns correct entries."""
         save_memory(project_dir, "tweet about API", "Too formal", "draft_001")
@@ -75,5 +74,5 @@ class TestMemoryHelpers:
         memories = list_memories(project_dir)
         assert len(memories) == 1
         assert "\n" not in memories[0]["context"]
-        assert "line1 line2 line3" == memories[0]["context"]
-        assert "multi line" == memories[0]["feedback"]
+        assert memories[0]["context"] == "line1 line2 line3"
+        assert memories[0]["feedback"] == "multi line"

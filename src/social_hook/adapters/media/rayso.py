@@ -2,7 +2,6 @@
 
 import base64
 import logging
-from typing import Optional
 from urllib.parse import quote
 
 from social_hook.adapters.dry_run import dry_run_media_result
@@ -28,7 +27,7 @@ def build_rayso_url(
     padding: int = DEFAULT_PADDING,
     background: bool = True,
     dark_mode: bool = True,
-    title: Optional[str] = None,
+    title: str | None = None,
     line_numbers: bool = False,
 ) -> str:
     """Build ray.so URL with hash fragment parameters.
@@ -73,7 +72,7 @@ def build_rayso_url(
 class RaySoAdapter(MediaAdapter):
     """Code snippet screenshot adapter using ray.so and Playwright."""
 
-    def __init__(self, playwright_adapter: Optional[PlaywrightAdapter] = None):
+    def __init__(self, playwright_adapter: PlaywrightAdapter | None = None):
         """Initialize RaySo adapter.
 
         Args:
@@ -84,7 +83,7 @@ class RaySoAdapter(MediaAdapter):
     def generate(
         self,
         spec: dict,
-        output_dir: Optional[str] = None,
+        output_dir: str | None = None,
         dry_run: bool = False,
     ) -> MediaResult:
         """Generate code snippet image using ray.so.
@@ -133,7 +132,7 @@ class RaySoAdapter(MediaAdapter):
         result = self.playwright.generate(playwright_spec, output_dir=output_dir)
 
         # If selector-based screenshot fails, try full viewport
-        if not result.success and "locator" in result.error.lower():
+        if not result.success and result.error and "locator" in result.error.lower():
             logger.info("Retrying ray.so screenshot with full viewport")
             fallback_spec = {**playwright_spec, "selector": None}
             result = self.playwright.generate(fallback_spec, output_dir=output_dir)

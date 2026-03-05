@@ -238,9 +238,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     # Record schema version only for brand-new databases.
     # Existing databases (current > 0) get updated by apply_migrations().
-    current = conn.execute(
-        "SELECT COALESCE(MAX(version), 0) FROM schema_version"
-    ).fetchone()[0]
+    current = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
 
     if current == 0:
         conn.execute(
@@ -298,16 +296,14 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path) -> No
         return
 
     # Fresh DB: schema_version table doesn't exist yet — nothing to migrate.
-    tables = {r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()}
+    tables = {
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
     if "schema_version" not in tables:
         return
 
     # Get current version
-    current = conn.execute(
-        "SELECT COALESCE(MAX(version), 0) FROM schema_version"
-    ).fetchone()[0]
+    current = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
 
     # Apply pending migrations
     for migration_file in sorted(migrations_dir.glob("*.sql")):

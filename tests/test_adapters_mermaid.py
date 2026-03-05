@@ -7,11 +7,7 @@ Source: WS3_ASSUMPTIONS.md A7 (lines 270-313) - PAKO encoding
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.adapters.media.mermaid import MermaidAdapter, encode_mermaid
-from social_hook.adapters.models import MediaResult
-
 
 # =============================================================================
 # T7: MermaidAdapter - PAKO Encoding
@@ -29,7 +25,7 @@ class TestMermaidEncoding:
     def test_encode_url_safe_base64(self):
         """Encoded string uses URL-safe base64 (no + or /)."""
         result = encode_mermaid("graph TD\n  A-->B\n  B-->C\n  C-->D")
-        encoded_part = result[len("pako:"):]
+        encoded_part = result[len("pako:") :]
         assert "+" not in encoded_part
         assert "/" not in encoded_part
 
@@ -86,9 +82,7 @@ class TestMermaidAdapter:
         """dry_run=True returns placeholder path without API call."""
         adapter = MermaidAdapter()
         with patch("social_hook.adapters.media.mermaid.requests.get") as mock_get:
-            result = adapter.generate(
-                {"diagram": "graph LR\n  A-->B"}, dry_run=True
-            )
+            result = adapter.generate({"diagram": "graph LR\n  A-->B"}, dry_run=True)
             mock_get.assert_not_called()
 
         assert result.success is True

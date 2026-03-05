@@ -1,7 +1,5 @@
 """CLI setup command."""
 
-from typing import Optional
-
 import typer
 
 app = typer.Typer()
@@ -11,7 +9,11 @@ app = typer.Typer()
 def setup(
     ctx: typer.Context,
     validate: bool = typer.Option(False, "--validate", help="Validate existing configuration only"),
-    only: Optional[str] = typer.Option(None, "--only", help="Configure only a specific component (models, apikeys, voice, telegram, platforms, x, linkedin, image, scheduling, journey, web)"),
+    only: str | None = typer.Option(
+        None,
+        "--only",
+        help="Configure only a specific component (models, apikeys, voice, telegram, platforms, x, linkedin, image, scheduling, journey, web)",
+    ),
 ):
     """Run the interactive setup wizard."""
     if ctx.invoked_subcommand is not None:

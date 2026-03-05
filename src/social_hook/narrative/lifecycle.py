@@ -1,11 +1,10 @@
 """Lifecycle phase detection and strategy triggers (T18)."""
 
 import sqlite3
-from typing import Optional
 
 from social_hook.config.project import StrategyConfig
 from social_hook.db import operations as ops
-from social_hook.models import Lifecycle, LifecyclePhase
+from social_hook.models import Lifecycle
 
 
 def detect_lifecycle_phase(signals: dict) -> Lifecycle:
@@ -112,8 +111,8 @@ def detect_lifecycle_phase(signals: dict) -> Lifecycle:
 def check_strategy_triggers(
     conn: sqlite3.Connection,
     project_id: str,
-    config: Optional[StrategyConfig] = None,
-    new_lifecycle: Optional[Lifecycle] = None,
+    config: StrategyConfig | None = None,
+    new_lifecycle: Lifecycle | None = None,
 ) -> list[str]:
     """Check all strategy trigger conditions.
 
@@ -197,7 +196,8 @@ def record_strategy_moment(conn: sqlite3.Connection, project_id: str) -> bool:
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     return ops.update_lifecycle(
-        conn, project_id,
+        conn,
+        project_id,
         last_strategy_moment=now,
     )
 
@@ -207,8 +207,6 @@ def get_audience_introduced(conn: sqlite3.Connection, project_id: str) -> bool:
     return ops.get_audience_introduced(conn, project_id)
 
 
-def set_audience_introduced(
-    conn: sqlite3.Connection, project_id: str, value: bool
-) -> bool:
+def set_audience_introduced(conn: sqlite3.Connection, project_id: str, value: bool) -> bool:
     """Set the audience_introduced flag for a project."""
     return ops.set_audience_introduced(conn, project_id, value)

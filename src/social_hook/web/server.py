@@ -2,13 +2,14 @@
 
 import asyncio
 import json
+import logging
 import re
 import sqlite3
 import time
 import uuid as _uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 from fastapi import Body, FastAPI, Header, HTTPException, Query
@@ -17,18 +18,17 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from social_hook import __version__
 from social_hook.config.env import KEY_GROUPS, KNOWN_KEYS
-from social_hook.constants import PROJECT_NAME, PROJECT_SLUG, PROJECT_DESCRIPTION, CONFIG_DIR_NAME
 from social_hook.config.project import DEFAULT_MEDIA_GUIDANCE
-from social_hook.config.yaml import Config, KNOWN_CHANNELS, validate_config
+from social_hook.config.yaml import KNOWN_CHANNELS, Config
+from social_hook.constants import CONFIG_DIR_NAME, PROJECT_DESCRIPTION, PROJECT_NAME, PROJECT_SLUG
+from social_hook.db import operations as ops
+from social_hook.db.connection import init_database
 from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
-from social_hook.db import operations as ops
-from social_hook.db.connection import init_database
-from social_hook.messaging.gateway import GatewayHub, GatewayEnvelope
-
-import logging
+from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
 
 logger = logging.getLogger(__name__)
 
@@ -47,17 +47,15 @@ async def lifespan(app_instance: FastAPI):
     task = asyncio.create_task(_event_bridge_loop())
     yield
     task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await task
-    except asyncio.CancelledError:
-        pass
 
 
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title=f"{PROJECT_NAME} Dashboard API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title=f"{PROJECT_NAME} Dashboard API", version=__version__, lifespan=lifespan)
 
 # CORS: localhost only
 app.add_middleware(
@@ -68,6 +66,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/api/branding")
 def get_branding():
     return {"name": PROJECT_NAME, "slug": PROJECT_SLUG, "description": PROJECT_DESCRIPTION}
@@ -77,7 +76,7 @@ def get_branding():
 # Module-level state
 # ---------------------------------------------------------------------------
 
-_config: Optional[Config] = None
+_config: Config | None = None
 _adapter = None  # Lazy WebAdapter singleton
 
 
@@ -116,11 +115,13 @@ def _get_adapter(scope_id: str | None = None):
     """
     if scope_id is not None:
         from social_hook.messaging.web import WebAdapter
+
         return WebAdapter(db_path=str(get_db_path()), scope_id=scope_id)
 
     global _adapter
     if _adapter is None:
         from social_hook.messaging.web import WebAdapter
+
         _adapter = WebAdapter(db_path=str(get_db_path()))
     return _adapter
 
@@ -164,7 +165,7 @@ class MessageRequest(BaseModel):
 
 class EnvUpdate(BaseModel):
     key: str
-    value: Optional[str] = None  # None = delete
+    value: str | None = None  # None = delete
 
 
 class SocialContextUpdate(BaseModel):
@@ -215,8 +216,12 @@ def _get_events_since(last_id: int, session_id: str | None = None) -> list[dict]
                 (last_id,),
             ).fetchall()
         return [
-            {"id": row["id"], "type": row["type"], "data": json.loads(row["data"]),
-             "created_at": row["created_at"]}
+            {
+                "id": row["id"],
+                "type": row["type"],
+                "data": json.loads(row["data"]),
+                "created_at": row["created_at"],
+            }
             for row in rows
         ]
     except Exception:
@@ -319,10 +324,8 @@ async def api_clear_events(x_session_id: str = Header("web")):
     chat_id = f"web:{x_session_id}"
     try:
         conn.execute("DELETE FROM web_events WHERE session_id = ?", (x_session_id,))
-        try:
+        with suppress(sqlite3.OperationalError):
             conn.execute("DELETE FROM chat_messages WHERE chat_id = ?", (chat_id,))
-        except sqlite3.OperationalError:
-            pass  # Table may not exist yet
         conn.commit()
         return {"ok": True}
     finally:
@@ -375,14 +378,17 @@ async def websocket_endpoint(ws: WebSocket):
         return
     await ws.accept()
     client_id = str(_uuid.uuid4())
-    conn = await _hub.connect(ws, client_id, channels=["web"])
+    await _hub.connect(ws, client_id, channels=["web"])  # type: ignore[arg-type]
     try:
         while True:
             data = await ws.receive_json()
             try:
                 envelope = GatewayEnvelope.from_dict(data)
             except (TypeError, KeyError):
-                await _hub.send(client_id, GatewayEnvelope(type="error", payload={"message": "Invalid envelope"}))
+                await _hub.send(
+                    client_id,
+                    GatewayEnvelope(type="error", payload={"message": "Invalid envelope"}),
+                )
                 continue
             await _handle_ws_envelope(envelope, client_id)
     except WebSocketDisconnect:
@@ -404,18 +410,29 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
         try:
             if command_type == "send_command":
                 from social_hook.bot.commands import handle_command
+
                 msg = InboundMessage(chat_id=chat_id, text=text, message_id="web_0")
                 await asyncio.to_thread(handle_command, msg, adapter, _get_config())
             elif command_type == "send_callback":
                 from social_hook.bot.buttons import handle_callback
-                event = CallbackEvent(chat_id=chat_id, callback_id="ws", action=envelope.payload.get("action", ""), payload=envelope.payload.get("payload", ""))
+
+                event = CallbackEvent(
+                    chat_id=chat_id,
+                    callback_id="ws",
+                    action=envelope.payload.get("action", ""),
+                    payload=envelope.payload.get("payload", ""),
+                )
                 await asyncio.to_thread(handle_callback, event, adapter, _get_config())
             elif command_type == "send_message":
                 from social_hook.bot.commands import handle_message
+
                 msg = InboundMessage(chat_id=chat_id, text=text, message_id="web_0")
                 await asyncio.to_thread(handle_message, msg, adapter, _get_config())
         except Exception as e:
-            await _hub.send(client_id, GatewayEnvelope(type="error", reply_to=envelope.id, payload={"message": str(e)}))
+            await _hub.send(
+                client_id,
+                GatewayEnvelope(type="error", reply_to=envelope.id, payload={"message": str(e)}),
+            )
     elif envelope.type == "subscribe":
         # Register session_id for this WS connection
         session_id = envelope.payload.get("session_id", "web")
@@ -455,7 +472,12 @@ async def _event_bridge_loop():
                 (last_id,),
             ).fetchall()
             for r in rows:
-                ev = {"id": r["id"], "type": r["type"], "data": json.loads(r["data"]), "created_at": r["created_at"]}
+                ev = {
+                    "id": r["id"],
+                    "type": r["type"],
+                    "data": json.loads(r["data"]),
+                    "created_at": r["created_at"],
+                }
                 envelope = GatewayEnvelope(type="event", channel="web", payload=ev)
                 event_session_id = r["session_id"]
                 if event_session_id is None:
@@ -479,7 +501,7 @@ async def _event_bridge_loop():
 
 
 @app.get("/api/drafts")
-async def api_drafts(status: Optional[str] = None, pending: bool = False):
+async def api_drafts(status: str | None = None, pending: bool = False):
     """List drafts, optionally filtered by status or pending flag."""
     conn = _get_conn()
     try:
@@ -489,9 +511,7 @@ async def api_drafts(status: Optional[str] = None, pending: bool = False):
                 (status,),
             ).fetchall()
         else:
-            rows = conn.execute(
-                "SELECT * FROM drafts ORDER BY created_at DESC"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM drafts ORDER BY created_at DESC").fetchall()
         drafts = [dict(row) for row in rows]
         if pending:
             drafts = [d for d in drafts if d.get("status") in ("draft", "approved", "scheduled")]
@@ -577,7 +597,7 @@ def _get_project_or_404(conn: sqlite3.Connection, project_id: str) -> sqlite3.Ro
     row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
-    return row
+    return row  # type: ignore[no-any-return]
 
 
 @app.get("/api/projects/{project_id}")
@@ -608,11 +628,14 @@ async def api_project_detail(project_id: str):
         project["narrative_debt"] = dict(nd_row) if nd_row else None
 
         # Stats: decision counts by type
-        decision_stats = conn.execute("""
+        decision_stats = conn.execute(
+            """
             SELECT decision, COUNT(*) as count
             FROM decisions WHERE project_id = ?
             GROUP BY decision
-        """, (project_id,)).fetchall()
+        """,
+            (project_id,),
+        ).fetchall()
         project["decision_counts"] = {row["decision"]: row["count"] for row in decision_stats}
 
         # Stats: draft and post counts
@@ -629,7 +652,7 @@ async def api_project_detail(project_id: str):
         narratives_file = get_narratives_path() / f"{project_id}.jsonl"
         narrative_count = 0
         if narratives_file.exists():
-            with open(narratives_file, "r") as f:
+            with open(narratives_file) as f:
                 narrative_count = sum(1 for _ in f)
         project["narrative_count"] = narrative_count
 
@@ -656,7 +679,8 @@ async def api_project_decisions(
     try:
         _get_project_or_404(conn, project_id)
 
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT d.*, COUNT(dr.id) as draft_count
             FROM decisions d
             LEFT JOIN drafts dr ON dr.decision_id = d.id
@@ -664,7 +688,9 @@ async def api_project_decisions(
             GROUP BY d.id
             ORDER BY d.created_at DESC
             LIMIT ? OFFSET ?
-        """, (project_id, limit, offset)).fetchall()
+        """,
+            (project_id, limit, offset),
+        ).fetchall()
 
         total = conn.execute(
             "SELECT COUNT(*) FROM decisions WHERE project_id = ?", (project_id,)
@@ -685,12 +711,15 @@ async def api_project_posts(
     try:
         _get_project_or_404(conn, project_id)
 
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT * FROM posts
             WHERE project_id = ?
             ORDER BY posted_at DESC
             LIMIT ?
-        """, (project_id, limit)).fetchall()
+        """,
+            (project_id, limit),
+        ).fetchall()
         return {"posts": [dict(r) for r in rows]}
     finally:
         conn.close()
@@ -706,7 +735,8 @@ async def api_project_usage(
     try:
         _get_project_or_404(conn, project_id)
 
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT
                 model,
                 operation_type,
@@ -721,7 +751,9 @@ async def api_project_usage(
               AND created_at >= datetime('now', '-' || ? || ' days')
             GROUP BY model, operation_type
             ORDER BY total_cost_cents DESC
-        """, (project_id, days)).fetchall()
+        """,
+            (project_id, days),
+        ).fetchall()
 
         rows_list = [dict(r) for r in rows]
         return {
@@ -800,12 +832,17 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
         db = DryRunContext(conn2, dry_run=False)
         try:
             context = assemble_evaluator_context(
-                db, project.id, project_config,
+                db,
+                project.id,
+                project_config,
                 commit_timestamp=commit.timestamp,
                 parent_timestamp=commit.parent_timestamp,
             )
             results = draft_for_platforms(
-                config, conn2, db, project,
+                config,
+                conn2,
+                db,
+                project,
                 decision_id=decision_id,
                 evaluation=evaluation,
                 context=context,
@@ -855,7 +892,9 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
 
         project_ids = {d.project_id for d in decisions}
         if len(project_ids) > 1:
-            raise HTTPException(status_code=400, detail="All decisions must belong to the same project")
+            raise HTTPException(
+                status_code=400, detail="All decisions must belong to the same project"
+            )
 
         project = ops.get_project(conn, decisions[0].project_id)
         if not project:
@@ -874,9 +913,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
 
     from social_hook.models import CommitInfo
 
-    combined_summary = "\n".join(
-        f"- {d.commit_message or d.commit_hash[:8]}" for d in decisions
-    )
+    combined_summary = "\n".join(f"- {d.commit_message or d.commit_hash[:8]}" for d in decisions)
     commit = CommitInfo(
         hash=f"batch-{decisions[-1].id[:8]}",
         message=f"Combined {len(decisions)} commits:\n{combined_summary}",
@@ -911,10 +948,15 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         db = DryRunContext(conn2, dry_run=False)
         try:
             context = assemble_evaluator_context(
-                db, project.id, project_config,
+                db,
+                project.id,
+                project_config,
             )
             results = draft_for_platforms(
-                config, conn2, db, project,
+                config,
+                conn2,
+                db,
+                project,
                 decision_id=anchor.id,
                 evaluation=evaluation,
                 context=context,
@@ -937,11 +979,14 @@ async def api_project_arcs(project_id: str):
     try:
         _get_project_or_404(conn, project_id)
 
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT * FROM arcs
             WHERE project_id = ?
             ORDER BY started_at DESC
-        """, (project_id,)).fetchall()
+        """,
+            (project_id,),
+        ).fetchall()
         return {"arcs": [dict(r) for r in rows]}
     finally:
         conn.close()
@@ -949,12 +994,12 @@ async def api_project_arcs(project_id: str):
 
 class ArcCreate(BaseModel):
     theme: str
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class ArcUpdate(BaseModel):
-    status: Optional[str] = None
-    notes: Optional[str] = None
+    status: str | None = None
+    notes: str | None = None
 
 
 @app.post("/api/projects/{project_id}/arcs")
@@ -973,7 +1018,7 @@ async def api_create_arc(project_id: str, body: ArcCreate):
             raise HTTPException(
                 status_code=409,
                 detail="Maximum 3 active arcs. Complete or abandon one first.",
-            )
+            ) from None
 
         if body.notes:
             update_arc(conn, arc_id, notes=body.notes)
@@ -1056,10 +1101,11 @@ async def api_get_config():
 async def api_update_config(body: dict[str, Any]):
     """Update config sections (merge + validate before writing)."""
     from social_hook.config.yaml import save_config
+
     try:
         _merged, hook_warning = save_config(body, config_path=get_config_path())
     except ConfigError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
     return {"status": "ok", **({"hook_warning": hook_warning} if hook_warning else {})}
 
@@ -1111,7 +1157,7 @@ async def api_update_env(body: EnvUpdate):
 
 
 @app.get("/api/settings/social-context")
-async def api_get_social_context(project_path: Optional[str] = None):
+async def api_get_social_context(project_path: str | None = None):
     """Read social-context.md content."""
     if project_path:
         sc_path = Path(project_path) / CONFIG_DIR_NAME / "social-context.md"
@@ -1133,7 +1179,9 @@ async def api_update_social_context(body: SocialContextUpdate):
     if body.project_path:
         project_dir = Path(body.project_path)
         if not project_dir.is_dir():
-            raise HTTPException(status_code=400, detail=f"Project path not found: {body.project_path}")
+            raise HTTPException(
+                status_code=400, detail=f"Project path not found: {body.project_path}"
+            )
         sc_path = project_dir / CONFIG_DIR_NAME / "social-context.md"
     else:
         sc_path = get_db_path().parent / "social-context.md"
@@ -1144,7 +1192,7 @@ async def api_update_social_context(body: SocialContextUpdate):
 
 
 @app.get("/api/settings/content-config")
-async def api_get_content_config(project_path: Optional[str] = None):
+async def api_get_content_config(project_path: str | None = None):
     """Read content-config.yaml content."""
     if project_path:
         cc_path = Path(project_path) / CONFIG_DIR_NAME / "content-config.yaml"
@@ -1166,12 +1214,14 @@ async def api_update_content_config(body: ContentConfigUpdate):
     try:
         yaml.safe_load(body.content)
     except yaml.YAMLError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}") from None
 
     if body.project_path:
         project_dir = Path(body.project_path)
         if not project_dir.is_dir():
-            raise HTTPException(status_code=400, detail=f"Project path not found: {body.project_path}")
+            raise HTTPException(
+                status_code=400, detail=f"Project path not found: {body.project_path}"
+            )
         cc_path = project_dir / CONFIG_DIR_NAME / "content-config.yaml"
     else:
         cc_path = get_db_path().parent / "content-config.yaml"
@@ -1182,7 +1232,7 @@ async def api_update_content_config(body: ContentConfigUpdate):
 
 
 @app.get("/api/settings/content-config/parsed")
-async def api_get_content_config_parsed(project_path: Optional[str] = None):
+async def api_get_content_config_parsed(project_path: str | None = None):
     """Return parsed content-config sections as structured JSON."""
     if project_path:
         cc_path = Path(project_path) / CONFIG_DIR_NAME / "content-config.yaml"
@@ -1202,7 +1252,7 @@ async def api_get_content_config_parsed(project_path: Optional[str] = None):
     # Merge structural defaults so the UI always shows all tool slots,
     # even if the YAML doesn't mention them yet
     yaml_tools = raw.get("media_tools", {})
-    merged_tools = {name: {} for name in DEFAULT_MEDIA_GUIDANCE}
+    merged_tools: dict[str, dict[str, object]] = {name: {} for name in DEFAULT_MEDIA_GUIDANCE}
     merged_tools.update(yaml_tools)
 
     return {
@@ -1214,7 +1264,9 @@ async def api_get_content_config_parsed(project_path: Optional[str] = None):
 
 
 @app.put("/api/settings/content-config/parsed")
-async def api_update_content_config_parsed(body: dict[str, Any] = Body(...), project_path: Optional[str] = None):
+async def api_update_content_config_parsed(
+    body: dict[str, Any] = Body(...), project_path: str | None = None
+):
     """Update specific content-config sections (merge + write)."""
     if project_path:
         project_dir = Path(project_path)
@@ -1285,7 +1337,7 @@ async def api_delete_memory(index: int, project_path: str):
     try:
         delete_memory(project_path, index)
     except (IndexError, FileNotFoundError) as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from None
     return {"status": "ok"}
 
 
@@ -1328,12 +1380,15 @@ async def api_get_branches(project_id: str):
         conn.close()
 
     import subprocess
+
     repo_path = project.repo_path
 
     try:
         result = subprocess.run(
             ["git", "-C", repo_path, "branch", "--format=%(refname:short)"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
     except (subprocess.CalledProcessError, OSError):
@@ -1342,9 +1397,11 @@ async def api_get_branches(project_id: str):
     try:
         result = subprocess.run(
             ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
-        current = result.stdout.strip()
+        current: str | None = result.stdout.strip()
         if current == "HEAD":
             current = None
     except (subprocess.CalledProcessError, OSError):
@@ -1398,8 +1455,8 @@ async def api_regenerate_summary(project_id: str):
         config = _get_config()
         evaluator_model = config.models.evaluator
 
-        from social_hook.llm.factory import create_client
         from social_hook.llm.discovery import discover_project
+        from social_hook.llm.factory import create_client
 
         client = create_client(evaluator_model, config)
 
@@ -1457,8 +1514,8 @@ async def api_validate_key(body: ValidateKeyRequest):
         try:
             import openai
 
-            client = openai.OpenAI(api_key=body.key)
-            client.models.list()
+            oai_client = openai.OpenAI(api_key=body.key)
+            oai_client.models.list()
             return {"valid": True, "provider": provider}
         except Exception as e:
             return {"valid": False, "provider": provider, "error": str(e)}
@@ -1474,8 +1531,13 @@ async def api_validate_key(body: ValidateKeyRequest):
 
 @app.get("/api/installations/status")
 async def api_installations_status():
-    from social_hook.setup.install import check_hook_installed, check_narrative_hook_installed, check_cron_installed
     from social_hook.bot.process import is_running
+    from social_hook.setup.install import (
+        check_cron_installed,
+        check_hook_installed,
+        check_narrative_hook_installed,
+    )
+
     return {
         "commit_hook": check_hook_installed(),
         "narrative_hook": check_narrative_hook_installed(),
@@ -1486,7 +1548,8 @@ async def api_installations_status():
 
 @app.post("/api/installations/{component}/install")
 async def api_install_component(component: str):
-    from social_hook.setup.install import install_hook, install_narrative_hook, install_cron
+    from social_hook.setup.install import install_cron, install_hook, install_narrative_hook
+
     install_fns = {
         "commit_hook": install_hook,
         "narrative_hook": install_narrative_hook,
@@ -1495,13 +1558,14 @@ async def api_install_component(component: str):
     fn = install_fns.get(component)
     if not fn:
         raise HTTPException(status_code=400, detail=f"Unknown component: {component}")
-    success, message = fn()
+    success, message = fn()  # type: ignore[operator]
     return {"success": success, "message": message}
 
 
 @app.post("/api/installations/{component}/uninstall")
 async def api_uninstall_component(component: str):
-    from social_hook.setup.install import uninstall_hook, uninstall_narrative_hook, uninstall_cron
+    from social_hook.setup.install import uninstall_cron, uninstall_hook, uninstall_narrative_hook
+
     uninstall_fns = {
         "commit_hook": uninstall_hook,
         "narrative_hook": uninstall_narrative_hook,
@@ -1510,14 +1574,16 @@ async def api_uninstall_component(component: str):
     fn = uninstall_fns.get(component)
     if not fn:
         raise HTTPException(status_code=400, detail=f"Unknown component: {component}")
-    success, message = fn()
+    success, message = fn()  # type: ignore[operator]
     return {"success": success, "message": message}
 
 
 @app.post("/api/installations/bot_daemon/start")
 async def api_start_bot_daemon():
     import subprocess as sp
+
     from social_hook.bot.process import is_running
+
     if is_running():
         return {"success": True, "message": "Bot daemon is already running"}
     try:
@@ -1530,6 +1596,7 @@ async def api_start_bot_daemon():
 @app.post("/api/installations/bot_daemon/stop")
 async def api_stop_bot_daemon():
     from social_hook.bot.process import is_running, stop_bot
+
     if not is_running():
         return {"success": True, "message": "Bot daemon is not running"}
     if stop_bot():
@@ -1550,6 +1617,7 @@ _CHANNEL_CREDENTIALS = {
 async def api_channels_status():
     """Return status of all known channels and daemon running state."""
     from social_hook.bot.process import is_running
+
     config = _get_config()
     channels_status = {}
     for name in sorted(KNOWN_CHANNELS):
@@ -1590,6 +1658,7 @@ async def api_test_channel(channel: str):
             return {"success": False, "error": "TELEGRAM_BOT_TOKEN not configured"}
         try:
             import requests
+
             resp = await asyncio.to_thread(
                 requests.get,
                 f"https://api.telegram.org/bot{tg_token}/getMe",

@@ -3,14 +3,12 @@
 import json
 import logging
 import os
-from pathlib import Path
 
 import pytest
 
-from social_hook.filesystem import generate_id, init_filesystem, get_base_path
 from social_hook.constants import CONFIG_DIR_NAME
+from social_hook.filesystem import generate_id, init_filesystem
 from social_hook.logging import setup_logging
-
 
 # =============================================================================
 # T4: File System Setup

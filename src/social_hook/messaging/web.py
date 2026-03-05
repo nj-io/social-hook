@@ -10,7 +10,7 @@ and stdlib (sqlite3, json, threading). No project-specific domain concepts.
 import json
 import sqlite3
 import threading
-from typing import Optional
+from typing import Any
 
 from social_hook.messaging.base import (
     ButtonRow,
@@ -26,7 +26,7 @@ class WebAdapter(MessagingAdapter):
 
     platform = "web"
 
-    def __init__(self, db_path: str, *, scope_id: Optional[str] = None) -> None:
+    def __init__(self, db_path: str, *, scope_id: str | None = None) -> None:
         self._db_path = db_path
         self._scope_id = scope_id
         self._lock = threading.Lock()
@@ -35,7 +35,7 @@ class WebAdapter(MessagingAdapter):
 
     def send_message(self, chat_id: str, message: OutboundMessage) -> SendResult:
         """Write a message event to web_events."""
-        data = {
+        data: dict[str, Any] = {
             "chat_id": chat_id,
             "text": message.text,
             "parse_mode": message.parse_mode,
@@ -45,11 +45,9 @@ class WebAdapter(MessagingAdapter):
         row_id = self._insert_event("message", data)
         return SendResult(success=True, message_id=str(row_id))
 
-    def edit_message(
-        self, chat_id: str, message_id: str, message: OutboundMessage
-    ) -> SendResult:
+    def edit_message(self, chat_id: str, message_id: str, message: OutboundMessage) -> SendResult:
         """Write an edit event to web_events."""
-        data = {
+        data: dict[str, Any] = {
             "chat_id": chat_id,
             "message_id": message_id,
             "text": message.text,
@@ -127,7 +125,7 @@ class WebAdapter(MessagingAdapter):
                     "INSERT INTO web_events (type, data, session_id) VALUES (?, ?, ?)",
                     (event_type, json.dumps(data), self._scope_id),
                 )
-                row_id = cursor.lastrowid
+                row_id = cursor.lastrowid or 0
                 conn.commit()
 
             self._write_count += 1
@@ -139,9 +137,7 @@ class WebAdapter(MessagingAdapter):
     def _cleanup_old_events(self) -> None:
         """Delete events older than 7 days. Called amortized every 100 writes."""
         with self._get_conn() as conn:
-            conn.execute(
-                "DELETE FROM web_events WHERE created_at < datetime('now', '-7 days')"
-            )
+            conn.execute("DELETE FROM web_events WHERE created_at < datetime('now', '-7 days')")
             conn.commit()
 
     def _get_conn(self) -> sqlite3.Connection:

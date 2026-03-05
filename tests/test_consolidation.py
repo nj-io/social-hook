@@ -2,17 +2,16 @@
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from social_hook.config.yaml import Config, ConsolidationConfig
-from social_hook.consolidation import consolidation_tick, get_consolidation_lock_path
+from social_hook.consolidation import consolidation_tick
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.filesystem import generate_id
 from social_hook.models import Decision, Project
-
 
 # =============================================================================
 # Helpers
@@ -85,8 +84,9 @@ class TestConsolidationDBOps:
         d1 = _make_decision(conn, project.id, "hold")
         d2 = _make_decision(conn, project.id, "hold")
         # skip should NOT be returned
-        _make_decision(conn, project.id, "skip",
-                       commit_hash=generate_id("c")[:12], commit_summary=None)
+        _make_decision(
+            conn, project.id, "skip", commit_hash=generate_id("c")[:12], commit_summary=None
+        )
 
         results = ops.get_held_decisions(conn, project.id)
         ids = [r.id for r in results]
@@ -139,7 +139,8 @@ class TestConsolidationDBOps:
         d = _make_decision(conn, project.id)
 
         updated = ops.update_decision(
-            conn, d.id,
+            conn,
+            d.id,
             decision="draft",
             reasoning="Re-evaluated as draftable",
             angle="New angle",
@@ -197,8 +198,14 @@ class TestConsolidationNotifyOnly:
     @patch("social_hook.consolidation.get_db_path")
     @patch("social_hook.consolidation.init_database")
     def test_notify_only_sends_notification(
-        self, mock_init_db, mock_db_path, mock_release, mock_lock,
-        mock_config, mock_notify, tmp_path,
+        self,
+        mock_init_db,
+        mock_db_path,
+        mock_release,
+        mock_lock,
+        mock_config,
+        mock_notify,
+        tmp_path,
     ):
         db_path = tmp_path / "test.db"
         conn = init_database(db_path)
@@ -254,8 +261,14 @@ class TestConsolidationIdempotent:
     @patch("social_hook.consolidation.get_db_path")
     @patch("social_hook.consolidation.init_database")
     def test_second_run_processes_nothing(
-        self, mock_init_db, mock_db_path, mock_release, mock_lock,
-        mock_config, mock_notify, tmp_path,
+        self,
+        mock_init_db,
+        mock_db_path,
+        mock_release,
+        mock_lock,
+        mock_config,
+        mock_notify,
+        tmp_path,
     ):
         db_path = tmp_path / "test.db"
         # Set up shared DB
@@ -292,8 +305,11 @@ class TestDecisionCommitSummary:
 
     def test_to_dict_includes_commit_summary(self):
         d = Decision(
-            id="d1", project_id="p1", commit_hash="abc",
-            decision="hold", reasoning="test",
+            id="d1",
+            project_id="p1",
+            commit_hash="abc",
+            decision="hold",
+            reasoning="test",
             commit_summary="Added logging feature",
         )
         data = d.to_dict()
@@ -304,8 +320,11 @@ class TestDecisionCommitSummary:
 
     def test_from_dict_parses_commit_summary(self):
         data = {
-            "id": "d1", "project_id": "p1", "commit_hash": "abc",
-            "decision": "hold", "reasoning": "test",
+            "id": "d1",
+            "project_id": "p1",
+            "commit_hash": "abc",
+            "decision": "hold",
+            "reasoning": "test",
             "commit_summary": "Fixed bug",
             "processed": 1,
             "batch_id": "batch-001",
@@ -317,8 +336,11 @@ class TestDecisionCommitSummary:
 
     def test_to_row_includes_commit_summary(self):
         d = Decision(
-            id="d1", project_id="p1", commit_hash="abc",
-            decision="hold", reasoning="test",
+            id="d1",
+            project_id="p1",
+            commit_hash="abc",
+            decision="hold",
+            reasoning="test",
             commit_summary="New feature",
         )
         row = d.to_row()

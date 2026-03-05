@@ -1,7 +1,6 @@
 """Notification formatting helpers."""
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -12,16 +11,16 @@ def format_draft_review(
     commit_message: str,
     platform: str,
     content: str,
-    suggested_time: Optional[str] = None,
-    draft_id: Optional[str] = None,
-    char_count: Optional[int] = None,
-    media_info: Optional[str] = None,
+    suggested_time: str | None = None,
+    draft_id: str | None = None,
+    char_count: int | None = None,
+    media_info: str | None = None,
     is_thread: bool = False,
-    tweet_count: Optional[int] = None,
-    episode_type: Optional[str] = None,
-    post_category: Optional[str] = None,
-    angle: Optional[str] = None,
-    evaluator_reasoning: Optional[str] = None,
+    tweet_count: int | None = None,
+    episode_type: str | None = None,
+    post_category: str | None = None,
+    angle: str | None = None,
+    evaluator_reasoning: str | None = None,
 ) -> str:
     """Format a draft review notification message.
 
@@ -68,12 +67,14 @@ def format_draft_review(
         lines.append(f"Media: {media_info}")
     if draft_id:
         lines.append(f"Draft: `{draft_id}`")
-    lines.extend([
-        "",
-        "```",
-        content[:500],
-        "```",
-    ])
+    lines.extend(
+        [
+            "",
+            "```",
+            content[:500],
+            "```",
+        ]
+    )
     if suggested_time:
         lines.append(f"\nSuggested time: {suggested_time}")
     return "\n".join(lines)

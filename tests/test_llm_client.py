@@ -5,22 +5,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from social_hook.db import operations as ops
-from social_hook.errors import AuthError, MalformedResponseError
+from social_hook.errors import AuthError
 from social_hook.llm.client import ClaudeClient, _calculate_cost_cents
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.models import (
-    Arc,
     Decision,
     Draft,
-    DraftChange,
-    DraftTweet,
-    Lifecycle,
-    NarrativeDebt,
-    Post,
     Project,
     UsageLog,
 )
-
 
 # =============================================================================
 # T11: Cost Calculation Tests
@@ -94,8 +87,11 @@ class TestClaudeClient:
         response.usage.cache_read_input_tokens = 0
         response.usage.cache_creation_input_tokens = 0
         response.content = [
-            MagicMock(type="tool_use", name="log_decision",
-                      input={"decision": "post_worthy", "reasoning": "test"})
+            MagicMock(
+                type="tool_use",
+                name="log_decision",
+                input={"decision": "post_worthy", "reasoning": "test"},
+            )
         ]
         return response
 
@@ -284,8 +280,10 @@ class TestDryRunContext:
         self._setup_project(temp_db)
         db = DryRunContext(temp_db, dry_run=True)
         decision = Decision(
-            id="dec_test1", project_id="proj_test1",
-            commit_hash="abc123", decision="draft",
+            id="dec_test1",
+            project_id="proj_test1",
+            commit_hash="abc123",
+            decision="draft",
             reasoning="Test",
         )
         result = db.insert_decision(decision)
@@ -299,8 +297,10 @@ class TestDryRunContext:
         # Need a decision first for FK — but in dry-run, reads only
         # Just verify the no-op behavior
         draft = Draft(
-            id="draft_test1", project_id="proj_test1",
-            decision_id="dec_test1", platform="x",
+            id="draft_test1",
+            project_id="proj_test1",
+            decision_id="dec_test1",
+            platform="x",
             content="Test",
         )
         result = db.insert_draft(draft)
@@ -309,8 +309,10 @@ class TestDryRunContext:
     def test_insert_usage_skipped(self, temp_db):
         db = DryRunContext(temp_db, dry_run=True)
         usage = UsageLog(
-            id="usage_test1", operation_type="evaluate",
-            model="claude-opus-4-5", input_tokens=100,
+            id="usage_test1",
+            operation_type="evaluate",
+            model="claude-opus-4-5",
+            input_tokens=100,
             output_tokens=50,
         )
         result = db.insert_usage(usage)
@@ -362,12 +364,18 @@ class TestDryRunContext:
 
     def test_insert_milestone_summary_skipped(self, temp_db):
         db = DryRunContext(temp_db, dry_run=True)
-        result = db.insert_milestone_summary({
-            "id": "ms_test1", "project_id": "proj_test1",
-            "milestone_type": "post", "summary": "Test",
-            "items_covered": [], "token_count": 10,
-            "period_start": "2026-01-01", "period_end": "2026-01-15",
-        })
+        result = db.insert_milestone_summary(
+            {
+                "id": "ms_test1",
+                "project_id": "proj_test1",
+                "milestone_type": "post",
+                "summary": "Test",
+                "items_covered": [],
+                "token_count": 10,
+                "period_start": "2026-01-01",
+                "period_end": "2026-01-15",
+            }
+        )
         assert result == "ms_test1"
 
     # --- Write operations pass through when not dry-run ---
@@ -376,8 +384,10 @@ class TestDryRunContext:
         self._setup_project(temp_db)
         db = DryRunContext(temp_db, dry_run=False)
         decision = Decision(
-            id="dec_test1", project_id="proj_test1",
-            commit_hash="abc123", decision="draft",
+            id="dec_test1",
+            project_id="proj_test1",
+            commit_hash="abc123",
+            decision="draft",
             reasoning="Test",
         )
         result = db.insert_decision(decision)

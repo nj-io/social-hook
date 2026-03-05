@@ -1,7 +1,7 @@
 """Usage logging helper. Social-hook-specific — not part of the reusable layer."""
 
 import sqlite3
-from typing import Any, Optional
+from typing import Any
 
 from social_hook.filesystem import generate_id
 from social_hook.models import UsageLog
@@ -12,8 +12,8 @@ def log_usage(
     operation_type: str,
     model_id: str,
     usage: Any,
-    project_id: Optional[str] = None,
-    commit_hash: Optional[str] = None,
+    project_id: str | None = None,
+    commit_hash: str | None = None,
     cost_cents: float = 0.0,
 ) -> None:
     """Write a UsageLog row. No-op if db or operation_type is falsy."""

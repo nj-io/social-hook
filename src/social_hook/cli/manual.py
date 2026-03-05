@@ -1,7 +1,5 @@
 """CLI commands for manual operations (evaluate, draft, consolidate, post)."""
 
-from typing import Optional
-
 import typer
 
 app = typer.Typer()
@@ -11,11 +9,11 @@ app = typer.Typer()
 def evaluate(
     ctx: typer.Context,
     commit: str = typer.Argument(..., help="Commit hash to evaluate"),
-    repo: Optional[str] = typer.Option(None, "--repo", help="Repository path"),
-    project_id: Optional[str] = typer.Option(None, "--project", "-p", help="Project ID"),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    project_id: str | None = typer.Option(None, "--project", "-p", help="Project ID"),
 ):
     """Manually evaluate a commit (without triggering draft creation)."""
-    from social_hook.trigger import parse_commit_info, run_trigger
+    from social_hook.trigger import run_trigger
 
     dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
     verbose = ctx.obj.get("verbose", False) if ctx.obj else False
@@ -23,6 +21,7 @@ def evaluate(
 
     if not repo:
         import os
+
         repo = os.getcwd()
 
     exit_code = run_trigger(
@@ -39,7 +38,9 @@ def evaluate(
 def draft(
     ctx: typer.Context,
     decision_id: str = typer.Argument(..., help="Decision ID to create draft for"),
-    platform: Optional[str] = typer.Option(None, "--platform", help="Target platform (default: all enabled)"),
+    platform: str | None = typer.Option(
+        None, "--platform", help="Target platform (default: all enabled)"
+    ),
 ):
     """Manually create drafts from an existing decision."""
     from social_hook.config import load_full_config
@@ -93,7 +94,9 @@ def draft(
             project_config = ProjectConfig(repo_path=project.repo_path)
 
         context = assemble_evaluator_context(
-            db, project.id, project_config,
+            db,
+            project.id,
+            project_config,
             commit_timestamp=commit_info.timestamp,
             parent_timestamp=commit_info.parent_timestamp,
         )
@@ -116,11 +119,18 @@ def draft(
 
         target_platform_names = [platform] if platform else None
         results = draft_for_platforms(
-            config, conn, db, project, decision_id=decision.id,
-            evaluation=evaluation, context=context, commit=commit_info,
+            config,
+            conn,
+            db,
+            project,
+            decision_id=decision.id,
+            evaluation=evaluation,
+            context=context,
+            commit=commit_info,
             project_config=project_config,
             target_platform_names=target_platform_names,
-            dry_run=dry_run, verbose=verbose,
+            dry_run=dry_run,
+            verbose=verbose,
         )
 
         if not results:
@@ -180,8 +190,7 @@ def consolidate(
         from social_hook.models import CommitInfo
 
         combined_summary = "\n".join(
-            f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}"
-            for d in decisions
+            f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}" for d in decisions
         )
         commit = CommitInfo(
             hash=f"consolidate-{decisions[-1].commit_hash[:8]}",
@@ -205,7 +214,9 @@ def consolidate(
             project_config = ProjectConfig(repo_path=project.repo_path)
 
         context = assemble_evaluator_context(
-            db, project.id, project_config,
+            db,
+            project.id,
+            project_config,
         )
 
         # Use most recent decision as anchor
@@ -225,16 +236,25 @@ def consolidate(
         from social_hook.drafting import draft_for_platforms
 
         results = draft_for_platforms(
-            config, conn, db, project, decision_id=anchor.id,
-            evaluation=evaluation, context=context, commit=commit,
+            config,
+            conn,
+            db,
+            project,
+            decision_id=anchor.id,
+            evaluation=evaluation,
+            context=context,
+            commit=commit,
             project_config=project_config,
-            dry_run=dry_run, verbose=verbose,
+            dry_run=dry_run,
+            verbose=verbose,
         )
 
         if not results:
             typer.echo("\nNo drafts created (platforms may have been filtered or deferred).")
         else:
-            typer.echo(f"\n{len(results)} draft(s) created from {len(decisions)} consolidated decisions:")
+            typer.echo(
+                f"\n{len(results)} draft(s) created from {len(decisions)} consolidated decisions:"
+            )
             for r in results:
                 typer.echo(f"  {r.draft.platform}: {r.draft.id}")
     finally:
@@ -262,7 +282,9 @@ def post(
             raise typer.Exit(1)
 
         if draft_obj.status not in ("approved", "scheduled"):
-            typer.echo(f"Draft status is '{draft_obj.status}'. Must be 'approved' or 'scheduled' to post.")
+            typer.echo(
+                f"Draft status is '{draft_obj.status}'. Must be 'approved' or 'scheduled' to post."
+            )
             raise typer.Exit(1)
 
         typer.echo(f"Platform: {draft_obj.platform}")
@@ -280,7 +302,7 @@ def post(
         result = _post_draft(conn, draft_obj, config)
         if result.success:
             update_draft(conn, draft_id, status="posted")
-            typer.echo(f"\nPosted successfully!")
+            typer.echo("\nPosted successfully!")
             if result.external_id:
                 typer.echo(f"External ID: {result.external_id}")
         else:

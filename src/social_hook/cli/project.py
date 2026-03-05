@@ -2,7 +2,6 @@
 
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -14,8 +13,10 @@ app = typer.Typer()
 @app.command()
 def register(
     ctx: typer.Context,
-    path: Optional[Path] = typer.Argument(None, help="Path to repository (default: current directory)"),
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="Project name"),
+    path: Path | None = typer.Argument(
+        None, help="Path to repository (default: current directory)"
+    ),
+    name: str | None = typer.Option(None, "--name", "-n", help="Project name"),
 ):
     """Register a project for social-hook."""
     from social_hook.config import load_full_config
@@ -54,9 +55,7 @@ def register(
         name = path.name
 
     # Check duplicates
-    config = load_full_config(
-        str(ctx.obj["config"]) if ctx.obj and ctx.obj.get("config") else None
-    )
+    load_full_config(str(ctx.obj["config"]) if ctx.obj and ctx.obj.get("config") else None)
     conn = init_database(get_db_path())
 
     try:
@@ -105,6 +104,7 @@ def register(
             typer.echo(f"  Origin: {repo_origin}")
 
         from social_hook.setup.install import check_hook_installed
+
         if not check_hook_installed():
             typer.echo()
             typer.echo("Warning: Claude Code commit hook is not installed.")
@@ -131,9 +131,7 @@ def unregister(
             raise typer.Exit(1)
 
         if not force:
-            confirm = typer.confirm(
-                f"Delete project '{project.name}' and all its data?"
-            )
+            confirm = typer.confirm(f"Delete project '{project.name}' and all its data?")
             if not confirm:
                 typer.echo("Cancelled.")
                 return
@@ -149,7 +147,9 @@ def unregister(
 @app.command()
 def pause(
     ctx: typer.Context,
-    project_id: Optional[str] = typer.Argument(None, help="Project ID (default: detect from current directory)"),
+    project_id: str | None = typer.Argument(
+        None, help="Project ID (default: detect from current directory)"
+    ),
 ):
     """Pause a project (skip commit evaluation)."""
     _set_paused(project_id, paused=True)
@@ -158,13 +158,15 @@ def pause(
 @app.command()
 def unpause(
     ctx: typer.Context,
-    project_id: Optional[str] = typer.Argument(None, help="Project ID (default: detect from current directory)"),
+    project_id: str | None = typer.Argument(
+        None, help="Project ID (default: detect from current directory)"
+    ),
 ):
     """Unpause a project (resume commit evaluation)."""
     _set_paused(project_id, paused=False)
 
 
-def _set_paused(project_id: Optional[str], paused: bool) -> None:
+def _set_paused(project_id: str | None, paused: bool) -> None:
     """Shared implementation for pause/unpause."""
     import subprocess as sp
 
@@ -187,6 +189,7 @@ def _set_paused(project_id: Optional[str], paused: bool) -> None:
             if not project:
                 # Try prefix match
                 from social_hook.db import get_all_projects
+
                 for p in get_all_projects(conn):
                     if p.id.startswith(project_id):
                         project = p
@@ -200,7 +203,8 @@ def _set_paused(project_id: Optional[str], paused: bool) -> None:
             if not project:
                 origin_result = sp.run(
                     ["git", "-C", cwd, "remote", "get-url", "origin"],
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                 )
                 if origin_result.returncode == 0:
                     matches = get_project_by_origin(conn, origin_result.stdout.strip())
@@ -228,9 +232,11 @@ def _set_paused(project_id: Optional[str], paused: bool) -> None:
 @app.command("set-branch")
 def set_branch(
     ctx: typer.Context,
-    branch: Optional[str] = typer.Argument(None, help="Branch name to filter on"),
-    project_id: Optional[str] = typer.Option(None, "--id", "-p", help="Project ID"),
-    all_branches: bool = typer.Option(False, "--all", help="Clear filter (trigger on all branches)"),
+    branch: str | None = typer.Argument(None, help="Branch name to filter on"),
+    project_id: str | None = typer.Option(None, "--id", "-p", help="Project ID"),
+    all_branches: bool = typer.Option(
+        False, "--all", help="Clear filter (trigger on all branches)"
+    ),
 ):
     """Set which branch triggers the pipeline for a project."""
     import subprocess as sp
@@ -259,6 +265,7 @@ def set_branch(
             project = get_project(conn, project_id)
             if not project:
                 from social_hook.db import get_all_projects
+
                 for p in get_all_projects(conn):
                     if p.id.startswith(project_id):
                         project = p
@@ -271,7 +278,8 @@ def set_branch(
             if not project:
                 origin_result = sp.run(
                     ["git", "-C", cwd, "remote", "get-url", "origin"],
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                 )
                 if origin_result.returncode == 0:
                     matches = get_project_by_origin(conn, origin_result.stdout.strip())
@@ -286,9 +294,17 @@ def set_branch(
         if target_branch:
             try:
                 sp.run(
-                    ["git", "-C", project.repo_path, "rev-parse", "--verify",
-                     f"refs/heads/{target_branch}"],
-                    capture_output=True, text=True, check=True,
+                    [
+                        "git",
+                        "-C",
+                        project.repo_path,
+                        "rev-parse",
+                        "--verify",
+                        f"refs/heads/{target_branch}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 )
             except (sp.CalledProcessError, OSError):
                 typer.echo(f"Warning: branch '{target_branch}' not found in {project.repo_path}")
@@ -299,7 +315,9 @@ def set_branch(
         if target_branch:
             typer.echo(f"Set trigger branch to '{target_branch}' for project '{project.name}'.")
         else:
-            typer.echo(f"Cleared trigger branch filter for project '{project.name}' (all branches).")
+            typer.echo(
+                f"Cleared trigger branch filter for project '{project.name}' (all branches)."
+            )
     finally:
         conn.close()
 
@@ -323,6 +341,7 @@ def list_projects(ctx: typer.Context):
             typer.echo(f"  {p.id[:12]}  {p.name:20s}  [{status}]{branch_info}  {p.repo_path}")
 
         from social_hook.setup.install import check_hook_installed
+
         if projects and not check_hook_installed():
             typer.echo()
             typer.echo("Warning: Claude Code commit hook is not installed.")

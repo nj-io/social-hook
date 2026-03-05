@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from social_hook.constants import CONFIG_DIR_NAME, PROJECT_SLUG
 from social_hook.config.project import (
     ContextConfig,
     ProjectConfig,
     _parse_context_notes,
     _parse_memories,
 )
+from social_hook.constants import CONFIG_DIR_NAME, PROJECT_SLUG
 from social_hook.errors import PromptNotFoundError
 from social_hook.models import CommitInfo, ProjectContext
 
@@ -26,6 +26,7 @@ def _relative_time(dt) -> str:
     if not dt:
         return "unknown"
     from datetime import datetime, timezone
+
     if isinstance(dt, str):
         dt = datetime.fromisoformat(dt)
     if dt.tzinfo is None:
@@ -52,14 +53,14 @@ def _render_narrative_sections(sections: list[str], narratives: list[dict]) -> N
         in_window = n.get("_in_window", True)
         label = "" if in_window else " (earlier context)"
         sections.append(f"\n### Session: {n.get('summary', 'No summary')}{label}")
-        if n.get('key_decisions'):
-            sections.append("**Key decisions:** " + "; ".join(n['key_decisions'][:3]))
-        if n.get('rejected_approaches'):
-            sections.append("**Rejected approaches:** " + "; ".join(n['rejected_approaches'][:3]))
-        if n.get('aha_moments'):
-            sections.append("**Insights:** " + "; ".join(n['aha_moments'][:3]))
-        if n.get('social_hooks'):
-            sections.append("**Post angles:** " + "; ".join(n['social_hooks'][:3]))
+        if n.get("key_decisions"):
+            sections.append("**Key decisions:** " + "; ".join(n["key_decisions"][:3]))
+        if n.get("rejected_approaches"):
+            sections.append("**Rejected approaches:** " + "; ".join(n["rejected_approaches"][:3]))
+        if n.get("aha_moments"):
+            sections.append("**Insights:** " + "; ".join(n["aha_moments"][:3]))
+        if n.get("social_hooks"):
+            sections.append("**Post angles:** " + "; ".join(n["social_hooks"][:3]))
 
 
 def load_prompt(role: str) -> str:
@@ -93,7 +94,7 @@ def count_tokens(text: str) -> int:
 
 def _get_enabled_tools(
     media_config: Optional["MediaGenerationConfig"],
-    media_guidance: Optional[dict[str, "MediaToolGuidance"]],
+    media_guidance: dict[str, "MediaToolGuidance"] | None,
 ) -> list[tuple[str, Optional["MediaToolGuidance"]]]:
     """Return list of (tool_name, guidance_or_None) for enabled tools only.
 
@@ -117,7 +118,7 @@ def _get_enabled_tools(
 def _append_media_tools_section(
     sections: list[str],
     media_config: Optional["MediaGenerationConfig"],
-    media_guidance: Optional[dict[str, "MediaToolGuidance"]],
+    media_guidance: dict[str, "MediaToolGuidance"] | None,
 ) -> None:
     """Append '## Available Media Tools' section to evaluator prompt."""
     tools = _get_enabled_tools(media_config, media_guidance)
@@ -139,7 +140,7 @@ def _append_media_tools_section(
 def _append_media_guide_section(
     sections: list[str],
     media_config: Optional["MediaGenerationConfig"],
-    media_guidance: Optional[dict[str, "MediaToolGuidance"]],
+    media_guidance: dict[str, "MediaToolGuidance"] | None,
 ) -> None:
     """Append '## Media Tool Guide' section to drafter prompt."""
     tools = _get_enabled_tools(media_config, media_guidance)
@@ -164,10 +165,10 @@ def assemble_evaluator_prompt(
     prompt: str,
     project_context: ProjectContext,
     commit: CommitInfo,
-    config: Optional[ContextConfig] = None,
-    platform_summaries: Optional[list[str]] = None,
+    config: ContextConfig | None = None,
+    platform_summaries: list[str] | None = None,
     media_config: Optional["MediaGenerationConfig"] = None,
-    media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
+    media_guidance: dict[str, "MediaToolGuidance"] | None = None,
     strategy_config: Optional["StrategyConfig"] = None,
     summary_config: Optional["SummaryConfig"] = None,
 ) -> str:
@@ -204,13 +205,9 @@ def assemble_evaluator_prompt(
     sections.append("\n---\n## Current State")
     if project_context.lifecycle:
         lc = project_context.lifecycle
-        sections.append(
-            f"- Lifecycle phase: {lc.phase} (confidence: {lc.confidence})"
-        )
+        sections.append(f"- Lifecycle phase: {lc.phase} (confidence: {lc.confidence})")
     sections.append(f"- Narrative debt: {project_context.narrative_debt}")
-    sections.append(
-        f"- Audience introduced: {project_context.audience_introduced}"
-    )
+    sections.append(f"- Audience introduced: {project_context.audience_introduced}")
 
     if project_context.active_arcs:
         arc_summaries = ", ".join(
@@ -219,14 +216,14 @@ def assemble_evaluator_prompt(
         sections.append(f"- Active arcs: [{arc_summaries}]")
 
     if project_context.pending_drafts:
-        cap = getattr(config, 'pending_drafts_cap', 10)
+        cap = getattr(config, "pending_drafts_cap", 10)
         to_show = project_context.pending_drafts[:cap]
         overflow = len(project_context.pending_drafts) - cap
-        detail = getattr(config, 'pending_draft_detail', 'full_content')
+        detail = getattr(config, "pending_draft_detail", "full_content")
         if detail == "full_content":
             sections.append("### Pending Drafts")
             for d in to_show:
-                intro = " [INTRO]" if getattr(d, 'is_intro', False) else ""
+                intro = " [INTRO]" if getattr(d, "is_intro", False) else ""
                 sections.append(f"- [{d.platform}:{d.status}]{intro}: {d.content}")
             if overflow > 0:
                 sections.append(f"  (+{overflow} older drafts)")
@@ -235,13 +232,19 @@ def assemble_evaluator_prompt(
             sections.append(f"- Pending drafts: [{summaries}]")
 
     if project_context.held_decisions:
-        max_hold = config.max_hold_count if hasattr(config, 'max_hold_count') else 5
+        max_hold = config.max_hold_count if hasattr(config, "max_hold_count") else 5
         sections.append("\n---\n## Held Commits")
-        sections.append(f"Commits held for consolidation ({len(project_context.held_decisions)}/{max_hold} slots).")
-        sections.append("For each: consolidate into this draft via `consolidate_with`, keep holding, or let drop.")
-        for d in project_context.held_decisions:
-            summary = d.commit_summary or d.commit_message or d.commit_hash[:8]
-            sections.append(f"- [id={d.id}] {d.commit_hash[:8]}: {summary} (held {_relative_time(d.created_at)})")
+        sections.append(
+            f"Commits held for consolidation ({len(project_context.held_decisions)}/{max_hold} slots)."
+        )
+        sections.append(
+            "For each: consolidate into this draft via `consolidate_with`, keep holding, or let drop."
+        )
+        for hd in project_context.held_decisions:
+            summary = hd.commit_summary or hd.commit_message or hd.commit_hash[:8]
+            sections.append(
+                f"- [id={hd.id}] {hd.commit_hash[:8]}: {summary} (held {_relative_time(hd.created_at)})"
+            )
 
     # Target platforms
     if platform_summaries:
@@ -258,8 +261,7 @@ def assemble_evaluator_prompt(
         sections.append("\n---\n## Voice Memories")
         for m in project_context.memories[-10:]:  # Last 10 memories
             sections.append(
-                f"- {m.get('date', 'N/A')}: {m.get('context', '')} → "
-                f"{m.get('feedback', '')}"
+                f"- {m.get('date', 'N/A')}: {m.get('context', '')} → {m.get('feedback', '')}"
             )
 
     # Context Notes
@@ -267,8 +269,7 @@ def assemble_evaluator_prompt(
         sections.append("\n---\n## Context Notes")
         for n in project_context.context_notes[-10:]:  # Last 10 notes
             sections.append(
-                f"- [{n.get('date', 'N/A')}] ({n.get('source', 'unknown')}): "
-                f"{n.get('note', '')}"
+                f"- [{n.get('date', 'N/A')}] ({n.get('source', 'unknown')}): {n.get('note', '')}"
             )
 
     # Development Narrative (from journey capture)
@@ -278,16 +279,18 @@ def assemble_evaluator_prompt(
     sections.append("\n---\n## Recent History")
     if project_context.recent_decisions:
         sections.append("### Recent Decisions")
-        for d in project_context.recent_decisions[:config.recent_decisions]:
+        for dec in project_context.recent_decisions[: config.recent_decisions]:
             sections.append(
-                f"- [{d.decision}] {d.commit_hash[:8]} \"{d.commit_message or 'N/A'}\": {d.reasoning[:100]}"
+                f'- [{dec.decision}] {dec.commit_hash[:8]} "{dec.commit_message or "N/A"}": {dec.reasoning[:100]}'
             )
     if project_context.recent_posts:
         sections.append("### Post History")
-        for p in project_context.recent_posts[:config.recent_posts]:
+        for p in project_context.recent_posts[: config.recent_posts]:
             url_part = f", {p.external_url}" if p.external_url else ""
             time_ago = _relative_time(p.posted_at)
-            sections.append(f"- {p.platform} [id={p.id}]: {p.content[:80]}... ({time_ago}{url_part})")
+            sections.append(
+                f"- {p.platform} [id={p.id}]: {p.content[:80]}... ({time_ago}{url_part})"
+            )
 
     # Project summary
     if project_context.project_summary:
@@ -313,10 +316,7 @@ def assemble_evaluator_prompt(
             if readme_path.exists():
                 readme_text = readme_path.read_text(encoding="utf-8")
                 if count_tokens(readme_text) > config.max_doc_tokens:
-                    readme_text = (
-                        readme_text[: config.max_doc_tokens * 4]
-                        + "\n[...truncated]"
-                    )
+                    readme_text = readme_text[: config.max_doc_tokens * 4] + "\n[...truncated]"
                 sections.append("\n---\n## README")
                 sections.append(readme_text)
         if config.include_claude_md:
@@ -324,10 +324,7 @@ def assemble_evaluator_prompt(
             if claude_path.exists():
                 claude_text = claude_path.read_text(encoding="utf-8")
                 if count_tokens(claude_text) > config.max_doc_tokens:
-                    claude_text = (
-                        claude_text[: config.max_doc_tokens * 4]
-                        + "\n[...truncated]"
-                    )
+                    claude_text = claude_text[: config.max_doc_tokens * 4] + "\n[...truncated]"
                 sections.append("\n---\n## CLAUDE.md")
                 sections.append(claude_text)
 
@@ -357,20 +354,15 @@ def assemble_evaluator_prompt(
     # Summary freshness thresholds
     if summary_config:
         sections.append("\n---\n## Summary Freshness Thresholds")
-        sections.append(
-            f"- Refresh after {summary_config.refresh_after_commits} commits"
-        )
-        sections.append(
-            f"- Refresh after {summary_config.refresh_after_days} days"
-        )
+        sections.append(f"- Refresh after {summary_config.refresh_after_commits} commits")
+        sections.append(f"- Refresh after {summary_config.refresh_after_days} days")
 
     # Current commit
     sections.append("\n---\n## Current Commit")
     sections.append(f"- Hash: {commit.hash}")
     sections.append(f"- Message: {commit.message}")
     sections.append(
-        f"- Changes: {len(commit.files_changed)} files, "
-        f"+{commit.insertions}/-{commit.deletions}"
+        f"- Changes: {len(commit.files_changed)} files, +{commit.insertions}/-{commit.deletions}"
     )
     if commit.files_changed:
         sections.append(f"- Files: {', '.join(commit.files_changed[:20])}")
@@ -396,10 +388,10 @@ def assemble_drafter_prompt(
     project_context: ProjectContext,
     recent_posts: list[Any],
     commit: CommitInfo,
-    arc_context: Optional[dict[str, Any]] = None,
+    arc_context: dict[str, Any] | None = None,
     config: Optional["ContextConfig"] = None,
     media_config: Optional["MediaGenerationConfig"] = None,
-    media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
+    media_guidance: dict[str, "MediaToolGuidance"] | None = None,
 ) -> str:
     """Assemble full drafter system prompt with context.
 
@@ -435,9 +427,7 @@ def assemble_drafter_prompt(
 
     # Current state — audience introduction status
     sections.append("\n---\n## Current State")
-    sections.append(
-        f"- Audience introduced: {project_context.audience_introduced}"
-    )
+    sections.append(f"- Audience introduced: {project_context.audience_introduced}")
     if not project_context.audience_introduced:
         sections.append(
             "- **THIS IS THE FIRST POST FOR THIS PROJECT.** "
@@ -452,8 +442,7 @@ def assemble_drafter_prompt(
         sections.append("\n---\n## Voice Memories")
         for m in project_context.memories[-10:]:
             sections.append(
-                f"- {m.get('date', 'N/A')}: {m.get('context', '')} → "
-                f"{m.get('feedback', '')}"
+                f"- {m.get('date', 'N/A')}: {m.get('context', '')} → {m.get('feedback', '')}"
             )
 
     # Context Notes
@@ -461,8 +450,7 @@ def assemble_drafter_prompt(
         sections.append("\n---\n## Context Notes")
         for n in project_context.context_notes[-10:]:
             sections.append(
-                f"- [{n.get('date', 'N/A')}] ({n.get('source', 'unknown')}): "
-                f"{n.get('note', '')}"
+                f"- [{n.get('date', 'N/A')}] ({n.get('source', 'unknown')}): {n.get('note', '')}"
             )
 
     # Development Narrative (from journey capture)
@@ -471,9 +459,12 @@ def assemble_drafter_prompt(
     # Project documentation — included when the evaluator requests it
     # (include_project_docs=true) or when audience hasn't been introduced yet.
     include_docs = not project_context.audience_introduced
-    if hasattr(decision, "include_project_docs") and decision.include_project_docs:
-        include_docs = True
-    elif isinstance(decision, dict) and decision.get("include_project_docs"):
+    if (
+        hasattr(decision, "include_project_docs")
+        and decision.include_project_docs
+        or isinstance(decision, dict)
+        and decision.get("include_project_docs")
+    ):
         include_docs = True
 
     if include_docs and project_context.project.repo_path:
@@ -486,6 +477,7 @@ def assemble_drafter_prompt(
         if not project_context.audience_introduced and project_context.project.discovery_files:
             try:
                 import json as _json
+
                 disc_files = _json.loads(project_context.project.discovery_files)
                 if disc_files:
                     sections.append("\n---\n## Project Documentation (Discovery)")
@@ -500,7 +492,7 @@ def assemble_drafter_prompt(
                             if tokens_used + file_tokens > config.max_doc_tokens:
                                 remaining = config.max_doc_tokens - tokens_used
                                 if remaining > 100:
-                                    content = content[:remaining * 4] + "\n[...truncated]"
+                                    content = content[: remaining * 4] + "\n[...truncated]"
                                     sections.append(f"\n### {rel_path}")
                                     sections.append(content)
                                 break
@@ -520,10 +512,7 @@ def assemble_drafter_prompt(
                 if readme_path.exists():
                     readme_text = readme_path.read_text(encoding="utf-8")
                     if count_tokens(readme_text) > config.max_doc_tokens:
-                        readme_text = (
-                            readme_text[: config.max_doc_tokens * 4]
-                            + "\n[...truncated]"
-                        )
+                        readme_text = readme_text[: config.max_doc_tokens * 4] + "\n[...truncated]"
                     sections.append("\n---\n## README")
                     sections.append(readme_text)
             if config.include_claude_md:
@@ -531,10 +520,7 @@ def assemble_drafter_prompt(
                 if claude_path.exists():
                     claude_text = claude_path.read_text(encoding="utf-8")
                     if count_tokens(claude_text) > config.max_doc_tokens:
-                        claude_text = (
-                            claude_text[: config.max_doc_tokens * 4]
-                            + "\n[...truncated]"
-                        )
+                        claude_text = claude_text[: config.max_doc_tokens * 4] + "\n[...truncated]"
                     sections.append("\n---\n## CLAUDE.md")
                     sections.append(claude_text)
 
@@ -572,10 +558,12 @@ def assemble_drafter_prompt(
                 sections.append(f"- Started: {arc.started_at}")
         if "posts" in arc_context:
             sections.append("### Previous Arc Posts")
-            arc_char_limit = getattr(config, 'arc_context_chars', 500) if config else 500
+            arc_char_limit = getattr(config, "arc_context_chars", 500) if config else 500
             for p in arc_context["posts"][:5]:
                 url_part = f" | url: {p.external_url}" if p.external_url else ""
-                sections.append(f"- [id={p.id}] [{p.platform}]{url_part}: {p.content[:arc_char_limit]}")
+                sections.append(
+                    f"- [id={p.id}] [{p.platform}]{url_part}: {p.content[:arc_char_limit]}"
+                )
 
     # Recent posts
     if recent_posts:
@@ -591,8 +579,7 @@ def assemble_drafter_prompt(
     sections.append(f"- Hash: {commit.hash}")
     sections.append(f"- Message: {commit.message}")
     sections.append(
-        f"- Changes: {len(commit.files_changed)} files, "
-        f"+{commit.insertions}/-{commit.deletions}"
+        f"- Changes: {len(commit.files_changed)} files, +{commit.insertions}/-{commit.deletions}"
     )
     if commit.diff:
         # Limit diff for drafter (doesn't need full diff)
@@ -608,16 +595,16 @@ def assemble_gatekeeper_prompt(
     prompt: str,
     draft: Any,
     user_message: str,
-    project_summary: Optional[str] = None,
-    system_snapshot: Optional[str] = None,
-    chat_history: Optional[str] = None,
-    recent_decisions: Optional[list[Any]] = None,
-    recent_posts: Optional[list[Any]] = None,
-    lifecycle_phase: Optional[str] = None,
-    active_arcs: Optional[list[Any]] = None,
-    narrative_debt: Optional[int] = None,
-    audience_introduced: Optional[bool] = None,
-    linked_decision: Optional[Any] = None,
+    project_summary: str | None = None,
+    system_snapshot: str | None = None,
+    chat_history: str | None = None,
+    recent_decisions: list[Any] | None = None,
+    recent_posts: list[Any] | None = None,
+    lifecycle_phase: str | None = None,
+    active_arcs: list[Any] | None = None,
+    narrative_debt: int | None = None,
+    audience_introduced: bool | None = None,
+    linked_decision: Any | None = None,
 ) -> str:
     """Assemble gatekeeper system prompt with enriched context.
 
@@ -669,17 +656,23 @@ def assemble_gatekeeper_prompt(
 
     # Recent Decisions
     if recent_decisions:
-        sections.append("\n---\n## Recent Decisions (last %d)" % len(recent_decisions))
+        sections.append(f"\n---\n## Recent Decisions (last {len(recent_decisions)})")
         for d in recent_decisions:
             decision = d.decision if hasattr(d, "decision") else d.get("decision", "?")
             commit_hash = d.commit_hash[:8] if hasattr(d, "commit_hash") else "?"
-            msg = d.commit_message or "N/A" if hasattr(d, "commit_message") else d.get("commit_message", "N/A")
-            reasoning = d.reasoning[:80] if hasattr(d, "reasoning") else str(d.get("reasoning", ""))[:80]
+            msg = (
+                d.commit_message or "N/A"
+                if hasattr(d, "commit_message")
+                else d.get("commit_message", "N/A")
+            )
+            reasoning = (
+                d.reasoning[:80] if hasattr(d, "reasoning") else str(d.get("reasoning", ""))[:80]
+            )
             sections.append(f"- [{decision}] {commit_hash}: {msg} — {reasoning}")
 
     # Recent Posts
     if recent_posts:
-        sections.append("\n---\n## Recent Posts (last %d)" % len(recent_posts))
+        sections.append(f"\n---\n## Recent Posts (last {len(recent_posts)})")
         for p in recent_posts:
             platform = p.platform if hasattr(p, "platform") else p.get("platform", "?")
             content = p.content[:100] if hasattr(p, "content") else str(p.get("content", ""))[:100]
@@ -695,12 +688,24 @@ def assemble_gatekeeper_prompt(
     # Linked Decision (for current draft)
     if linked_decision:
         sections.append("\n---\n## Linked Decision (for current draft)")
-        reasoning = linked_decision.reasoning if hasattr(linked_decision, "reasoning") else linked_decision.get("reasoning", "")
+        reasoning = (
+            linked_decision.reasoning
+            if hasattr(linked_decision, "reasoning")
+            else linked_decision.get("reasoning", "")
+        )
         sections.append(f"- Reasoning: {reasoning[:200]}")
-        angle = linked_decision.angle if hasattr(linked_decision, "angle") else linked_decision.get("angle")
+        angle = (
+            linked_decision.angle
+            if hasattr(linked_decision, "angle")
+            else linked_decision.get("angle")
+        )
         if angle:
             sections.append(f"- Angle: {angle}")
-        episode_type = linked_decision.episode_type if hasattr(linked_decision, "episode_type") else linked_decision.get("episode_type")
+        episode_type = (
+            linked_decision.episode_type
+            if hasattr(linked_decision, "episode_type")
+            else linked_decision.get("episode_type")
+        )
         if episode_type:
             sections.append(f"- Episode type: {episode_type}")
 
@@ -726,8 +731,8 @@ def assemble_expert_prompt(
     draft: Any,
     user_message: str,
     escalation_reason: str,
-    escalation_context: Optional[str] = None,
-    project_summary: Optional[str] = None,
+    escalation_context: str | None = None,
+    project_summary: str | None = None,
 ) -> str:
     """Assemble expert system prompt for escalated requests.
 
@@ -780,9 +785,9 @@ def assemble_evaluator_context(
     db: Any,
     project_id: str,
     project_config: ProjectConfig,
-    config: Optional[ContextConfig] = None,
-    commit_timestamp: Optional[str] = None,
-    parent_timestamp: Optional[str] = None,
+    config: ContextConfig | None = None,
+    commit_timestamp: str | None = None,
+    parent_timestamp: str | None = None,
 ) -> ProjectContext:
     """Gather all DB data into a ProjectContext for agent use.
 
@@ -828,8 +833,10 @@ def assemble_evaluator_context(
     # Load session narratives from journey capture storage
     try:
         from social_hook.narrative.storage import load_recent_narratives
+
         session_narratives = load_recent_narratives(
-            project_id, limit=5,
+            project_id,
+            limit=5,
             after=parent_timestamp,
             before=commit_timestamp,
         )
@@ -897,8 +904,7 @@ def compact_by_truncation(context: str, max_tokens: int) -> str:
 
     # Progressively remove history lines from oldest (end of list)
     while (
-        count_tokens("\n".join(pre_history + history_lines + post_history))
-        > max_tokens
+        count_tokens("\n".join(pre_history + history_lines + post_history)) > max_tokens
         and len(history_lines) > 2  # Keep section header
     ):
         history_lines.pop(-1)

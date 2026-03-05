@@ -3,13 +3,10 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.setup.validation import validate_claude_cli
 
-
 VALID_CLI_RESPONSE = [
-    {"type": "result", "result": "{\"status\": \"ok\"}"},
+    {"type": "result", "result": '{"status": "ok"}'},
 ]
 
 
@@ -52,6 +49,7 @@ class TestValidateClaudeCli:
     @patch("social_hook.setup.validation.subprocess.run")
     def test_timeout(self, mock_run):
         import subprocess
+
         mock_run.side_effect = subprocess.TimeoutExpired("claude", 30)
         ok, msg = validate_claude_cli()
         assert ok is False

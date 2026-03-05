@@ -8,7 +8,6 @@ and requests (common dependency). No project-specific domain concepts.
 """
 
 import logging
-from typing import Optional
 
 import requests
 
@@ -47,9 +46,7 @@ class TelegramAdapter(MessagingAdapter):
             }
         return self._post("sendMessage", payload)
 
-    def edit_message(
-        self, chat_id: str, message_id: str, message: OutboundMessage
-    ) -> SendResult:
+    def edit_message(self, chat_id: str, message_id: str, message: OutboundMessage) -> SendResult:
         """Edit an existing Telegram message."""
         payload: dict = {
             "chat_id": chat_id,
@@ -86,8 +83,9 @@ class TelegramAdapter(MessagingAdapter):
             supported_media_types=["png", "jpg", "jpeg", "gif"],
         )
 
-    def send_media(self, chat_id: str, file_path: str, caption: str = "",
-                   parse_mode: str = "markdown") -> SendResult:
+    def send_media(
+        self, chat_id: str, file_path: str, caption: str = "", parse_mode: str = "markdown"
+    ) -> SendResult:
         """Send a media file via Telegram."""
         from pathlib import Path
 
@@ -159,9 +157,7 @@ class TelegramAdapter(MessagingAdapter):
             [
                 {
                     "text": btn.label,
-                    "callback_data": f"{btn.action}:{btn.payload}"
-                    if btn.payload
-                    else btn.action,
+                    "callback_data": f"{btn.action}:{btn.payload}" if btn.payload else btn.action,
                 }
                 for btn in row.buttons
             ]
@@ -179,15 +175,11 @@ class TelegramAdapter(MessagingAdapter):
         data = callback.get("data", "")
         parts = data.split(":", 1)
         return CallbackEvent(
-            chat_id=str(
-                callback.get("message", {}).get("chat", {}).get("id", "")
-            ),
+            chat_id=str(callback.get("message", {}).get("chat", {}).get("id", "")),
             callback_id=callback.get("id", ""),
             action=parts[0],
             payload=parts[1] if len(parts) > 1 else "",
-            message_id=str(
-                callback.get("message", {}).get("message_id", "")
-            ),
+            message_id=str(callback.get("message", {}).get("message_id", "")),
             raw=callback,
         )
 

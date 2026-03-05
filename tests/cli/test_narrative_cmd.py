@@ -1,10 +1,8 @@
 """Tests for journey CLI sub-app and narrative-capture hidden command."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from typer.testing import CliRunner
 
 from social_hook.cli import app
@@ -22,9 +20,7 @@ class TestJourneyOn:
 
     @patch("social_hook.setup.install.install_narrative_hook")
     @patch("social_hook.cli.journey.get_config_path")
-    def test_enables_config_and_installs_hook(
-        self, mock_config_path, mock_install, temp_dir
-    ):
+    def test_enables_config_and_installs_hook(self, mock_config_path, mock_install, temp_dir):
         config_file = temp_dir / "config.yaml"
         config_file.write_text("models:\n  evaluator: anthropic/claude-opus-4-5\n")
         mock_config_path.return_value = config_file
@@ -44,9 +40,7 @@ class TestJourneyOn:
 
     @patch("social_hook.setup.install.install_narrative_hook")
     @patch("social_hook.cli.journey.get_config_path")
-    def test_creates_config_if_missing(
-        self, mock_config_path, mock_install, temp_dir
-    ):
+    def test_creates_config_if_missing(self, mock_config_path, mock_install, temp_dir):
         config_file = temp_dir / "config.yaml"
         mock_config_path.return_value = config_file
         mock_install.return_value = (True, "Narrative hook installed")
@@ -62,9 +56,7 @@ class TestJourneyOn:
 
     @patch("social_hook.setup.install.install_narrative_hook")
     @patch("social_hook.cli.journey.get_config_path")
-    def test_warns_on_hook_install_failure(
-        self, mock_config_path, mock_install, temp_dir
-    ):
+    def test_warns_on_hook_install_failure(self, mock_config_path, mock_install, temp_dir):
         config_file = temp_dir / "config.yaml"
         mock_config_path.return_value = config_file
         mock_install.return_value = (False, "Could not read settings file")
@@ -79,9 +71,7 @@ class TestJourneyOff:
 
     @patch("social_hook.setup.install.uninstall_narrative_hook")
     @patch("social_hook.cli.journey.get_config_path")
-    def test_disables_config_and_uninstalls_hook(
-        self, mock_config_path, mock_uninstall, temp_dir
-    ):
+    def test_disables_config_and_uninstalls_hook(self, mock_config_path, mock_uninstall, temp_dir):
         config_file = temp_dir / "config.yaml"
         config_file.write_text("journey_capture:\n  enabled: true\n")
         mock_config_path.return_value = config_file
@@ -154,9 +144,7 @@ class TestNarrativeCaptureDisabled:
 
     @patch("social_hook.config.yaml.load_full_config")
     @patch("social_hook.filesystem.get_base_path")
-    def test_disabled_config_exits_silently(
-        self, mock_base_path, mock_config, temp_dir
-    ):
+    def test_disabled_config_exits_silently(self, mock_base_path, mock_config, temp_dir):
         mock_base_path.return_value = temp_dir
         config = MagicMock()
         config.journey_capture.enabled = False

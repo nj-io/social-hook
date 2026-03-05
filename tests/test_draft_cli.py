@@ -33,7 +33,16 @@ def db_env(tmp_path):
     )
 
     # Insert drafts in all 8 statuses
-    statuses = ["draft", "approved", "scheduled", "posted", "rejected", "failed", "superseded", "cancelled"]
+    statuses = [
+        "draft",
+        "approved",
+        "scheduled",
+        "posted",
+        "rejected",
+        "failed",
+        "superseded",
+        "cancelled",
+    ]
     for status in statuses:
         media_spec = json.dumps({"prompt": "test"}) if status == "draft" else None
         media_type = "nano_banana_pro" if status == "draft" else None
@@ -63,9 +72,7 @@ def _patch_paths(db_env):
     from contextlib import ExitStack
 
     stack = ExitStack()
-    stack.enter_context(
-        patch("social_hook.filesystem.get_db_path", return_value=db_env["db_path"])
-    )
+    stack.enter_context(patch("social_hook.filesystem.get_db_path", return_value=db_env["db_path"]))
     return stack
 
 
@@ -104,12 +111,16 @@ class TestDraftReject:
 
     def test_reject_with_reason(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["draft", "reject", "draft_approved", "--reason", "Not good enough"])
+            result = runner.invoke(
+                app, ["draft", "reject", "draft_approved", "--reason", "Not good enough"]
+            )
             assert result.exit_code == 0
 
         conn = sqlite3.connect(str(db_env["db_path"]))
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT last_error FROM drafts WHERE id = ?", ("draft_approved",)).fetchone()
+        row = conn.execute(
+            "SELECT last_error FROM drafts WHERE id = ?", ("draft_approved",)
+        ).fetchone()
         conn.close()
         assert "Rejected: Not good enough" in row["last_error"]
 
@@ -123,13 +134,17 @@ class TestDraftReject:
 class TestDraftSchedule:
     def test_schedule_with_time(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["draft", "schedule", "draft_draft", "--time", "2026-03-05T14:00:00"])
+            result = runner.invoke(
+                app, ["draft", "schedule", "draft_draft", "--time", "2026-03-05T14:00:00"]
+            )
             assert result.exit_code == 0
             assert "scheduled" in result.output
 
         conn = sqlite3.connect(str(db_env["db_path"]))
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT status, scheduled_time FROM drafts WHERE id = ?", ("draft_draft",)).fetchone()
+        row = conn.execute(
+            "SELECT status, scheduled_time FROM drafts WHERE id = ?", ("draft_draft",)
+        ).fetchone()
         conn.close()
         assert row["status"] == "scheduled"
         assert "2026-03-05" in row["scheduled_time"]
@@ -146,9 +161,11 @@ class TestDraftSchedule:
             time_reason="test",
         )
 
-        with _patch_paths(db_env), \
-             patch("social_hook.config.yaml.load_full_config") as mock_config, \
-             patch("social_hook.scheduling.calculate_optimal_time", return_value=mock_result):
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.scheduling.calculate_optimal_time", return_value=mock_result),
+        ):
             mock_config.return_value = MagicMock()
             result = runner.invoke(app, ["draft", "schedule", "draft_approved"])
             assert result.exit_code == 0
@@ -156,7 +173,9 @@ class TestDraftSchedule:
 
     def test_schedule_invalid_datetime(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["draft", "schedule", "draft_draft", "--time", "not-a-date"])
+            result = runner.invoke(
+                app, ["draft", "schedule", "draft_draft", "--time", "not-a-date"]
+            )
             assert result.exit_code == 1
             assert "Invalid datetime" in result.output
 
@@ -196,7 +215,9 @@ class TestDraftRetry:
 
         conn = sqlite3.connect(str(db_env["db_path"]))
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT status, retry_count FROM drafts WHERE id = ?", ("draft_failed",)).fetchone()
+        row = conn.execute(
+            "SELECT status, retry_count FROM drafts WHERE id = ?", ("draft_failed",)
+        ).fetchone()
         conn.close()
         assert row["status"] == "scheduled"
         assert row["retry_count"] == 0
@@ -221,9 +242,11 @@ class TestDraftQuickApprove:
             time_reason="test",
         )
 
-        with _patch_paths(db_env), \
-             patch("social_hook.config.yaml.load_full_config") as mock_config, \
-             patch("social_hook.scheduling.calculate_optimal_time", return_value=mock_result):
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.scheduling.calculate_optimal_time", return_value=mock_result),
+        ):
             mock_config.return_value = MagicMock()
             result = runner.invoke(app, ["draft", "quick-approve", "draft_draft"])
             assert result.exit_code == 0
@@ -239,7 +262,9 @@ class TestDraftQuickApprove:
 class TestDraftEdit:
     def test_edit_content(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["draft", "edit", "draft_draft", "--content", "New content here"])
+            result = runner.invoke(
+                app, ["draft", "edit", "draft_draft", "--content", "New content here"]
+            )
             assert result.exit_code == 0
             assert "updated" in result.output
 
@@ -255,7 +280,9 @@ class TestDraftEdit:
 
         conn = sqlite3.connect(str(db_env["db_path"]))
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT * FROM draft_changes WHERE draft_id = ?", ("draft_draft",)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM draft_changes WHERE draft_id = ?", ("draft_draft",)
+        ).fetchone()
         conn.close()
         assert row is not None
         assert row["field"] == "content"
@@ -293,7 +320,9 @@ class TestDraftMediaRemove:
 
         conn = sqlite3.connect(str(db_env["db_path"]))
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT media_paths FROM drafts WHERE id = ?", ("draft_draft",)).fetchone()
+        row = conn.execute(
+            "SELECT media_paths FROM drafts WHERE id = ?", ("draft_draft",)
+        ).fetchone()
         conn.close()
         assert json.loads(row["media_paths"]) == []
 
@@ -321,11 +350,15 @@ class TestDraftMediaRemove:
 class TestDraftMediaRegen:
     def test_media_regen_success(self, db_env):
         mock_adapter = MagicMock()
-        mock_adapter.generate.return_value = MagicMock(success=True, file_path="/tmp/test.png", error=None)
+        mock_adapter.generate.return_value = MagicMock(
+            success=True, file_path="/tmp/test.png", error=None
+        )
 
-        with _patch_paths(db_env), \
-             patch("social_hook.config.yaml.load_full_config") as mock_config, \
-             patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter):
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter),
+        ):
             mock_config.return_value = MagicMock()
             result = runner.invoke(app, ["draft", "media-regen", "draft_draft"])
             assert result.exit_code == 0

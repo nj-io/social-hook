@@ -8,16 +8,13 @@ Tests cover:
 - draft_for_platforms() arc_context wiring
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.db import operations as ops
-from social_hook.errors import MaxArcsError
 from social_hook.llm.schemas import LogEvaluationInput
-from social_hook.models import Arc, Decision, Project
+from social_hook.models import Decision, Project
 from social_hook.narrative.arcs import (
     create_arc,
     get_arc,
@@ -60,68 +57,80 @@ class TestLogEvaluationNewArcTheme:
     """LogEvaluationInput new_arc_theme field validation."""
 
     def test_new_arc_theme_accepted(self):
-        result = LogEvaluationInput.validate({
-            "commit_analysis": {"summary": "Starts new auth work"},
-            "targets": {
-                "default": {
-                    "action": "draft",
-                    "reason": "Starts new auth work",
-                    "new_arc_theme": "Building the auth system",
-                    "post_category": "arc",
-                    "episode_type": "milestone",
-                }
-            },
-        })
+        result = LogEvaluationInput.validate(
+            {
+                "commit_analysis": {"summary": "Starts new auth work"},
+                "targets": {
+                    "default": {
+                        "action": "draft",
+                        "reason": "Starts new auth work",
+                        "new_arc_theme": "Building the auth system",
+                        "post_category": "arc",
+                        "episode_type": "milestone",
+                    }
+                },
+            }
+        )
         assert result.targets["default"].new_arc_theme == "Building the auth system"
         assert result.targets["default"].arc_id is None
 
     def test_arc_id_still_works(self):
-        result = LogEvaluationInput.validate({
-            "commit_analysis": {"summary": "Continues auth arc"},
-            "targets": {
-                "default": {
-                    "action": "draft",
-                    "reason": "Continues auth arc",
-                    "arc_id": "arc_abc123",
-                    "post_category": "arc",
-                    "episode_type": "milestone",
-                }
-            },
-        })
+        result = LogEvaluationInput.validate(
+            {
+                "commit_analysis": {"summary": "Continues auth arc"},
+                "targets": {
+                    "default": {
+                        "action": "draft",
+                        "reason": "Continues auth arc",
+                        "arc_id": "arc_abc123",
+                        "post_category": "arc",
+                        "episode_type": "milestone",
+                    }
+                },
+            }
+        )
         assert result.targets["default"].arc_id == "arc_abc123"
         assert result.targets["default"].new_arc_theme is None
 
     def test_neither_arc_field(self):
-        result = LogEvaluationInput.validate({
-            "commit_analysis": {"summary": "Standalone post"},
-            "targets": {
-                "default": {
-                    "action": "draft",
-                    "reason": "Standalone post",
-                    "post_category": "opportunistic",
-                    "episode_type": "demo_proof",
-                }
-            },
-        })
+        result = LogEvaluationInput.validate(
+            {
+                "commit_analysis": {"summary": "Standalone post"},
+                "targets": {
+                    "default": {
+                        "action": "draft",
+                        "reason": "Standalone post",
+                        "post_category": "opportunistic",
+                        "episode_type": "demo_proof",
+                    }
+                },
+            }
+        )
         assert result.targets["default"].arc_id is None
         assert result.targets["default"].new_arc_theme is None
 
     def test_new_arc_theme_optional(self):
-        result = LogEvaluationInput.validate({
-            "commit_analysis": {"summary": "Typo fix"},
-            "targets": {"default": {"action": "skip", "reason": "Just a typo fix"}},
-        })
+        result = LogEvaluationInput.validate(
+            {
+                "commit_analysis": {"summary": "Typo fix"},
+                "targets": {"default": {"action": "skip", "reason": "Just a typo fix"}},
+            }
+        )
         assert result.targets["default"].new_arc_theme is None
 
     def test_tool_schema_includes_new_arc_theme(self):
         schema = LogEvaluationInput.to_tool_schema()
-        target_props = schema["input_schema"]["properties"]["targets"]["additionalProperties"]["properties"]
+        target_props = schema["input_schema"]["properties"]["targets"]["additionalProperties"][
+            "properties"
+        ]
         assert "new_arc_theme" in target_props
         assert target_props["new_arc_theme"]["type"] == "string"
 
     def test_tool_schema_arc_id_present(self):
         schema = LogEvaluationInput.to_tool_schema()
-        target_props = schema["input_schema"]["properties"]["targets"]["additionalProperties"]["properties"]
+        target_props = schema["input_schema"]["properties"]["targets"]["additionalProperties"][
+            "properties"
+        ]
         assert "arc_id" in target_props
 
 
@@ -150,7 +159,7 @@ class TestIncrementArcPostCount:
         _setup_project(temp_db)
         arc_id = create_arc(temp_db, "proj_test1", "Multi-post arc")
 
-        for i in range(3):
+        for _i in range(3):
             increment_arc_post_count(temp_db, arc_id)
 
         arc = get_arc(temp_db, arc_id)
@@ -235,6 +244,7 @@ class TestTriggerArcCreation:
         _setup_project(temp_db)
 
         from social_hook.llm.dry_run import DryRunContext
+
         db = DryRunContext(temp_db, dry_run=False)
 
         evaluation = _make_evaluation(new_arc_theme="Auth system build")
@@ -256,6 +266,7 @@ class TestTriggerArcCreation:
 
         if _new_arc_theme and not _arc_id:
             from social_hook.narrative.arcs import create_arc as _create_arc
+
             new_arc_id = _create_arc(db.conn, project.id, _new_arc_theme)
             db.update_decision(decision.id, arc_id=new_arc_id)
             decision.arc_id = new_arc_id
@@ -305,6 +316,7 @@ class TestTriggerArcCreation:
         create_arc(temp_db, "proj_test1", "Arc 3")
 
         from social_hook.llm.dry_run import DryRunContext
+
         db = DryRunContext(temp_db, dry_run=False)
 
         evaluation = _make_evaluation(new_arc_theme="Fourth arc")
@@ -327,6 +339,7 @@ class TestTriggerArcCreation:
         if _new_arc_theme and not _arc_id:
             try:
                 from social_hook.narrative.arcs import create_arc as _create_arc
+
                 new_arc_id = _create_arc(db.conn, project.id, _new_arc_theme)
                 decision.arc_id = new_arc_id
                 arc_created = True
@@ -434,6 +447,7 @@ class TestEvaluatorPromptArcInstructions:
     def _read_source_prompt():
         """Read the evaluator prompt source template."""
         from pathlib import Path
+
         src = Path(__file__).parent.parent / "src" / "social_hook" / "prompts" / "evaluator.md"
         return src.read_text(encoding="utf-8")
 
@@ -465,7 +479,10 @@ class TestDraftingArcContext:
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.drafting._generate_media", return_value=([], None, None))
     def test_arc_context_passed_when_arc_id_set(
-        self, mock_media, mock_schedule, temp_db,
+        self,
+        mock_media,
+        mock_schedule,
+        temp_db,
     ):
         """When evaluation has arc_id, arc_context kwarg is passed to drafter."""
         from social_hook.config.yaml import Config
@@ -524,21 +541,30 @@ class TestDraftingArcContext:
         )
 
         # Mock the drafter's create_draft to capture args
-        mock_draft_result = CreateDraftInput.validate({
-            "content": "Test draft content",
-            "platform": "preview",
-            "reasoning": "Test reasoning",
-        })
+        mock_draft_result = CreateDraftInput.validate(
+            {
+                "content": "Test draft content",
+                "platform": "preview",
+                "reasoning": "Test reasoning",
+            }
+        )
 
         config = Config()
         db = DryRunContext(temp_db, dry_run=False)
 
-        with patch("social_hook.llm.factory.create_client") as mock_create_client, \
-             patch("social_hook.llm.drafter.Drafter.create_draft", return_value=mock_draft_result) as mock_create_draft:
+        with (
+            patch("social_hook.llm.factory.create_client") as mock_create_client,
+            patch(
+                "social_hook.llm.drafter.Drafter.create_draft", return_value=mock_draft_result
+            ) as mock_create_draft,
+        ):
             mock_create_client.return_value = MagicMock()
 
-            results = draft_for_platforms(
-                config, temp_db, db, project,
+            draft_for_platforms(
+                config,
+                temp_db,
+                db,
+                project,
                 decision_id=decision.id,
                 evaluation=evaluation,
                 context=context,
@@ -560,7 +586,10 @@ class TestDraftingArcContext:
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.drafting._generate_media", return_value=([], None, None))
     def test_arc_context_none_when_no_arc_id(
-        self, mock_media, mock_schedule, temp_db,
+        self,
+        mock_media,
+        mock_schedule,
+        temp_db,
     ):
         """When evaluation has no arc_id, arc_context is None."""
         from social_hook.config.yaml import Config
@@ -572,7 +601,8 @@ class TestDraftingArcContext:
 
         project = _setup_project(temp_db)
         evaluation = _make_evaluation(
-            arc_id=None, post_category="opportunistic",
+            arc_id=None,
+            post_category="opportunistic",
         )
 
         decision = Decision(
@@ -611,21 +641,30 @@ class TestDraftingArcContext:
             deferred=False,
         )
 
-        mock_draft_result = CreateDraftInput.validate({
-            "content": "Test draft content",
-            "platform": "preview",
-            "reasoning": "Test reasoning",
-        })
+        mock_draft_result = CreateDraftInput.validate(
+            {
+                "content": "Test draft content",
+                "platform": "preview",
+                "reasoning": "Test reasoning",
+            }
+        )
 
         config = Config()
         db = DryRunContext(temp_db, dry_run=False)
 
-        with patch("social_hook.llm.factory.create_client") as mock_create_client, \
-             patch("social_hook.llm.drafter.Drafter.create_draft", return_value=mock_draft_result) as mock_create_draft:
+        with (
+            patch("social_hook.llm.factory.create_client") as mock_create_client,
+            patch(
+                "social_hook.llm.drafter.Drafter.create_draft", return_value=mock_draft_result
+            ) as mock_create_draft,
+        ):
             mock_create_client.return_value = MagicMock()
 
-            results = draft_for_platforms(
-                config, temp_db, db, project,
+            draft_for_platforms(
+                config,
+                temp_db,
+                db,
+                project,
                 decision_id=decision.id,
                 evaluation=evaluation,
                 context=context,

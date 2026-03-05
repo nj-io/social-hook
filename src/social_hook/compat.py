@@ -3,7 +3,9 @@
 from types import SimpleNamespace
 
 
-def make_eval_compat(evaluation, decision_str: str, target_name: str = "default") -> SimpleNamespace:
+def make_eval_compat(
+    evaluation, decision_str: str, target_name: str = "default"
+) -> SimpleNamespace:
     """Map LogEvaluationInput to flat attribute namespace for drafting pipeline.
 
     The drafting pipeline uses getattr() to read fields like episode_type,

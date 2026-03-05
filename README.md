@@ -99,6 +99,27 @@ Social Hook supports multiple LLM providers via a `provider/model-id` format:
 - `openrouter/anthropic/claude-sonnet-4.5` — OpenRouter
 - `ollama/llama3.3` — Local Ollama
 
+## Development
+
+```bash
+git clone https://github.com/nj-io/social-hook.git
+cd social-hook
+pip install -e ".[dev]"
+pre-commit install
+pre-commit install --hook-type commit-msg
+python -m pytest tests/ -q
+```
+
+## Contributing
+
+- Use [conventional commits](https://www.conventionalcommits.org/): `feat: ✨ description`, `fix: 🐛 description`, etc.
+- All PRs require passing CI (lint, typecheck, tests across Python 3.10-3.12)
+- Run `ruff check src/ tests/` and `mypy src/social_hook/` before pushing
+
+## Versioning
+
+Social Hook uses [Semantic Versioning](https://semver.org/). Releases are automated via [Release Please](https://github.com/googleapis/release-please) — conventional commits on `main` trigger version bumps, changelog generation, and PyPI publishing.
+
 ## License
 
 [MIT](LICENSE)

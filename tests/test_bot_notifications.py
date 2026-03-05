@@ -1,9 +1,5 @@
 """Tests for bot notification formatting helpers (T28)."""
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 from social_hook.bot.notifications import (
     format_draft_review,
     get_review_buttons_normalized,
@@ -81,23 +77,35 @@ class TestFormatDraftReviewExtended:
 
     def test_includes_char_count(self):
         msg = format_draft_review(
-            project_name="test", commit_hash="abc", commit_message="msg",
-            platform="x", content="hello", char_count=42,
+            project_name="test",
+            commit_hash="abc",
+            commit_message="msg",
+            platform="x",
+            content="hello",
+            char_count=42,
         )
         assert "Characters: 42" in msg
 
     def test_includes_media_info(self):
         msg = format_draft_review(
-            project_name="test", commit_hash="abc", commit_message="msg",
-            platform="x", content="hello", media_info="Screenshot of dashboard",
+            project_name="test",
+            commit_hash="abc",
+            commit_message="msg",
+            platform="x",
+            content="hello",
+            media_info="Screenshot of dashboard",
         )
         assert "Media: Screenshot of dashboard" in msg
 
     def test_thread_format(self):
         msg = format_draft_review(
-            project_name="test", commit_hash="abc", commit_message="msg",
-            platform="x", content="Thread content",
-            is_thread=True, tweet_count=4,
+            project_name="test",
+            commit_hash="abc",
+            commit_message="msg",
+            platform="x",
+            content="Thread content",
+            is_thread=True,
+            tweet_count=4,
         )
         assert "Thread: 4 tweets" in msg
 
@@ -107,23 +115,34 @@ class TestFormatDraftReviewEvaluatorContext:
 
     def test_with_episode_type(self):
         msg = format_draft_review(
-            project_name="test", commit_hash="abc", commit_message="msg",
-            platform="x", content="hello", episode_type="feature_launch",
+            project_name="test",
+            commit_hash="abc",
+            commit_message="msg",
+            platform="x",
+            content="hello",
+            episode_type="feature_launch",
         )
         assert "Episode: feature_launch" in msg
 
     def test_with_angle(self):
         msg = format_draft_review(
-            project_name="test", commit_hash="abc", commit_message="msg",
-            platform="x", content="hello", angle="Show the developer workflow",
+            project_name="test",
+            commit_hash="abc",
+            commit_message="msg",
+            platform="x",
+            content="hello",
+            angle="Show the developer workflow",
         )
         assert "Angle:" in msg
         assert "Show the developer workflow" in msg
 
     def test_with_all_context(self):
         msg = format_draft_review(
-            project_name="test", commit_hash="abc", commit_message="msg",
-            platform="x", content="hello",
+            project_name="test",
+            commit_hash="abc",
+            commit_message="msg",
+            platform="x",
+            content="hello",
             episode_type="bug_fix",
             post_category="technical",
             angle="Reliability matters",
@@ -139,8 +158,11 @@ class TestFormatDraftReviewEvaluatorContext:
     def test_without_context_backward_compat(self):
         """Verify backward compat -- no new params still works."""
         msg = format_draft_review(
-            project_name="test", commit_hash="abc", commit_message="msg",
-            platform="x", content="hello",
+            project_name="test",
+            commit_hash="abc",
+            commit_message="msg",
+            platform="x",
+            content="hello",
         )
         assert "Episode:" not in msg
         assert "Category:" not in msg
@@ -151,8 +173,10 @@ class TestFormatDraftReviewEvaluatorContext:
     def test_format_draft_review_with_media_info(self):
         """Media info line appears with trigger-style format (type + file count)."""
         msg = format_draft_review(
-            project_name="my-project", commit_hash="abc1234",
-            commit_message="Add diagram", platform="x",
+            project_name="my-project",
+            commit_hash="abc1234",
+            commit_message="Add diagram",
+            platform="x",
             content="Check out the architecture",
             media_info="mermaid (1 file)",
             draft_id="draft_xyz",
@@ -166,8 +190,11 @@ class TestFormatDraftReviewEvaluatorContext:
     def test_format_draft_review_without_media_info(self):
         """No media line when media_info is None."""
         msg = format_draft_review(
-            project_name="test", commit_hash="abc", commit_message="msg",
-            platform="x", content="hello",
+            project_name="test",
+            commit_hash="abc",
+            commit_message="msg",
+            platform="x",
+            content="hello",
         )
         assert "Media:" not in msg
 
@@ -177,6 +204,7 @@ class TestGetReviewButtonsNormalized:
 
     def test_returns_button_rows(self):
         from social_hook.messaging.base import ButtonRow
+
         buttons = get_review_buttons_normalized("draft_123")
         assert len(buttons) == 2
         assert all(isinstance(row, ButtonRow) for row in buttons)
@@ -208,6 +236,7 @@ class TestPublicAPISurface:
     def test_public_api_surface(self):
         """Module only exposes format_draft_review and get_review_buttons_normalized."""
         import social_hook.bot.notifications as mod
+
         public_names = [n for n in dir(mod) if not n.startswith("_")]
         # Expect: format_draft_review, get_review_buttons_normalized, logger, logging
         assert "format_draft_review" in public_names
@@ -225,4 +254,5 @@ class TestPublicAPISurface:
     def test_no_requests_import(self):
         """Module no longer imports requests."""
         import social_hook.bot.notifications as mod
+
         assert not hasattr(mod, "requests")

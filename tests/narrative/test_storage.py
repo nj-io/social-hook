@@ -5,14 +5,11 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import pytest
-
 from social_hook.narrative.storage import (
     cleanup_old_narratives,
     load_recent_narratives,
     save_narrative,
 )
-
 
 # =============================================================================
 # Helpers
@@ -36,7 +33,7 @@ class FakeExtraction:
 def _read_jsonl(path: Path) -> list[dict]:
     """Read all JSON lines from a file."""
     entries = []
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -53,9 +50,7 @@ class TestSaveNarrative:
     """Tests for save_narrative."""
 
     def test_creates_file_and_appends(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         extraction = FakeExtraction()
         result = save_narrative("my-project", extraction, "sess-001", "auto")
 
@@ -73,9 +68,7 @@ class TestSaveNarrative:
         assert "timestamp" in entry
 
     def test_appends_multiple_entries(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         extraction = FakeExtraction()
 
         save_narrative("proj", extraction, "sess-001", "auto")
@@ -96,9 +89,7 @@ class TestLoadRecentNarratives:
     """Tests for load_recent_narratives."""
 
     def test_returns_only_relevant_for_social(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         relevant = FakeExtraction(relevant_for_social=True)
         irrelevant = FakeExtraction(relevant_for_social=False)
 
@@ -111,9 +102,7 @@ class TestLoadRecentNarratives:
         assert all(e["relevant_for_social"] is True for e in result)
 
     def test_deduplicates_by_session_id_keeps_latest(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         early = FakeExtraction(summary="First attempt")
         later = FakeExtraction(summary="Second attempt")
 
@@ -125,9 +114,7 @@ class TestLoadRecentNarratives:
         assert result[0]["summary"] == "Second attempt"
 
     def test_respects_limit(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         extraction = FakeExtraction()
         for i in range(10):
             save_narrative("proj", extraction, f"sess-{i:03}", "auto")
@@ -136,9 +123,7 @@ class TestLoadRecentNarratives:
         assert len(result) == 3
 
     def test_returns_most_recent_first(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         for i in range(5):
             ext = FakeExtraction(summary=f"Session {i}")
             save_narrative("proj", ext, f"sess-{i:03}", "auto")
@@ -149,18 +134,14 @@ class TestLoadRecentNarratives:
         assert result[-1]["summary"] == "Session 0"
 
     def test_handles_empty_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         (tmp_path / "proj.jsonl").write_text("")
 
         result = load_recent_narratives("proj")
         assert result == []
 
     def test_handles_missing_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         result = load_recent_narratives("proj")
         assert result == []
 
@@ -198,9 +179,7 @@ class TestLoadRecentNarrativesTimeWindow:
 
     def test_no_window_params_backwards_compatible(self, tmp_path, monkeypatch):
         """Without after/before, all entries get _in_window=True."""
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         extraction = FakeExtraction()
         save_narrative("proj", extraction, "sess-001", "auto")
 
@@ -210,9 +189,7 @@ class TestLoadRecentNarrativesTimeWindow:
 
     def test_in_window_entries_returned_first(self, tmp_path, monkeypatch):
         """In-window entries come before out-of-window entries."""
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
 
         # Old entry (before window)
@@ -223,7 +200,8 @@ class TestLoadRecentNarrativesTimeWindow:
         self._write_entry(path, "old2-sess", "2026-02-17T10:00:00+00:00", "Older session")
 
         result = load_recent_narratives(
-            "proj", limit=5,
+            "proj",
+            limit=5,
             after="2026-02-19T10:00:00+00:00",
             before="2026-02-20T10:00:00+00:00",
         )
@@ -237,9 +215,7 @@ class TestLoadRecentNarrativesTimeWindow:
 
     def test_timezone_safe_comparison(self, tmp_path, monkeypatch):
         """UTC narrative timestamp compared with +07:00 window boundary."""
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
 
         # Narrative at 11:00 UTC = 18:00+07:00
@@ -247,7 +223,8 @@ class TestLoadRecentNarrativesTimeWindow:
 
         # Window: after 10:30+07:00 (= 03:30 UTC), before 18:30+07:00 (= 11:30 UTC)
         result = load_recent_narratives(
-            "proj", limit=5,
+            "proj",
+            limit=5,
             after="2026-02-20T10:30:00+07:00",
             before="2026-02-20T18:30:00+07:00",
         )
@@ -256,9 +233,7 @@ class TestLoadRecentNarrativesTimeWindow:
 
     def test_boundary_exclusive_after_inclusive_before(self, tmp_path, monkeypatch):
         """after is exclusive (>), before is inclusive (<=)."""
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
 
         # Entry exactly at after boundary
@@ -269,7 +244,8 @@ class TestLoadRecentNarrativesTimeWindow:
         self._write_entry(path, "between", "2026-02-20T11:00:00+00:00", "Between")
 
         result = load_recent_narratives(
-            "proj", limit=5,
+            "proj",
+            limit=5,
             after="2026-02-20T10:00:00+00:00",
             before="2026-02-20T12:00:00+00:00",
         )
@@ -284,9 +260,7 @@ class TestLoadRecentNarrativesTimeWindow:
 
     def test_empty_window_returns_extended_context(self, tmp_path, monkeypatch):
         """When no narratives fall in window, out-of-window entries still returned."""
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
 
         self._write_entry(path, "old-1", "2026-02-18T10:00:00+00:00", "Old 1")
@@ -294,7 +268,8 @@ class TestLoadRecentNarrativesTimeWindow:
 
         # Window is in the future — no entries match
         result = load_recent_narratives(
-            "proj", limit=5,
+            "proj",
+            limit=5,
             after="2026-02-25T00:00:00+00:00",
             before="2026-02-26T00:00:00+00:00",
         )
@@ -303,19 +278,18 @@ class TestLoadRecentNarrativesTimeWindow:
 
     def test_limit_respected_with_window(self, tmp_path, monkeypatch):
         """Limit applies to total returned (in-window + extended)."""
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
 
         # 3 in-window, 5 out-of-window
         for i in range(3):
-            self._write_entry(path, f"in-{i}", f"2026-02-20T{10+i}:00:00+00:00")
+            self._write_entry(path, f"in-{i}", f"2026-02-20T{10 + i}:00:00+00:00")
         for i in range(5):
-            self._write_entry(path, f"out-{i}", f"2026-02-18T{10+i}:00:00+00:00")
+            self._write_entry(path, f"out-{i}", f"2026-02-18T{10 + i}:00:00+00:00")
 
         result = load_recent_narratives(
-            "proj", limit=4,
+            "proj",
+            limit=4,
             after="2026-02-20T00:00:00+00:00",
             before="2026-02-21T00:00:00+00:00",
         )
@@ -328,16 +302,15 @@ class TestLoadRecentNarrativesTimeWindow:
 
     def test_only_after_boundary(self, tmp_path, monkeypatch):
         """With only after (no before), all entries after the boundary are in-window."""
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
 
         self._write_entry(path, "old", "2026-02-18T10:00:00+00:00")
         self._write_entry(path, "new", "2026-02-20T10:00:00+00:00")
 
         result = load_recent_narratives(
-            "proj", limit=5,
+            "proj",
+            limit=5,
             after="2026-02-19T00:00:00+00:00",
         )
         in_window = [e for e in result if e["_in_window"]]
@@ -346,16 +319,15 @@ class TestLoadRecentNarrativesTimeWindow:
 
     def test_only_before_boundary(self, tmp_path, monkeypatch):
         """With only before (no after), all entries before the boundary are in-window."""
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
 
         self._write_entry(path, "early", "2026-02-18T10:00:00+00:00")
         self._write_entry(path, "late", "2026-02-25T10:00:00+00:00")
 
         result = load_recent_narratives(
-            "proj", limit=5,
+            "proj",
+            limit=5,
             before="2026-02-20T00:00:00+00:00",
         )
         in_window = [e for e in result if e["_in_window"]]
@@ -387,9 +359,7 @@ class TestCleanupOldNarratives:
             f.write(json.dumps(record) + "\n")
 
     def test_removes_old_entries(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
         now = datetime.datetime.now(datetime.timezone.utc)
         old_ts = (now - datetime.timedelta(days=100)).isoformat()
@@ -406,9 +376,7 @@ class TestCleanupOldNarratives:
         assert entries[0]["session_id"] == "recent-sess"
 
     def test_keeps_recent_entries(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
         now = datetime.datetime.now(datetime.timezone.utc)
 
@@ -421,25 +389,19 @@ class TestCleanupOldNarratives:
         assert len(_read_jsonl(path)) == 5
 
     def test_handles_empty_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         (tmp_path / "proj.jsonl").write_text("")
 
         removed = cleanup_old_narratives("proj")
         assert removed == 0
 
     def test_handles_missing_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         removed = cleanup_old_narratives("proj")
         assert removed == 0
 
     def test_returns_correct_count(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "social_hook.narrative.storage.get_narratives_path", lambda: tmp_path
-        )
+        monkeypatch.setattr("social_hook.narrative.storage.get_narratives_path", lambda: tmp_path)
         path = tmp_path / "proj.jsonl"
         now = datetime.datetime.now(datetime.timezone.utc)
 

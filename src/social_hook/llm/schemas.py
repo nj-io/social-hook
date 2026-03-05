@@ -1,12 +1,11 @@
 """Pydantic models for LLM tool call validation."""
 
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
 from social_hook.errors import MalformedResponseError
-
 
 # =============================================================================
 # Schema-specific Enums (str enums for Pydantic JSON serialization)
@@ -86,7 +85,7 @@ class CommitAnalysis(BaseModel):
     """Structured analysis of a commit."""
 
     summary: str
-    technical_detail: Optional[str] = None
+    technical_detail: str | None = None
     episode_tags: list[str] = []
 
 
@@ -95,15 +94,15 @@ class TargetDecisionInput(BaseModel):
 
     action: TargetAction
     reason: str
-    consolidate_with: Optional[list[str]] = None
-    arc_id: Optional[str] = None
-    new_arc_theme: Optional[str] = None
-    reference_posts: Optional[list[str]] = None
-    angle: Optional[str] = None
-    episode_type: Optional[EpisodeTypeSchema] = None
-    post_category: Optional[PostCategorySchema] = None
-    media_tool: Optional[MediaTool] = None
-    include_project_docs: Optional[bool] = None
+    consolidate_with: list[str] | None = None
+    arc_id: str | None = None
+    new_arc_theme: str | None = None
+    reference_posts: list[str] | None = None
+    angle: str | None = None
+    episode_type: EpisodeTypeSchema | None = None
+    post_category: PostCategorySchema | None = None
+    media_tool: MediaTool | None = None
+    include_project_docs: bool | None = None
 
 
 class QueueAction(BaseModel):
@@ -119,7 +118,7 @@ class LogEvaluationInput(BaseModel):
 
     commit_analysis: CommitAnalysis
     targets: dict[str, TargetDecisionInput]
-    queue_actions: Optional[dict[str, list[QueueAction]]] = None
+    queue_actions: dict[str, list[QueueAction]] | None = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -253,10 +252,10 @@ class CreateDraftInput(BaseModel):
     content: str
     platform: str
     reasoning: str
-    media_type: Optional[MediaTool] = None
-    media_spec: Optional[dict[str, Any]] = None
-    format_hint: Optional[str] = None
-    beat_count: Optional[int] = None
+    media_type: MediaTool | None = None
+    media_spec: dict[str, Any] | None = None
+    format_hint: str | None = None
+    beat_count: int | None = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -308,6 +307,7 @@ class CreateDraftInput(BaseModel):
         # Convert to JSON string so validation passes and thread parsing works downstream.
         if isinstance(data.get("content"), list):
             import json
+
             data = {**data, "content": json.dumps(data["content"])}
         try:
             return cls.model_validate(data)
@@ -319,10 +319,10 @@ class RouteActionInput(BaseModel):
     """Gatekeeper tool call: route_action."""
 
     action: RouteAction
-    operation: Optional[GatekeeperOperation] = None
-    params: Optional[dict[str, Any]] = None
-    escalation_reason: Optional[str] = None
-    escalation_context: Optional[str] = None
+    operation: GatekeeperOperation | None = None
+    params: dict[str, Any] | None = None
+    escalation_reason: str | None = None
+    escalation_context: str | None = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -454,9 +454,9 @@ class ExpertResponseInput(BaseModel):
 
     action: ExpertAction
     reasoning: str
-    refined_content: Optional[str] = None
-    answer: Optional[str] = None
-    context_note: Optional[str] = None
+    refined_content: str | None = None
+    answer: str | None = None
+    context_note: str | None = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -499,6 +499,3 @@ class ExpertResponseInput(BaseModel):
             return cls.model_validate(data)
         except ValidationError as e:
             raise MalformedResponseError(f"Invalid expert_response input: {e}") from e
-
-
-

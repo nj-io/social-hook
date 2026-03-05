@@ -1,9 +1,6 @@
 """Tests for trigger thread pipeline and format decisions (Phase A)."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from social_hook.trigger import _needs_thread, _parse_thread_tweets
 

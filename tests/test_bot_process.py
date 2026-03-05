@@ -1,10 +1,7 @@
 """Tests for bot process management (T24)."""
 
 import os
-import signal
 from pathlib import Path
-
-import pytest
 
 from social_hook.bot.process import (
     get_pid_file,

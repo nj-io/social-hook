@@ -1,7 +1,7 @@
 """Gatekeeper agent: routes Telegram messages (T15)."""
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from social_hook.constants import PROJECT_SLUG
 from social_hook.errors import MalformedResponseError
@@ -41,19 +41,19 @@ class Gatekeeper:
     def route(
         self,
         user_message: str,
-        draft_context: Optional[Any] = None,
-        project_summary: Optional[str] = None,
-        db: Optional[Any] = None,
-        project_id: Optional[str] = None,
-        system_snapshot: Optional[str] = None,
-        chat_history: Optional[str] = None,
-        recent_decisions: Optional[list] = None,
-        recent_posts: Optional[list] = None,
-        lifecycle_phase: Optional[str] = None,
-        active_arcs: Optional[list] = None,
-        narrative_debt: Optional[int] = None,
-        audience_introduced: Optional[bool] = None,
-        linked_decision: Optional[Any] = None,
+        draft_context: Any | None = None,
+        project_summary: str | None = None,
+        db: Any | None = None,
+        project_id: str | None = None,
+        system_snapshot: str | None = None,
+        chat_history: str | None = None,
+        recent_decisions: list | None = None,
+        recent_posts: list | None = None,
+        lifecycle_phase: str | None = None,
+        active_arcs: list | None = None,
+        narrative_debt: int | None = None,
+        audience_introduced: bool | None = None,
+        linked_decision: Any | None = None,
     ) -> RouteActionInput:
         """Route a user message to the appropriate handler.
 
@@ -83,7 +83,10 @@ class Gatekeeper:
             draft_context = {"content": "[No active draft]", "platform": "N/A"}
 
         system = assemble_gatekeeper_prompt(
-            prompt, draft_context, user_message, project_summary,
+            prompt,
+            draft_context,
+            user_message,
+            project_summary,
             system_snapshot=system_snapshot,
             chat_history=chat_history,
             recent_decisions=recent_decisions,
@@ -100,8 +103,9 @@ class Gatekeeper:
             tools=[RouteActionInput.to_tool_schema()],
             system=system,
         )
-        log_usage(db, "gatekeeper", getattr(self.client, "full_id", "unknown"),
-                  response.usage, project_id)
+        log_usage(
+            db, "gatekeeper", getattr(self.client, "full_id", "unknown"), response.usage, project_id
+        )
 
         try:
             tool_input = extract_tool_call(response, "route_action")
@@ -114,5 +118,8 @@ class Gatekeeper:
             return RouteActionInput(
                 action=RouteAction.handle_directly,
                 operation=GatekeeperOperation.query,
-                params={"answer": text or f"I'm your {PROJECT_SLUG} assistant. Try sending a draft or ask me a question!"},
+                params={
+                    "answer": text
+                    or f"I'm your {PROJECT_SLUG} assistant. Try sending a draft or ask me a question!"
+                },
             )

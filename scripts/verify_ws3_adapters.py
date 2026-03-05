@@ -89,10 +89,7 @@ def check_x_adapter_dry_run_thread():
     from social_hook.adapters.platform.x import XAdapter
 
     adapter = XAdapter("k", "s", "t", "ts")
-    tweets = [
-        {"content": f"Tweet {i}", "media_paths": []}
-        for i in range(1, 5)
-    ]
+    tweets = [{"content": f"Tweet {i}", "media_paths": []} for i in range(1, 5)]
     result = adapter.post_thread(tweets, dry_run=True)
     assert result.success is True
     assert len(result.tweet_results) == 4, f"Expected 4, got {len(result.tweet_results)}"
@@ -158,9 +155,7 @@ def check_rayso_dry_run():
     from social_hook.adapters.media.rayso import RaySoAdapter
 
     adapter = RaySoAdapter()
-    result = adapter.generate(
-        {"code": "print('hello')", "language": "python"}, dry_run=True
-    )
+    result = adapter.generate({"code": "print('hello')", "language": "python"}, dry_run=True)
     assert result.success is True
     assert result.file_path is not None
 
@@ -181,7 +176,9 @@ def check_rate_limiting():
 
     # calculate_backoff: cap at 1 hour
     backoff_high = calculate_backoff(10)
-    assert backoff_high.total_seconds() <= 3960, f"Expected <= 3960s, got {backoff_high.total_seconds()}"
+    assert backoff_high.total_seconds() <= 3960, (
+        f"Expected <= 3960s, got {backoff_high.total_seconds()}"
+    )
 
     # should_retry
     state = RateLimitState(attempts=0)
@@ -253,7 +250,9 @@ def check_registry_names():
     from social_hook.adapters.registry import MEDIA_ADAPTER_NAMES
 
     expected = {"mermaid", "nano_banana_pro", "playwright", "ray_so"}
-    assert set(MEDIA_ADAPTER_NAMES) == expected, f"Expected {expected}, got {set(MEDIA_ADAPTER_NAMES)}"
+    assert set(MEDIA_ADAPTER_NAMES) == expected, (
+        f"Expected {expected}, got {set(MEDIA_ADAPTER_NAMES)}"
+    )
 
 
 # ── Check 15: Registry — get_media_adapter ────────────────────────────

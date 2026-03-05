@@ -1,10 +1,8 @@
 """Tests for scheduling algorithm (T30)."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-import pytest
-
-from social_hook.db import init_database, insert_decision, insert_draft, insert_post, insert_project
+from social_hook.db import insert_decision, insert_draft, insert_post, insert_project
 from social_hook.filesystem import generate_id
 from social_hook.models import Decision, Draft, Post, Project
 from social_hook.scheduling import ScheduleResult, calculate_optimal_time
@@ -29,9 +27,7 @@ class TestCalculateOptimalTime:
     """Tests for calculate_optimal_time."""
 
     def _setup_project(self, conn):
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         return project
 
@@ -46,7 +42,8 @@ class TestCalculateOptimalTime:
         """Scheduled time uses one of the optimal hours."""
         project = self._setup_project(temp_db)
         result = calculate_optimal_time(
-            temp_db, project.id,
+            temp_db,
+            project.id,
             tz="UTC",
             optimal_hours=[9, 12, 17],
         )
@@ -85,7 +82,8 @@ class TestCalculateOptimalTime:
             insert_post(temp_db, post)
 
         result = calculate_optimal_time(
-            temp_db, project.id,
+            temp_db,
+            project.id,
             max_posts_per_day=3,
         )
         # Should be scheduled for a future day
@@ -96,7 +94,8 @@ class TestCalculateOptimalTime:
         """Handles timezone conversion correctly."""
         project = self._setup_project(temp_db)
         result = calculate_optimal_time(
-            temp_db, project.id,
+            temp_db,
+            project.id,
             tz="America/New_York",
             optimal_hours=[9, 12, 17],
         )
@@ -107,7 +106,8 @@ class TestCalculateOptimalTime:
         """Falls back to UTC for invalid timezone."""
         project = self._setup_project(temp_db)
         result = calculate_optimal_time(
-            temp_db, project.id,
+            temp_db,
+            project.id,
             tz="Invalid/Timezone",
         )
         assert isinstance(result, ScheduleResult)
@@ -117,7 +117,8 @@ class TestCalculateOptimalTime:
         """Works with a single optimal day."""
         project = self._setup_project(temp_db)
         result = calculate_optimal_time(
-            temp_db, project.id,
+            temp_db,
+            project.id,
             optimal_days=["Mon"],
             optimal_hours=[9],
         )
@@ -157,7 +158,8 @@ class TestCalculateOptimalTime:
             insert_post(temp_db, post)
 
         result = calculate_optimal_time(
-            temp_db, p1.id,
+            temp_db,
+            p1.id,
             max_posts_per_day=3,
         )
         # All 3 slots used by project 2, so should schedule for tomorrow
@@ -169,9 +171,7 @@ class TestPlatformFilter:
     """Tests for platform parameter in calculate_optimal_time."""
 
     def _setup_project(self, conn):
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         return project
 
@@ -208,7 +208,8 @@ class TestPlatformFilter:
 
         # With platform=None (cross-platform), max reached
         result_all = calculate_optimal_time(
-            temp_db, project.id,
+            temp_db,
+            project.id,
             max_posts_per_day=3,
         )
         now = datetime.now(timezone.utc)
@@ -216,7 +217,8 @@ class TestPlatformFilter:
 
         # With platform="linkedin", no posts exist — should schedule today
         result_li = calculate_optimal_time(
-            temp_db, project.id,
+            temp_db,
+            project.id,
             platform="linkedin",
             max_posts_per_day=3,
         )
@@ -235,9 +237,7 @@ class TestMaxPerWeekDeferral:
     """Tests for max_per_week weekly deferral in calculate_optimal_time."""
 
     def _setup_project(self, conn):
-        project = Project(
-            id=generate_id("project"), name="test", repo_path="/tmp/test"
-        )
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         return project
 
@@ -273,7 +273,8 @@ class TestMaxPerWeekDeferral:
             insert_post(temp_db, post)
 
         result = calculate_optimal_time(
-            temp_db, project.id,
+            temp_db,
+            project.id,
             max_per_week=5,
         )
         assert result.deferred is True
@@ -284,7 +285,8 @@ class TestMaxPerWeekDeferral:
         project = self._setup_project(temp_db)
 
         result = calculate_optimal_time(
-            temp_db, project.id,
+            temp_db,
+            project.id,
             max_per_week=10,
         )
         assert result.deferred is False

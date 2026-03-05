@@ -29,10 +29,10 @@ from social_hook.bot.commands import (
     handle_message,
     set_chat_draft_context,
 )
+from social_hook.constants import PROJECT_NAME, PROJECT_SLUG
 from social_hook.db import get_connection, init_database, insert_draft, insert_project
 from social_hook.filesystem import generate_id
 from social_hook.messaging.base import InboundMessage, MessagingAdapter, SendResult
-from social_hook.constants import PROJECT_NAME, PROJECT_SLUG
 from social_hook.models import Draft, Project
 
 
@@ -385,13 +385,20 @@ class TestCmdReject:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x", content="Test", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -423,13 +430,20 @@ class TestCmdSchedule:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x", content="Test", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -464,13 +478,20 @@ class TestCmdCancel:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x", content="Test", status="scheduled",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="scheduled",
         )
         insert_draft(conn, draft)
 
@@ -492,7 +513,7 @@ class TestCmdRetry:
     @patch("social_hook.bot.commands._send")
     @patch("social_hook.bot.commands._get_conn")
     def test_retry_failed_draft(self, mock_conn, mock_send, mock_adapter, temp_dir):
-        from social_hook.db import get_draft, insert_decision, update_draft
+        from social_hook.db import get_draft, insert_decision
         from social_hook.models import Decision
 
         db_path = temp_dir / "test.db"
@@ -502,13 +523,20 @@ class TestCmdRetry:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x", content="Test", status="failed",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="failed",
         )
         insert_draft(conn, draft)
 
@@ -533,13 +561,20 @@ class TestCmdRetry:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x", content="Test", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -652,6 +687,7 @@ class TestCmdReview:
     @patch("social_hook.bot.commands._send")
     def test_review_no_args(self, mock_send, mock_adapter):
         from social_hook.bot.commands import cmd_review
+
         cmd_review(mock_adapter, "123", "", None)
         assert "Usage" in mock_send.call_args[0][2]
 
@@ -668,13 +704,20 @@ class TestCmdReview:
         project = Project(id=generate_id("project"), name="reviewproj", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc12345", decision="draft", reasoning="Good commit",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc12345",
+            decision="draft",
+            reasoning="Good commit",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x", content="Review me", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Review me",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -693,6 +736,7 @@ class TestCmdRegister:
     @patch("social_hook.bot.commands._send")
     def test_sends_terminal_instructions(self, mock_send, mock_adapter):
         from social_hook.bot.commands import cmd_register
+
         cmd_register(mock_adapter, "123", "", None)
         text = mock_send.call_args[0][2]
         assert "terminal" in text.lower()
@@ -741,13 +785,20 @@ class TestCmdRejectReason:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x", content="Test", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -793,7 +844,10 @@ class TestHandleMessage:
     def test_no_config(self, mock_send, mock_adapter):
         msg = _make_inbound("Hello")
         handle_message(msg, mock_adapter, config=None)
-        assert "not configured" in mock_send.call_args[0][2].lower() or "API key" in mock_send.call_args[0][2]
+        assert (
+            "not configured" in mock_send.call_args[0][2].lower()
+            or "API key" in mock_send.call_args[0][2]
+        )
 
     @patch("social_hook.bot.commands._send")
     def test_empty_text(self, mock_send, mock_adapter):
@@ -814,7 +868,9 @@ class TestChatDraftContext:
     def test_ttl_expiry(self):
         """Verify context expires after TTL."""
         _chat_draft_context["chat1"] = (
-            "draft_abc", "proj_123", time.time() - _CONTEXT_TTL_SECONDS - 60
+            "draft_abc",
+            "proj_123",
+            time.time() - _CONTEXT_TTL_SECONDS - 60,
         )
         result = get_chat_draft_context("chat1")
         assert result is None
@@ -843,14 +899,20 @@ class TestPendingEditSaves:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x",
-            content="Old content", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Old content",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -889,14 +951,20 @@ class TestPendingEditSaves:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x",
-            content="Old content", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Old content",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -952,14 +1020,20 @@ class TestSubstituteHandler:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x",
-            content="Old content", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Old content",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -994,14 +1068,20 @@ class TestSubstituteHandler:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x",
-            content="Old content", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Old content",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -1053,8 +1133,10 @@ class TestReviewEvaluatorContext:
         project = Project(id=generate_id("project"), name="reviewproj", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc12345", decision="draft",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc12345",
+            decision="draft",
             reasoning="Strong commit with clear narrative",
             episode_type="launch",
             post_category="arc",
@@ -1062,9 +1144,12 @@ class TestReviewEvaluatorContext:
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x",
-            content="Check out our new API", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Check out our new API",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -1095,14 +1180,20 @@ class TestExpertRefineSaves:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x",
-            content="Original content", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Original content",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -1121,19 +1212,26 @@ class TestExpertRefineSaves:
         config = MagicMock()
         config.models.drafter = "anthropic/claude-sonnet-4-5"
 
-        with patch("social_hook.llm.factory.create_client") as mock_create:
-            with patch("social_hook.llm.expert.Expert") as MockExpert:
-                MockExpert.return_value.handle.return_value = expert_result
+        with (
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.expert.Expert") as MockExpert,
+        ):
+            MockExpert.return_value.handle.return_value = expert_result
 
-                from social_hook.bot.commands import _handle_expert_escalation
+            from social_hook.bot.commands import _handle_expert_escalation
 
-                # Create a mock draft object for context
-                draft_obj = get_draft(conn, draft.id)
+            # Create a mock draft object for context
+            draft_obj = get_draft(conn, draft.id)
 
-                _handle_expert_escalation(
-                    mock_adapter, "123", "make it punchier", route, config,
-                    draft=draft_obj, project_id=project.id,
-                )
+            _handle_expert_escalation(
+                mock_adapter,
+                "123",
+                "make it punchier",
+                route,
+                config,
+                draft=draft_obj,
+                project_id=project.id,
+            )
 
         # Verify buttons were sent via adapter.send_message
         mock_adapter.send_message.assert_called_once()
@@ -1177,16 +1275,22 @@ class TestExpertRefineSaves:
         config = MagicMock()
         config.models.drafter = "anthropic/claude-sonnet-4-5"
 
-        with patch("social_hook.llm.factory.create_client"):
-            with patch("social_hook.llm.expert.Expert") as MockExpert:
-                MockExpert.return_value.handle.return_value = expert_result
+        with (
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.expert.Expert") as MockExpert,
+        ):
+            MockExpert.return_value.handle.return_value = expert_result
 
-                from social_hook.bot.commands import _handle_expert_escalation
+            from social_hook.bot.commands import _handle_expert_escalation
 
-                _handle_expert_escalation(
-                    mock_adapter, "123", "make it better", route, config,
-                    draft=None,  # No draft context
-                )
+            _handle_expert_escalation(
+                mock_adapter,
+                "123",
+                "make it better",
+                route,
+                config,
+                draft=None,  # No draft context
+            )
 
         text = mock_send.call_args[0][2]
         assert "no active draft" in text.lower()
@@ -1218,21 +1322,28 @@ class TestExpertRefineSaves:
         mock_draft.content = "Draft content"
         mock_draft.id = "draft_123"
 
-        with patch("social_hook.llm.factory.create_client"):
-            with patch("social_hook.llm.expert.Expert") as MockExpert:
-                MockExpert.return_value.handle.return_value = expert_result
+        with (
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.expert.Expert") as MockExpert,
+        ):
+            MockExpert.return_value.handle.return_value = expert_result
 
-                from social_hook.bot.commands import _handle_expert_escalation
+            from social_hook.bot.commands import _handle_expert_escalation
 
-                _handle_expert_escalation(
-                    mock_adapter, "123", "what do you think?", route, config,
-                    draft=mock_draft, project_id="proj_123",
-                )
+            _handle_expert_escalation(
+                mock_adapter,
+                "123",
+                "what do you think?",
+                route,
+                config,
+                draft=mock_draft,
+                project_id="proj_123",
+            )
 
-                # Verify expert was called with draft
-                call_kwargs = MockExpert.return_value.handle.call_args
-                assert call_kwargs[1]["draft"] == mock_draft
-                assert call_kwargs[1]["project_id"] == "proj_123"
+            # Verify expert was called with draft
+            call_kwargs = MockExpert.return_value.handle.call_args
+            assert call_kwargs[1]["draft"] == mock_draft
+            assert call_kwargs[1]["project_id"] == "proj_123"
 
 
 class TestHandleMessageContext:
@@ -1240,7 +1351,9 @@ class TestHandleMessageContext:
 
     @patch("social_hook.bot.commands._send")
     @patch("social_hook.bot.commands._get_conn")
-    def test_handle_message_passes_draft_to_gatekeeper(self, mock_conn, mock_send, mock_adapter, temp_dir):
+    def test_handle_message_passes_draft_to_gatekeeper(
+        self, mock_conn, mock_send, mock_adapter, temp_dir
+    ):
         """Verify gatekeeper.route() called with draft_context and project_id."""
         from social_hook.db import insert_decision
         from social_hook.models import Decision
@@ -1252,14 +1365,20 @@ class TestHandleMessageContext:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x",
-            content="Draft for context test", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Draft for context test",
+            status="draft",
         )
         insert_draft(conn, draft)
 
@@ -1273,20 +1392,22 @@ class TestHandleMessageContext:
         mock_route_result.action.value = "handle_directly"
         mock_route_result.operation = None
 
-        with patch("social_hook.llm.factory.create_client"):
-            with patch("social_hook.llm.gatekeeper.Gatekeeper") as MockGK:
-                MockGK.return_value.route.return_value = mock_route_result
+        with (
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.gatekeeper.Gatekeeper") as MockGK,
+        ):
+            MockGK.return_value.route.return_value = mock_route_result
 
-                msg = _make_inbound("what about this draft?")
-                handle_message(msg, mock_adapter, config=config)
+            msg = _make_inbound("what about this draft?")
+            handle_message(msg, mock_adapter, config=config)
 
-                # Verify gatekeeper was called with context
-                call_kwargs = MockGK.return_value.route.call_args
-                assert call_kwargs[1].get("draft_context") is not None
-                assert call_kwargs[1].get("project_id") == project.id
-                # Verify system snapshot was built and passed
-                assert call_kwargs[1].get("system_snapshot") is not None
-                assert "## System Status" in call_kwargs[1]["system_snapshot"]
+            # Verify gatekeeper was called with context
+            call_kwargs = MockGK.return_value.route.call_args
+            assert call_kwargs[1].get("draft_context") is not None
+            assert call_kwargs[1].get("project_id") == project.id
+            # Verify system snapshot was built and passed
+            assert call_kwargs[1].get("system_snapshot") is not None
+            assert "## System Status" in call_kwargs[1]["system_snapshot"]
 
 
 # =============================================================================
@@ -1309,22 +1430,30 @@ class TestBuildSystemSnapshot:
         insert_project(conn, project)
 
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc123", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x",
-            content="Test post", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test post",
+            status="draft",
         )
         insert_draft(conn, draft)
 
         config = MagicMock()
         config.platforms = {"x": MagicMock(enabled=True, account_tier="free")}
         config.scheduling = MagicMock(
-            timezone="UTC", optimal_days=["Tue", "Wed"],
-            optimal_hours=[9, 17], max_posts_per_day=3,
+            timezone="UTC",
+            optimal_days=["Tue", "Wed"],
+            optimal_hours=[9, 17],
+            max_posts_per_day=3,
         )
         config.media_generation = MagicMock(enabled=True, tools={"mermaid": True, "ray_so": False})
 
@@ -1349,7 +1478,9 @@ class TestBuildSystemSnapshot:
         config = MagicMock()
         config.platforms = {}
         config.scheduling = MagicMock(
-            timezone="UTC", optimal_days=[], optimal_hours=[],
+            timezone="UTC",
+            optimal_days=[],
+            optimal_hours=[],
             max_posts_per_day=3,
         )
         config.media_generation = MagicMock(enabled=False)
@@ -1371,7 +1502,9 @@ class TestBuildSystemSnapshot:
         config = MagicMock()
         config.platforms = {}
         config.scheduling = MagicMock(
-            timezone="UTC", optimal_days=[], optimal_hours=[],
+            timezone="UTC",
+            optimal_days=[],
+            optimal_hours=[],
             max_posts_per_day=3,
         )
         config.media_generation = MagicMock(enabled=False)
@@ -1393,14 +1526,20 @@ class TestBuildSystemSnapshot:
         insert_project(conn, project)
 
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="test",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x",
-            content="Test", status="posted",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="posted",
         )
         insert_draft(conn, draft)
 
@@ -1409,8 +1548,10 @@ class TestBuildSystemSnapshot:
         from social_hook.models import Post
 
         post = Post(
-            id=generate_id("post"), draft_id=draft.id,
-            project_id=project.id, platform="x",
+            id=generate_id("post"),
+            draft_id=draft.id,
+            project_id=project.id,
+            platform="x",
             content="Posted content",
         )
         insert_post(conn, post)
@@ -1418,7 +1559,9 @@ class TestBuildSystemSnapshot:
         config = MagicMock()
         config.platforms = {}
         config.scheduling = MagicMock(
-            timezone="UTC", optimal_days=[], optimal_hours=[],
+            timezone="UTC",
+            optimal_days=[],
+            optimal_hours=[],
             max_posts_per_day=3,
         )
         config.media_generation = MagicMock(enabled=False)
@@ -1439,7 +1582,7 @@ class TestChatMessageOperations:
 
     def test_insert_and_retrieve(self, temp_dir):
         """Insert a message and query it back."""
-        from social_hook.db.operations import insert_chat_message, get_recent_chat_messages
+        from social_hook.db.operations import get_recent_chat_messages, insert_chat_message
 
         conn = init_database(temp_dir / "test.db")
         try:
@@ -1456,7 +1599,7 @@ class TestChatMessageOperations:
 
     def test_time_window_filtering(self, temp_dir):
         """Only recent messages within time window are returned."""
-        from social_hook.db.operations import insert_chat_message, get_recent_chat_messages
+        from social_hook.db.operations import get_recent_chat_messages, insert_chat_message
 
         conn = init_database(temp_dir / "test.db")
         try:
@@ -1478,7 +1621,11 @@ class TestChatMessageOperations:
 
     def test_cleanup_old_messages(self, temp_dir):
         """Cleanup deletes only old messages."""
-        from social_hook.db.operations import insert_chat_message, cleanup_old_chat_messages, get_recent_chat_messages
+        from social_hook.db.operations import (
+            cleanup_old_chat_messages,
+            get_recent_chat_messages,
+            insert_chat_message,
+        )
 
         conn = init_database(temp_dir / "test.db")
         try:
@@ -1504,7 +1651,7 @@ class TestChatMessageOperations:
 
     def test_limit_parameter(self, temp_dir):
         """Limit caps the number of returned messages."""
-        from social_hook.db.operations import insert_chat_message, get_recent_chat_messages
+        from social_hook.db.operations import get_recent_chat_messages, insert_chat_message
 
         conn = init_database(temp_dir / "test.db")
         try:

@@ -1,24 +1,22 @@
 """Tests for narrative helpers (T18, T19, T20, T20a, T20b)."""
 
 from datetime import date
-from pathlib import Path
 
 import pytest
 
-from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.config.project import (
     StrategyConfig,
+    _parse_context_notes,
+    _parse_memories,
     load_context_notes,
     save_context_note,
     save_memory,
-    _parse_memories,
-    _parse_context_notes,
 )
+from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.db import operations as ops
 from social_hook.errors import MaxArcsError
-from social_hook.models import Arc, Lifecycle, NarrativeDebt, Project
+from social_hook.models import Arc, Lifecycle, Project
 from social_hook.narrative.arcs import create_arc, get_active_arcs, get_arc, update_arc
-from social_hook.narrative.memories import add_memory, parse_memories_file
 from social_hook.narrative.debt import (
     get_narrative_debt,
     increment_narrative_debt,
@@ -32,6 +30,7 @@ from social_hook.narrative.lifecycle import (
     record_strategy_moment,
     set_audience_introduced,
 )
+from social_hook.narrative.memories import add_memory, parse_memories_file
 
 
 def _setup_project(conn, project_id="proj_test1"):
@@ -50,45 +49,55 @@ class TestDetectLifecyclePhase:
     """T18: Phase detection from signals."""
 
     def test_research_signals(self):
-        lifecycle = detect_lifecycle_phase({
-            "high_file_churn": True,
-            "new_directories": True,
-            "docs_heavy": True,
-        })
+        lifecycle = detect_lifecycle_phase(
+            {
+                "high_file_churn": True,
+                "new_directories": True,
+                "docs_heavy": True,
+            }
+        )
         assert lifecycle.phase == "research"
         assert lifecycle.confidence >= 0.7
 
     def test_build_signals(self):
-        lifecycle = detect_lifecycle_phase({
-            "tests_growing": True,
-            "architecture_stabilizing": True,
-        })
+        lifecycle = detect_lifecycle_phase(
+            {
+                "tests_growing": True,
+                "architecture_stabilizing": True,
+            }
+        )
         assert lifecycle.phase == "build"
         assert lifecycle.confidence >= 0.5
 
     def test_demo_signals(self):
-        lifecycle = detect_lifecycle_phase({
-            "demo_scripts": True,
-            "ux_polish": True,
-            "readme_updates": True,
-        })
+        lifecycle = detect_lifecycle_phase(
+            {
+                "demo_scripts": True,
+                "ux_polish": True,
+                "readme_updates": True,
+            }
+        )
         assert lifecycle.phase == "demo"
         assert lifecycle.confidence >= 0.5
 
     def test_launch_signals(self):
-        lifecycle = detect_lifecycle_phase({
-            "release_tags": True,
-            "changelog": True,
-            "deploy_automation": True,
-        })
+        lifecycle = detect_lifecycle_phase(
+            {
+                "release_tags": True,
+                "changelog": True,
+                "deploy_automation": True,
+            }
+        )
         assert lifecycle.phase == "launch"
         assert lifecycle.confidence >= 0.7
 
     def test_post_launch_signals(self):
-        lifecycle = detect_lifecycle_phase({
-            "bugfixes": True,
-            "optimization": True,
-        })
+        lifecycle = detect_lifecycle_phase(
+            {
+                "bugfixes": True,
+                "optimization": True,
+            }
+        )
         assert lifecycle.phase == "post_launch"
         assert lifecycle.confidence >= 0.5
 
@@ -98,20 +107,24 @@ class TestDetectLifecyclePhase:
         assert lifecycle.confidence == 0.3
 
     def test_evidence_populated(self):
-        lifecycle = detect_lifecycle_phase({
-            "tests_growing": True,
-            "release_tags": True,
-        })
+        lifecycle = detect_lifecycle_phase(
+            {
+                "tests_growing": True,
+                "release_tags": True,
+            }
+        )
         assert "tests_growing" in lifecycle.evidence
         assert "release_tags" in lifecycle.evidence
 
     def test_confidence_capped_at_one(self):
         # Even with many signals, confidence shouldn't exceed 1.0
-        lifecycle = detect_lifecycle_phase({
-            "release_tags": True,
-            "changelog": True,
-            "deploy_automation": True,
-        })
+        lifecycle = detect_lifecycle_phase(
+            {
+                "release_tags": True,
+                "changelog": True,
+                "deploy_automation": True,
+            }
+        )
         assert lifecycle.confidence <= 1.0
 
 
@@ -209,7 +222,9 @@ class TestStrategyTriggers:
         # New detection says "build" with high confidence
         new_lc = Lifecycle(project_id="proj_test1", phase="build", confidence=0.8)
         triggers = check_strategy_triggers(
-            temp_db, "proj_test1", new_lifecycle=new_lc,
+            temp_db,
+            "proj_test1",
+            new_lifecycle=new_lc,
         )
         assert "phase_transition" in triggers
 
@@ -221,7 +236,9 @@ class TestStrategyTriggers:
 
         new_lc = Lifecycle(project_id="proj_test1", phase="build", confidence=0.5)
         triggers = check_strategy_triggers(
-            temp_db, "proj_test1", new_lifecycle=new_lc,
+            temp_db,
+            "proj_test1",
+            new_lifecycle=new_lc,
         )
         assert "phase_transition" not in triggers
 
@@ -233,7 +250,9 @@ class TestStrategyTriggers:
 
         new_lc = Lifecycle(project_id="proj_test1", phase="build", confidence=0.9)
         triggers = check_strategy_triggers(
-            temp_db, "proj_test1", new_lifecycle=new_lc,
+            temp_db,
+            "proj_test1",
+            new_lifecycle=new_lc,
         )
         assert "phase_transition" not in triggers
 
@@ -244,7 +263,9 @@ class TestStrategyTriggers:
 
         new_lc = Lifecycle(project_id="proj_test1", phase="research", confidence=0.8)
         triggers = check_strategy_triggers(
-            temp_db, "proj_test1", new_lifecycle=new_lc,
+            temp_db,
+            "proj_test1",
+            new_lifecycle=new_lc,
         )
         assert "phase_transition" in triggers
 
@@ -630,6 +651,7 @@ class TestMemoriesWrapper:
     def test_importable_from_narrative(self):
         """Verify imports work from social_hook.narrative."""
         from social_hook.narrative import add_memory, parse_memories_file
+
         assert callable(add_memory)
         assert callable(parse_memories_file)
 

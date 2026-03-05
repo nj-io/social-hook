@@ -21,7 +21,6 @@ from social_hook.models import (
     is_held,
 )
 
-
 # =============================================================================
 # T3: Core Data Models
 # =============================================================================
@@ -345,7 +344,9 @@ class TestDecisionNewFields:
 
     def test_decision_to_row_column_count(self):
         """Decision.to_row() returns 16-element tuple."""
-        d = Decision(id="test", project_id="p", commit_hash="abc", decision="draft", reasoning="test")
+        d = Decision(
+            id="test", project_id="p", commit_hash="abc", decision="draft", reasoning="test"
+        )
         assert len(d.to_row()) == 16
 
     def test_decision_new_types_valid(self):
@@ -357,8 +358,12 @@ class TestDecisionNewFields:
     def test_decision_episode_tags_roundtrip(self):
         """episode_tags serializes to JSON and deserializes back."""
         d = Decision(
-            id="t", project_id="p", commit_hash="c", decision="draft",
-            reasoning="r", episode_tags=["milestone", "demo"],
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="draft",
+            reasoning="r",
+            episode_tags=["milestone", "demo"],
         )
         d_dict = d.to_dict()
         assert d_dict["episode_tags"] == ["milestone", "demo"]
@@ -371,8 +376,12 @@ class TestDecisionNewFields:
     def test_decision_targets_roundtrip(self):
         """targets serializes to JSON and deserializes back."""
         d = Decision(
-            id="t", project_id="p", commit_hash="c", decision="draft",
-            reasoning="r", targets={"x": {"max_length": 280}},
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="draft",
+            reasoning="r",
+            targets={"x": {"max_length": 280}},
         )
         row = d.to_row()
         assert '"x"' in row[13]  # targets is at index 13
@@ -386,15 +395,23 @@ class TestDecisionNewFields:
     def test_decision_consolidate_with_roundtrip(self):
         """consolidate_with serializes and deserializes correctly."""
         d = Decision(
-            id="t", project_id="p", commit_hash="c", decision="hold",
-            reasoning="r", consolidate_with=["abc123", "def456"],
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="hold",
+            reasoning="r",
+            consolidate_with=["abc123", "def456"],
         )
         row = d.to_row()
         assert row[15] is not None  # consolidate_with is at index 15
 
         d2 = Decision(
-            id="t2", project_id="p", commit_hash="c2", decision="draft",
-            reasoning="r", consolidate_with=None,
+            id="t2",
+            project_id="p",
+            commit_hash="c2",
+            decision="draft",
+            reasoning="r",
+            consolidate_with=None,
         )
         assert d2.to_row()[15] is None
 
@@ -409,7 +426,9 @@ class TestDraftNewFields:
 
     def test_draft_intro_flag(self):
         """is_intro flag serializes correctly."""
-        d = Draft(id="t", project_id="p", decision_id="d", platform="x", content="hi", is_intro=True)
+        d = Draft(
+            id="t", project_id="p", decision_id="d", platform="x", content="hi", is_intro=True
+        )
         assert d.to_dict()["is_intro"] is True
         row = d.to_row()
         assert row[15] == 1  # is_intro position
@@ -417,8 +436,12 @@ class TestDraftNewFields:
     def test_draft_post_format(self):
         """post_format field round-trips."""
         d = Draft(
-            id="t", project_id="p", decision_id="d", platform="x",
-            content="hi", post_format="thread",
+            id="t",
+            project_id="p",
+            decision_id="d",
+            platform="x",
+            content="hi",
+            post_format="thread",
         )
         assert d.to_dict()["post_format"] == "thread"
         assert d.to_row()[16] == "thread"
@@ -426,9 +449,13 @@ class TestDraftNewFields:
     def test_draft_from_dict_new_fields(self):
         """Draft.from_dict() parses new fields."""
         d_dict = {
-            "id": "t", "project_id": "p", "decision_id": "d",
-            "platform": "x", "content": "hi",
-            "is_intro": 1, "post_format": "reply",
+            "id": "t",
+            "project_id": "p",
+            "decision_id": "d",
+            "platform": "x",
+            "content": "hi",
+            "is_intro": 1,
+            "post_format": "reply",
             "reference_post_id": "post_abc",
         }
         d = Draft.from_dict(d_dict)

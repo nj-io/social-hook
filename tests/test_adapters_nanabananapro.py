@@ -7,11 +7,7 @@ Source: TECHNICAL_ARCHITECTURE.md lines 2074-2116
 import base64
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.adapters.media.nanabananapro import NanaBananaAdapter
-from social_hook.adapters.models import MediaResult
-
 
 # =============================================================================
 # T8: NanaBananaAdapter
@@ -104,13 +100,7 @@ class TestNanaBananaAdapterGenerate:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "candidates": [
-                {
-                    "content": {
-                        "parts": [{"text": "I can't generate that image"}]
-                    }
-                }
-            ]
+            "candidates": [{"content": {"parts": [{"text": "I can't generate that image"}]}}]
         }
         mock_post.return_value = mock_resp
 
@@ -125,9 +115,7 @@ class TestNanaBananaAdapterGenerate:
         """API error returns MediaResult(success=False)."""
         mock_resp = MagicMock()
         mock_resp.status_code = 429
-        mock_resp.json.return_value = {
-            "error": {"message": "Rate limit exceeded"}
-        }
+        mock_resp.json.return_value = {"error": {"message": "Rate limit exceeded"}}
         mock_resp.text = "Rate limit exceeded"
         mock_post.return_value = mock_resp
 

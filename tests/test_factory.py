@@ -1,10 +1,11 @@
 """Tests for LLM factory and model string parser."""
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from social_hook.errors import ConfigError
-from social_hook.llm.factory import parse_provider_model, create_client
+from social_hook.llm.factory import create_client, parse_provider_model
 
 
 class TestParseProviderModel:
@@ -21,7 +22,10 @@ class TestParseProviderModel:
 
     def test_parse_openrouter(self):
         """OpenRouter models have nested slashes."""
-        assert parse_provider_model("openrouter/anthropic/claude-sonnet-4.5") == ("openrouter", "anthropic/claude-sonnet-4.5")
+        assert parse_provider_model("openrouter/anthropic/claude-sonnet-4.5") == (
+            "openrouter",
+            "anthropic/claude-sonnet-4.5",
+        )
 
     def test_parse_openai(self):
         assert parse_provider_model("openai/gpt-4o") == ("openai", "gpt-4o")
@@ -48,6 +52,7 @@ class TestCreateClient:
         config = self._mock_config(ANTHROPIC_API_KEY="sk-ant-test")
         client = create_client("anthropic/claude-opus-4-5", config)
         from social_hook.llm.client import ClaudeClient
+
         assert isinstance(client, ClaudeClient)
         assert client.model == "claude-opus-4-5"
 
@@ -55,6 +60,7 @@ class TestCreateClient:
         config = self._mock_config()
         client = create_client("claude-cli/sonnet", config)
         from social_hook.llm.claude_cli import ClaudeCliClient
+
         assert isinstance(client, ClaudeCliClient)
         assert client.model == "sonnet"
 
@@ -78,6 +84,7 @@ class TestCreateClient:
         config = self._mock_config()
         client = create_client("ollama/llama3.3", config)
         from social_hook.llm.openai_compat import OpenAICompatClient
+
         assert isinstance(client, OpenAICompatClient)
         assert client.model == "llama3.3"
 
@@ -85,11 +92,13 @@ class TestCreateClient:
         config = self._mock_config(OPENAI_API_KEY="sk-test")
         client = create_client("openai/gpt-4o", config)
         from social_hook.llm.openai_compat import OpenAICompatClient
+
         assert isinstance(client, OpenAICompatClient)
 
     def test_create_openrouter_client(self):
         config = self._mock_config(OPENROUTER_API_KEY="sk-or-test")
         client = create_client("openrouter/anthropic/claude-sonnet-4.5", config)
         from social_hook.llm.openai_compat import OpenAICompatClient
+
         assert isinstance(client, OpenAICompatClient)
         assert client.model == "anthropic/claude-sonnet-4.5"

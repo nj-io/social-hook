@@ -79,8 +79,13 @@ class NarrativeExtractor:
             tools=[ExtractNarrativeInput.to_tool_schema()],
             system=SYSTEM_PROMPT,
         )
-        log_usage(db, "narrative_extract", getattr(self.client, "full_id", "unknown"),
-                  response.usage, project_id)
+        log_usage(
+            db,
+            "narrative_extract",
+            getattr(self.client, "full_id", "unknown"),
+            response.usage,
+            project_id,
+        )
 
         tool_input = extract_tool_call(response, "extract_narrative")
         return ExtractNarrativeInput.validate(tool_input)

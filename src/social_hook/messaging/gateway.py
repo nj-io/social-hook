@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class GatewayTransport(Protocol):
     """Protocol for WebSocket-like transports."""
+
     async def send_json(self, data: Any, **kwargs: Any) -> None: ...
     async def receive_json(self, **kwargs: Any) -> Any: ...
 
@@ -22,12 +23,13 @@ class GatewayTransport(Protocol):
 @dataclass
 class GatewayEnvelope:
     """Protocol-agnostic message envelope."""
-    type: str          # "event", "command", "subscribe", "unsubscribe", "ack", "error"
-    payload: dict      # Type-specific data
-    id: str = ""       # Auto-generated UUID if empty
+
+    type: str  # "event", "command", "subscribe", "unsubscribe", "ack", "error"
+    payload: dict  # Type-specific data
+    id: str = ""  # Auto-generated UUID if empty
     channel: str = ""  # Routing channel
-    timestamp: str = "" # ISO 8601
-    reply_to: str = "" # ID of envelope this replies to
+    timestamp: str = ""  # ISO 8601
+    reply_to: str = ""  # ID of envelope this replies to
 
     def __post_init__(self):
         if not self.id:
@@ -46,7 +48,10 @@ class GatewayEnvelope:
 
 class GatewayConnection:
     """Wraps a transport connection with metadata."""
-    def __init__(self, client_id: str, transport: GatewayTransport, channels: list[str] | None = None):
+
+    def __init__(
+        self, client_id: str, transport: GatewayTransport, channels: list[str] | None = None
+    ):
         self.client_id = client_id
         self.transport = transport
         self.channels: set[str] = set(channels or [])
@@ -60,11 +65,14 @@ class GatewayHub:
     subscribe/unsubscribe/connection_count methods are safe because asyncio
     is cooperative — no concurrent mutation can occur mid-call.
     """
+
     def __init__(self):
         self._connections: dict[str, GatewayConnection] = {}
         self._lock = asyncio.Lock()
 
-    async def connect(self, transport: GatewayTransport, client_id: str, channels: list[str] | None = None) -> GatewayConnection:
+    async def connect(
+        self, transport: GatewayTransport, client_id: str, channels: list[str] | None = None
+    ) -> GatewayConnection:
         conn = GatewayConnection(client_id, transport, channels)
         async with self._lock:
             self._connections[client_id] = conn

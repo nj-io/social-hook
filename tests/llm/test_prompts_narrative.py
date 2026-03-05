@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from social_hook.config.project import ContextConfig, ProjectConfig
+from social_hook.config.project import ProjectConfig
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import (
     assemble_drafter_prompt,
@@ -15,13 +15,11 @@ from social_hook.models import (
     Arc,
     CommitInfo,
     Decision,
-    Draft,
     Lifecycle,
     Post,
     Project,
     ProjectContext,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -42,12 +40,8 @@ def sample_commit():
 
 @pytest.fixture
 def sample_project_context():
-    project = Project(
-        id="proj_test1", name="test-project", repo_path="/tmp/test"
-    )
-    lifecycle = Lifecycle(
-        project_id="proj_test1", phase="build", confidence=0.8
-    )
+    project = Project(id="proj_test1", name="test-project", repo_path="/tmp/test")
+    lifecycle = Lifecycle(project_id="proj_test1", phase="build", confidence=0.8)
     return ProjectContext(
         project=project,
         social_context="## Voice\nTechnical but approachable.",
@@ -60,14 +54,20 @@ def sample_project_context():
         pending_drafts=[],
         recent_decisions=[
             Decision(
-                id="dec_1", project_id="proj_test1", commit_hash="prev123",
-                decision="draft", reasoning="Added logging system",
+                id="dec_1",
+                project_id="proj_test1",
+                commit_hash="prev123",
+                decision="draft",
+                reasoning="Added logging system",
             ),
         ],
         recent_posts=[
             Post(
-                id="post_1", draft_id="draft_1", project_id="proj_test1",
-                platform="x", content="Just shipped logging!",
+                id="post_1",
+                draft_id="draft_1",
+                project_id="proj_test1",
+                platform="x",
+                content="Just shipped logging!",
             ),
         ],
         project_summary="Test project building auth system.",
@@ -125,67 +125,50 @@ class TestEvaluatorPromptNarrative:
 
     def test_narratives_present_shows_section(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "## Development Narrative" in result
 
     def test_empty_narratives_no_section(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = []
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "## Development Narrative" not in result
 
     def test_includes_key_decisions(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "**Key decisions:**" in result
         assert "Use RS256 over HS256 for key rotation" in result
 
     def test_includes_rejected_approaches(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "**Rejected approaches:**" in result
         assert "Session-based auth" in result
 
     def test_includes_aha_moments(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "**Insights:**" in result
         assert "Refresh token rotation" in result
 
     def test_includes_social_hooks(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "**Post angles:**" in result
         assert "Why we chose JWT over sessions" in result
 
     def test_session_summary_as_heading(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "### Session: Implemented JWT authentication flow" in result
         assert "### Session: Refactored database layer" in result
 
     def test_limits_to_5_narratives(self, sample_project_context, sample_commit):
         many_narratives = [
-            {"summary": f"Session {i}", "key_decisions": [f"decision-{i}"]}
-            for i in range(10)
+            {"summary": f"Session {i}", "key_decisions": [f"decision-{i}"]} for i in range(10)
         ]
         sample_project_context.session_narratives = many_narratives
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "Session 0" in result
         assert "Session 4" in result
         assert "Session 5" not in result
@@ -199,9 +182,7 @@ class TestEvaluatorPromptNarrative:
             "social_hooks": [f"hook-{i}" for i in range(10)],
         }
         sample_project_context.session_narratives = [narrative_with_many]
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "dec-0" in result
         assert "dec-2" in result
         assert "dec-3" not in result
@@ -214,9 +195,7 @@ class TestEvaluatorPromptNarrative:
 
     def test_missing_summary_shows_fallback(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = [{"key_decisions": ["d1"]}]
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "### Session: No summary" in result
 
     def test_in_window_narrative_no_label(self, sample_project_context, sample_commit):
@@ -224,9 +203,7 @@ class TestEvaluatorPromptNarrative:
         sample_project_context.session_narratives = [
             {"summary": "Recent work", "_in_window": True, "key_decisions": ["d1"]},
         ]
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "### Session: Recent work" in result
         assert "(earlier context)" not in result
 
@@ -235,9 +212,7 @@ class TestEvaluatorPromptNarrative:
         sample_project_context.session_narratives = [
             {"summary": "Old work", "_in_window": False, "key_decisions": ["d1"]},
         ]
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "### Session: Old work (earlier context)" in result
 
     def test_mixed_window_labels(self, sample_project_context, sample_commit):
@@ -246,9 +221,7 @@ class TestEvaluatorPromptNarrative:
             {"summary": "Current", "_in_window": True, "key_decisions": []},
             {"summary": "Previous", "_in_window": False, "key_decisions": []},
         ]
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "### Session: Current\n" in result or "### Session: Current" in result
         assert "(earlier context)" not in result.split("### Session: Current")[1].split("###")[0]
         assert "### Session: Previous (earlier context)" in result
@@ -258,9 +231,7 @@ class TestEvaluatorPromptNarrative:
         sample_project_context.session_narratives = [
             {"summary": "Legacy narrative", "key_decisions": ["d1"]},
         ]
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "### Session: Legacy narrative" in result
         assert "(earlier context)" not in result
 
@@ -274,9 +245,7 @@ class TestEvaluatorPromptNarrative:
                 "social_hooks": [],
             }
         ]
-        result = assemble_evaluator_prompt(
-            "# Eval", sample_project_context, sample_commit
-        )
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "## Development Narrative" in result
         assert "### Session: Minimal session" in result
         assert "**Key decisions:**" not in result
@@ -296,36 +265,54 @@ class TestDrafterPromptNarrative:
     def test_narratives_present_shows_section(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
         decision = Decision(
-            id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="draft", reasoning="Added auth",
+            id="dec_1",
+            project_id="proj_test1",
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Added auth",
         )
         result = assemble_drafter_prompt(
-            "# Drafter", decision, sample_project_context,
-            sample_project_context.recent_posts, sample_commit,
+            "# Drafter",
+            decision,
+            sample_project_context,
+            sample_project_context.recent_posts,
+            sample_commit,
         )
         assert "## Development Narrative" in result
 
     def test_empty_narratives_no_section(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = []
         decision = Decision(
-            id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="draft", reasoning="Added auth",
+            id="dec_1",
+            project_id="proj_test1",
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Added auth",
         )
         result = assemble_drafter_prompt(
-            "# Drafter", decision, sample_project_context,
-            sample_project_context.recent_posts, sample_commit,
+            "# Drafter",
+            decision,
+            sample_project_context,
+            sample_project_context.recent_posts,
+            sample_commit,
         )
         assert "## Development Narrative" not in result
 
     def test_includes_narrative_content(self, sample_project_context, sample_commit):
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
         decision = Decision(
-            id="dec_1", project_id="proj_test1", commit_hash="abc123",
-            decision="draft", reasoning="Added auth",
+            id="dec_1",
+            project_id="proj_test1",
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Added auth",
         )
         result = assemble_drafter_prompt(
-            "# Drafter", decision, sample_project_context,
-            sample_project_context.recent_posts, sample_commit,
+            "# Drafter",
+            decision,
+            sample_project_context,
+            sample_project_context.recent_posts,
+            sample_commit,
         )
         assert "### Session: Implemented JWT authentication flow" in result
         assert "**Key decisions:**" in result
@@ -335,8 +322,11 @@ class TestDrafterPromptNarrative:
         sample_project_context.session_narratives = SAMPLE_NARRATIVES
         decision = {"decision": "draft", "reasoning": "Test"}
         result = assemble_drafter_prompt(
-            "# Drafter", decision, sample_project_context,
-            [], sample_commit,
+            "# Drafter",
+            decision,
+            sample_project_context,
+            [],
+            sample_commit,
         )
         assert "## Development Narrative" in result
 
@@ -384,12 +374,15 @@ class TestEvaluatorContextNarrativeLoading:
             return_value=[],
         ) as mock_load:
             assemble_evaluator_context(
-                db, "proj_nar_ts", project_config,
+                db,
+                "proj_nar_ts",
+                project_config,
                 commit_timestamp="2026-02-20T12:00:00+07:00",
                 parent_timestamp="2026-02-20T10:00:00+07:00",
             )
             mock_load.assert_called_once_with(
-                "proj_nar_ts", limit=5,
+                "proj_nar_ts",
+                limit=5,
                 after="2026-02-20T10:00:00+07:00",
                 before="2026-02-20T12:00:00+07:00",
             )

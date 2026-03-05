@@ -1,9 +1,10 @@
 """Narrative JSONL storage — append-only log of extracted session narratives."""
 
+import contextlib
 import datetime
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from social_hook.filesystem import get_narratives_path
 from social_hook.llm.schemas import ExtractNarrativeInput
@@ -16,9 +17,7 @@ def _narratives_file(project_id: str) -> Path:
     return path
 
 
-def save_narrative(
-    project_id: str, extraction: Any, session_id: str, trigger: str
-) -> Path:
+def save_narrative(project_id: str, extraction: Any, session_id: str, trigger: str) -> Path:
     """Save an extracted narrative to JSONL storage.
 
     Storage: ~/.social-hook/narratives/{project-id}.jsonl — append-only,
@@ -58,8 +57,8 @@ def save_narrative(
 def load_recent_narratives(
     project_id: str,
     limit: int = 5,
-    after: Optional[str] = None,
-    before: Optional[str] = None,
+    after: str | None = None,
+    before: str | None = None,
 ) -> list[dict]:
     """Load N most recent narratives where relevant_for_social is True.
 
@@ -86,7 +85,7 @@ def load_recent_narratives(
         return []
 
     entries: list[dict] = []
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -110,7 +109,7 @@ def load_recent_narratives(
             seen[sid] = entry  # later entries overwrite earlier ones
         else:
             # Entries without session_id are kept as-is (shouldn't happen normally).
-            seen[id(entry)] = entry
+            seen[str(id(entry))] = entry
 
     deduped = list(seen.values())
 
@@ -123,15 +122,11 @@ def load_recent_narratives(
     before_dt = None
     has_window = False
     if after:
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             after_dt = datetime.datetime.fromisoformat(after)
-        except (ValueError, TypeError):
-            pass
     if before:
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             before_dt = datetime.datetime.fromisoformat(before)
-        except (ValueError, TypeError):
-            pass
     has_window = after_dt is not None or before_dt is not None
 
     if not has_window:
@@ -195,14 +190,12 @@ def cleanup_old_narratives(project_id: str, max_age_days: int = 90) -> int:
     if not path.exists():
         return 0
 
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-        days=max_age_days
-    )
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=max_age_days)
 
     kept: list[str] = []
     removed = 0
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             stripped = line.strip()
             if not stripped:

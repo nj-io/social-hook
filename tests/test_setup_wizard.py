@@ -3,11 +3,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.setup.wizard import (
-    WizardProgress,
     WIZARD_TOTAL_SECTIONS,
+    WizardProgress,
     _obfuscate,
     _save_env,
     _validate_existing,
@@ -15,7 +13,6 @@ from social_hook.setup.wizard import (
     _validate_positive_int,
     run_wizard,
 )
-
 
 # =============================================================================
 # Helper tests
@@ -49,38 +46,42 @@ class TestValidatePositiveInt:
 
     def test_zero(self):
         result = _validate_positive_int("0")
-        assert result != True
+        assert result is not True
         assert "positive" in result.lower()
 
     def test_negative(self):
         result = _validate_positive_int("-1")
-        assert result != True
+        assert result is not True
 
     def test_non_numeric(self):
         result = _validate_positive_int("abc")
-        assert result != True
+        assert result is not True
         assert "number" in result.lower()
 
     def test_float_string(self):
         result = _validate_positive_int("3.5")
-        assert result != True
+        assert result is not True
 
 
 class TestSectionHelpers:
     def test_section_does_not_raise(self):
         from social_hook.setup.wizard import _section
+
         _section("Test Title", "Test description")
 
     def test_section_no_description(self):
         from social_hook.setup.wizard import _section
+
         _section("Title Only")
 
     def test_section_with_step(self):
         from social_hook.setup.wizard import _section
+
         _section("Step Test", "Description", step=3)
 
     def test_section_with_wizard_progress(self):
         from social_hook.setup.wizard import _section
+
         progress = WizardProgress()
         progress.set_section(2, "Voice & Style", substeps=8)
         progress.advance()
@@ -88,11 +89,13 @@ class TestSectionHelpers:
 
     def test_section_progress_fallback(self):
         from social_hook.setup.wizard import _section
+
         with patch.dict("sys.modules", {"rich.console": None, "rich.panel": None}):
             _section("Fallback Progress", "Desc", step=5)
 
     def test_section_progress_object_fallback(self):
         from social_hook.setup.wizard import _section
+
         progress = WizardProgress()
         progress.set_section(3, "Telegram", substeps=2)
         with patch.dict("sys.modules", {"rich.console": None, "rich.panel": None}):
@@ -100,32 +103,39 @@ class TestSectionHelpers:
 
     def test_success_does_not_raise(self):
         from social_hook.setup.wizard import _success
+
         _success("It worked")
 
     def test_warn_does_not_raise(self):
         from social_hook.setup.wizard import _warn
+
         _warn("Careful now")
 
     def test_error_does_not_raise(self):
         from social_hook.setup.wizard import _error
+
         _error("Something broke")
 
     def test_section_fallback_without_rich(self):
         from social_hook.setup.wizard import _section
+
         with patch.dict("sys.modules", {"rich.console": None, "rich.panel": None}):
             _section("Fallback Title", "Fallback desc")
 
     def test_success_fallback_without_rich(self):
         from social_hook.setup.wizard import _success
+
         with patch.dict("sys.modules", {"rich.console": None}):
             _success("fallback ok")
 
     def test_info_does_not_raise(self):
         from social_hook.setup.wizard import _info
+
         _info("Some informational message")
 
     def test_info_fallback_without_rich(self):
         from social_hook.setup.wizard import _info
+
         with patch.dict("sys.modules", {"rich.console": None, "rich.panel": None}):
             _info("fallback info")
 
@@ -231,20 +241,20 @@ class TestWizardProgress:
 class TestValidateNotEmpty:
     def test_rejects_empty_string(self):
         result = _validate_not_empty("")
-        assert result != True
+        assert result is not True
         assert "empty" in result.lower()
 
     def test_rejects_whitespace(self):
         result = _validate_not_empty("   ")
-        assert result != True
+        assert result is not True
 
     def test_rejects_single_y(self):
         result = _validate_not_empty("y")
-        assert result != True
+        assert result is not True
 
     def test_rejects_single_n(self):
         result = _validate_not_empty("n")
-        assert result != True
+        assert result is not True
 
     def test_accepts_valid_input(self):
         assert _validate_not_empty("sk-ant-abc123") is True
@@ -257,6 +267,7 @@ class TestPromptFallbackValidation:
     @patch("social_hook.setup.wizard._rich_prompt", side_effect=Exception("no InquirerPy"))
     def test_fallback_rejects_empty_then_accepts_valid(self, _mock_rich):
         from social_hook.setup.wizard import _prompt
+
         with patch("builtins.input", side_effect=["", "  ", "valid-input"]):
             result = _prompt("Enter value")
             assert result == "valid-input"
@@ -264,6 +275,7 @@ class TestPromptFallbackValidation:
     @patch("social_hook.setup.wizard._rich_prompt", side_effect=Exception("no InquirerPy"))
     def test_fallback_uses_default_on_empty(self, _mock_rich):
         from social_hook.setup.wizard import _prompt
+
         with patch("builtins.input", return_value=""):
             result = _prompt("Enter value", default="my-default")
             assert result == "my-default"
@@ -275,6 +287,7 @@ class TestPromptApiKey:
     @patch("social_hook.setup.wizard._prompt")
     def test_returns_key_on_success(self, mock_prompt, mock_spinner, _mock_success):
         from social_hook.setup.wizard import _prompt_api_key
+
         mock_prompt.return_value = "valid-key"
         mock_spinner.return_value = (True, "Connected")
         result = _prompt_api_key("API key", lambda k: (True, "ok"))
@@ -284,8 +297,11 @@ class TestPromptApiKey:
     @patch("social_hook.setup.wizard._error")
     @patch("social_hook.setup.wizard._spinner")
     @patch("social_hook.setup.wizard._prompt")
-    def test_saves_key_on_validation_failure(self, mock_prompt, mock_spinner, _mock_error, mock_confirm):
+    def test_saves_key_on_validation_failure(
+        self, mock_prompt, mock_spinner, _mock_error, mock_confirm
+    ):
         from social_hook.setup.wizard import _prompt_api_key
+
         mock_prompt.return_value = "bad-key"
         mock_spinner.return_value = (False, "Invalid key")
         mock_confirm.return_value = False  # decline retry
@@ -301,6 +317,7 @@ class TestPromptApiKey:
         self, mock_prompt, mock_spinner, _mock_error, mock_confirm, _mock_success
     ):
         from social_hook.setup.wizard import _prompt_api_key
+
         mock_prompt.side_effect = ["bad-key", "good-key"]
         mock_spinner.side_effect = [(False, "Invalid"), (True, "OK")]
         mock_confirm.return_value = True
@@ -312,13 +329,16 @@ class TestPromptApiKey:
     @patch("social_hook.setup.wizard._success")
     def test_uses_existing_as_default(self, _mock_success, mock_spinner, mock_prompt):
         from social_hook.setup.wizard import _prompt_api_key
+
         mock_prompt.return_value = "existing-key"
         mock_spinner.return_value = (True, "OK")
         result = _prompt_api_key("API key", lambda k: (True, "ok"), existing="existing-key")
         assert result == "existing-key"
         # Existing value passed as default kwarg to _prompt
-        assert mock_prompt.call_args[1].get("default") == "existing-key" or \
-            mock_prompt.call_args[0][0] == "API key"
+        assert (
+            mock_prompt.call_args[1].get("default") == "existing-key"
+            or mock_prompt.call_args[0][0] == "API key"
+        )
 
 
 # =============================================================================
@@ -350,10 +370,24 @@ class TestRunWizard:
     @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
-    def test_full_wizard(self, mock_init, mock_save, mock_api_keys, mock_voice,
-                         mock_telegram, mock_platforms, mock_models,
-                         mock_image, mock_sched, mock_web, mock_install, mock_yaml,
-                         mock_summary, mock_load, mock_sys):
+    def test_full_wizard(
+        self,
+        mock_init,
+        mock_save,
+        mock_api_keys,
+        mock_voice,
+        mock_telegram,
+        mock_platforms,
+        mock_models,
+        mock_image,
+        mock_sched,
+        mock_web,
+        mock_install,
+        mock_yaml,
+        mock_summary,
+        mock_load,
+        mock_sys,
+    ):
         mock_sys.stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
         result = run_wizard()
@@ -453,10 +487,24 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
     def test_warns_when_missing_keys(
-        self, mock_init, mock_save, mock_api_keys, mock_voice,
-        mock_telegram, mock_platforms, mock_models,
-        mock_image, mock_sched, mock_web, mock_install, mock_yaml,
-        mock_summary, mock_load, mock_success, mock_warn, mock_sys,
+        self,
+        mock_init,
+        mock_save,
+        mock_api_keys,
+        mock_voice,
+        mock_telegram,
+        mock_platforms,
+        mock_models,
+        mock_image,
+        mock_sched,
+        mock_web,
+        mock_install,
+        mock_yaml,
+        mock_summary,
+        mock_load,
+        mock_success,
+        mock_warn,
+        mock_sys,
     ):
         mock_sys.stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
@@ -471,9 +519,10 @@ class TestWizardWarnings:
 
     @patch("social_hook.setup.wizard._warn")
     @patch("social_hook.setup.wizard._success")
-    @patch("social_hook.setup.wizard._load_existing", return_value=(
-        {"ANTHROPIC_API_KEY": "key", "TELEGRAM_BOT_TOKEN": "tok"}, {}
-    ))
+    @patch(
+        "social_hook.setup.wizard._load_existing",
+        return_value=({"ANTHROPIC_API_KEY": "key", "TELEGRAM_BOT_TOKEN": "tok"}, {}),
+    )
     @patch("social_hook.setup.wizard._show_summary")
     @patch("social_hook.setup.wizard._save_config_yaml")
     @patch("social_hook.setup.wizard._setup_installations")
@@ -488,10 +537,24 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
     def test_no_warnings_when_existing_keys(
-        self, mock_init, mock_save, mock_api_keys, mock_voice,
-        mock_telegram, mock_platforms, mock_models,
-        mock_image, mock_sched, mock_web, mock_install, mock_yaml,
-        mock_summary, mock_load, mock_success, mock_warn, mock_sys,
+        self,
+        mock_init,
+        mock_save,
+        mock_api_keys,
+        mock_voice,
+        mock_telegram,
+        mock_platforms,
+        mock_models,
+        mock_image,
+        mock_sched,
+        mock_web,
+        mock_install,
+        mock_yaml,
+        mock_summary,
+        mock_load,
+        mock_success,
+        mock_warn,
+        mock_sys,
         tmp_path,
     ):
         mock_sys.stdout.isatty.return_value = False
@@ -501,7 +564,8 @@ class TestWizardWarnings:
         (tmp_path / "social-context.md").write_text("voice config")
         # Existing env has X key too
         mock_load.return_value = (
-            {"ANTHROPIC_API_KEY": "key", "TELEGRAM_BOT_TOKEN": "tok", "X_API_KEY": "xk"}, {}
+            {"ANTHROPIC_API_KEY": "key", "TELEGRAM_BOT_TOKEN": "tok", "X_API_KEY": "xk"},
+            {},
         )
         run_wizard()
 
@@ -515,8 +579,14 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._save_env")
     @patch("social_hook.filesystem.init_filesystem")
     def test_no_warnings_in_only_mode(
-        self, mock_init, mock_save, mock_api_keys, mock_load,
-        mock_success, mock_warn, mock_sys,
+        self,
+        mock_init,
+        mock_save,
+        mock_api_keys,
+        mock_load,
+        mock_success,
+        mock_warn,
+        mock_sys,
     ):
         mock_sys.stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
@@ -622,8 +692,14 @@ class TestVoiceStyleStep:
 
         mock_confirm.return_value = True
         mock_prompt.side_effect = [
-            "Technical", "", "Buzzwords", "Oxford comma: yes",
-            "Devs", "Tools", "Python", "Politics",
+            "Technical",
+            "",
+            "Buzzwords",
+            "Oxford comma: yes",
+            "Devs",
+            "Tools",
+            "Python",
+            "Politics",
         ]
         mock_select.side_effect = ["I (first person)", "Advanced"]
 
@@ -669,7 +745,11 @@ class TestModelSelection:
         with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
             mock_discover.return_value = [
                 {"id": "claude-cli", "status": "detected", "detail": "Uses subscription ($0)"},
-                {"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"},
+                {
+                    "id": "anthropic",
+                    "status": "unconfigured",
+                    "detail": "Requires ANTHROPIC_API_KEY",
+                },
             ]
             _setup_models(yaml_config, {}, {}, {})
 
@@ -687,7 +767,11 @@ class TestModelSelection:
         yaml_config = {}
         with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
             mock_discover.return_value = [
-                {"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"},
+                {
+                    "id": "anthropic",
+                    "status": "unconfigured",
+                    "detail": "Requires ANTHROPIC_API_KEY",
+                },
             ]
             _setup_models(yaml_config, {}, {}, {})
 
@@ -706,7 +790,11 @@ class TestModelSelection:
         yaml_config = {}
         with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
             mock_discover.return_value = [
-                {"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"},
+                {
+                    "id": "anthropic",
+                    "status": "unconfigured",
+                    "detail": "Requires ANTHROPIC_API_KEY",
+                },
             ]
             _setup_models(yaml_config, {}, {}, {}, progress=progress)
 
@@ -725,7 +813,11 @@ class TestModelSelection:
         yaml_config = {}
         with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
             mock_discover.return_value = [
-                {"id": "anthropic", "status": "unconfigured", "detail": "Requires ANTHROPIC_API_KEY"},
+                {
+                    "id": "anthropic",
+                    "status": "unconfigured",
+                    "detail": "Requires ANTHROPIC_API_KEY",
+                },
             ]
             _setup_models(yaml_config, {}, {}, {})
 
@@ -842,13 +934,21 @@ class TestXTierSelection:
     @patch("social_hook.setup.wizard._select")
     @patch("social_hook.setup.wizard._spinner")
     @patch("social_hook.setup.wizard._confirm")
-    def test_retries_on_validation_failure(self, mock_confirm, mock_spinner, mock_select, mock_prompt):
+    def test_retries_on_validation_failure(
+        self, mock_confirm, mock_spinner, mock_select, mock_prompt
+    ):
         from social_hook.setup.wizard import _setup_x
 
         mock_confirm.side_effect = [True, True]
         mock_prompt.side_effect = [
-            "key1", "secret1", "token1", "tsecret1",
-            "key2", "secret2", "token2", "tsecret2",
+            "key1",
+            "secret1",
+            "token1",
+            "tsecret1",
+            "key2",
+            "secret2",
+            "token2",
+            "tsecret2",
         ]
         mock_spinner.side_effect = [
             (False, "Auth failed"),
@@ -922,9 +1022,13 @@ class TestApiKeysStep:
         mock_prompt_key.return_value = "sk-ant-test123"
 
         env_vars = {}
-        yaml_config = {"models": {"evaluator": "anthropic/claude-opus-4-5",
-                                   "drafter": "anthropic/claude-opus-4-5",
-                                   "gatekeeper": "anthropic/claude-haiku-4-5"}}
+        yaml_config = {
+            "models": {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "anthropic/claude-opus-4-5",
+                "gatekeeper": "anthropic/claude-haiku-4-5",
+            }
+        }
         _setup_api_keys(env_vars, {}, yaml_config, {})
 
         assert env_vars["ANTHROPIC_API_KEY"] == "sk-ant-test123"
@@ -936,9 +1040,13 @@ class TestApiKeysStep:
         mock_prompt_key.return_value = None
 
         env_vars = {}
-        yaml_config = {"models": {"evaluator": "anthropic/claude-opus-4-5",
-                                   "drafter": "anthropic/claude-opus-4-5",
-                                   "gatekeeper": "anthropic/claude-haiku-4-5"}}
+        yaml_config = {
+            "models": {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "anthropic/claude-opus-4-5",
+                "gatekeeper": "anthropic/claude-haiku-4-5",
+            }
+        }
         _setup_api_keys(env_vars, {"ANTHROPIC_API_KEY": "existing-key"}, yaml_config, {})
 
         # Existing key preserved explicitly in env_vars
@@ -951,9 +1059,13 @@ class TestApiKeysStep:
         mock_prompt_key.return_value = "existing-key"
 
         env_vars = {}
-        yaml_config = {"models": {"evaluator": "anthropic/claude-opus-4-5",
-                                   "drafter": "anthropic/claude-opus-4-5",
-                                   "gatekeeper": "anthropic/claude-haiku-4-5"}}
+        yaml_config = {
+            "models": {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "anthropic/claude-opus-4-5",
+                "gatekeeper": "anthropic/claude-haiku-4-5",
+            }
+        }
         _setup_api_keys(env_vars, {"ANTHROPIC_API_KEY": "existing-key"}, yaml_config, {})
 
         assert mock_prompt_key.call_args.kwargs.get("existing") == "existing-key"
@@ -965,9 +1077,13 @@ class TestApiKeysStep:
         mock_prompt_key.return_value = "sk-key"
         progress = WizardProgress()
         env_vars = {}
-        yaml_config = {"models": {"evaluator": "anthropic/claude-opus-4-5",
-                                   "drafter": "anthropic/claude-opus-4-5",
-                                   "gatekeeper": "anthropic/claude-haiku-4-5"}}
+        yaml_config = {
+            "models": {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "anthropic/claude-opus-4-5",
+                "gatekeeper": "anthropic/claude-haiku-4-5",
+            }
+        }
         _setup_api_keys(env_vars, {}, yaml_config, {}, progress=progress)
 
         assert progress.section == 2
@@ -977,9 +1093,13 @@ class TestApiKeysStep:
         from social_hook.setup.wizard import _setup_api_keys
 
         env_vars = {}
-        yaml_config = {"models": {"evaluator": "claude-cli/sonnet",
-                                   "drafter": "claude-cli/sonnet",
-                                   "gatekeeper": "claude-cli/haiku"}}
+        yaml_config = {
+            "models": {
+                "evaluator": "claude-cli/sonnet",
+                "drafter": "claude-cli/sonnet",
+                "gatekeeper": "claude-cli/haiku",
+            }
+        }
         _setup_api_keys(env_vars, {}, yaml_config, {})
 
         # No API keys should be set
@@ -1128,7 +1248,9 @@ class TestTimezoneSelector:
         ]
 
         yaml_config = {}
-        existing = {"scheduling": {"timezone": "US/Pacific", "max_posts_per_day": 5, "min_gap_minutes": 15}}
+        existing = {
+            "scheduling": {"timezone": "US/Pacific", "max_posts_per_day": 5, "min_gap_minutes": 15}
+        }
         _setup_scheduling(Path("/tmp"), yaml_config, existing)
 
         assert yaml_config["scheduling"]["timezone"] == "US/Pacific"
@@ -1177,8 +1299,11 @@ class TestTimezoneSelector:
         from social_hook.setup.wizard import _setup_scheduling
 
         mock_select.side_effect = [
-            "UTC", "3 (recommended)", "30 (recommended)",
-            "10 (recommended)", "4 (recommended)",
+            "UTC",
+            "3 (recommended)",
+            "30 (recommended)",
+            "10 (recommended)",
+            "4 (recommended)",
         ]
 
         progress = WizardProgress()
@@ -1194,7 +1319,9 @@ class TestTimezoneSelector:
         from social_hook.setup.wizard import _setup_scheduling
 
         mock_select.side_effect = [
-            "UTC", "3 (recommended)", "30 (recommended)",
+            "UTC",
+            "3 (recommended)",
+            "30 (recommended)",
             "20",
             "4 (recommended)",
         ]
@@ -1210,7 +1337,9 @@ class TestTimezoneSelector:
         from social_hook.setup.wizard import _setup_scheduling
 
         mock_select.side_effect = [
-            "UTC", "3 (recommended)", "30 (recommended)",
+            "UTC",
+            "3 (recommended)",
+            "30 (recommended)",
             "10 (recommended)",
             "6",
         ]
@@ -1232,7 +1361,10 @@ class TestSummaryTable:
 
         env_vars = {"ANTHROPIC_API_KEY": "sk-ant-test123456", "TELEGRAM_BOT_TOKEN": "123:ABC"}
         yaml_config = {
-            "models": {"evaluator": "anthropic/claude-opus-4-5", "drafter": "anthropic/claude-opus-4-5"},
+            "models": {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "anthropic/claude-opus-4-5",
+            },
             "platforms": {"x": {"account_tier": "free"}},
             "scheduling": {"timezone": "UTC", "max_posts_per_day": 3},
         }
@@ -1268,6 +1400,7 @@ class TestSaveConfigYaml:
         config_path = temp_dir / "config.yaml"
         assert config_path.exists()
         import yaml
+
         loaded = yaml.safe_load(config_path.read_text())
         assert loaded["platforms"]["x"]["account_tier"] == "free"
 
@@ -1275,7 +1408,9 @@ class TestSaveConfigYaml:
         import yaml
 
         config_path = temp_dir / "config.yaml"
-        config_path.write_text(yaml.dump({"existing": "value", "platforms": {"x": {"enabled": True}}}))
+        config_path.write_text(
+            yaml.dump({"existing": "value", "platforms": {"x": {"enabled": True}}})
+        )
 
         from social_hook.setup.wizard import _save_config_yaml
 
@@ -1303,9 +1438,11 @@ class TestValidateExisting:
         mock_base.return_value = temp_dir
         mock_config.return_value = MagicMock(
             env={"ANTHROPIC_API_KEY": "test", "TELEGRAM_BOT_TOKEN": "test"},
-            models=MagicMock(evaluator="anthropic/claude-opus-4-5",
-                           drafter="anthropic/claude-opus-4-5",
-                           gatekeeper="anthropic/claude-haiku-4-5"),
+            models=MagicMock(
+                evaluator="anthropic/claude-opus-4-5",
+                drafter="anthropic/claude-opus-4-5",
+                gatekeeper="anthropic/claude-haiku-4-5",
+            ),
         )
 
         result = _validate_existing()
@@ -1326,9 +1463,11 @@ class TestValidateExisting:
         mock_base.return_value = temp_dir
         mock_config.return_value = MagicMock(
             env={"TELEGRAM_BOT_TOKEN": "test"},
-            models=MagicMock(evaluator="anthropic/claude-opus-4-5",
-                           drafter="anthropic/claude-opus-4-5",
-                           gatekeeper="anthropic/claude-haiku-4-5"),
+            models=MagicMock(
+                evaluator="anthropic/claude-opus-4-5",
+                drafter="anthropic/claude-opus-4-5",
+                gatekeeper="anthropic/claude-haiku-4-5",
+            ),
         )
 
         result = _validate_existing()
@@ -1344,9 +1483,11 @@ class TestValidateExisting:
         mock_base.return_value = temp_dir
         mock_config.return_value = MagicMock(
             env={"TELEGRAM_BOT_TOKEN": "test"},
-            models=MagicMock(evaluator="claude-cli/sonnet",
-                           drafter="claude-cli/sonnet",
-                           gatekeeper="claude-cli/haiku"),
+            models=MagicMock(
+                evaluator="claude-cli/sonnet",
+                drafter="claude-cli/sonnet",
+                gatekeeper="claude-cli/haiku",
+            ),
         )
 
         result = _validate_existing()
@@ -1399,7 +1540,9 @@ class TestInstallations:
     @patch("social_hook.setup.install.check_cron_installed", return_value=True)
     @patch("social_hook.setup.install.check_hook_installed", return_value=True)
     @patch("social_hook.setup.wizard._confirm")
-    def test_skips_already_installed(self, mock_confirm, mock_hook, mock_cron, mock_bot, mock_subprocess):
+    def test_skips_already_installed(
+        self, mock_confirm, mock_hook, mock_cron, mock_bot, mock_subprocess
+    ):
         from social_hook.setup.wizard import _setup_installations
 
         mock_confirm.return_value = True
@@ -1415,8 +1558,14 @@ class TestInstallations:
     @patch("social_hook.setup.install.check_hook_installed", return_value=False)
     @patch("social_hook.setup.wizard._confirm")
     def test_installs_all_components(
-        self, mock_confirm, mock_hook_check, mock_hook_install,
-        mock_cron_check, mock_cron_install, mock_bot_running, mock_subprocess
+        self,
+        mock_confirm,
+        mock_hook_check,
+        mock_hook_install,
+        mock_cron_check,
+        mock_cron_install,
+        mock_bot_running,
+        mock_subprocess,
     ):
         from social_hook.setup.wizard import _setup_installations
 
@@ -1437,8 +1586,14 @@ class TestInstallations:
     @patch("social_hook.setup.install.check_hook_installed", return_value=False)
     @patch("social_hook.setup.wizard._confirm")
     def test_with_progress(
-        self, mock_confirm, mock_hook_check, mock_hook_install,
-        mock_cron_check, mock_cron_install, mock_bot_running, mock_subprocess
+        self,
+        mock_confirm,
+        mock_hook_check,
+        mock_hook_install,
+        mock_cron_check,
+        mock_cron_install,
+        mock_bot_running,
+        mock_subprocess,
     ):
         from social_hook.setup.wizard import _setup_installations
 
@@ -1475,12 +1630,18 @@ class TestLoadExisting:
 
         mock_config.return_value = MagicMock(
             env={"ANTHROPIC_API_KEY": "sk-test", "TELEGRAM_BOT_TOKEN": "tok"},
-            models=MagicMock(evaluator="anthropic/claude-opus-4-5", drafter="anthropic/claude-opus-4-5", gatekeeper="anthropic/claude-haiku-4-5"),
+            models=MagicMock(
+                evaluator="anthropic/claude-opus-4-5",
+                drafter="anthropic/claude-opus-4-5",
+                gatekeeper="anthropic/claude-haiku-4-5",
+            ),
             platforms={
                 "x": OutputPlatformConfig(enabled=True, priority="primary", account_tier="free"),
             },
             scheduling=MagicMock(timezone="UTC", max_posts_per_day=3, min_gap_minutes=30),
-            media_generation=MagicMock(enabled=True, tools={"mermaid": True, "nano_banana_pro": True}),
+            media_generation=MagicMock(
+                enabled=True, tools={"mermaid": True, "nano_banana_pro": True}
+            ),
             journey_capture=MagicMock(enabled=False, model=None),
         )
 
@@ -1534,11 +1695,13 @@ class TestKeysNeededForConfig:
     def test_anthropic_models_need_anthropic_key(self):
         from social_hook.setup.wizard import _keys_needed_for_config
 
-        config = {"models": {
-            "evaluator": "anthropic/claude-opus-4-5",
-            "drafter": "anthropic/claude-opus-4-5",
-            "gatekeeper": "anthropic/claude-haiku-4-5",
-        }}
+        config = {
+            "models": {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "anthropic/claude-opus-4-5",
+                "gatekeeper": "anthropic/claude-haiku-4-5",
+            }
+        }
         needed = _keys_needed_for_config(config)
         assert "ANTHROPIC_API_KEY" in needed
         assert "OPENAI_API_KEY" not in needed
@@ -1546,22 +1709,26 @@ class TestKeysNeededForConfig:
     def test_cli_models_need_no_keys(self):
         from social_hook.setup.wizard import _keys_needed_for_config
 
-        config = {"models": {
-            "evaluator": "claude-cli/sonnet",
-            "drafter": "claude-cli/sonnet",
-            "gatekeeper": "claude-cli/haiku",
-        }}
+        config = {
+            "models": {
+                "evaluator": "claude-cli/sonnet",
+                "drafter": "claude-cli/sonnet",
+                "gatekeeper": "claude-cli/haiku",
+            }
+        }
         needed = _keys_needed_for_config(config)
         assert len(needed) == 0
 
     def test_mixed_providers_need_multiple_keys(self):
         from social_hook.setup.wizard import _keys_needed_for_config
 
-        config = {"models": {
-            "evaluator": "anthropic/claude-opus-4-5",
-            "drafter": "openai/gpt-4o",
-            "gatekeeper": "openrouter/anthropic/claude-sonnet-4.5",
-        }}
+        config = {
+            "models": {
+                "evaluator": "anthropic/claude-opus-4-5",
+                "drafter": "openai/gpt-4o",
+                "gatekeeper": "openrouter/anthropic/claude-sonnet-4.5",
+            }
+        }
         needed = _keys_needed_for_config(config)
         assert "ANTHROPIC_API_KEY" in needed
         assert "OPENAI_API_KEY" in needed
@@ -1588,15 +1755,15 @@ class TestPlatformSetup:
 
         # Enable X (primary), enable LinkedIn (secondary), no custom
         mock_confirm.side_effect = [
-            True,   # Enable X?
+            True,  # Enable X?
             False,  # Configure X credentials?
-            True,   # Enable LinkedIn?
+            True,  # Enable LinkedIn?
             False,  # Configure LinkedIn credentials?
             False,  # Add custom platform?
         ]
         mock_select.side_effect = [
-            "Primary (recommended)",    # X priority
-            "free (280 chars)",         # X tier
+            "Primary (recommended)",  # X priority
+            "free (280 chars)",  # X tier
             "Secondary (recommended)",  # LinkedIn priority
         ]
 
@@ -1620,14 +1787,14 @@ class TestPlatformSetup:
         mock_confirm.side_effect = [
             False,  # Enable X?
             False,  # Enable LinkedIn?
-            True,   # Add custom platform?
+            True,  # Add custom platform?
             False,  # Add another custom platform?
         ]
         mock_select.side_effect = [
             "Primary",  # blog priority
         ]
         mock_prompt.side_effect = [
-            "blog",     # Platform name
+            "blog",  # Platform name
             "article",  # Content format
             "Long-form technical articles",  # Description
         ]

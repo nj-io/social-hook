@@ -1,7 +1,7 @@
 """OpenAI-compatible provider client for OpenAI, OpenRouter, Ollama."""
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from social_hook.errors import ConfigError, MalformedResponseError
 from social_hook.llm.base import LLMClient, NormalizedResponse, NormalizedToolCall, NormalizedUsage
@@ -39,9 +39,7 @@ class OpenAICompatClient(LLMClient):
         provider_name: str = "openai",
     ):
         if OpenAI is None:
-            raise ConfigError(
-                "openai package required for OpenAI/OpenRouter/Ollama providers."
-            )
+            raise ConfigError("openai package required for OpenAI/OpenRouter/Ollama providers.")
         self.model = model
         self.provider = provider_name
         self.full_id = f"{self.provider}/{self.model}"
@@ -51,7 +49,7 @@ class OpenAICompatClient(LLMClient):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = 4096,
     ) -> NormalizedResponse:
         # 1. Convert tool schemas: Anthropic -> OpenAI format
@@ -65,7 +63,7 @@ class OpenAICompatClient(LLMClient):
 
         # 3. Call API
         try:
-            response = self._client.chat.completions.create(
+            response = self._client.chat.completions.create(  # type: ignore[call-overload]
                 model=self.model,
                 messages=openai_messages,
                 tools=openai_tools,
@@ -78,15 +76,17 @@ class OpenAICompatClient(LLMClient):
         # 4. Normalize response
         choice = response.choices[0]
         tool_calls = []
-        for tc in (choice.message.tool_calls or []):
-            tool_calls.append(NormalizedToolCall(
-                name=tc.function.name,
-                input=json.loads(tc.function.arguments),
-            ))
+        for tc in choice.message.tool_calls or []:
+            tool_calls.append(
+                NormalizedToolCall(
+                    name=tc.function.name,
+                    input=json.loads(tc.function.arguments),
+                )
+            )
 
         usage = NormalizedUsage(
-            input_tokens=getattr(response.usage, 'prompt_tokens', 0) or 0,
-            output_tokens=getattr(response.usage, 'completion_tokens', 0) or 0,
+            input_tokens=getattr(response.usage, "prompt_tokens", 0) or 0,
+            output_tokens=getattr(response.usage, "completion_tokens", 0) or 0,
         )
 
         return NormalizedResponse(content=tool_calls, usage=usage, raw=response)

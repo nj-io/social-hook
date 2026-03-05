@@ -4,10 +4,7 @@ Source: WS3_ADAPTERS.md T12 (lines 232-243)
 """
 
 from dataclasses import dataclass
-from typing import Optional
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 from social_hook.adapters.dry_run import (
     dry_run_media_result,
@@ -22,7 +19,7 @@ from social_hook.errors import ErrorType, classify_error
 @dataclass
 class MockResponse:
     status_code: int
-    _json: Optional[dict] = None
+    _json: dict | None = None
     content: bytes = b"{}"
 
     def json(self) -> dict:

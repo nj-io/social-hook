@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.setup.validation import (
     exchange_linkedin_code,
     get_linkedin_auth_url,
@@ -40,6 +38,7 @@ class TestValidateAnthropicKey:
     @patch("social_hook.setup.validation.requests.post")
     def test_network_error(self, mock_post):
         import requests
+
         mock_post.side_effect = requests.RequestException("timeout")
         success, msg = validate_anthropic_key("sk-ant-key")
         assert success is False
@@ -68,6 +67,7 @@ class TestValidateTelegramBot:
     @patch("social_hook.setup.validation.requests.get")
     def test_network_error(self, mock_get):
         import requests
+
         mock_get.side_effect = requests.RequestException()
         success, msg = validate_telegram_bot("123:ABC")
         assert success is False
@@ -152,6 +152,7 @@ class TestValidateMediaGen:
     @patch("social_hook.setup.validation.requests.post")
     def test_nano_banana_pro_network_error(self, mock_post):
         import requests
+
         mock_post.side_effect = requests.RequestException("timeout")
         success, msg = validate_media_gen("nano_banana_pro", "key")
         assert success is False

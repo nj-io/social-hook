@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from social_hook.bot.notifications import format_draft_review, get_review_buttons_normalized
 from social_hook.constants import PROJECT_NAME, PROJECT_SLUG
@@ -26,7 +26,7 @@ def set_chat_draft_context(chat_id: str, draft_id: str, project_id: str) -> None
     _chat_draft_context[chat_id] = (draft_id, project_id, time.time())
 
 
-def get_chat_draft_context(chat_id: str) -> Optional[tuple[str, str]]:
+def get_chat_draft_context(chat_id: str) -> tuple[str, str] | None:
     """Get the (draft_id, project_id) for this chat, or None if expired/missing."""
     entry = _chat_draft_context.get(chat_id)
     if entry is None:
@@ -52,7 +52,7 @@ def _get_conn():
     return init_database(get_db_path())
 
 
-def _build_system_snapshot(conn, project_id: Optional[str], config, arcs=None) -> str:
+def _build_system_snapshot(conn, project_id: str | None, config, arcs=None) -> str:
     """Build a compact system status block for Gatekeeper context.
 
     Args:
@@ -137,8 +137,10 @@ def _build_system_snapshot(conn, project_id: Optional[str], config, arcs=None) -
     if config and hasattr(config, "scheduling"):
         s = config.scheduling
         days = "/".join(s.optimal_days) if s.optimal_days else "any"
-        hours = "/".join(str(h) for h in s.optimal_hours) if s.optimal_hours else "any"
-        lines.append(f"- Schedule: {s.timezone}, {days} at {hours}, max {s.max_posts_per_day}/day")
+        hours_str = "/".join(str(h) for h in s.optimal_hours) if s.optimal_hours else "any"
+        lines.append(
+            f"- Schedule: {s.timezone}, {days} at {hours_str}, max {s.max_posts_per_day}/day"
+        )
 
     # Media tools
     if config and hasattr(config, "media_generation") and config.media_generation.enabled:
@@ -157,7 +159,7 @@ def _build_chat_history(
     chat_id: str,
     token_budget: int = 400,
     time_window_minutes: int = 15,
-) -> Optional[str]:
+) -> str | None:
     """Build recent chat history for conversational context.
 
     Fills backwards from most recent messages until the token budget is
@@ -223,7 +225,9 @@ def _parse_command(text: str) -> tuple[str, str]:
     return cmd, args.strip()
 
 
-def handle_command(msg: InboundMessage, adapter: MessagingAdapter, config: Optional[Any] = None) -> None:
+def handle_command(
+    msg: InboundMessage, adapter: MessagingAdapter, config: Any | None = None
+) -> None:
     """Route a /command message to its handler.
 
     Args:
@@ -261,7 +265,9 @@ def handle_command(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
         _send(adapter, chat_id, f"Unknown command: /{cmd}\nUse /help for available commands.")
 
 
-def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optional[Any] = None) -> None:
+def handle_message(
+    msg: InboundMessage, adapter: MessagingAdapter, config: Any | None = None
+) -> None:
     """Handle a free-text message by routing through Gatekeeper.
 
     Checks for pending edits first (Fix 1), then threads draft/project
@@ -279,7 +285,7 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
         return
 
     # Check for pending edit FIRST (Fix 1)
-    from social_hook.bot.buttons import get_pending_edit, clear_pending_edit
+    from social_hook.bot.buttons import clear_pending_edit, get_pending_edit
 
     pending_draft_id = get_pending_edit(chat_id)
     if pending_draft_id:
@@ -288,9 +294,9 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
         return
 
     try:
+        from social_hook.errors import ConfigError
         from social_hook.llm.factory import create_client
         from social_hook.llm.gatekeeper import Gatekeeper
-        from social_hook.errors import ConfigError
 
         if not config:
             _send(adapter, chat_id, f"Not configured. Run {PROJECT_SLUG} setup first.")
@@ -315,12 +321,14 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
             # Always open DB — needed for snapshot even without draft context
             _context_conn = _get_conn()
             from social_hook.llm.dry_run import DryRunContext
+
             db = DryRunContext(_context_conn, dry_run=False)
 
             if ctx:
                 draft_id_ctx, project_id = ctx
                 try:
                     from social_hook.db import get_draft
+
                     draft_obj = get_draft(_context_conn, draft_id_ctx)
                 except Exception:
                     pass  # Graceful fallback — context is optional
@@ -328,6 +336,7 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
             # If no project from draft context, use first active project
             if not project_id:
                 from social_hook.db import operations as ops
+
                 all_projects = ops.get_all_projects(_context_conn)
                 active = [p for p in all_projects if not p.paused]
                 if active:
@@ -349,8 +358,12 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
                 summary = get_project_summary(_context_conn, project_id)
 
                 try:
-                    gk_recent_decisions = ops.get_recent_decisions(_context_conn, project_id, limit=10)
-                    gk_recent_posts = ops.get_recent_posts_for_context(_context_conn, project_id, limit=5)
+                    gk_recent_decisions = ops.get_recent_decisions(
+                        _context_conn, project_id, limit=10
+                    )
+                    gk_recent_posts = ops.get_recent_posts_for_context(
+                        _context_conn, project_id, limit=5
+                    )
                     lifecycle = ops.get_lifecycle(_context_conn, project_id)
                     gk_lifecycle_phase = lifecycle.phase if lifecycle else None
                     gk_active_arcs = ops.get_active_arcs(_context_conn, project_id)
@@ -364,7 +377,9 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
 
             # Build system snapshot, reusing already-fetched arcs
             try:
-                snapshot = _build_system_snapshot(_context_conn, project_id, config, arcs=gk_active_arcs)
+                snapshot = _build_system_snapshot(
+                    _context_conn, project_id, config, arcs=gk_active_arcs
+                )
             except Exception:
                 logger.debug("Failed to build system snapshot", exc_info=True)
 
@@ -377,6 +392,7 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
 
             # Store inbound message
             from social_hook.db.operations import insert_chat_message
+
             try:
                 insert_chat_message(_context_conn, chat_id, "user", text)
             except Exception:
@@ -405,7 +421,11 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
                 response_text = _handle_gatekeeper_direct(adapter, chat_id, route, config)
             elif route.action.value == "escalate_to_expert":
                 response_text = _handle_expert_escalation(
-                    adapter, chat_id, text, route, config,
+                    adapter,
+                    chat_id,
+                    text,
+                    route,
+                    config,
                     draft=draft_obj,
                     project_id=project_id,
                     db=db,
@@ -424,6 +444,7 @@ def handle_message(msg: InboundMessage, adapter: MessagingAdapter, config: Optio
             if _chat_msg_count % 50 == 0:
                 try:
                     from social_hook.db.operations import cleanup_old_chat_messages
+
                     cleanup_old_chat_messages(_context_conn)
                 except Exception:
                     logger.debug("Chat message cleanup failed", exc_info=True)
@@ -488,7 +509,7 @@ def _save_edit(
 
 def _handle_gatekeeper_direct(
     adapter: MessagingAdapter, chat_id: str, route: Any, config: Any
-) -> Optional[str]:
+) -> str | None:
     """Handle a Gatekeeper direct action. Returns response text for chat history."""
     op = route.operation
     if op is None:
@@ -540,7 +561,7 @@ def _handle_gatekeeper_direct(
         _save_edit(adapter, chat_id, draft_id, new_content, changed_by="gatekeeper")
         return None
     elif op_value == "query":
-        answer = params.get("answer", "I'll look into that.")
+        answer: str = params.get("answer", "I'll look into that.")
         _send(adapter, chat_id, answer)
         return answer
     else:
@@ -555,9 +576,9 @@ def _handle_expert_escalation(
     route: Any,
     config: Any,
     draft: Any = None,
-    project_id: Optional[str] = None,
+    project_id: str | None = None,
     db: Any = None,
-) -> Optional[str]:
+) -> str | None:
     """Handle an Expert escalation. Returns response text for chat history.
 
     Args:
@@ -571,9 +592,9 @@ def _handle_expert_escalation(
         db: Database context for usage logging
     """
     try:
-        from social_hook.llm.factory import create_client
-        from social_hook.llm.expert import Expert
         from social_hook.errors import ConfigError
+        from social_hook.llm.expert import Expert
+        from social_hook.llm.factory import create_client
 
         try:
             client = create_client(config.models.drafter, config)
@@ -606,9 +627,7 @@ def _handle_expert_escalation(
                 projects = get_all_projects(conn)
                 if projects:
                     project = projects[0]
-                    save_context_note(
-                        project.repo_path, result.context_note, source="telegram"
-                    )
+                    save_context_note(project.repo_path, result.context_note, source="telegram")
                     msg = f"Context note saved for {project.name}."
                     _send(adapter, chat_id, msg)
                     return msg
@@ -767,18 +786,15 @@ def cmd_pending(adapter: MessagingAdapter, chat_id: str, args: str, config: Any)
             return
 
         for d in drafts[:10]:
-            status_icon = {"draft": "📝", "approved": "✅", "scheduled": "⏰"}.get(
-                d.status, "❓"
-            )
-            text = (
-                f"{status_icon} `{d.id[:12]}` [{d.platform}]\n"
-                f"{d.content[:80]}..."
-            )
+            status_icon = {"draft": "📝", "approved": "✅", "scheduled": "⏰"}.get(d.status, "❓")
+            text = f"{status_icon} `{d.id[:12]}` [{d.platform}]\n{d.content[:80]}..."
             buttons = [
-                ButtonRow(buttons=[
-                    Button(label="Review", action="review", payload=d.id),
-                    Button(label="Quick Approve", action="quick_approve", payload=d.id),
-                ]),
+                ButtonRow(
+                    buttons=[
+                        Button(label="Review", action="review", payload=d.id),
+                        Button(label="Quick Approve", action="quick_approve", payload=d.id),
+                    ]
+                ),
             ]
             adapter.send_message(chat_id, OutboundMessage(text=text, buttons=buttons))
 
@@ -804,9 +820,11 @@ def cmd_scheduled(adapter: MessagingAdapter, chat_id: str, args: str, config: An
             time_str = d.scheduled_time or "no time"
             text = f"⏰ `{d.id[:12]}` [{d.platform}] {time_str}"
             buttons = [
-                ButtonRow(buttons=[
-                    Button(label="Cancel", action="cancel", payload=d.id),
-                ]),
+                ButtonRow(
+                    buttons=[
+                        Button(label="Cancel", action="cancel", payload=d.id),
+                    ]
+                ),
             ]
             adapter.send_message(chat_id, OutboundMessage(text=text, buttons=buttons))
     finally:
@@ -972,9 +990,7 @@ def cmd_approve(adapter: MessagingAdapter, chat_id: str, args: str, config: Any)
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
         if draft.status not in ("draft", "approved"):
-            _send(
-                adapter, chat_id, f"Cannot approve draft with status: {draft.status}"
-            )
+            _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 
         update_draft(conn, draft_id, status="approved")
@@ -1007,7 +1023,7 @@ def cmd_reject(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
         update_kwargs = {"status": "rejected"}
         if reason:
             update_kwargs["last_error"] = f"Rejected: {reason}"
-        update_draft(conn, draft_id, **update_kwargs)
+        update_draft(conn, draft_id, **update_kwargs)  # type: ignore[arg-type]
 
         msg = f"Draft `{draft_id[:12]}` rejected."
         if reason:
@@ -1060,9 +1076,7 @@ def cmd_schedule(adapter: MessagingAdapter, chat_id: str, args: str, config: Any
                 optimal_hours=config.scheduling.optimal_hours if config else None,
             )
             scheduled_str = result.datetime.isoformat()
-            update_draft(
-                conn, draft_id, status="scheduled", scheduled_time=scheduled_str
-            )
+            update_draft(conn, draft_id, status="scheduled", scheduled_time=scheduled_str)
             _send(
                 adapter,
                 chat_id,
@@ -1146,9 +1160,7 @@ def cmd_pause(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -
             _send(adapter, chat_id, f"Project `{project.name}` is already paused.")
             return
 
-        conn.execute(
-            "UPDATE projects SET paused = 1 WHERE id = ?", (project_id,)
-        )
+        conn.execute("UPDATE projects SET paused = 1 WHERE id = ?", (project_id,))
         conn.commit()
         _send(adapter, chat_id, f"Project `{project.name}` paused.")
     finally:
@@ -1175,9 +1187,7 @@ def cmd_resume(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
             _send(adapter, chat_id, f"Project `{project.name}` is not paused.")
             return
 
-        conn.execute(
-            "UPDATE projects SET paused = 0 WHERE id = ?", (project_id,)
-        )
+        conn.execute("UPDATE projects SET paused = 0 WHERE id = ?", (project_id,))
         conn.commit()
         _send(adapter, chat_id, f"Project `{project.name}` resumed.")
     finally:

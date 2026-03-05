@@ -2,7 +2,6 @@
 
 import sqlite3
 from datetime import datetime, timezone
-from typing import Optional
 
 from social_hook.db import operations as ops
 from social_hook.errors import MaxArcsError
@@ -28,8 +27,7 @@ def create_arc(conn: sqlite3.Connection, project_id: str, theme: str) -> str:
     if len(active) >= 3:
         themes = [a.theme for a in active]
         raise MaxArcsError(
-            f"Cannot create arc: 3 active arcs already exist for project "
-            f"{project_id}: {themes}"
+            f"Cannot create arc: 3 active arcs already exist for project {project_id}: {themes}"
         )
 
     arc = Arc(
@@ -45,7 +43,7 @@ def get_active_arcs(conn: sqlite3.Connection, project_id: str) -> list[Arc]:
     return ops.get_active_arcs(conn, project_id)
 
 
-def get_arc(conn: sqlite3.Connection, arc_id: str) -> Optional[Arc]:
+def get_arc(conn: sqlite3.Connection, arc_id: str) -> Arc | None:
     """Get a single arc by ID."""
     return ops.get_arc(conn, arc_id)
 
@@ -64,7 +62,8 @@ def increment_arc_post_count(conn: sqlite3.Connection, arc_id: str) -> bool:
     if arc is None:
         return False
     return ops.update_arc(
-        conn, arc_id,
+        conn,
+        arc_id,
         post_count=arc.post_count + 1,
         last_post_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -73,14 +72,15 @@ def increment_arc_post_count(conn: sqlite3.Connection, arc_id: str) -> bool:
 def update_arc(
     conn: sqlite3.Connection,
     arc_id: str,
-    status: Optional[str] = None,
-    post_count: Optional[int] = None,
-    last_post_at: Optional[str] = None,
-    notes: Optional[str] = None,
+    status: str | None = None,
+    post_count: int | None = None,
+    last_post_at: str | None = None,
+    notes: str | None = None,
 ) -> bool:
     """Update an arc."""
     return ops.update_arc(
-        conn, arc_id,
+        conn,
+        arc_id,
         status=status,
         post_count=post_count,
         last_post_at=last_post_at,

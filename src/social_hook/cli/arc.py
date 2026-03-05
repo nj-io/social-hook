@@ -1,22 +1,23 @@
 """CLI commands for narrative arc management."""
 
 import os
-from typing import Optional
 
 import typer
 
 app = typer.Typer(no_args_is_help=True)
 
 
-def _resolve_project(project: Optional[str] = None) -> str:
+def _resolve_project(project: str | None = None) -> str:
     """Resolve project path, defaulting to cwd."""
     return os.path.realpath(project or os.getcwd())
 
 
 @app.command("list")
 def list_cmd(
-    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
-    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status: active, completed, abandoned, all"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
+    status: str | None = typer.Option(
+        None, "--status", "-s", help="Filter by status: active, completed, abandoned, all"
+    ),
 ):
     """List narrative arcs for a project."""
     from social_hook.db import operations as ops
@@ -50,8 +51,8 @@ def list_cmd(
 @app.command()
 def create(
     theme: str = typer.Argument(..., help="Theme/topic for the narrative arc"),
-    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
-    notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Optional notes"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
+    notes: str | None = typer.Option(None, "--notes", "-n", help="Optional notes"),
 ):
     """Create a new narrative arc."""
     from social_hook.db import operations as ops
@@ -72,7 +73,7 @@ def create(
             arc_id = create_arc(conn, proj.id, theme)
         except MaxArcsError:
             typer.echo("Maximum 3 active arcs. Complete or abandon one first.", err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
         if notes:
             update_arc(conn, arc_id, notes=notes)
@@ -86,7 +87,7 @@ def create(
 @app.command()
 def complete(
     arc_id: str = typer.Argument(..., help="Arc ID to complete"),
-    notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Optional completion notes"),
+    notes: str | None = typer.Option(None, "--notes", "-n", help="Optional completion notes"),
 ):
     """Mark a narrative arc as completed."""
     from social_hook.db import operations as ops
@@ -114,7 +115,7 @@ def complete(
 @app.command()
 def abandon(
     arc_id: str = typer.Argument(..., help="Arc ID to abandon"),
-    notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Optional notes"),
+    notes: str | None = typer.Option(None, "--notes", "-n", help="Optional notes"),
 ):
     """Mark a narrative arc as abandoned."""
     from social_hook.db import operations as ops

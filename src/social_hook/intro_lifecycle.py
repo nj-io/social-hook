@@ -2,7 +2,6 @@
 
 import logging
 from collections import defaultdict
-from typing import Optional
 
 from social_hook.db import operations as ops
 
@@ -20,7 +19,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
 
     Returns summary message.
     """
-    if not getattr(draft, 'is_intro', False):
+    if not getattr(draft, "is_intro", False):
         return ""
 
     # 1. Flip audience_introduced back
@@ -28,7 +27,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
 
     # 2. Find pending non-intro drafts
     pending = ops.get_pending_drafts(conn, project_id)
-    non_intro = [d for d in pending if not getattr(d, 'is_intro', False)]
+    non_intro = [d for d in pending if not getattr(d, "is_intro", False)]
 
     if not non_intro:
         if verbose:
@@ -45,13 +44,13 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
     replacement_count = 0
 
     try:
-        from social_hook.config.yaml import load_full_config
+        from types import SimpleNamespace
+
         from social_hook.config.project import load_project_config
+        from social_hook.config.yaml import load_full_config
         from social_hook.drafting import draft_for_platforms
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.models import CommitInfo
-
-        from types import SimpleNamespace
 
         config = load_full_config()
         db = DryRunContext(conn, dry_run=False)
@@ -91,6 +90,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
 
             # Rebuild context with audience_introduced=False
             from social_hook.llm.prompts import assemble_evaluator_context
+
             context = assemble_evaluator_context(db, project_id, project_config)
             context.audience_introduced = False
 
@@ -98,9 +98,17 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
 
             try:
                 new_results = draft_for_platforms(
-                    config, conn, db, project, decision_id=decision_id,
-                    evaluation=eval_compat, context=context, commit=commit,
-                    project_config=project_config, dry_run=False, verbose=verbose,
+                    config,
+                    conn,
+                    db,
+                    project,
+                    decision_id=decision_id,
+                    evaluation=eval_compat,
+                    context=context,
+                    commit=commit,
+                    project_config=project_config,
+                    dry_run=False,
+                    verbose=verbose,
                     target_platform_names=target_platforms,
                 )
             except Exception as e:

@@ -1,7 +1,7 @@
 """Dynamic platform registry with smart defaults and content filtering."""
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from social_hook.errors import ConfigError
 
@@ -15,7 +15,7 @@ VALID_PRIORITIES = ("primary", "secondary")
 VALID_PLATFORM_TYPES = ("builtin", "custom")
 
 # Content filter: which episode_types pass
-FILTER_EPISODE_TYPES: dict[str, Optional[set[str]]] = {
+FILTER_EPISODE_TYPES: dict[str, set[str] | None] = {
     "all": None,  # All drafts pass
     "notable": {"milestone", "launch", "synthesis", "demo_proof", "before_after", "postmortem"},
     "significant": {"milestone", "launch", "synthesis"},
@@ -55,19 +55,19 @@ class OutputPlatformConfig:
 
     # Platform identity
     type: str = "builtin"  # "builtin" or "custom"
-    account_tier: Optional[str] = None  # X-specific (free/basic/premium/premium_plus)
+    account_tier: str | None = None  # X-specific (free/basic/premium/premium_plus)
 
     # Custom platform fields (type=custom only)
-    description: Optional[str] = None  # Extra context for the drafter
-    format: Optional[str] = None  # "tweet", "post", "article", "email", etc.
-    max_length: Optional[int] = None  # Character limit (None = no limit)
+    description: str | None = None  # Extra context for the drafter
+    format: str | None = None  # "tweet", "post", "article", "email", etc.
+    max_length: int | None = None  # Character limit (None = no limit)
 
     # Advanced settings (None = resolved from priority + platform via smart defaults)
-    filter: Optional[str] = None  # "all", "notable", "significant"
-    frequency: Optional[str] = None  # "high", "moderate", "low", "minimal"
+    filter: str | None = None  # "all", "notable", "significant"
+    frequency: str | None = None  # "high", "moderate", "low", "minimal"
 
     # Per-platform scheduling overrides (None = use global + frequency preset)
-    scheduling: Optional[dict] = None
+    scheduling: dict | None = None
 
 
 @dataclass
@@ -78,10 +78,10 @@ class ResolvedPlatformConfig:
     enabled: bool
     priority: str
     type: str
-    account_tier: Optional[str]
-    description: Optional[str]
-    format: Optional[str]
-    max_length: Optional[int]
+    account_tier: str | None
+    description: str | None
+    format: str | None
+    max_length: int | None
     filter: str  # Always resolved (never None)
     frequency: str  # Always resolved (never None)
     max_posts_per_day: int  # Resolved from frequency preset or scheduling override
@@ -154,7 +154,7 @@ def resolve_platform(
     )
 
 
-def passes_content_filter(filter_name: str, episode_type: Optional[str]) -> bool:
+def passes_content_filter(filter_name: str, episode_type: str | None) -> bool:
     """Check if an episode_type passes the given content filter.
 
     Args:

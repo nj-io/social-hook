@@ -1,7 +1,6 @@
 """Result dataclasses for adapter operations."""
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -9,9 +8,9 @@ class PostResult:
     """Result of a single post operation."""
 
     success: bool
-    external_id: Optional[str] = None
-    external_url: Optional[str] = None
-    error: Optional[str] = None
+    external_id: str | None = None
+    external_url: str | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -20,7 +19,7 @@ class ThreadResult:
 
     success: bool
     tweet_results: list[PostResult] = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -28,5 +27,5 @@ class MediaResult:
     """Result of a media generation operation."""
 
     success: bool
-    file_path: Optional[str] = None
-    error: Optional[str] = None
+    file_path: str | None = None
+    error: str | None = None

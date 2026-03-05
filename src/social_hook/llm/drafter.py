@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from social_hook.config.platforms import ResolvedPlatformConfig
     from social_hook.config.project import MediaToolGuidance
     from social_hook.config.yaml import MediaGenerationConfig
-from social_hook.db import operations as ops
 from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
@@ -34,11 +33,11 @@ class Drafter:
         db: Any,
         platform: str = "x",
         tier: str = "free",
-        arc_context: Optional[dict[str, Any]] = None,
-        config: Optional[ContextConfig] = None,
+        arc_context: dict[str, Any] | None = None,
+        config: ContextConfig | None = None,
         platform_config: Optional["ResolvedPlatformConfig"] = None,
         media_config: Optional["MediaGenerationConfig"] = None,
-        media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
+        media_guidance: dict[str, "MediaToolGuidance"] | None = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit.
 
@@ -64,8 +63,12 @@ class Drafter:
         recent_posts = project_context.recent_posts
 
         system = assemble_drafter_prompt(
-            prompt, decision, project_context,
-            recent_posts, commit, arc_context=arc_context,
+            prompt,
+            decision,
+            project_context,
+            recent_posts,
+            commit,
+            arc_context=arc_context,
             config=config,
             media_config=media_config,
             media_guidance=media_guidance,
@@ -103,6 +106,7 @@ class Drafter:
             pc_tier = platform_config.account_tier or "free"
             if platform_config.account_tier:
                 from social_hook.config.yaml import TIER_CHAR_LIMITS
+
                 char_limit = TIER_CHAR_LIMITS.get(pc_tier, 25000)
                 platform_desc += f", {pc_tier} tier, {char_limit} char limit"
             elif platform_config.max_length:
@@ -123,14 +127,14 @@ class Drafter:
             # X free tier specific format guidance
             if platform == "x" and pc_tier == "free":
                 user_content += (
-                    f"\nUse the Format Selection Framework: punchy (<100), detailed (240-280), "
-                    f"or set format_hint='thread' if this needs multiple beats (4+). "
-                    f"Avoid links in main post."
+                    "\nUse the Format Selection Framework: punchy (<100), detailed (240-280), "
+                    "or set format_hint='thread' if this needs multiple beats (4+). "
+                    "Avoid links in main post."
                 )
             elif platform == "x":
                 user_content += (
-                    f"\nUse the Format Selection Framework. Write at whatever length serves the narrative. "
-                    f"Set beat_count for narrative beats. format_hint='thread' for visual separation."
+                    "\nUse the Format Selection Framework. Write at whatever length serves the narrative. "
+                    "Set beat_count for narrative beats. format_hint='thread' for visual separation."
                 )
         elif platform == "x" and tier == "free":
             from social_hook.config.yaml import TIER_CHAR_LIMITS
@@ -177,8 +181,14 @@ class Drafter:
             tools=[CreateDraftInput.to_tool_schema()],
             system=system,
         )
-        log_usage(db, "draft", getattr(self.client, "full_id", "unknown"),
-                  response.usage, project_context.project.id, commit.hash)
+        log_usage(
+            db,
+            "draft",
+            getattr(self.client, "full_id", "unknown"),
+            response.usage,
+            project_context.project.id,
+            commit.hash,
+        )
 
         tool_input = extract_tool_call(response, "create_draft")
         return CreateDraftInput.validate(tool_input)
@@ -191,7 +201,7 @@ class Drafter:
         db: Any,
         platform: str = "x",
         media_config: Optional["MediaGenerationConfig"] = None,
-        media_guidance: Optional[dict[str, "MediaToolGuidance"]] = None,
+        media_guidance: dict[str, "MediaToolGuidance"] | None = None,
     ) -> CreateDraftInput:
         """Create a thread (>= 4 tweets) for a post-worthy commit.
 
@@ -210,8 +220,11 @@ class Drafter:
         prompt = load_prompt("drafter")
 
         system = assemble_drafter_prompt(
-            prompt, decision, project_context,
-            project_context.recent_posts, commit,
+            prompt,
+            decision,
+            project_context,
+            project_context.recent_posts,
+            commit,
             media_config=media_config,
             media_guidance=media_guidance,
         )
@@ -229,8 +242,14 @@ class Drafter:
             tools=[CreateDraftInput.to_tool_schema()],
             system=system,
         )
-        log_usage(db, "draft_thread", getattr(self.client, "full_id", "unknown"),
-                  response.usage, project_context.project.id, commit.hash)
+        log_usage(
+            db,
+            "draft_thread",
+            getattr(self.client, "full_id", "unknown"),
+            response.usage,
+            project_context.project.id,
+            commit.hash,
+        )
 
         tool_input = extract_tool_call(response, "create_draft")
         return CreateDraftInput.validate(tool_input)

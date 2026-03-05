@@ -1,6 +1,5 @@
 """Tests for LLM agent roles: Evaluator, Drafter, Gatekeeper, Expert (T13-T16)."""
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -12,8 +11,7 @@ from social_hook.llm.base import LLMClient, ToolExtractionError
 from social_hook.llm.drafter import Drafter
 from social_hook.llm.evaluator import Evaluator
 from social_hook.llm.expert import Expert
-from social_hook.llm.gatekeeper import Gatekeeper
-from social_hook.llm.gatekeeper import _extract_text_content
+from social_hook.llm.gatekeeper import Gatekeeper, _extract_text_content
 from social_hook.llm.schemas import (
     CreateDraftInput,
     ExpertResponseInput,
@@ -25,14 +23,12 @@ from social_hook.llm.schemas import (
 from social_hook.models import (
     Arc,
     CommitInfo,
-    Decision,
     Draft,
     Lifecycle,
     Post,
     Project,
     ProjectContext,
 )
-
 
 # =============================================================================
 # Helpers
@@ -146,21 +142,23 @@ class TestEvaluator:
     def test_evaluate_post_worthy(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_evaluation", {
-            "commit_analysis": {"summary": "Added authentication"},
-            "targets": {
-                "default": {
-                    "action": "draft",
-                    "reason": "Major new feature",
-                    "episode_type": "milestone",
-                    "post_category": "opportunistic",
-                    "media_tool": "ray_so",
+        mock_client.complete.return_value = _mock_response(
+            "log_evaluation",
+            {
+                "commit_analysis": {"summary": "Added authentication"},
+                "targets": {
+                    "default": {
+                        "action": "draft",
+                        "reason": "Major new feature",
+                        "episode_type": "milestone",
+                        "post_category": "opportunistic",
+                        "media_tool": "ray_so",
+                    },
                 },
             },
-        })
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             evaluator = Evaluator(mock_client)
             result = evaluator.evaluate(sample_commit, sample_context, mock_db)
 
@@ -173,18 +171,20 @@ class TestEvaluator:
     def test_evaluate_not_post_worthy(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_evaluation", {
-            "commit_analysis": {"summary": "Minor formatting fix"},
-            "targets": {
-                "default": {
-                    "action": "skip",
-                    "reason": "Minor formatting fix",
+        mock_client.complete.return_value = _mock_response(
+            "log_evaluation",
+            {
+                "commit_analysis": {"summary": "Minor formatting fix"},
+                "targets": {
+                    "default": {
+                        "action": "skip",
+                        "reason": "Minor formatting fix",
+                    },
                 },
             },
-        })
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             evaluator = Evaluator(mock_client)
             result = evaluator.evaluate(sample_commit, sample_context, mock_db)
 
@@ -194,18 +194,20 @@ class TestEvaluator:
     def test_evaluate_consolidate(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_evaluation", {
-            "commit_analysis": {"summary": "Part of auth change"},
-            "targets": {
-                "default": {
-                    "action": "hold",
-                    "reason": "Part of a larger auth change",
+        mock_client.complete.return_value = _mock_response(
+            "log_evaluation",
+            {
+                "commit_analysis": {"summary": "Part of auth change"},
+                "targets": {
+                    "default": {
+                        "action": "hold",
+                        "reason": "Part of a larger auth change",
+                    },
                 },
             },
-        })
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             evaluator = Evaluator(mock_client)
             result = evaluator.evaluate(sample_commit, sample_context, mock_db)
 
@@ -216,8 +218,7 @@ class TestEvaluator:
     ):
         mock_client.complete.return_value = _mock_response_no_tool()
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             evaluator = Evaluator(mock_client)
             with pytest.raises(ToolExtractionError):
                 evaluator.evaluate(sample_commit, sample_context, mock_db)
@@ -225,18 +226,20 @@ class TestEvaluator:
     def test_evaluate_invalid_response_raises(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_evaluation", {
-            "commit_analysis": {"summary": "test"},
-            "targets": {
-                "default": {
-                    "action": "invalid_value",
-                    "reason": "test",
+        mock_client.complete.return_value = _mock_response(
+            "log_evaluation",
+            {
+                "commit_analysis": {"summary": "test"},
+                "targets": {
+                    "default": {
+                        "action": "invalid_value",
+                        "reason": "test",
+                    },
                 },
             },
-        })
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             evaluator = Evaluator(mock_client)
             with pytest.raises(MalformedResponseError):
                 evaluator.evaluate(sample_commit, sample_context, mock_db)
@@ -245,15 +248,17 @@ class TestEvaluator:
     def test_evaluate_passes_usage_tracking(
         self, mock_log_usage, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("log_evaluation", {
-            "commit_analysis": {"summary": "Test"},
-            "targets": {
-                "default": {"action": "draft", "reason": "Test"},
+        mock_client.complete.return_value = _mock_response(
+            "log_evaluation",
+            {
+                "commit_analysis": {"summary": "Test"},
+                "targets": {
+                    "default": {"action": "draft", "reason": "Test"},
+                },
             },
-        })
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             evaluator = Evaluator(mock_client)
             evaluator.evaluate(sample_commit, sample_context, mock_db)
 
@@ -272,15 +277,17 @@ class TestEvaluator:
             "commits_since_summary": 12,
             "days_since_summary": 7,
         }
-        mock_client.complete.return_value = _mock_response("log_evaluation", {
-            "commit_analysis": {"summary": "Test"},
-            "targets": {
-                "default": {"action": "draft", "reason": "Test"},
+        mock_client.complete.return_value = _mock_response(
+            "log_evaluation",
+            {
+                "commit_analysis": {"summary": "Test"},
+                "targets": {
+                    "default": {"action": "draft", "reason": "Test"},
+                },
             },
-        })
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             evaluator = Evaluator(mock_client)
             evaluator.evaluate(sample_commit, sample_context, mock_db)
 
@@ -294,15 +301,17 @@ class TestEvaluator:
     ):
         """T20a: Evaluator works without freshness data."""
         mock_db.get_summary_freshness.return_value = None
-        mock_client.complete.return_value = _mock_response("log_evaluation", {
-            "commit_analysis": {"summary": "Test"},
-            "targets": {
-                "default": {"action": "draft", "reason": "Test"},
+        mock_client.complete.return_value = _mock_response(
+            "log_evaluation",
+            {
+                "commit_analysis": {"summary": "Test"},
+                "targets": {
+                    "default": {"action": "draft", "reason": "Test"},
+                },
             },
-        })
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             evaluator = Evaluator(mock_client)
             evaluator.evaluate(sample_commit, sample_context, mock_db)
 
@@ -319,14 +328,15 @@ class TestEvaluator:
 class TestDrafter:
     """T14: Drafter agent."""
 
-    def test_create_draft_x(
-        self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
-    ):
-        mock_client.complete.return_value = _mock_response("create_draft", {
-            "content": "Just shipped auth! 🔐",
-            "platform": "x",
-            "reasoning": "Milestone worth sharing",
-        })
+    def test_create_draft_x(self, mock_client, mock_db, sample_commit, sample_context, prompts_dir):
+        mock_client.complete.return_value = _mock_response(
+            "create_draft",
+            {
+                "content": "Just shipped auth! 🔐",
+                "platform": "x",
+                "reasoning": "Milestone worth sharing",
+            },
+        )
 
         decision = SimpleNamespace(
             decision="draft",
@@ -342,11 +352,13 @@ class TestDrafter:
             commit_summary=None,
         )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             drafter = Drafter(mock_client)
             result = drafter.create_draft(
-                decision, sample_context, sample_commit, mock_db,
+                decision,
+                sample_context,
+                sample_commit,
+                mock_db,
             )
 
         assert isinstance(result, CreateDraftInput)
@@ -356,24 +368,36 @@ class TestDrafter:
     def test_create_draft_linkedin(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("create_draft", {
-            "content": "Implemented user authentication using JWT...",
-            "platform": "linkedin",
-            "reasoning": "Professional audience",
-        })
-
-        decision = SimpleNamespace(
-            decision="draft", reasoning="Test",
-            episode_type=None, post_category=None, arc_id=None,
-            new_arc_theme=None, media_tool=None, reference_posts=None,
-            angle=None, include_project_docs=None, commit_summary=None,
+        mock_client.complete.return_value = _mock_response(
+            "create_draft",
+            {
+                "content": "Implemented user authentication using JWT...",
+                "platform": "linkedin",
+                "reasoning": "Professional audience",
+            },
         )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        decision = SimpleNamespace(
+            decision="draft",
+            reasoning="Test",
+            episode_type=None,
+            post_category=None,
+            arc_id=None,
+            new_arc_theme=None,
+            media_tool=None,
+            reference_posts=None,
+            angle=None,
+            include_project_docs=None,
+            commit_summary=None,
+        )
+
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             drafter = Drafter(mock_client)
             result = drafter.create_draft(
-                decision, sample_context, sample_commit, mock_db,
+                decision,
+                sample_context,
+                sample_commit,
+                mock_db,
                 platform="linkedin",
             )
 
@@ -382,57 +406,79 @@ class TestDrafter:
     def test_create_draft_with_media(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("create_draft", {
-            "content": "Auth flow diagram",
-            "platform": "x",
-            "reasoning": "Visual explanation",
-            "media_type": "mermaid",
-            "media_spec": {"diagram": "graph LR; A-->B"},
-        })
-
-        decision = SimpleNamespace(
-            decision="draft", reasoning="Test",
-            episode_type=None, post_category=None, arc_id=None,
-            new_arc_theme=None, media_tool="mermaid", reference_posts=None,
-            angle=None, include_project_docs=None, commit_summary=None,
+        mock_client.complete.return_value = _mock_response(
+            "create_draft",
+            {
+                "content": "Auth flow diagram",
+                "platform": "x",
+                "reasoning": "Visual explanation",
+                "media_type": "mermaid",
+                "media_spec": {"diagram": "graph LR; A-->B"},
+            },
         )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        decision = SimpleNamespace(
+            decision="draft",
+            reasoning="Test",
+            episode_type=None,
+            post_category=None,
+            arc_id=None,
+            new_arc_theme=None,
+            media_tool="mermaid",
+            reference_posts=None,
+            angle=None,
+            include_project_docs=None,
+            commit_summary=None,
+        )
+
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             drafter = Drafter(mock_client)
             result = drafter.create_draft(
-                decision, sample_context, sample_commit, mock_db,
+                decision,
+                sample_context,
+                sample_commit,
+                mock_db,
             )
 
         assert result.media_type.value == "mermaid"
 
-    def test_create_thread(
-        self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
-    ):
+    def test_create_thread(self, mock_client, mock_db, sample_commit, sample_context, prompts_dir):
         thread_content = (
             "1/ Just shipped user authentication for my project.\n\n"
             "2/ The tricky part was handling token refresh without losing state.\n\n"
             "3/ Ended up using a rotating token strategy.\n\n"
             "4/ Full breakdown in the thread below."
         )
-        mock_client.complete.return_value = _mock_response("create_draft", {
-            "content": thread_content,
-            "platform": "x",
-            "reasoning": "Complex topic needs thread",
-        })
-
-        decision = SimpleNamespace(
-            decision="draft", reasoning="Test",
-            episode_type=None, post_category=None, arc_id=None,
-            new_arc_theme=None, media_tool=None, reference_posts=None,
-            angle=None, include_project_docs=None, commit_summary=None,
+        mock_client.complete.return_value = _mock_response(
+            "create_draft",
+            {
+                "content": thread_content,
+                "platform": "x",
+                "reasoning": "Complex topic needs thread",
+            },
         )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        decision = SimpleNamespace(
+            decision="draft",
+            reasoning="Test",
+            episode_type=None,
+            post_category=None,
+            arc_id=None,
+            new_arc_theme=None,
+            media_tool=None,
+            reference_posts=None,
+            angle=None,
+            include_project_docs=None,
+            commit_summary=None,
+        )
+
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             drafter = Drafter(mock_client)
             result = drafter.create_thread(
-                decision, sample_context, sample_commit, mock_db,
+                decision,
+                sample_context,
+                sample_commit,
+                mock_db,
             )
 
         assert isinstance(result, CreateDraftInput)
@@ -445,25 +491,38 @@ class TestDrafter:
     def test_create_draft_free_tier_link_warning(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
-        mock_client.complete.return_value = _mock_response("create_draft", {
-            "content": "Test post",
-            "platform": "x",
-            "reasoning": "Test",
-        })
-
-        decision = SimpleNamespace(
-            decision="draft", reasoning="Test",
-            episode_type=None, post_category=None, arc_id=None,
-            new_arc_theme=None, media_tool=None, reference_posts=None,
-            angle=None, include_project_docs=None, commit_summary=None,
+        mock_client.complete.return_value = _mock_response(
+            "create_draft",
+            {
+                "content": "Test post",
+                "platform": "x",
+                "reasoning": "Test",
+            },
         )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        decision = SimpleNamespace(
+            decision="draft",
+            reasoning="Test",
+            episode_type=None,
+            post_category=None,
+            arc_id=None,
+            new_arc_theme=None,
+            media_tool=None,
+            reference_posts=None,
+            angle=None,
+            include_project_docs=None,
+            commit_summary=None,
+        )
+
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             drafter = Drafter(mock_client)
             drafter.create_draft(
-                decision, sample_context, sample_commit, mock_db,
-                platform="x", tier="free",
+                decision,
+                sample_context,
+                sample_commit,
+                mock_db,
+                platform="x",
+                tier="free",
             )
 
         call_kwargs = mock_client.complete.call_args[1]
@@ -476,51 +535,77 @@ class TestDrafter:
         mock_client.complete.return_value = _mock_response_no_tool()
 
         decision = SimpleNamespace(
-            decision="draft", reasoning="Test",
-            episode_type=None, post_category=None, arc_id=None,
-            new_arc_theme=None, media_tool=None, reference_posts=None,
-            angle=None, include_project_docs=None, commit_summary=None,
+            decision="draft",
+            reasoning="Test",
+            episode_type=None,
+            post_category=None,
+            arc_id=None,
+            new_arc_theme=None,
+            media_tool=None,
+            reference_posts=None,
+            angle=None,
+            include_project_docs=None,
+            commit_summary=None,
         )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             drafter = Drafter(mock_client)
             with pytest.raises(ToolExtractionError):
                 drafter.create_draft(
-                    decision, sample_context, sample_commit, mock_db,
+                    decision,
+                    sample_context,
+                    sample_commit,
+                    mock_db,
                 )
 
     def test_create_draft_with_arc_context(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
         """T20c: Arc posts include arc context in drafter."""
-        mock_client.complete.return_value = _mock_response("create_draft", {
-            "content": "Continuing the auth arc...",
-            "platform": "x",
-            "reasoning": "Advances auth arc",
-        })
+        mock_client.complete.return_value = _mock_response(
+            "create_draft",
+            {
+                "content": "Continuing the auth arc...",
+                "platform": "x",
+                "reasoning": "Advances auth arc",
+            },
+        )
 
         decision = SimpleNamespace(
-            decision="draft", reasoning="Arc post",
-            episode_type=None, post_category="arc", arc_id="arc_1",
-            new_arc_theme=None, media_tool=None, reference_posts=None,
-            angle=None, include_project_docs=None, commit_summary=None,
+            decision="draft",
+            reasoning="Arc post",
+            episode_type=None,
+            post_category="arc",
+            arc_id="arc_1",
+            new_arc_theme=None,
+            media_tool=None,
+            reference_posts=None,
+            angle=None,
+            include_project_docs=None,
+            commit_summary=None,
         )
 
         arc = Arc(id="arc_1", project_id="proj_test1", theme="Auth arc", post_count=3)
         arc_ctx = {
             "arc": arc,
             "posts": [
-                Post(id="p1", draft_id="d1", project_id="proj_test1",
-                     platform="x", content="Previous auth post"),
+                Post(
+                    id="p1",
+                    draft_id="d1",
+                    project_id="proj_test1",
+                    platform="x",
+                    content="Previous auth post",
+                ),
             ],
         }
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             drafter = Drafter(mock_client)
             result = drafter.create_draft(
-                decision, sample_context, sample_commit, mock_db,
+                decision,
+                sample_context,
+                sample_commit,
+                mock_db,
                 arc_context=arc_ctx,
             )
 
@@ -536,18 +621,23 @@ class TestGatekeeper:
     """T15: Gatekeeper agent."""
 
     def test_route_approve(self, mock_client, prompts_dir):
-        mock_client.complete.return_value = _mock_response("route_action", {
-            "action": "handle_directly",
-            "operation": "approve",
-        })
-
-        draft = Draft(
-            id="draft_1", project_id="proj_1", decision_id="dec_1",
-            platform="x", content="Test post",
+        mock_client.complete.return_value = _mock_response(
+            "route_action",
+            {
+                "action": "handle_directly",
+                "operation": "approve",
+            },
         )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        draft = Draft(
+            id="draft_1",
+            project_id="proj_1",
+            decision_id="dec_1",
+            platform="x",
+            content="Test post",
+        )
+
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
             result = gk.route("looks good", draft_context=draft)
 
@@ -556,14 +646,16 @@ class TestGatekeeper:
         assert result.operation.value == "approve"
 
     def test_route_schedule(self, mock_client, prompts_dir):
-        mock_client.complete.return_value = _mock_response("route_action", {
-            "action": "handle_directly",
-            "operation": "schedule",
-            "params": {"time": "2026-01-15T14:00:00"},
-        })
+        mock_client.complete.return_value = _mock_response(
+            "route_action",
+            {
+                "action": "handle_directly",
+                "operation": "schedule",
+                "params": {"time": "2026-01-15T14:00:00"},
+            },
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
             result = gk.route("schedule for 2pm tomorrow")
 
@@ -571,40 +663,46 @@ class TestGatekeeper:
         assert result.params["time"] == "2026-01-15T14:00:00"
 
     def test_route_reject(self, mock_client, prompts_dir):
-        mock_client.complete.return_value = _mock_response("route_action", {
-            "action": "handle_directly",
-            "operation": "reject",
-        })
+        mock_client.complete.return_value = _mock_response(
+            "route_action",
+            {
+                "action": "handle_directly",
+                "operation": "reject",
+            },
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
             result = gk.route("no, skip this")
 
         assert result.operation.value == "reject"
 
     def test_route_cancel(self, mock_client, prompts_dir):
-        mock_client.complete.return_value = _mock_response("route_action", {
-            "action": "handle_directly",
-            "operation": "cancel",
-        })
+        mock_client.complete.return_value = _mock_response(
+            "route_action",
+            {
+                "action": "handle_directly",
+                "operation": "cancel",
+            },
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
             result = gk.route("cancel")
 
         assert result.operation.value == "cancel"
 
     def test_route_escalate(self, mock_client, prompts_dir):
-        mock_client.complete.return_value = _mock_response("route_action", {
-            "action": "escalate_to_expert",
-            "escalation_reason": "Creative request",
-            "escalation_context": "User wants more casual tone",
-        })
+        mock_client.complete.return_value = _mock_response(
+            "route_action",
+            {
+                "action": "escalate_to_expert",
+                "escalation_reason": "Creative request",
+                "escalation_context": "User wants more casual tone",
+            },
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
             result = gk.route("make it more fun and casual")
 
@@ -613,30 +711,35 @@ class TestGatekeeper:
 
     def test_route_reject_with_context_escalates(self, mock_client, prompts_dir):
         """T20e: Reject with context escalates to expert."""
-        mock_client.complete.return_value = _mock_response("route_action", {
-            "action": "escalate_to_expert",
-            "escalation_reason": "Reject with context",
-            "escalation_context": "Too similar to yesterday's post",
-        })
+        mock_client.complete.return_value = _mock_response(
+            "route_action",
+            {
+                "action": "escalate_to_expert",
+                "escalation_reason": "Reject with context",
+                "escalation_context": "Too similar to yesterday's post",
+            },
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
             result = gk.route("no - too similar to yesterday's post")
 
         assert result.action.value == "escalate_to_expert"
 
     def test_route_with_project_summary(self, mock_client, prompts_dir):
-        mock_client.complete.return_value = _mock_response("route_action", {
-            "action": "handle_directly",
-            "operation": "approve",
-        })
+        mock_client.complete.return_value = _mock_response(
+            "route_action",
+            {
+                "action": "handle_directly",
+                "operation": "approve",
+            },
+        )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
-            result = gk.route(
-                "approve", project_summary="Auth project for developers.",
+            gk.route(
+                "approve",
+                project_summary="Auth project for developers.",
             )
 
         # Verify summary was included in system prompt
@@ -647,8 +750,7 @@ class TestGatekeeper:
         """Gatekeeper returns fallback query when LLM skips the tool."""
         mock_client.complete.return_value = _mock_response_no_tool()
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
             result = gk.route("hi")
 
@@ -672,8 +774,7 @@ class TestGatekeeper:
         response.usage.cache_creation_input_tokens = 0
         mock_client.complete.return_value = response
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             gk = Gatekeeper(mock_client)
             result = gk.route("test")
 
@@ -736,22 +837,28 @@ class TestExpert:
     """T16: Expert agent."""
 
     def test_handle_refine_draft(self, mock_client, prompts_dir):
-        mock_client.complete.return_value = _mock_response("expert_response", {
-            "action": "refine_draft",
-            "reasoning": "Adjusted tone per user request",
-            "refined_content": "Updated auth post with casual tone!",
-        })
-
-        draft = Draft(
-            id="draft_1", project_id="proj_1", decision_id="dec_1",
-            platform="x", content="Original auth post.",
+        mock_client.complete.return_value = _mock_response(
+            "expert_response",
+            {
+                "action": "refine_draft",
+                "reasoning": "Adjusted tone per user request",
+                "refined_content": "Updated auth post with casual tone!",
+            },
         )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        draft = Draft(
+            id="draft_1",
+            project_id="proj_1",
+            decision_id="dec_1",
+            platform="x",
+            content="Original auth post.",
+        )
+
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             expert = Expert(mock_client)
             result = expert.handle(
-                draft, "make it more casual",
+                draft,
+                "make it more casual",
                 escalation_reason="Creative request",
             )
 
@@ -760,19 +867,22 @@ class TestExpert:
         assert "casual" in result.refined_content
 
     def test_handle_answer_question(self, mock_client, prompts_dir):
-        mock_client.complete.return_value = _mock_response("expert_response", {
-            "action": "answer_question",
-            "reasoning": "User asked about decision logic",
-            "answer": "The commit was skipped because it was a minor fix.",
-        })
+        mock_client.complete.return_value = _mock_response(
+            "expert_response",
+            {
+                "action": "answer_question",
+                "reasoning": "User asked about decision logic",
+                "answer": "The commit was skipped because it was a minor fix.",
+            },
+        )
 
         draft = {"content": "N/A", "platform": "x"}
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             expert = Expert(mock_client)
             result = expert.handle(
-                draft, "why was my last commit skipped?",
+                draft,
+                "why was my last commit skipped?",
                 escalation_reason="Question about reasoning",
             )
 
@@ -781,22 +891,28 @@ class TestExpert:
 
     def test_handle_save_context_note(self, mock_client, prompts_dir):
         """T20e: Expert saves context note from reject-with-context."""
-        mock_client.complete.return_value = _mock_response("expert_response", {
-            "action": "save_context_note",
-            "reasoning": "User provided feedback about post similarity",
-            "context_note": "Author prefers more variety between consecutive posts",
-        })
-
-        draft = Draft(
-            id="draft_1", project_id="proj_1", decision_id="dec_1",
-            platform="x", content="Similar post content.",
+        mock_client.complete.return_value = _mock_response(
+            "expert_response",
+            {
+                "action": "save_context_note",
+                "reasoning": "User provided feedback about post similarity",
+                "context_note": "Author prefers more variety between consecutive posts",
+            },
         )
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        draft = Draft(
+            id="draft_1",
+            project_id="proj_1",
+            decision_id="dec_1",
+            platform="x",
+            content="Similar post content.",
+        )
+
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             expert = Expert(mock_client)
             result = expert.handle(
-                draft, "no - too similar to yesterday",
+                draft,
+                "no - too similar to yesterday",
                 escalation_reason="Reject with context",
                 escalation_context="Post repetition feedback",
             )
@@ -805,19 +921,22 @@ class TestExpert:
         assert "variety" in result.context_note
 
     def test_handle_with_project_summary(self, mock_client, prompts_dir):
-        mock_client.complete.return_value = _mock_response("expert_response", {
-            "action": "refine_draft",
-            "reasoning": "Test",
-            "refined_content": "Refined content",
-        })
+        mock_client.complete.return_value = _mock_response(
+            "expert_response",
+            {
+                "action": "refine_draft",
+                "reasoning": "Test",
+                "refined_content": "Refined content",
+            },
+        )
 
         draft = {"content": "Test", "platform": "x"}
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             expert = Expert(mock_client)
             expert.handle(
-                draft, "edit this",
+                draft,
+                "edit this",
                 escalation_reason="Edit request",
                 project_summary="Auth project summary.",
             )
@@ -830,30 +949,33 @@ class TestExpert:
 
         draft = {"content": "Test", "platform": "x"}
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             expert = Expert(mock_client)
             with pytest.raises(ToolExtractionError):
                 expert.handle(
-                    draft, "test",
+                    draft,
+                    "test",
                     escalation_reason="Test",
                 )
 
     def test_expert_shares_drafter_prompt(self, mock_client, prompts_dir):
         """Expert uses drafter.md, not its own prompt file."""
-        mock_client.complete.return_value = _mock_response("expert_response", {
-            "action": "refine_draft",
-            "reasoning": "Test",
-            "refined_content": "Test",
-        })
+        mock_client.complete.return_value = _mock_response(
+            "expert_response",
+            {
+                "action": "refine_draft",
+                "reasoning": "Test",
+                "refined_content": "Test",
+            },
+        )
 
         draft = {"content": "Test", "platform": "x"}
 
-        with patch("social_hook.llm.prompts.Path.home",
-                    return_value=prompts_dir.parent.parent):
+        with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             expert = Expert(mock_client)
             expert.handle(
-                draft, "test",
+                draft,
+                "test",
                 escalation_reason="Test",
             )
 

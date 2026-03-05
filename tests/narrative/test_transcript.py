@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from social_hook.narrative.transcript import (
     discover_transcript_path,
     filter_for_extraction,
@@ -12,7 +10,6 @@ from social_hook.narrative.transcript import (
     read_transcript,
     truncate_to_budget,
 )
-
 
 # =============================================================================
 # Helpers
@@ -167,10 +164,12 @@ class TestFilterForExtraction:
     """Tests for filter_for_extraction."""
 
     def test_strips_tool_use_blocks(self):
-        msg = _make_assistant_msg([
-            {"type": "text", "text": "I'll read the file"},
-            {"type": "tool_use", "name": "Read", "input": {"path": "/etc/passwd"}},
-        ])
+        msg = _make_assistant_msg(
+            [
+                {"type": "text", "text": "I'll read the file"},
+                {"type": "tool_use", "name": "Read", "input": {"path": "/etc/passwd"}},
+            ]
+        )
         result = filter_for_extraction([msg])
         assert len(result) == 1
         blocks = result[0]["message"]["content"]
@@ -178,17 +177,21 @@ class TestFilterForExtraction:
         assert blocks[0]["type"] == "text"
 
     def test_strips_tool_result_blocks(self):
-        msg = _make_user_msg([
-            {"type": "tool_result", "content": "ANTHROPIC_API_KEY=sk-secret-key"},
-        ])
+        msg = _make_user_msg(
+            [
+                {"type": "tool_result", "content": "ANTHROPIC_API_KEY=sk-secret-key"},
+            ]
+        )
         result = filter_for_extraction([msg])
         assert len(result) == 0  # No blocks left, message removed
 
     def test_strips_image_blocks(self):
-        msg = _make_user_msg([
-            {"type": "text", "text": "Here is a screenshot"},
-            {"type": "image", "source": {"data": "base64data..."}},
-        ])
+        msg = _make_user_msg(
+            [
+                {"type": "text", "text": "Here is a screenshot"},
+                {"type": "image", "source": {"data": "base64data..."}},
+            ]
+        )
         result = filter_for_extraction([msg])
         assert len(result) == 1
         blocks = result[0]["message"]["content"]
@@ -196,9 +199,11 @@ class TestFilterForExtraction:
         assert blocks[0]["type"] == "text"
 
     def test_keeps_text_blocks(self):
-        msg = _make_assistant_msg([
-            {"type": "text", "text": "Let me explain the architecture"},
-        ])
+        msg = _make_assistant_msg(
+            [
+                {"type": "text", "text": "Let me explain the architecture"},
+            ]
+        )
         result = filter_for_extraction([msg])
         assert len(result) == 1
         blocks = result[0]["message"]["content"]
@@ -206,10 +211,12 @@ class TestFilterForExtraction:
         assert blocks[0]["text"] == "Let me explain the architecture"
 
     def test_keeps_thinking_blocks(self):
-        msg = _make_assistant_msg([
-            {"type": "thinking", "thinking": "The user wants to understand the design"},
-            {"type": "text", "text": "Here is the design..."},
-        ])
+        msg = _make_assistant_msg(
+            [
+                {"type": "thinking", "thinking": "The user wants to understand the design"},
+                {"type": "text", "text": "Here is the design..."},
+            ]
+        )
         result = filter_for_extraction([msg])
         assert len(result) == 1
         blocks = result[0]["message"]["content"]
@@ -234,9 +241,11 @@ class TestFilterForExtraction:
         assert result[0]["message"]["content"] == "Just a plain text message"
 
     def test_handles_content_as_array(self):
-        msg = _make_assistant_msg([
-            {"type": "text", "text": "Response text"},
-        ])
+        msg = _make_assistant_msg(
+            [
+                {"type": "text", "text": "Response text"},
+            ]
+        )
         result = filter_for_extraction([msg])
         assert len(result) == 1
         blocks = result[0]["message"]["content"]
@@ -244,11 +253,13 @@ class TestFilterForExtraction:
         assert len(blocks) == 1
 
     def test_removes_empty_text_blocks(self):
-        msg = _make_assistant_msg([
-            {"type": "text", "text": "\n\n"},
-            {"type": "text", "text": "   "},
-            {"type": "text", "text": "Actual content here"},
-        ])
+        msg = _make_assistant_msg(
+            [
+                {"type": "text", "text": "\n\n"},
+                {"type": "text", "text": "   "},
+                {"type": "text", "text": "Actual content here"},
+            ]
+        )
         result = filter_for_extraction([msg])
         assert len(result) == 1
         blocks = result[0]["message"]["content"]
@@ -256,9 +267,11 @@ class TestFilterForExtraction:
         assert blocks[0]["text"] == "Actual content here"
 
     def test_removes_message_when_all_blocks_filtered(self):
-        msg = _make_user_msg([
-            {"type": "tool_result", "content": "file contents here"},
-        ])
+        msg = _make_user_msg(
+            [
+                {"type": "tool_result", "content": "file contents here"},
+            ]
+        )
         result = filter_for_extraction([msg])
         assert len(result) == 0
 
@@ -307,10 +320,12 @@ class TestFormatForPrompt:
         assert "[ASSISTANT] It works like this..." in result
 
     def test_thinking_format(self):
-        msg = _make_assistant_msg([
-            {"type": "thinking", "thinking": "Let me analyze this"},
-            {"type": "text", "text": "Here is my analysis"},
-        ])
+        msg = _make_assistant_msg(
+            [
+                {"type": "thinking", "thinking": "Let me analyze this"},
+                {"type": "text", "text": "Here is my analysis"},
+            ]
+        )
         filtered = filter_for_extraction([msg])
         result = format_for_prompt(filtered)
         assert "[ASSISTANT THINKING] Let me analyze this" in result
@@ -393,19 +408,28 @@ class TestPipelineIntegration:
         transcript = tmp_path / "session.jsonl"
         entries = [
             _make_user_msg("Let's build a new feature"),
-            _make_assistant_msg([
-                {"type": "thinking", "thinking": "The user wants a new feature. I should plan the approach."},
-                {"type": "text", "text": "I'll help you build that feature."},
-                {"type": "tool_use", "name": "Read", "input": {"path": "/src/main.py"}},
-            ]),
-            _make_user_msg([
-                {"type": "tool_result", "content": "def main(): pass"},
-            ]),
+            _make_assistant_msg(
+                [
+                    {
+                        "type": "thinking",
+                        "thinking": "The user wants a new feature. I should plan the approach.",
+                    },
+                    {"type": "text", "text": "I'll help you build that feature."},
+                    {"type": "tool_use", "name": "Read", "input": {"path": "/src/main.py"}},
+                ]
+            ),
+            _make_user_msg(
+                [
+                    {"type": "tool_result", "content": "def main(): pass"},
+                ]
+            ),
             {"type": "progress", "data": {"type": "hook_progress"}},
             {"type": "system", "subtype": "stop_hook_summary"},
-            _make_assistant_msg([
-                {"type": "text", "text": "Here is the implementation."},
-            ]),
+            _make_assistant_msg(
+                [
+                    {"type": "text", "text": "Here is the implementation."},
+                ]
+            ),
         ]
         _write_jsonl(transcript, entries)
 
@@ -445,6 +469,7 @@ class TestImports:
             read_transcript,
             truncate_to_budget,
         )
+
         assert callable(read_transcript)
         assert callable(discover_transcript_path)
         assert callable(filter_for_extraction)

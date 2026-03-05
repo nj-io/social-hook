@@ -1,16 +1,13 @@
 """Consolidation tick: processes batched consolidate/deferred decisions."""
 
-import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id, get_base_path, get_db_path
-from social_hook.models import Decision
 from social_hook.scheduler import acquire_lock, release_lock
 
 logger = logging.getLogger(__name__)
@@ -23,8 +20,8 @@ def get_consolidation_lock_path() -> Path:
 
 def consolidation_tick(
     dry_run: bool = False,
-    config_path: Optional[str] = None,
-    lock_path: Optional[Path] = None,
+    config_path: str | None = None,
+    lock_path: Path | None = None,
 ) -> int:
     """Run one consolidation tick: process batched decisions.
 
@@ -67,7 +64,9 @@ def consolidation_tick(
                 continue
 
             decisions = ops.get_held_decisions(
-                conn, project.id, limit=config.consolidation.batch_size,
+                conn,
+                project.id,
+                limit=config.consolidation.batch_size,
             )
             if not decisions:
                 continue
@@ -79,7 +78,13 @@ def consolidation_tick(
                 _process_notify_only(config, project, decisions, batch_id, dry_run)
             elif config.consolidation.mode == "re_evaluate":
                 _process_re_evaluate(
-                    config, conn, db, project, decisions, batch_id, dry_run,
+                    config,
+                    conn,
+                    db,
+                    project,
+                    decisions,
+                    batch_id,
+                    dry_run,
                 )
 
             # Mark as processed (direct DB write, not via DryRunContext)
@@ -113,8 +118,7 @@ def _process_notify_only(config, project, decisions, batch_id, dry_run):
     message = (
         f"*Consolidation batch* `{batch_id[:12]}`\n"
         f"Project: {project.name}\n"
-        f"Decisions: {len(decisions)}\n\n"
-        + "\n".join(summaries)
+        f"Decisions: {len(decisions)}\n\n" + "\n".join(summaries)
     )
 
     from social_hook.notifications import send_notification
@@ -134,13 +138,14 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
 
     # Combine commit summaries for the evaluator
     combined_summary = "\n".join(
-        f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}"
-        for d in decisions
+        f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}" for d in decisions
     )
 
     # Assemble context (use the latest decision's commit for timestamps)
     context = assemble_evaluator_context(
-        db, project.id, project_config,
+        db,
+        project.id,
+        project_config,
     )
 
     # Build a synthetic CommitInfo representing the batch
@@ -172,7 +177,9 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
                 platform_summaries.append(summary)
 
         evaluation = evaluator.evaluate(
-            commit, context, db,
+            commit,
+            context,
+            db,
             platform_summaries=platform_summaries or None,
             media_config=config.media_generation,
             media_guidance=project_config.media_guidance if project_config else None,
@@ -192,9 +199,7 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
         return x.value if hasattr(x, "value") else x
 
     if _val(target.action) != "draft":
-        logger.info(
-            f"Consolidation re-evaluation for {project.name}: {_val(target.action)}"
-        )
+        logger.info(f"Consolidation re-evaluation for {project.name}: {_val(target.action)}")
         return
 
     # Draftable: update the most recent decision in the batch
@@ -218,9 +223,16 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
 
     eval_compat = make_eval_compat(evaluation, "draft")
     draft_results = draft_for_platforms(
-        config, conn, db, project, decision_id=most_recent.id,
-        evaluation=eval_compat, context=context, commit=commit,
-        project_config=project_config, dry_run=dry_run,
+        config,
+        conn,
+        db,
+        project,
+        decision_id=most_recent.id,
+        evaluation=eval_compat,
+        context=context,
+        commit=commit,
+        project_config=project_config,
+        dry_run=dry_run,
     )
 
     if draft_results:

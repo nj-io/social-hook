@@ -1,7 +1,7 @@
 """Telegram channel runner using long-polling."""
 
 import logging
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import requests
 
@@ -18,10 +18,10 @@ class TelegramRunner(ChannelRunner):
     def __init__(
         self,
         token: str,
-        allowed_chat_ids: Optional[set[str]] = None,
-        on_command: Optional[Callable] = None,
-        on_callback: Optional[Callable] = None,
-        on_message: Optional[Callable] = None,
+        allowed_chat_ids: set[str] | None = None,
+        on_command: Callable | None = None,
+        on_callback: Callable | None = None,
+        on_message: Callable | None = None,
     ) -> None:
         self.token = token
         self.allowed_chat_ids = allowed_chat_ids or set()
@@ -55,7 +55,7 @@ class TelegramRunner(ChannelRunner):
             if not data.get("ok"):
                 logger.warning(f"getUpdates not ok: {data}")
                 return []
-            return data.get("result", [])
+            return data.get("result", [])  # type: ignore[no-any-return]
         except requests.RequestException as e:
             logger.warning(f"getUpdates failed: {e}")
             return []

@@ -1,19 +1,19 @@
 """Thin wrapper for memory operations (delegates to config.project)."""
 
 from pathlib import Path
-from typing import Union
 
 from social_hook.config.project import (
-    _parse_memories,
-    save_memory as _save_memory,
-    list_memories,
-    delete_memory,
     clear_memories,
+    delete_memory,
+    list_memories,
+)
+from social_hook.config.project import (
+    save_memory as _save_memory,
 )
 
 
 def add_memory(
-    repo_path: Union[str, Path],
+    repo_path: str | Path,
     context: str,
     feedback: str,
     draft_id: str,
@@ -29,7 +29,7 @@ def add_memory(
     _save_memory(repo_path, context, feedback, draft_id)
 
 
-def parse_memories_file(repo_path: Union[str, Path]) -> list[dict]:
+def parse_memories_file(repo_path: str | Path) -> list[dict]:
     """Parse memories from a project's memories.md file.
 
     Args:

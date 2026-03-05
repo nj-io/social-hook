@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from social_hook.config.platforms import OutputPlatformConfig
 from social_hook.config.yaml import Config
 from social_hook.db import init_database, insert_decision, insert_draft, insert_project
@@ -21,9 +19,11 @@ def _make_config(**overrides):
 
 def _make_config_no_platforms():
     """Config with no enabled platforms."""
-    return Config(platforms={
-        "x": OutputPlatformConfig(enabled=False, priority="primary", type="builtin"),
-    })
+    return Config(
+        platforms={
+            "x": OutputPlatformConfig(enabled=False, priority="primary", type="builtin"),
+        }
+    )
 
 
 class TestDraftCommand:
@@ -33,6 +33,7 @@ class TestDraftCommand:
     @patch("social_hook.config.load_full_config")
     def test_draft_not_found(self, mock_config, mock_db_path, temp_dir):
         from typer.testing import CliRunner
+
         from social_hook.cli.manual import app
 
         db_path = temp_dir / "test.db"
@@ -49,6 +50,7 @@ class TestDraftCommand:
     def test_draft_not_post_worthy_creates_drafts(self, mock_config, mock_db_path, temp_dir):
         """Manual draft overrides not_post_worthy decisions (no rejection)."""
         from typer.testing import CliRunner
+
         from social_hook.cli.manual import app
 
         db_path = temp_dir / "test.db"
@@ -60,18 +62,22 @@ class TestDraftCommand:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="skip", reasoning="boring",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="skip",
+            reasoning="boring",
         )
         insert_decision(conn, decision)
         conn.close()
 
         # Mock the drafting pipeline since we don't have real LLM/git
-        with patch("social_hook.trigger.parse_commit_info") as mock_parse, \
-             patch("social_hook.config.project.load_project_config") as mock_proj_config, \
-             patch("social_hook.llm.prompts.assemble_evaluator_context") as mock_ctx, \
-             patch("social_hook.drafting.draft_for_platforms") as mock_draft:
-
+        with (
+            patch("social_hook.trigger.parse_commit_info") as mock_parse,
+            patch("social_hook.config.project.load_project_config") as mock_proj_config,
+            patch("social_hook.llm.prompts.assemble_evaluator_context") as mock_ctx,
+            patch("social_hook.drafting.draft_for_platforms") as mock_draft,
+        ):
             mock_parse.return_value = MagicMock(timestamp=None, parent_timestamp=None)
             mock_proj_config.return_value = MagicMock()
             mock_ctx.return_value = MagicMock()
@@ -89,6 +95,7 @@ class TestDraftCommand:
     def test_draft_no_enabled_platforms_uses_preview(self, mock_config, mock_db_path, temp_dir):
         """Draft with no enabled platforms falls back to preview platform."""
         from typer.testing import CliRunner
+
         from social_hook.cli.manual import app
 
         db_path = temp_dir / "test.db"
@@ -107,6 +114,7 @@ class TestDraftCommand:
     def test_draft_platform_not_enabled(self, mock_config, mock_db_path, temp_dir):
         """Draft with --platform targeting a disabled platform errors."""
         from typer.testing import CliRunner
+
         from social_hook.cli.manual import app
 
         db_path = temp_dir / "test.db"
@@ -127,6 +135,7 @@ class TestConsolidateCommand:
     def test_consolidate_fewer_than_2_ids(self, mock_config):
         """Consolidate with < 2 IDs exits with error."""
         from typer.testing import CliRunner
+
         from social_hook.cli.manual import app
 
         mock_config.return_value = _make_config()
@@ -141,6 +150,7 @@ class TestConsolidateCommand:
     def test_consolidate_different_projects(self, mock_config, mock_db_path, temp_dir):
         """Consolidate decisions from different projects errors."""
         from typer.testing import CliRunner
+
         from social_hook.cli.manual import app
 
         db_path = temp_dir / "test.db"
@@ -154,12 +164,18 @@ class TestConsolidateCommand:
         insert_project(conn, proj2)
 
         d1 = Decision(
-            id=generate_id("decision"), project_id=proj1.id,
-            commit_hash="aaa", decision="skip", reasoning="r1",
+            id=generate_id("decision"),
+            project_id=proj1.id,
+            commit_hash="aaa",
+            decision="skip",
+            reasoning="r1",
         )
         d2 = Decision(
-            id=generate_id("decision"), project_id=proj2.id,
-            commit_hash="bbb", decision="skip", reasoning="r2",
+            id=generate_id("decision"),
+            project_id=proj2.id,
+            commit_hash="bbb",
+            decision="skip",
+            reasoning="r2",
         )
         insert_decision(conn, d1)
         insert_decision(conn, d2)
@@ -175,6 +191,7 @@ class TestConsolidateCommand:
     def test_consolidate_decision_not_found(self, mock_config, mock_db_path, temp_dir):
         """Consolidate with missing decision ID errors."""
         from typer.testing import CliRunner
+
         from social_hook.cli.manual import app
 
         db_path = temp_dir / "test.db"
@@ -195,6 +212,7 @@ class TestPostCommand:
     @patch("social_hook.config.load_full_config")
     def test_post_not_found(self, mock_config, mock_db_path, temp_dir):
         from typer.testing import CliRunner
+
         from social_hook.cli.manual import app
 
         db_path = temp_dir / "test.db"
@@ -210,6 +228,7 @@ class TestPostCommand:
     @patch("social_hook.config.load_full_config")
     def test_post_wrong_status(self, mock_config, mock_db_path, temp_dir):
         from typer.testing import CliRunner
+
         from social_hook.cli.manual import app
 
         db_path = temp_dir / "test.db"
@@ -220,13 +239,20 @@ class TestPostCommand:
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
         decision = Decision(
-            id=generate_id("decision"), project_id=project.id,
-            commit_hash="abc", decision="draft", reasoning="good",
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="good",
         )
         insert_decision(conn, decision)
         draft = Draft(
-            id=generate_id("draft"), project_id=project.id,
-            decision_id=decision.id, platform="x", content="Test", status="draft",
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="draft",
         )
         insert_draft(conn, draft)
         conn.close()

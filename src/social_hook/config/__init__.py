@@ -9,7 +9,13 @@ from social_hook.config.project import (
     load_project_config,
     save_context_note,
 )
-from social_hook.config.yaml import Config, ChannelConfig, KNOWN_CHANNELS, load_config, load_full_config
+from social_hook.config.yaml import (
+    KNOWN_CHANNELS,
+    ChannelConfig,
+    Config,
+    load_config,
+    load_full_config,
+)
 
 __all__ = [
     "load_env",

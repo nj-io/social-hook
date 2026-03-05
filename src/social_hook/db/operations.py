@@ -3,7 +3,7 @@
 import json
 import logging
 import sqlite3
-from typing import Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,6 @@ from social_hook.models import (
     UsageLog,
 )
 
-
 # =============================================================================
 # Schema Version
 # =============================================================================
@@ -28,9 +27,7 @@ from social_hook.models import (
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
     """Get current schema version."""
-    result = conn.execute(
-        "SELECT COALESCE(MAX(version), 0) FROM schema_version"
-    ).fetchone()
+    result = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()
     return result[0] if result else 0
 
 
@@ -55,11 +52,9 @@ def insert_project(conn: sqlite3.Connection, project: Project) -> str:
     return project.id
 
 
-def get_project(conn: sqlite3.Connection, project_id: str) -> Optional[Project]:
+def get_project(conn: sqlite3.Connection, project_id: str) -> Project | None:
     """Get a project by ID."""
-    row = conn.execute(
-        "SELECT * FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     if row:
         return Project.from_dict(dict(row))
     return None
@@ -71,25 +66,17 @@ def get_all_projects(conn: sqlite3.Connection) -> list[Project]:
     return [Project.from_dict(dict(row)) for row in rows]
 
 
-def get_project_by_path(
-    conn: sqlite3.Connection, repo_path: str
-) -> Optional[Project]:
+def get_project_by_path(conn: sqlite3.Connection, repo_path: str) -> Project | None:
     """Get a project by its repository path."""
-    row = conn.execute(
-        "SELECT * FROM projects WHERE repo_path = ?", (repo_path,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM projects WHERE repo_path = ?", (repo_path,)).fetchone()
     if row:
         return Project.from_dict(dict(row))
     return None
 
 
-def get_project_by_origin(
-    conn: sqlite3.Connection, repo_origin: str
-) -> list[Project]:
+def get_project_by_origin(conn: sqlite3.Connection, repo_origin: str) -> list[Project]:
     """Get projects by their git remote origin."""
-    rows = conn.execute(
-        "SELECT * FROM projects WHERE repo_origin = ?", (repo_origin,)
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM projects WHERE repo_origin = ?", (repo_origin,)).fetchall()
     return [Project.from_dict(dict(row)) for row in rows]
 
 
@@ -102,7 +89,9 @@ def set_project_paused(conn: sqlite3.Connection, project_id: str, paused: bool) 
     conn.commit()
 
 
-def set_project_trigger_branch(conn: sqlite3.Connection, project_id: str, branch: Optional[str]) -> None:
+def set_project_trigger_branch(
+    conn: sqlite3.Connection, project_id: str, branch: str | None
+) -> None:
     """Set trigger branch filter. None = all branches."""
     conn.execute(
         "UPDATE projects SET trigger_branch = ? WHERE id = ?",
@@ -121,9 +110,7 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     Returns True if the project was deleted.
     """
     # Check project exists
-    row = conn.execute(
-        "SELECT id FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
+    row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
     if not row:
         return False
 
@@ -199,11 +186,9 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
     return decision.id
 
 
-def get_decision(conn: sqlite3.Connection, decision_id: str) -> Optional[Decision]:
+def get_decision(conn: sqlite3.Connection, decision_id: str) -> Decision | None:
     """Get a decision by ID."""
-    row = conn.execute(
-        "SELECT * FROM decisions WHERE id = ?", (decision_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM decisions WHERE id = ?", (decision_id,)).fetchone()
     if row:
         return Decision.from_dict(dict(row))
     return None
@@ -225,9 +210,7 @@ def get_recent_decisions(
     return [Decision.from_dict(dict(row)) for row in rows]
 
 
-def get_all_recent_decisions(
-    conn: sqlite3.Connection, limit: int = 30
-) -> list[Decision]:
+def get_all_recent_decisions(conn: sqlite3.Connection, limit: int = 30) -> list[Decision]:
     """Get recent decisions across all projects.
 
     Cross-project query for the `log` command without project filter.
@@ -304,17 +287,17 @@ def mark_decisions_processed(
 def update_decision(
     conn: sqlite3.Connection,
     decision_id: str,
-    decision: Optional[str] = None,
-    reasoning: Optional[str] = None,
-    angle: Optional[str] = None,
-    episode_type: Optional[str] = None,
-    post_category: Optional[str] = None,
-    arc_id: Optional[str] = None,
-    media_tool: Optional[str] = None,
-    platforms: Optional[str] = None,
-    episode_tags: Optional[list[str]] = None,
-    targets: Optional[dict] = None,
-    consolidate_with: Optional[list[str]] = None,
+    decision: str | None = None,
+    reasoning: str | None = None,
+    angle: str | None = None,
+    episode_type: str | None = None,
+    post_category: str | None = None,
+    arc_id: str | None = None,
+    media_tool: str | None = None,
+    platforms: str | None = None,
+    episode_tags: list[str] | None = None,
+    targets: dict | None = None,
+    consolidate_with: list[str] | None = None,
 ) -> bool:
     """Update a decision row.
 
@@ -322,8 +305,8 @@ def update_decision(
 
     Returns True if a row was updated.
     """
-    updates = []
-    params = []
+    updates: list[str] = []
+    params: list[Any] = []
 
     if decision is not None:
         updates.append("decision = ?")
@@ -394,7 +377,7 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
     return draft.id
 
 
-def get_draft(conn: sqlite3.Connection, draft_id: str) -> Optional[Draft]:
+def get_draft(conn: sqlite3.Connection, draft_id: str) -> Draft | None:
     """Get a draft by ID."""
     row = conn.execute("SELECT * FROM drafts WHERE id = ?", (draft_id,)).fetchone()
     if row:
@@ -405,24 +388,24 @@ def get_draft(conn: sqlite3.Connection, draft_id: str) -> Optional[Draft]:
 def update_draft(
     conn: sqlite3.Connection,
     draft_id: str,
-    status: Optional[str] = None,
-    content: Optional[str] = None,
-    scheduled_time: Optional[str] = None,
-    retry_count: Optional[int] = None,
-    last_error: Optional[str] = None,
-    media_paths: Optional[list[str]] = None,
-    media_type: Optional[str] = None,
-    media_spec: Optional[dict] = None,
-    is_intro: Optional[bool] = None,
-    post_format: Optional[str] = None,
-    reference_post_id: Optional[str] = None,
+    status: str | None = None,
+    content: str | None = None,
+    scheduled_time: str | None = None,
+    retry_count: int | None = None,
+    last_error: str | None = None,
+    media_paths: list[str] | None = None,
+    media_type: str | None = None,
+    media_spec: dict | None = None,
+    is_intro: bool | None = None,
+    post_format: str | None = None,
+    reference_post_id: str | None = None,
 ) -> bool:
     """Update a draft.
 
     Returns True if a row was updated.
     """
-    updates = []
-    params = []
+    updates: list[str] = []
+    params: list[Any] = []
 
     if status is not None:
         updates.append("status = ?")
@@ -472,9 +455,7 @@ def update_draft(
     return cursor.rowcount > 0
 
 
-def supersede_draft(
-    conn: sqlite3.Connection, old_draft_id: str, new_draft_id: str
-) -> bool:
+def supersede_draft(conn: sqlite3.Connection, old_draft_id: str, new_draft_id: str) -> bool:
     """Mark a draft as superseded by another.
 
     Returns True if a row was updated.
@@ -519,8 +500,8 @@ def get_all_pending_drafts(conn: sqlite3.Connection) -> list[Draft]:
 
 def get_drafts_filtered(
     conn: sqlite3.Connection,
-    status: Optional[str] = None,
-    project_id: Optional[str] = None,
+    status: str | None = None,
+    project_id: str | None = None,
 ) -> list[Draft]:
     """Get drafts with optional status and project filters."""
     clauses, params = [], []
@@ -531,9 +512,7 @@ def get_drafts_filtered(
         clauses.append("project_id = ?")
         params.append(project_id)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = conn.execute(
-        f"SELECT * FROM drafts{where} ORDER BY created_at DESC", params
-    ).fetchall()
+    rows = conn.execute(f"SELECT * FROM drafts{where} ORDER BY created_at DESC", params).fetchall()
     return [Draft.from_dict(dict(row)) for row in rows]
 
 
@@ -591,9 +570,9 @@ def get_draft_tweets(conn: sqlite3.Connection, draft_id: str) -> list[DraftTweet
 def update_draft_tweet(
     conn: sqlite3.Connection,
     tweet_id: str,
-    external_id: Optional[str] = None,
-    posted_at: Optional[str] = None,
-    error: Optional[str] = None,
+    external_id: str | None = None,
+    posted_at: str | None = None,
+    error: str | None = None,
 ) -> bool:
     """Update a draft tweet after posting.
 
@@ -607,8 +586,8 @@ def update_draft_tweet(
     Returns:
         True if a row was updated.
     """
-    updates = []
-    params = []
+    updates: list[str] = []
+    params: list[Any] = []
 
     if external_id is not None:
         updates.append("external_id = ?")
@@ -688,9 +667,7 @@ def insert_post(conn: sqlite3.Connection, post: Post) -> str:
     return post.id
 
 
-def get_recent_posts(
-    conn: sqlite3.Connection, project_id: str, days: int = 7
-) -> list[Post]:
+def get_recent_posts(conn: sqlite3.Connection, project_id: str, days: int = 7) -> list[Post]:
     """Get recent posts for a project within a time window.
 
     Use case: Scheduling coordination - what was posted recently.
@@ -733,9 +710,7 @@ def get_recent_posts_for_context(
     return [Post.from_dict(dict(row)) for row in rows]
 
 
-def get_all_recent_posts(
-    conn: sqlite3.Connection, since_datetime: str
-) -> list[Post]:
+def get_all_recent_posts(conn: sqlite3.Connection, since_datetime: str) -> list[Post]:
     """Get recent posts across all projects since a given datetime.
 
     Cross-project query for scheduling coordination.
@@ -775,11 +750,9 @@ def insert_lifecycle(conn: sqlite3.Connection, lifecycle: Lifecycle) -> str:
     return lifecycle.project_id
 
 
-def get_lifecycle(conn: sqlite3.Connection, project_id: str) -> Optional[Lifecycle]:
+def get_lifecycle(conn: sqlite3.Connection, project_id: str) -> Lifecycle | None:
     """Get lifecycle for a project."""
-    row = conn.execute(
-        "SELECT * FROM lifecycles WHERE project_id = ?", (project_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM lifecycles WHERE project_id = ?", (project_id,)).fetchone()
     if row:
         return Lifecycle.from_dict(dict(row))
     return None
@@ -788,17 +761,17 @@ def get_lifecycle(conn: sqlite3.Connection, project_id: str) -> Optional[Lifecyc
 def update_lifecycle(
     conn: sqlite3.Connection,
     project_id: str,
-    phase: Optional[str] = None,
-    confidence: Optional[float] = None,
-    evidence: Optional[list[str]] = None,
-    last_strategy_moment: Optional[str] = None,
+    phase: str | None = None,
+    confidence: float | None = None,
+    evidence: list[str] | None = None,
+    last_strategy_moment: str | None = None,
 ) -> bool:
     """Update a lifecycle.
 
     Returns True if a row was updated.
     """
-    updates = []
-    params = []
+    updates: list[str] = []
+    params: list[Any] = []
 
     if phase is not None:
         updates.append("phase = ?")
@@ -851,17 +824,17 @@ def insert_arc(conn: sqlite3.Connection, arc: Arc) -> str:
 def update_arc(
     conn: sqlite3.Connection,
     arc_id: str,
-    status: Optional[str] = None,
-    post_count: Optional[int] = None,
-    last_post_at: Optional[str] = None,
-    notes: Optional[str] = None,
+    status: str | None = None,
+    post_count: int | None = None,
+    last_post_at: str | None = None,
+    notes: str | None = None,
 ) -> bool:
     """Update an arc.
 
     Returns True if a row was updated.
     """
-    updates = []
-    params = []
+    updates: list[str] = []
+    params: list[Any] = []
 
     if status is not None:
         updates.append("status = ?")
@@ -907,18 +880,16 @@ def get_active_arcs(conn: sqlite3.Connection, project_id: str) -> list[Arc]:
     return [Arc.from_dict(dict(row)) for row in rows]
 
 
-def get_arc(conn: sqlite3.Connection, arc_id: str) -> Optional[Arc]:
+def get_arc(conn: sqlite3.Connection, arc_id: str) -> Arc | None:
     """Get a single arc by ID."""
-    row = conn.execute(
-        "SELECT * FROM arcs WHERE id = ?", (arc_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM arcs WHERE id = ?", (arc_id,)).fetchone()
     if row:
         return Arc.from_dict(dict(row))
     return None
 
 
 def get_arcs_by_project(
-    conn: sqlite3.Connection, project_id: str, status: Optional[str] = None
+    conn: sqlite3.Connection, project_id: str, status: str | None = None
 ) -> list[Arc]:
     """Get arcs for a project, optionally filtered by status.
 
@@ -976,9 +947,7 @@ def get_audience_introduced(conn: sqlite3.Connection, project_id: str) -> bool:
     return False
 
 
-def set_audience_introduced(
-    conn: sqlite3.Connection, project_id: str, value: bool
-) -> bool:
+def set_audience_introduced(conn: sqlite3.Connection, project_id: str, value: bool) -> bool:
     """Update the audience_introduced flag for a project.
 
     Returns True if a row was updated.
@@ -1012,9 +981,7 @@ def insert_narrative_debt(conn: sqlite3.Connection, debt: NarrativeDebt) -> str:
     return debt.project_id
 
 
-def get_narrative_debt(
-    conn: sqlite3.Connection, project_id: str
-) -> Optional[NarrativeDebt]:
+def get_narrative_debt(conn: sqlite3.Connection, project_id: str) -> NarrativeDebt | None:
     """Get narrative debt for a project."""
     row = conn.execute(
         "SELECT * FROM narrative_debt WHERE project_id = ?", (project_id,)
@@ -1084,9 +1051,7 @@ def insert_usage(conn: sqlite3.Connection, usage: UsageLog) -> str:
     return usage.id
 
 
-def get_usage_summary(
-    conn: sqlite3.Connection, days: int = 30
-) -> list[dict]:
+def get_usage_summary(conn: sqlite3.Connection, days: int = 30) -> list[dict]:
     """Get aggregated usage summary by model.
 
     Returns list of dicts with model, total_input, total_output, total_cost_cents.
@@ -1107,9 +1072,7 @@ def get_usage_summary(
     return [dict(row) for row in rows]
 
 
-def get_recent_usage(
-    conn: sqlite3.Connection, limit: int = 10
-) -> list[dict]:
+def get_recent_usage(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
     """Get recent individual usage log entries.
 
     Returns list of dicts with operation details, project name, and commit hash.
@@ -1165,22 +1128,18 @@ def update_project_summary(
     return cursor.rowcount > 0
 
 
-def get_project_summary(conn: sqlite3.Connection, project_id: str) -> Optional[str]:
+def get_project_summary(conn: sqlite3.Connection, project_id: str) -> str | None:
     """Get project summary for Gatekeeper context injection.
 
     Returns the summary text, or None if no summary exists.
     """
-    row = conn.execute(
-        "SELECT summary FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
+    row = conn.execute("SELECT summary FROM projects WHERE id = ?", (project_id,)).fetchone()
     if row and row[0]:
-        return row[0]
+        return str(row[0])
     return None
 
 
-def get_summary_freshness(
-    conn: sqlite3.Connection, project_id: str
-) -> dict:
+def get_summary_freshness(conn: sqlite3.Connection, project_id: str) -> dict:
     """Get summary freshness indicators for Evaluator judgment.
 
     Returns dict with:
@@ -1212,8 +1171,7 @@ def get_summary_freshness(
     if summary_updated_at:
         # Calculate days since summary
         result = conn.execute(
-            "SELECT julianday('now') - julianday(?)",
-            (summary_updated_at,)
+            "SELECT julianday('now') - julianday(?)", (summary_updated_at,)
         ).fetchone()
         days_since = int(result[0]) if result else None
 
@@ -1260,7 +1218,7 @@ def insert_milestone_summary(conn: sqlite3.Connection, summary: dict) -> str:
         ),
     )
     conn.commit()
-    return summary["id"]
+    return str(summary["id"])
 
 
 def get_milestone_summaries(
@@ -1301,7 +1259,7 @@ def insert_chat_message(conn: sqlite3.Connection, chat_id: str, role: str, conte
         (chat_id, role, content),
     )
     conn.commit()
-    return cursor.lastrowid
+    return cursor.lastrowid or 0
 
 
 def get_recent_chat_messages(
@@ -1350,7 +1308,7 @@ def cleanup_old_chat_messages(conn: sqlite3.Connection, days: int = 7) -> int:
 # =============================================================================
 
 
-def get_post(conn: sqlite3.Connection, post_id: str) -> Optional[Post]:
+def get_post(conn: sqlite3.Connection, post_id: str) -> Post | None:
     """Get a single post by ID."""
     row = conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
     if row:
@@ -1375,7 +1333,7 @@ def get_drafts_in_time_window(
     return [Draft.from_dict(dict(row)) for row in rows]
 
 
-def get_intro_draft(conn: sqlite3.Connection, project_id: str) -> Optional[Draft]:
+def get_intro_draft(conn: sqlite3.Connection, project_id: str) -> Draft | None:
     """Get the most recent active intro draft for a project."""
     row = conn.execute(
         """
@@ -1393,7 +1351,7 @@ def get_intro_draft(conn: sqlite3.Connection, project_id: str) -> Optional[Draft
 
 def get_most_recent_posted_for_arc(
     conn: sqlite3.Connection, arc_id: str, platform: str
-) -> Optional[Post]:
+) -> Post | None:
     """Get the most recently posted content for an arc on a given platform.
 
     Requires posts->drafts->decisions join since posts lacks arc_id.
@@ -1448,10 +1406,17 @@ def emit_data_event(
     try:
         conn.execute(
             "INSERT INTO web_events (type, data) VALUES (?, ?)",
-            ("data_change", json.dumps({
-                "entity": entity, "action": action,
-                "entity_id": entity_id, "project_id": project_id,
-            })),
+            (
+                "data_change",
+                json.dumps(
+                    {
+                        "entity": entity,
+                        "action": action,
+                        "entity_id": entity_id,
+                        "project_id": project_id,
+                    }
+                ),
+            ),
         )
         conn.commit()
     except Exception:
