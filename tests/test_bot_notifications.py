@@ -47,7 +47,7 @@ class TestFormatDraftReview:
         assert "Suggested time:" in msg
         assert "2026-02-10 14:00 UTC" in msg
 
-    def test_content_truncated(self):
+    def test_content_not_truncated(self):
         long_content = "x" * 1000
         msg = format_draft_review(
             project_name="test",
@@ -56,10 +56,8 @@ class TestFormatDraftReview:
             platform="x",
             content=long_content,
         )
-        # Content should be truncated to 500 chars
-        assert len(long_content) > 500
-        assert "x" * 500 in msg
-        assert "x" * 501 not in msg
+        # Full content should be included without truncation
+        assert "x" * 1000 in msg
 
     def test_includes_code_block(self):
         msg = format_draft_review(
@@ -212,12 +210,12 @@ class TestGetReviewButtonsNormalized:
     def test_button_labels(self):
         buttons = get_review_buttons_normalized("draft_abc")
         labels = [btn.label for row in buttons for btn in row.buttons]
-        assert labels == ["Approve", "Schedule", "Edit", "Reject"]
+        assert labels == ["Quick Approve", "Schedule", "Edit", "Reject"]
 
     def test_button_actions(self):
         buttons = get_review_buttons_normalized("draft_abc")
         actions = [btn.action for row in buttons for btn in row.buttons]
-        assert actions == ["approve", "schedule", "edit", "reject"]
+        assert actions == ["quick_approve", "schedule", "edit", "reject"]
 
     def test_button_payloads(self):
         buttons = get_review_buttons_normalized("draft_abc")

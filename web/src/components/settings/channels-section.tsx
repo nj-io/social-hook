@@ -195,6 +195,22 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
             </div>
           )}
 
+          {telegramConfig.enabled && !status?.daemon_running && (
+            <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-400">
+              <p>
+                The bot daemon must be running to receive button presses and messages from this channel.
+                Notifications will be sent without interactive buttons until the daemon is started.
+              </p>
+              <button
+                onClick={handleDaemonToggle}
+                disabled={daemonAction}
+                className="mt-2 rounded-md bg-amber-200 px-3 py-1 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-300 disabled:opacity-50 dark:bg-amber-800 dark:text-amber-200 dark:hover:bg-amber-700"
+              >
+                {daemonAction ? "Starting..." : "Start Daemon"}
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-2">
             <button
               onClick={handleTest}

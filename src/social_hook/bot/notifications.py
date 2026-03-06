@@ -71,7 +71,7 @@ def format_draft_review(
         [
             "",
             "```",
-            content[:500],
+            content,
             "```",
         ]
     )
@@ -94,7 +94,7 @@ def get_review_buttons_normalized(draft_id: str) -> list:
     return [
         ButtonRow(
             buttons=[
-                Button(label="Approve", action="approve", payload=draft_id),
+                Button(label="Quick Approve", action="quick_approve", payload=draft_id),
                 Button(label="Schedule", action="schedule", payload=draft_id),
             ]
         ),

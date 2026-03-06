@@ -137,6 +137,14 @@ def _append_media_tools_section(
             sections.append(f"- {tool_name}")
 
 
+_MEDIA_SPEC_FIELDS = {
+    "ray_so": "Required spec fields: code (string). Optional: language, title.",
+    "mermaid": "Required spec fields: diagram (mermaid markup string).",
+    "nano_banana_pro": "Required spec fields: prompt (image description string).",
+    "playwright": "Required spec fields: url (string). Optional: selector.",
+}
+
+
 def _append_media_guide_section(
     sections: list[str],
     media_config: Optional["MediaGenerationConfig"],
@@ -157,8 +165,14 @@ def _append_media_guide_section(
                 sections.append("**Constraints:** " + "; ".join(guidance.constraints))
             if guidance.prompt_example:
                 sections.append(f"**Prompt example:** {guidance.prompt_example}")
+            spec_info = _MEDIA_SPEC_FIELDS.get(tool_name)
+            if spec_info:
+                sections.append(f"**Spec fields:** {spec_info}")
         else:
             sections.append(f"- {tool_name}")
+            spec_info = _MEDIA_SPEC_FIELDS.get(tool_name)
+            if spec_info:
+                sections.append(f"  **Spec fields:** {spec_info}")
 
 
 def assemble_evaluator_prompt(
@@ -760,6 +774,12 @@ def assemble_expert_prompt(
     if hasattr(draft, "content"):
         sections.append(f"- Platform: {draft.platform}")
         sections.append(f"- Content: {draft.content}")
+        if hasattr(draft, "media_type") and draft.media_type:
+            sections.append(f"- Media type: {draft.media_type}")
+        if hasattr(draft, "media_spec") and draft.media_spec:
+            import json as _json
+
+            sections.append(f"- Media spec: {_json.dumps(draft.media_spec)}")
     elif isinstance(draft, dict):
         for k, v in draft.items():
             if v is not None:

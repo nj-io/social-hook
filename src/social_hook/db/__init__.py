@@ -3,6 +3,7 @@
 from social_hook.db.connection import get_connection, init_database
 from social_hook.db.operations import (
     cleanup_old_chat_messages,
+    delete_decision,
     delete_project,
     emit_data_event,
     execute_queue_action,
@@ -87,6 +88,7 @@ __all__ = [
     "set_project_paused",
     "set_project_trigger_branch",
     "delete_project",
+    "delete_decision",
     "insert_decision",
     "get_decision",
     "get_recent_decisions",

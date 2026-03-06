@@ -1120,15 +1120,29 @@ def test_B_pipeline(harness: E2EHarness, runner: E2ERunner):
 
         # Find the most recent draft
         draft = drafts[0]
-        detail = f"Draft: {draft.id}, media_type={draft.media_type}"
+
+        # Structural assertion: if media_type is set, media_spec must be populated
+        if draft.media_type and draft.media_type != "none":
+            assert draft.media_spec is not None and draft.media_spec != {}, (
+                f"Draft has media_type={draft.media_type} but media_spec is empty/None"
+            )
+
+        detail = (
+            f"Draft: {draft.id}, media_type={draft.media_type}, "
+            f"media_spec={draft.media_spec}, media_paths={draft.media_paths}"
+        )
 
         runner.add_review_item(
             "B10",
             title="Pipeline with media generation enabled",
             decision="draft",
             draft_content=draft.content,
-            review_question="Does the generated media match the content?",
+            review_question=(
+                "Does the media_spec contain sensible fields for the chosen tool? "
+                "Does the generated media match the content?"
+            ),
             media_type=draft.media_type,
+            media_spec=draft.media_spec,
             media_paths=draft.media_paths,
         )
 

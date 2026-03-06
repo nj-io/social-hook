@@ -767,7 +767,11 @@ app.add_typer(memory_app, name="memory", help="Manage voice memories.")
 # Arc commands: list, create, complete, abandon
 app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
 
+from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
+
+# Decision management: list, delete
+app.add_typer(decision_app, name="decision", help="Decision management.")
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
 app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")

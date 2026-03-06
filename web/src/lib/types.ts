@@ -98,6 +98,7 @@ export interface Draft {
   media_paths?: string;
   media_type?: string;
   media_spec?: string;
+  media_spec_used?: string;
   reasoning?: string;
   last_error?: string;
   retry_count?: number;
@@ -154,6 +155,7 @@ export interface Decision {
   targets: Record<string, unknown>;
   consolidate_with: string[] | null;
   draft_count: number;
+  draft_ids?: string[];
   created_at: string;
 }
 

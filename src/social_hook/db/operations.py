@@ -138,6 +138,37 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     return True
 
 
+def delete_decision(conn: sqlite3.Connection, decision_id: str) -> bool:
+    """Delete a decision and all associated data.
+
+    Cascades to: draft_changes, draft_tweets, posts, drafts for this decision.
+    Returns True if the decision was deleted.
+    """
+    row = conn.execute("SELECT id FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+    if not row:
+        return False
+
+    # Get all draft IDs for this decision
+    draft_rows = conn.execute(
+        "SELECT id FROM drafts WHERE decision_id = ?", (decision_id,)
+    ).fetchall()
+    draft_ids = [r[0] for r in draft_rows]
+
+    # Delete in dependency order
+    for draft_id in draft_ids:
+        conn.execute("DELETE FROM draft_changes WHERE draft_id = ?", (draft_id,))
+        conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_id,))
+
+    conn.execute(
+        "DELETE FROM posts WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
+        (decision_id,),
+    )
+    conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
+    conn.execute("DELETE FROM decisions WHERE id = ?", (decision_id,))
+    conn.commit()
+    return True
+
+
 def update_discovery_files(
     conn: sqlite3.Connection,
     project_id: str,
@@ -367,9 +398,9 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
     conn.execute(
         """
         INSERT INTO drafts (id, project_id, decision_id, platform, status, content,
-            media_paths, media_type, media_spec, suggested_time, scheduled_time,
+            media_paths, media_type, media_spec, media_spec_used, suggested_time, scheduled_time,
             reasoning, superseded_by, retry_count, last_error, is_intro, post_format, reference_post_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         draft.to_row(),
     )
@@ -396,6 +427,7 @@ def update_draft(
     media_paths: list[str] | None = None,
     media_type: str | None = None,
     media_spec: dict | None = None,
+    media_spec_used: dict | None = None,
     is_intro: bool | None = None,
     post_format: str | None = None,
     reference_post_id: str | None = None,
@@ -431,6 +463,9 @@ def update_draft(
     if media_spec is not None:
         updates.append("media_spec = ?")
         params.append(json.dumps(media_spec))
+    if media_spec_used is not None:
+        updates.append("media_spec_used = ?")
+        params.append(json.dumps(media_spec_used))
     if is_intro is not None:
         updates.append("is_intro = ?")
         params.append(1 if is_intro else 0)
@@ -502,17 +537,30 @@ def get_drafts_filtered(
     conn: sqlite3.Connection,
     status: str | None = None,
     project_id: str | None = None,
+    decision_id: str | None = None,
+    commit_hash: str | None = None,
 ) -> list[Draft]:
-    """Get drafts with optional status and project filters."""
+    """Get drafts with optional status, project, decision, and commit filters."""
     clauses, params = [], []
+    need_join = commit_hash is not None
     if status:
-        clauses.append("status = ?")
+        clauses.append("d.status = ?")
         params.append(status)
     if project_id:
-        clauses.append("project_id = ?")
+        clauses.append("d.project_id = ?")
         params.append(project_id)
+    if decision_id:
+        clauses.append("d.decision_id = ?")
+        params.append(decision_id)
+    if commit_hash:
+        clauses.append("dec.commit_hash = ?")
+        params.append(commit_hash)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = conn.execute(f"SELECT * FROM drafts{where} ORDER BY created_at DESC", params).fetchall()
+    if need_join:
+        sql = f"SELECT d.* FROM drafts d JOIN decisions dec ON d.decision_id = dec.id{where} ORDER BY d.created_at DESC"
+    else:
+        sql = f"SELECT d.* FROM drafts d{where} ORDER BY d.created_at DESC"
+    rows = conn.execute(sql, params).fetchall()
     return [Draft.from_dict(dict(row)) for row in rows]
 
 

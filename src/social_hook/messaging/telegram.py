@@ -58,6 +58,8 @@ class TelegramAdapter(MessagingAdapter):
             payload["reply_markup"] = {
                 "inline_keyboard": self._buttons_to_telegram(message.buttons)
             }
+        else:
+            payload["reply_markup"] = {"inline_keyboard": []}
         return self._post("editMessageText", payload)
 
     def answer_callback(self, callback_id: str, text: str = "") -> bool:

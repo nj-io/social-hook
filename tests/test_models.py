@@ -420,9 +420,9 @@ class TestDraftNewFields:
     """Tests for evaluator rework Draft fields."""
 
     def test_draft_to_row_column_count(self):
-        """Draft.to_row() returns 18-element tuple."""
+        """Draft.to_row() returns 19-element tuple."""
         d = Draft(id="test", project_id="p", decision_id="d", platform="x", content="hello")
-        assert len(d.to_row()) == 18
+        assert len(d.to_row()) == 19
 
     def test_draft_intro_flag(self):
         """is_intro flag serializes correctly."""
@@ -431,7 +431,7 @@ class TestDraftNewFields:
         )
         assert d.to_dict()["is_intro"] is True
         row = d.to_row()
-        assert row[15] == 1  # is_intro position
+        assert row[16] == 1  # is_intro position
 
     def test_draft_post_format(self):
         """post_format field round-trips."""
@@ -444,7 +444,7 @@ class TestDraftNewFields:
             post_format="thread",
         )
         assert d.to_dict()["post_format"] == "thread"
-        assert d.to_row()[16] == "thread"
+        assert d.to_row()[17] == "thread"
 
     def test_draft_from_dict_new_fields(self):
         """Draft.from_dict() parses new fields."""

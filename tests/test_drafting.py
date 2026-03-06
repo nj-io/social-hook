@@ -188,6 +188,8 @@ class TestDraftForPlatformsTargetFilter:
         draft_result_mock.reasoning = "Test reasoning"
         draft_result_mock.platform = "linkedin"
         draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         from social_hook.scheduling import ScheduleResult
@@ -307,6 +309,8 @@ class TestDraftForPlatformsProjectConfigNone:
         draft_result_mock.reasoning = "Test reasoning"
         draft_result_mock.platform = "linkedin"
         draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
@@ -394,6 +398,8 @@ class TestDraftForPlatformsPerPlatformError:
             result.reasoning = "Reasoning"
             result.platform = "linkedin"
             result.format_hint = "single"
+            result.media_type = None
+            result.media_spec = None
             return result
 
         mock_drafter_instance.create_draft.side_effect = side_effect
@@ -471,6 +477,8 @@ class TestDraftResultDecisionId:
         draft_result_mock.reasoning = "Test reasoning"
         draft_result_mock.platform = "x"
         draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
@@ -499,4 +507,224 @@ class TestDraftResultDecisionId:
 
         assert len(results) == 1
         assert results[0].draft.decision_id == custom_decision_id
+        conn.close()
+
+
+class TestDraftMediaSpecGuards:
+    """Tests for media spec guard logic in draft_for_platforms()."""
+
+    @patch("social_hook.drafting.resolve_platform")
+    @patch("social_hook.drafting.passes_content_filter", return_value=True)
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    @patch("social_hook.drafting._generate_media")
+    def test_empty_spec_skipped_in_caller(
+        self,
+        mock_gen_media,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
+    ):
+        """When drafter returns media_type but empty media_spec, _generate_media is NOT called."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=True)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+
+        resolved = MagicMock()
+        resolved.filter = "all"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        mock_resolve.return_value = resolved
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Test content"
+        draft_result_mock.reasoning = "Test reasoning"
+        draft_result_mock.platform = "x"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = "ray_so"
+        draft_result_mock.media_spec = {}  # Empty spec
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        from social_hook.scheduling import ScheduleResult
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=True,
+            day_reason="weekday",
+            time_reason="optimal hour",
+            deferred=False,
+        )
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-001",
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
+                commit=_make_commit(),
+            )
+
+        # _generate_media should NOT have been called because media_spec was empty
+        mock_gen_media.assert_not_called()
+        assert len(results) == 1
+        conn.close()
+
+    @patch("social_hook.drafting.resolve_platform")
+    @patch("social_hook.drafting.passes_content_filter", return_value=True)
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    @patch("social_hook.drafting._generate_media")
+    def test_none_spec_skipped_in_caller(
+        self,
+        mock_gen_media,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
+    ):
+        """When drafter returns media_type but None media_spec, _generate_media is NOT called."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=True)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+
+        resolved = MagicMock()
+        resolved.filter = "all"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        mock_resolve.return_value = resolved
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Test content"
+        draft_result_mock.reasoning = "Test reasoning"
+        draft_result_mock.platform = "x"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = "ray_so"
+        draft_result_mock.media_spec = None  # None spec
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        from social_hook.scheduling import ScheduleResult
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=True,
+            day_reason="weekday",
+            time_reason="optimal hour",
+            deferred=False,
+        )
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-001",
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
+                commit=_make_commit(),
+            )
+
+        # _generate_media should NOT have been called because media_spec was None
+        mock_gen_media.assert_not_called()
+        assert len(results) == 1
+        conn.close()
+
+    @patch("social_hook.drafting.resolve_platform")
+    @patch("social_hook.drafting.passes_content_filter", return_value=True)
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    @patch(
+        "social_hook.drafting._generate_media",
+        return_value=(["/tmp/media/code.png"], "ray_so", {"code": "x=1"}, None),
+    )
+    def test_valid_spec_triggers_media(
+        self,
+        mock_gen_media,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
+    ):
+        """When drafter returns media_type and valid media_spec, _generate_media IS called."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=True)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+
+        resolved = MagicMock()
+        resolved.filter = "all"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        mock_resolve.return_value = resolved
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Test content"
+        draft_result_mock.reasoning = "Test reasoning"
+        draft_result_mock.platform = "x"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = "ray_so"
+        draft_result_mock.media_spec = {"code": "x=1"}  # Valid spec
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        from social_hook.scheduling import ScheduleResult
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=True,
+            day_reason="weekday",
+            time_reason="optimal hour",
+            deferred=False,
+        )
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-001",
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
+                commit=_make_commit(),
+            )
+
+        # _generate_media SHOULD have been called
+        mock_gen_media.assert_called_once()
+        assert len(results) == 1
         conn.close()

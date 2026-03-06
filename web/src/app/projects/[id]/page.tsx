@@ -11,9 +11,12 @@ import {
   updateProjectSummary,
   regenerateProjectSummary,
   createDraftFromDecision,
+  deleteDecision,
+  retriggerDecision,
   fetchEnabledPlatforms,
   consolidateDecisions,
   fetchMemories,
+  type BackgroundTask,
 } from "@/lib/api";
 import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
@@ -22,6 +25,7 @@ import { SimpleMarkdown } from "@/components/simple-markdown";
 import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
 import { useDataEvents } from "@/lib/use-data-events";
+import { useBackgroundTasks } from "@/lib/use-background-tasks";
 
 const DECISIONS_PER_PAGE = 10;
 
@@ -46,13 +50,46 @@ export default function ProjectDetailPage() {
     return localStorage.getItem("project-summary-expanded") !== "false";
   });
   const [expandedDecisions, setExpandedDecisions] = useState<Set<string>>(new Set());
-  const [creatingDraftFor, setCreatingDraftFor] = useState<Set<string>>(new Set());
   const [draftResult, setDraftResult] = useState<Record<string, { count?: number; error?: string }>>({});
   const [platformCount, setPlatformCount] = useState<number>(0);
   const [selectedDecisions, setSelectedDecisions] = useState<Set<string>>(new Set());
-  const [consolidating, setConsolidating] = useState(false);
   const [consolidateResult, setConsolidateResult] = useState<{ count?: number; error?: string } | null>(null);
   const [confirmRedraft, setConfirmRedraft] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmRetrigger, setConfirmRetrigger] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // Consolidate uses a special ref_id key since it spans multiple decisions
+  const CONSOLIDATE_REF = "__consolidate__";
+
+  const onTaskCompleted = useCallback((task: BackgroundTask) => {
+    if (task.status === "completed" && task.result) {
+      if (task.type === "create_draft") {
+        const count = (task.result as Record<string, unknown>).count as number | undefined;
+        if (count != null) {
+          setDraftResult((prev) => ({ ...prev, [task.ref_id]: { count } }));
+          setDecisions((prev) =>
+            prev.map((d) =>
+              d.id === task.ref_id ? { ...d, draft_count: d.draft_count + count } : d,
+            ),
+          );
+        }
+      } else if (task.type === "consolidate") {
+        const count = (task.result as Record<string, unknown>).count as number | undefined;
+        setConsolidateResult({ count });
+        setSelectedDecisions(new Set());
+      }
+    } else if (task.status === "failed") {
+      const error = task.error ?? "Task failed";
+      if (task.type === "create_draft") {
+        setDraftResult((prev) => ({ ...prev, [task.ref_id]: { error } }));
+      } else if (task.type === "consolidate") {
+        setConsolidateResult({ error });
+      }
+    }
+  }, []);
+
+  const { trackTask, isRunning: isTaskRunning } = useBackgroundTasks(id, onTaskCompleted);
 
   const loadMemories = useCallback(async (repoPath: string) => {
     try {
@@ -82,7 +119,7 @@ export default function ProjectDetailPage() {
     }
   }, [id, decisionOffset, loadMemories]);
 
-  useDataEvents(["decision", "draft", "post", "project", "arc"], reload, id);
+  useDataEvents(["decision", "draft", "post", "project", "arc", "task"], reload, id);
 
   useEffect(() => {
     async function load() {
@@ -132,41 +169,25 @@ export default function ProjectDetailPage() {
 
   async function handleCreateDraft(decisionId: string) {
     setConfirmRedraft(null);
-    setCreatingDraftFor((prev) => new Set(prev).add(decisionId));
     setDraftResult((prev) => { const next = { ...prev }; delete next[decisionId]; return next; });
     try {
       const res = await createDraftFromDecision(decisionId);
-      setDraftResult((prev) => ({ ...prev, [decisionId]: { count: res.count } }));
-      setDecisions((prev) =>
-        prev.map((d) =>
-          d.id === decisionId ? { ...d, draft_count: d.draft_count + res.count } : d,
-        ),
-      );
+      trackTask(res.task_id, decisionId, "create_draft");
     } catch (e) {
       setDraftResult((prev) => ({
         ...prev,
         [decisionId]: { error: e instanceof Error ? e.message : "Failed" },
       }));
-    } finally {
-      setCreatingDraftFor((prev) => {
-        const next = new Set(prev);
-        next.delete(decisionId);
-        return next;
-      });
     }
   }
 
   async function handleConsolidate() {
-    setConsolidating(true);
     setConsolidateResult(null);
     try {
       const res = await consolidateDecisions(Array.from(selectedDecisions));
-      setConsolidateResult({ count: res.count });
-      setSelectedDecisions(new Set());
+      trackTask(res.task_id, CONSOLIDATE_REF, "consolidate");
     } catch (e) {
       setConsolidateResult({ error: e instanceof Error ? e.message : "Failed" });
-    } finally {
-      setConsolidating(false);
     }
   }
 
@@ -393,13 +414,14 @@ export default function ProjectDetailPage() {
                     <th className="hidden pb-2 pr-4 font-medium md:table-cell">Category</th>
                     <th className="pb-2 pr-4 font-medium">Date</th>
                     <th className="pb-2 pr-4 font-medium">Drafts</th>
-                    <th className="pb-2 font-medium">Actions</th>
+                    <th className="pb-2 pr-4 font-medium">Actions</th>
+                    <th className="pb-2 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {decisions.map((d) => {
                     const isExpanded = expandedDecisions.has(d.id);
-                    const isCreating = creatingDraftFor.has(d.id);
+                    const isCreating = isTaskRunning(d.id);
                     const result = draftResult[d.id];
                     return (
                       <tr
@@ -453,6 +475,23 @@ export default function ProjectDetailPage() {
                                     Arc: <span className="font-mono text-foreground">{d.arc_id.slice(0, 12)}</span>
                                   </p>
                                 )}
+                                {d.draft_ids && d.draft_ids.length > 0 && (
+                                  <div className="text-xs text-muted-foreground">
+                                    Drafts:{" "}
+                                    {d.draft_ids.map((draftId, i) => (
+                                      <span key={draftId}>
+                                        {i > 0 && ", "}
+                                        <Link
+                                          href={`/drafts/${draftId}`}
+                                          className="font-mono text-accent hover:underline"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          {draftId.slice(0, 14)}
+                                        </Link>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -466,7 +505,7 @@ export default function ProjectDetailPage() {
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           {d.draft_count > 0 ? (
                             <Link
-                              href={`/drafts?from=${id}&name=${encodeURIComponent(project.name)}`}
+                              href={`/drafts?from=${id}&name=${encodeURIComponent(project.name)}&decision=${encodeURIComponent(d.id)}`}
                               className="text-xs text-accent hover:underline"
                             >
                               {d.draft_count} draft{d.draft_count !== 1 ? "s" : ""}
@@ -475,39 +514,39 @@ export default function ProjectDetailPage() {
                             <span className="text-xs text-muted-foreground">-</span>
                           )}
                         </td>
+                        <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => onCreateDraftClick(d.id, d.draft_count > 0)}
+                            disabled={isCreating}
+                            className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-70 ${
+                              d.draft_count > 0 && !isCreating
+                                ? "border border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
+                                : "bg-accent text-accent-foreground hover:bg-accent/80"
+                            }`}
+                            title={platformCount === 0 ? "Uses preview mode" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
+                          >
+                            {isCreating && (
+                              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                            )}
+                            {isCreating
+                              ? "Creating..."
+                              : d.draft_count > 0
+                                ? "Draft Created"
+                                : "Create Draft"}
+                          </button>
+                        </td>
                         <td className="py-2" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => onCreateDraftClick(d.id, d.draft_count > 0)}
-                              disabled={isCreating}
-                              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-70 ${
-                                d.draft_count > 0 && !isCreating
-                                  ? "border border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
-                                  : "bg-accent text-accent-foreground hover:bg-accent/80"
-                              }`}
-                              title={platformCount === 0 ? "Uses preview mode" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
-                            >
-                              {isCreating && (
-                                <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                </svg>
-                              )}
-                              {isCreating
-                                ? "Creating..."
-                                : d.draft_count > 0
-                                  ? "Draft Created"
-                                  : "Create Draft"}
-                            </button>
-                            {result?.count != null && (
-                              <span className="text-xs text-green-600 dark:text-green-400">
-                                +{result.count}
-                              </span>
-                            )}
-                            {result?.error && (
-                              <span className="text-xs text-destructive">{result.error}</span>
-                            )}
-                          </div>
+                          {result?.count != null && (
+                            <span className="text-xs text-green-600 dark:text-green-400">
+                              +{result.count} draft{result.count !== 1 ? "s" : ""} created
+                            </span>
+                          )}
+                          {result?.error && (
+                            <span className="text-xs text-destructive">{result.error}</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -628,12 +667,114 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {/* Floating consolidation bar */}
-      {selectedDecisions.size >= 2 && (
+      {/* Delete confirmation modal */}
+      {confirmDelete && (() => {
+        const ids = Array.from(selectedDecisions);
+        const totalDrafts = decisions
+          .filter((d) => ids.includes(d.id))
+          .reduce((sum, d) => sum + d.draft_count, 0);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !actionLoading && setConfirmDelete(false)}>
+            <div className="mx-4 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-sm font-semibold">Delete {ids.length === 1 ? "decision" : `${ids.length} decisions`}?</h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                This will permanently delete {ids.length} decision{ids.length !== 1 ? "s" : ""}{totalDrafts > 0 ? ` and ${totalDrafts} associated draft${totalDrafts !== 1 ? "s" : ""}` : ""}.
+              </p>
+              {actionError && (
+                <p className="mt-2 text-sm text-destructive">{actionError}</p>
+              )}
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={actionLoading}
+                  className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setActionLoading(true);
+                    setActionError(null);
+                    try {
+                      await Promise.all(ids.map((did) => deleteDecision(did)));
+                      setDecisions((prev) => prev.filter((d) => !ids.includes(d.id)));
+                      setSelectedDecisions(new Set());
+                      setConfirmDelete(false);
+                    } catch (err) {
+                      setActionError(err instanceof Error ? err.message : "Delete failed");
+                    } finally {
+                      setActionLoading(false);
+                    }
+                  }}
+                  disabled={actionLoading}
+                  className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80 disabled:opacity-50"
+                >
+                  {actionLoading ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Re-evaluate confirmation modal */}
+      {confirmRetrigger && (() => {
+        const did = Array.from(selectedDecisions)[0];
+        const dec = decisions.find((d) => d.id === did);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !actionLoading && setConfirmRetrigger(false)}>
+            <div className="mx-4 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-sm font-semibold">Re-evaluate commit?</h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                This will delete the current decision for commit <code className="text-xs">{dec?.commit_hash.slice(0, 7)}</code> and re-run the evaluator. The result may differ from the original evaluation.
+              </p>
+              {actionError && (
+                <p className="mt-2 text-sm text-destructive">{actionError}</p>
+              )}
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => setConfirmRetrigger(false)}
+                  disabled={actionLoading}
+                  className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setActionLoading(true);
+                    setActionError(null);
+                    try {
+                      const res = await retriggerDecision(did);
+                      if (res.status === "retriggered") {
+                        setSelectedDecisions(new Set());
+                        setConfirmRetrigger(false);
+                        reload();
+                      } else {
+                        setActionError(`Re-evaluation failed (exit code ${res.exit_code})`);
+                      }
+                    } catch (err) {
+                      setActionError(err instanceof Error ? err.message : "Retrigger failed");
+                    } finally {
+                      setActionLoading(false);
+                    }
+                  }}
+                  disabled={actionLoading}
+                  className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                >
+                  {actionLoading ? "Re-evaluating..." : "Re-evaluate"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Floating action bar */}
+      {(selectedDecisions.size >= 1 || isTaskRunning(CONSOLIDATE_REF)) && (
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border bg-background p-3 shadow-lg">
           <div className="mx-auto flex max-w-5xl items-center justify-between">
             <span className="text-sm text-muted-foreground">
-              {selectedDecisions.size} decisions selected
+              {selectedDecisions.size} decision{selectedDecisions.size !== 1 ? "s" : ""} selected
             </span>
             <div className="flex items-center gap-3">
               {consolidateResult?.count != null && (
@@ -650,15 +791,31 @@ export default function ProjectDetailPage() {
               >
                 Clear
               </button>
+              {selectedDecisions.size === 1 && (
+                <button
+                  onClick={() => { setActionError(null); setConfirmRetrigger(true); }}
+                  className="rounded-md border border-accent px-4 py-1.5 text-sm font-medium text-accent hover:bg-accent/10"
+                >
+                  Re-evaluate
+                </button>
+              )}
               <button
-                onClick={handleConsolidate}
-                disabled={consolidating}
-                className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                onClick={() => { setActionError(null); setConfirmDelete(true); }}
+                className="rounded-md border border-destructive/50 px-4 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
               >
-                {consolidating
-                  ? "Consolidating..."
-                  : `Consolidate ${selectedDecisions.size} decisions → Create Draft`}
+                Delete {selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}
               </button>
+              {selectedDecisions.size >= 2 && (
+                <button
+                  onClick={handleConsolidate}
+                  disabled={isTaskRunning(CONSOLIDATE_REF)}
+                  className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                >
+                  {isTaskRunning(CONSOLIDATE_REF)
+                    ? "Consolidating..."
+                    : `Consolidate ${selectedDecisions.size} → Create Draft`}
+                </button>
+              )
             </div>
           </div>
         </div>

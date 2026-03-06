@@ -39,9 +39,19 @@ export async function updateEnv(key: string, value: string | null): Promise<{ st
 }
 
 // Drafts
-export async function fetchDrafts(status?: string): Promise<{ drafts: Draft[] }> {
-  const params = status ? `?status=${encodeURIComponent(status)}` : "";
-  return apiFetch(`/api/drafts${params}`);
+export async function fetchDrafts(filters?: {
+  status?: string;
+  project_id?: string;
+  decision_id?: string;
+  commit?: string;
+}): Promise<{ drafts: Draft[] }> {
+  const params = new URLSearchParams();
+  if (filters?.status) params.set("status", filters.status);
+  if (filters?.project_id) params.set("project_id", filters.project_id);
+  if (filters?.decision_id) params.set("decision_id", filters.decision_id);
+  if (filters?.commit) params.set("commit", filters.commit);
+  const qs = params.toString();
+  return apiFetch(`/api/drafts${qs ? `?${qs}` : ""}`);
 }
 
 export async function fetchDraft(id: string): Promise<Draft> {
@@ -307,11 +317,27 @@ export async function updateDraftMediaSpec(
 export async function createDraftFromDecision(
   decisionId: string,
   platform?: string,
-): Promise<{ draft_ids: string[]; count: number; status: string }> {
+): Promise<{ task_id: string; status: string }> {
   return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}/create-draft`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(platform ? { platform } : {}),
+  });
+}
+
+export async function deleteDecision(
+  decisionId: string,
+): Promise<{ status: string; decision_id: string }> {
+  return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function retriggerDecision(
+  decisionId: string,
+): Promise<{ status: string; exit_code: number }> {
+  return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}/retrigger`, {
+    method: "POST",
   });
 }
 
@@ -323,12 +349,39 @@ export async function fetchEnabledPlatforms(): Promise<{ platforms: Record<strin
 // Consolidation
 export async function consolidateDecisions(
   decisionIds: string[],
-): Promise<{ draft_ids: string[]; count: number }> {
+): Promise<{ task_id: string; status: string }> {
   return apiFetch("/api/decisions/consolidate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision_ids: decisionIds }),
   });
+}
+
+// Background tasks
+export interface BackgroundTask {
+  id: string;
+  type: string;
+  ref_id: string;
+  project_id: string;
+  status: "running" | "completed" | "failed";
+  result: Record<string, unknown> | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export async function fetchTasks(params: {
+  type?: string;
+  ref_id?: string;
+  project_id?: string;
+  status?: string;
+}): Promise<{ tasks: BackgroundTask[] }> {
+  const qs = new URLSearchParams();
+  if (params.type) qs.set("type", params.type);
+  if (params.ref_id) qs.set("ref_id", params.ref_id);
+  if (params.project_id) qs.set("project_id", params.project_id);
+  if (params.status) qs.set("status", params.status);
+  return apiFetch(`/api/tasks?${qs.toString()}`);
 }
 
 // Memories

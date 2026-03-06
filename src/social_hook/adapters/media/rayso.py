@@ -131,8 +131,13 @@ class RaySoAdapter(MediaAdapter):
 
         result = self.playwright.generate(playwright_spec, output_dir=output_dir)
 
-        # If selector-based screenshot fails, try full viewport
-        if not result.success and result.error and "locator" in result.error.lower():
+        # If selector-based screenshot fails, try full viewport (but not for browser crashes)
+        if (
+            not result.success
+            and result.error
+            and "locator" in result.error.lower()
+            and "crash" not in result.error.lower()
+        ):
             logger.info("Retrying ray.so screenshot with full viewport")
             fallback_spec = {**playwright_spec, "selector": None}
             result = self.playwright.generate(fallback_spec, output_dir=output_dir)
