@@ -265,7 +265,7 @@ def btn_edit_text(
             adapter,
             chat_id,
             f"*Current content for* `{draft_id[:12]}`:\n\n"
-            f"```\n{draft.content[:500]}\n```\n\n"
+            f"```\n{draft.content}\n```\n\n"
             f"Reply with new content to update this draft.",
         )
     finally:

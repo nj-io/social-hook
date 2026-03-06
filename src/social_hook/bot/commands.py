@@ -16,6 +16,8 @@ from social_hook.messaging.base import (
 
 logger = logging.getLogger(__name__)
 
+_TERMINAL_STATUSES = {"posted", "rejected", "cancelled", "superseded"}
+
 # Chat draft context: chat_id → (draft_id, project_id, timestamp)
 _chat_draft_context: dict[str, tuple[str, str, float]] = {}
 _CONTEXT_TTL_SECONDS = 3600  # 1 hour
@@ -506,7 +508,7 @@ def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
 
 
 def _save_rejection_note(adapter, chat_id, draft_id, text):
-    """Reject a draft with a user-provided note."""
+    """Reject a draft with a user-provided note and save as voice memory."""
     from social_hook.db import get_draft, update_draft
     from social_hook.db import operations as ops
     from social_hook.intro_lifecycle import on_intro_rejected
@@ -521,9 +523,28 @@ def _save_rejection_note(adapter, chat_id, draft_id, text):
         update_draft(conn, draft_id, status="rejected", last_error=f"Rejected: {text}")
         ops.emit_data_event(conn, "draft", "rejected", draft_id, draft.project_id)
 
+        # Save rejection feedback as voice memory for future content generation
+        memory_saved = False
+        try:
+            project = ops.get_project(conn, draft.project_id)
+            if project:
+                from social_hook.config.project import save_memory
+
+                save_memory(
+                    project.repo_path,
+                    context=f"Rejected {draft.platform} draft",
+                    feedback=text,
+                    draft_id=draft_id,
+                )
+                memory_saved = True
+        except Exception:
+            logger.debug("Failed to save rejection memory", exc_info=True)
+
         cascade_msg = on_intro_rejected(conn, draft, draft.project_id, verbose=False)
 
         reject_msg = f"Draft `{draft_id[:12]}` rejected with note."
+        if memory_saved:
+            reject_msg += " Feedback saved for future drafts."
         if cascade_msg:
             reject_msg += f"\n{cascade_msg}"
         _send(adapter, chat_id, reject_msg)
@@ -531,10 +552,88 @@ def _save_rejection_note(adapter, chat_id, draft_id, text):
         conn.close()
 
 
-def _save_angle(adapter, chat_id, draft_id, text):
-    """Store angle feedback on a draft."""
-    from social_hook.db import get_draft, update_draft
+def _apply_expert_result(
+    conn,
+    draft,
+    result,
+    config=None,
+) -> bool:
+    """Apply Expert refinement result to a draft in the database.
+
+    Handles content updates, media spec updates, draft change audit trail,
+    and optional auto-media-regeneration. Returns True if any changes were applied.
+    """
+    from social_hook.db import insert_draft_change, update_draft
     from social_hook.db import operations as ops
+    from social_hook.filesystem import generate_id
+    from social_hook.models import DraftChange
+
+    if not result.refined_content and not result.refined_media_spec:
+        return False
+
+    if result.refined_content:
+        old_content = draft.content
+        update_draft(conn, draft.id, content=result.refined_content)
+        insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft.id,
+                field="content",
+                old_value=old_content[:200],
+                new_value=result.refined_content[:200],
+                changed_by="expert",
+            ),
+        )
+
+    if result.refined_media_spec:
+        import json as json_mod
+
+        update_draft(conn, draft.id, media_spec=result.refined_media_spec)
+        insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft.id,
+                field="media_spec",
+                old_value=json_mod.dumps(draft.media_spec)[:200] if draft.media_spec else "null",
+                new_value=json_mod.dumps(result.refined_media_spec)[:200],
+                changed_by="expert",
+            ),
+        )
+
+        # Auto-regenerate media with new spec if config available
+        if config and draft.media_type:
+            try:
+                from social_hook.drafting import _generate_media
+
+                media_paths, _, _ = _generate_media(
+                    config,
+                    draft.media_type,
+                    result.refined_media_spec,
+                    project_config=None,
+                )
+                if media_paths:
+                    update_draft(
+                        conn,
+                        draft.id,
+                        media_paths=media_paths,
+                        media_spec_used=result.refined_media_spec,
+                    )
+            except Exception as e:
+                logger.warning(f"Auto-regeneration after expert refine failed: {e}")
+
+    ops.emit_data_event(conn, "draft", "edited", draft.id, draft.project_id)
+    return True
+
+
+def _save_angle(adapter, chat_id, draft_id, text):
+    """Use Expert agent to redraft content with a new angle."""
+    from social_hook.config.yaml import load_full_config
+    from social_hook.db import get_draft
+    from social_hook.db import operations as ops
+    from social_hook.llm.expert import Expert
+    from social_hook.llm.factory import create_client
 
     conn = _get_conn()
     try:
@@ -543,13 +642,50 @@ def _save_angle(adapter, chat_id, draft_id, text):
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
-        update_draft(conn, draft_id, last_error=f"Angle feedback: {text}")
-        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
-        _send(
-            adapter,
-            chat_id,
-            f"Angle feedback noted for `{draft_id[:12]}`. Use /review to see the current draft.",
+        if draft.status in _TERMINAL_STATUSES:
+            _send(adapter, chat_id, f"Cannot redraft: draft is '{draft.status}'")
+            return
+
+        try:
+            config = load_full_config()
+            client = create_client(config.models.drafter, config)
+        except Exception as e:
+            _send(adapter, chat_id, f"Cannot redraft: {e}")
+            return
+
+        summary = ops.get_project_summary(conn, draft.project_id)
+
+        expert = Expert(client)
+        result = expert.handle(
+            draft=draft,
+            user_message=text,
+            escalation_reason="angle_change",
+            project_summary=summary,
+            project_id=draft.project_id,
+            db=conn,
         )
+
+        if _apply_expert_result(conn, draft, result, config=config):
+            set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+            parts = []
+            if result.refined_content:
+                parts.append(
+                    f"Draft `{draft_id[:12]}` redrafted with new angle."
+                    f"\n\n```\n{result.refined_content}\n```"
+                )
+            else:
+                parts.append(f"Draft `{draft_id[:12]}` media spec updated.")
+            if result.refined_media_spec:
+                parts.append("Media spec updated. Run `media-regen` to regenerate media.")
+            msg = "\n".join(parts)
+            buttons = get_review_buttons_normalized(draft.id)
+            adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
+        else:
+            _send(adapter, chat_id, f"Expert could not refine draft: {result.reasoning}")
+    except Exception as e:
+        logger.exception("Error in angle redraft")
+        _send(adapter, chat_id, f"Error redrafting: {e}")
     finally:
         conn.close()
 
@@ -601,7 +737,7 @@ def _save_edit(
         _send(
             adapter,
             chat_id,
-            f"Draft `{draft_id[:12]}` updated.\n\n```\n{new_content[:300]}\n```",
+            f"Draft `{draft_id[:12]}` updated.\n\n```\n{new_content}\n```",
         )
     finally:
         conn.close()
@@ -740,75 +876,19 @@ def _handle_expert_escalation(
         elif action == "refine_draft" and (result.refined_content or result.refined_media_spec):
             if not draft:
                 display_text = (
-                    result.refined_content[:500] if result.refined_content else result.reasoning
+                    result.refined_content if result.refined_content else result.reasoning
                 )
                 msg = f"*Refined draft (no active draft to update):*\n\n```\n{display_text}\n```"
                 _send(adapter, chat_id, msg)
                 return msg
 
-            from social_hook.db import insert_draft_change, update_draft
-            from social_hook.filesystem import generate_id
-            from social_hook.models import DraftChange
-
             conn = _get_conn()
             try:
-                if result.refined_content:
-                    old_content = draft.content
-                    update_draft(conn, draft.id, content=result.refined_content)
-
-                    change = DraftChange(
-                        id=generate_id("change"),
-                        draft_id=draft.id,
-                        field="content",
-                        old_value=old_content[:200],
-                        new_value=result.refined_content[:200],
-                        changed_by="expert",
-                    )
-                    insert_draft_change(conn, change)
-
-                # If expert refined the media spec, update it and auto-regenerate
-                if result.refined_media_spec:
-                    import json as json_mod
-
-                    update_draft(conn, draft.id, media_spec=result.refined_media_spec)
-                    insert_draft_change(
-                        conn,
-                        DraftChange(
-                            id=generate_id("change"),
-                            draft_id=draft.id,
-                            field="media_spec",
-                            old_value=json_mod.dumps(draft.media_spec)[:200]
-                            if draft.media_spec
-                            else "null",
-                            new_value=json_mod.dumps(result.refined_media_spec)[:200],
-                            changed_by="expert",
-                        ),
-                    )
-
-                    # Auto-regenerate media with new spec
-                    if draft.media_type:
-                        try:
-                            from social_hook.drafting import _generate_media
-
-                            media_paths, _, _ = _generate_media(
-                                config,
-                                draft.media_type,
-                                result.refined_media_spec,
-                                project_config=None,
-                            )
-                            if media_paths:
-                                update_draft(
-                                    conn,
-                                    draft.id,
-                                    media_paths=media_paths,
-                                    media_spec_used=result.refined_media_spec,
-                                )
-                        except Exception as e:
-                            logger.warning(f"Auto-regeneration after expert refine failed: {e}")
+                _apply_expert_result(conn, draft, result, config=config)
 
                 parts = []
                 if result.refined_content:
-                    parts.append(f"```\n{result.refined_content[:500]}\n```")
+                    parts.append(f"```\n{result.refined_content}\n```")
                 if result.refined_media_spec:
                     import json as json_mod
 

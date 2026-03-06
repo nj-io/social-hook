@@ -487,3 +487,101 @@ class TestHelpJson:
         result = runner.invoke(app, ["help", "draft", "nonexistent"])
         assert result.exit_code == 1
         assert "Unknown command" in result.output
+
+
+class TestDraftRedraft:
+    def test_redraft_calls_expert(self, db_env):
+        mock_result = MagicMock()
+        mock_result.refined_content = "Redrafted content here"
+        mock_result.refined_media_spec = None
+        mock_result.reasoning = "Applied new angle"
+        mock_result.action = MagicMock()
+        mock_result.action.value = "refine_draft"
+
+        mock_expert_instance = MagicMock()
+        mock_expert_instance.handle.return_value = mock_result
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.llm.factory.create_client") as mock_create,
+            patch("social_hook.llm.expert.Expert", return_value=mock_expert_instance),
+        ):
+            mock_config.return_value = MagicMock()
+            mock_create.return_value = MagicMock()
+            result = runner.invoke(
+                app,
+                ["draft", "redraft", "draft_draft", "--angle", "focus on performance"],
+            )
+            assert result.exit_code == 0, result.output
+            assert "redrafted" in result.output
+
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT content FROM drafts WHERE id = ?", ("draft_draft",)).fetchone()
+        conn.close()
+        assert row["content"] == "Redrafted content here"
+
+    def test_redraft_terminal_status_fails(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(
+                app,
+                ["draft", "redraft", "draft_rejected", "--angle", "new angle"],
+            )
+            assert result.exit_code == 1
+            assert "Cannot redraft" in result.output
+
+    def test_redraft_expert_no_content(self, db_env):
+        mock_result = MagicMock()
+        mock_result.refined_content = None
+        mock_result.refined_media_spec = None
+        mock_result.reasoning = "Could not find a better angle"
+        mock_result.action = MagicMock()
+        mock_result.action.value = "refine_draft"
+
+        mock_expert_instance = MagicMock()
+        mock_expert_instance.handle.return_value = mock_result
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.llm.factory.create_client") as mock_create,
+            patch("social_hook.llm.expert.Expert", return_value=mock_expert_instance),
+        ):
+            mock_config.return_value = MagicMock()
+            mock_create.return_value = MagicMock()
+            result = runner.invoke(
+                app,
+                ["draft", "redraft", "draft_draft", "--angle", "new angle"],
+            )
+            assert result.exit_code == 1
+            assert "could not refine" in result.output
+
+
+class TestDraftRejectMemory:
+    def test_reject_with_reason_saves_memory(self, db_env):
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.project.save_memory") as mock_save,
+        ):
+            result = runner.invoke(
+                app,
+                ["draft", "reject", "draft_draft", "--reason", "too technical"],
+            )
+            assert result.exit_code == 0
+            assert "rejected" in result.output
+            mock_save.assert_called_once_with(
+                str(db_env["tmp_path"]),
+                context="Rejected x draft",
+                feedback="too technical",
+                draft_id="draft_draft",
+            )
+
+    def test_reject_without_reason_no_memory(self, db_env):
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.project.save_memory") as mock_save,
+        ):
+            result = runner.invoke(app, ["draft", "reject", "draft_approved"])
+            assert result.exit_code == 0
+            mock_save.assert_not_called()

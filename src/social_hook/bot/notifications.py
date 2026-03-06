@@ -71,7 +71,7 @@ def format_draft_review(
         [
             "",
             "```",
-            content[:500],
+            content,
             "```",
         ]
     )
