@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -227,6 +227,22 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_lookup
     ON chat_messages(chat_id, created_at DESC);
+
+-- Background Tasks (Long-running operations tracked for web UI)
+CREATE TABLE IF NOT EXISTS background_tasks (
+    id         TEXT PRIMARY KEY,
+    type       TEXT NOT NULL,
+    ref_id     TEXT NOT NULL DEFAULT '',
+    project_id TEXT NOT NULL DEFAULT '',
+    status     TEXT NOT NULL DEFAULT 'running',
+    result     TEXT,
+    error      TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_background_tasks_ref ON background_tasks(type, ref_id, status);
 """
 
 

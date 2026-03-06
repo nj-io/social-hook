@@ -307,7 +307,7 @@ export async function updateDraftMediaSpec(
 export async function createDraftFromDecision(
   decisionId: string,
   platform?: string,
-): Promise<{ draft_ids: string[]; count: number; status: string }> {
+): Promise<{ task_id: string; status: string }> {
   return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}/create-draft`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -323,12 +323,39 @@ export async function fetchEnabledPlatforms(): Promise<{ platforms: Record<strin
 // Consolidation
 export async function consolidateDecisions(
   decisionIds: string[],
-): Promise<{ draft_ids: string[]; count: number }> {
+): Promise<{ task_id: string; status: string }> {
   return apiFetch("/api/decisions/consolidate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision_ids: decisionIds }),
   });
+}
+
+// Background tasks
+export interface BackgroundTask {
+  id: string;
+  type: string;
+  ref_id: string;
+  project_id: string;
+  status: "running" | "completed" | "failed";
+  result: Record<string, unknown> | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export async function fetchTasks(params: {
+  type?: string;
+  ref_id?: string;
+  project_id?: string;
+  status?: string;
+}): Promise<{ tasks: BackgroundTask[] }> {
+  const qs = new URLSearchParams();
+  if (params.type) qs.set("type", params.type);
+  if (params.ref_id) qs.set("ref_id", params.ref_id);
+  if (params.project_id) qs.set("project_id", params.project_id);
+  if (params.status) qs.set("status", params.status);
+  return apiFetch(`/api/tasks?${qs.toString()}`);
 }
 
 // Memories

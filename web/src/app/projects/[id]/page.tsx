@@ -14,6 +14,7 @@ import {
   fetchEnabledPlatforms,
   consolidateDecisions,
   fetchMemories,
+  type BackgroundTask,
 } from "@/lib/api";
 import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
@@ -22,6 +23,7 @@ import { SimpleMarkdown } from "@/components/simple-markdown";
 import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
 import { useDataEvents } from "@/lib/use-data-events";
+import { useBackgroundTasks } from "@/lib/use-background-tasks";
 
 const DECISIONS_PER_PAGE = 10;
 
@@ -46,13 +48,42 @@ export default function ProjectDetailPage() {
     return localStorage.getItem("project-summary-expanded") !== "false";
   });
   const [expandedDecisions, setExpandedDecisions] = useState<Set<string>>(new Set());
-  const [creatingDraftFor, setCreatingDraftFor] = useState<Set<string>>(new Set());
   const [draftResult, setDraftResult] = useState<Record<string, { count?: number; error?: string }>>({});
   const [platformCount, setPlatformCount] = useState<number>(0);
   const [selectedDecisions, setSelectedDecisions] = useState<Set<string>>(new Set());
-  const [consolidating, setConsolidating] = useState(false);
   const [consolidateResult, setConsolidateResult] = useState<{ count?: number; error?: string } | null>(null);
   const [confirmRedraft, setConfirmRedraft] = useState<string | null>(null);
+  // Consolidate uses a special ref_id key since it spans multiple decisions
+  const CONSOLIDATE_REF = "__consolidate__";
+
+  const onTaskCompleted = useCallback((task: BackgroundTask) => {
+    if (task.status === "completed" && task.result) {
+      if (task.type === "create_draft") {
+        const count = (task.result as Record<string, unknown>).count as number | undefined;
+        if (count != null) {
+          setDraftResult((prev) => ({ ...prev, [task.ref_id]: { count } }));
+          setDecisions((prev) =>
+            prev.map((d) =>
+              d.id === task.ref_id ? { ...d, draft_count: d.draft_count + count } : d,
+            ),
+          );
+        }
+      } else if (task.type === "consolidate") {
+        const count = (task.result as Record<string, unknown>).count as number | undefined;
+        setConsolidateResult({ count });
+        setSelectedDecisions(new Set());
+      }
+    } else if (task.status === "failed") {
+      const error = task.error ?? "Task failed";
+      if (task.type === "create_draft") {
+        setDraftResult((prev) => ({ ...prev, [task.ref_id]: { error } }));
+      } else if (task.type === "consolidate") {
+        setConsolidateResult({ error });
+      }
+    }
+  }, []);
+
+  const { trackTask, isRunning: isTaskRunning } = useBackgroundTasks(id, onTaskCompleted);
 
   const loadMemories = useCallback(async (repoPath: string) => {
     try {
@@ -82,7 +113,7 @@ export default function ProjectDetailPage() {
     }
   }, [id, decisionOffset, loadMemories]);
 
-  useDataEvents(["decision", "draft", "post", "project", "arc"], reload, id);
+  useDataEvents(["decision", "draft", "post", "project", "arc", "task"], reload, id);
 
   useEffect(() => {
     async function load() {
@@ -132,41 +163,25 @@ export default function ProjectDetailPage() {
 
   async function handleCreateDraft(decisionId: string) {
     setConfirmRedraft(null);
-    setCreatingDraftFor((prev) => new Set(prev).add(decisionId));
     setDraftResult((prev) => { const next = { ...prev }; delete next[decisionId]; return next; });
     try {
       const res = await createDraftFromDecision(decisionId);
-      setDraftResult((prev) => ({ ...prev, [decisionId]: { count: res.count } }));
-      setDecisions((prev) =>
-        prev.map((d) =>
-          d.id === decisionId ? { ...d, draft_count: d.draft_count + res.count } : d,
-        ),
-      );
+      trackTask(res.task_id, decisionId, "create_draft");
     } catch (e) {
       setDraftResult((prev) => ({
         ...prev,
         [decisionId]: { error: e instanceof Error ? e.message : "Failed" },
       }));
-    } finally {
-      setCreatingDraftFor((prev) => {
-        const next = new Set(prev);
-        next.delete(decisionId);
-        return next;
-      });
     }
   }
 
   async function handleConsolidate() {
-    setConsolidating(true);
     setConsolidateResult(null);
     try {
       const res = await consolidateDecisions(Array.from(selectedDecisions));
-      setConsolidateResult({ count: res.count });
-      setSelectedDecisions(new Set());
+      trackTask(res.task_id, CONSOLIDATE_REF, "consolidate");
     } catch (e) {
       setConsolidateResult({ error: e instanceof Error ? e.message : "Failed" });
-    } finally {
-      setConsolidating(false);
     }
   }
 
@@ -399,7 +414,7 @@ export default function ProjectDetailPage() {
                 <tbody className="divide-y divide-border">
                   {decisions.map((d) => {
                     const isExpanded = expandedDecisions.has(d.id);
-                    const isCreating = creatingDraftFor.has(d.id);
+                    const isCreating = isTaskRunning(d.id);
                     const result = draftResult[d.id];
                     return (
                       <tr
@@ -629,7 +644,7 @@ export default function ProjectDetailPage() {
       )}
 
       {/* Floating consolidation bar */}
-      {selectedDecisions.size >= 2 && (
+      {(selectedDecisions.size >= 2 || isTaskRunning(CONSOLIDATE_REF)) && (
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border bg-background p-3 shadow-lg">
           <div className="mx-auto flex max-w-5xl items-center justify-between">
             <span className="text-sm text-muted-foreground">
@@ -652,10 +667,10 @@ export default function ProjectDetailPage() {
               </button>
               <button
                 onClick={handleConsolidate}
-                disabled={consolidating}
+                disabled={isTaskRunning(CONSOLIDATE_REF)}
                 className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
               >
-                {consolidating
+                {isTaskRunning(CONSOLIDATE_REF)
                   ? "Consolidating..."
                   : `Consolidate ${selectedDecisions.size} decisions → Create Draft`}
               </button>
