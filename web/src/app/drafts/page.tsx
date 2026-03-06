@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { fetchDrafts } from "@/lib/api";
 import type { Draft } from "@/lib/types";
@@ -12,8 +12,12 @@ const STATUSES = ["All", "draft", "approved", "scheduled", "posted", "rejected",
 
 export default function DraftsPage() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const fromProjectId = searchParams.get("from");
   const fromProjectName = searchParams.get("name");
+  const decisionFilter = searchParams.get("decision");
+  const commitFilter = searchParams.get("commit");
 
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,15 +26,31 @@ export default function DraftsPage() {
   const filterRef = useRef(filter);
   filterRef.current = filter;
 
+  function removeParam(key: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete(key);
+    const qs = params.toString();
+    router.replace(`${pathname}${qs ? `?${qs}` : ""}`);
+  }
+
+  const buildFilters = useCallback(() => {
+    const filters: Record<string, string> = {};
+    const status = filterRef.current === "All" ? undefined : filterRef.current;
+    if (status) filters.status = status;
+    if (fromProjectId) filters.project_id = fromProjectId;
+    if (decisionFilter) filters.decision_id = decisionFilter;
+    if (commitFilter) filters.commit = commitFilter;
+    return filters;
+  }, [fromProjectId, decisionFilter, commitFilter]);
+
   const reload = useCallback(async () => {
     try {
-      const status = filterRef.current === "All" ? undefined : filterRef.current;
-      const result = await fetchDrafts(status);
+      const result = await fetchDrafts(buildFilters());
       setDrafts(result.drafts);
     } catch {
       // Silent refresh failure
     }
-  }, []);
+  }, [buildFilters]);
 
   useDataEvents(["draft"], reload);
 
@@ -38,8 +58,7 @@ export default function DraftsPage() {
     async function load() {
       setLoading(true);
       try {
-        const status = filter === "All" ? undefined : filter;
-        const result = await fetchDrafts(status);
+        const result = await fetchDrafts(buildFilters());
         setDrafts(result.drafts);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load drafts");
@@ -48,7 +67,9 @@ export default function DraftsPage() {
       }
     }
     load();
-  }, [filter]);
+  }, [filter, buildFilters]);
+
+  const hasActiveFilters = fromProjectId || decisionFilter || commitFilter;
 
   return (
     <div className="space-y-6">
@@ -78,6 +99,30 @@ export default function DraftsPage() {
           </button>
         ))}
       </div>
+
+      {/* Active filter chips */}
+      {hasActiveFilters && (
+        <div className="flex flex-wrap gap-2">
+          {fromProjectId && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+              Project: {fromProjectName || fromProjectId.slice(0, 12)}
+              <button onClick={() => removeParam("from")} className="ml-0.5 hover:text-foreground">&times;</button>
+            </span>
+          )}
+          {decisionFilter && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+              Decision: <code>{decisionFilter.slice(0, 14)}</code>
+              <button onClick={() => removeParam("decision")} className="ml-0.5 hover:text-foreground">&times;</button>
+            </span>
+          )}
+          {commitFilter && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+              Commit: <code>{commitFilter.slice(0, 7)}</code>
+              <button onClick={() => removeParam("commit")} className="ml-0.5 hover:text-foreground">&times;</button>
+            </span>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">

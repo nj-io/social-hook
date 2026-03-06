@@ -155,6 +155,7 @@ export interface Decision {
   targets: Record<string, unknown>;
   consolidate_with: string[] | null;
   draft_count: number;
+  draft_ids?: string[];
   created_at: string;
 }
 

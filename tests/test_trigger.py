@@ -1502,7 +1502,7 @@ class TestGenerateMediaPerTool:
         cfg.media_generation.enabled = True
         cfg.media_generation.tools = {"mermaid": False, "nano_banana_pro": True}
 
-        paths, mtype, spec = _generate_media(
+        paths, mtype, spec, err = _generate_media(
             cfg, "mermaid", {"diagram": "graph LR\n  A-->B"}, dry_run=False
         )
         assert paths == []
@@ -1517,7 +1517,7 @@ class TestGenerateMediaPerTool:
         cfg.media_generation.enabled = False
         cfg.media_generation.tools = {"mermaid": True}
 
-        paths, mtype, spec = _generate_media(cfg, "ray_so", {"code": "x=1"}, dry_run=False)
+        paths, mtype, spec, err = _generate_media(cfg, "ray_so", {"code": "x=1"}, dry_run=False)
         assert paths == []
         assert mtype is None
         assert spec is None
@@ -1535,7 +1535,7 @@ class TestGenerateMediaPerTool:
         guidance.enabled = False
         project_config.media_guidance.get.return_value = guidance
 
-        paths, mtype, spec = _generate_media(
+        paths, mtype, spec, err = _generate_media(
             cfg,
             "mermaid",
             {"diagram": "graph LR\n  A-->B"},
@@ -1562,7 +1562,7 @@ class TestGenerateMediaPerTool:
         mock_get_adapter.return_value = mock_adapter
 
         spec = {"code": "print('hello')", "language": "python", "title": "example.py"}
-        paths, mtype, returned_spec = _generate_media(cfg, "ray_so", spec, dry_run=False)
+        paths, mtype, returned_spec, err = _generate_media(cfg, "ray_so", spec, dry_run=False)
 
         assert paths == ["/tmp/media/code.png"]
         assert mtype == "ray_so"
@@ -1586,7 +1586,7 @@ class TestGenerateMediaPerTool:
         mock_get_adapter.return_value = mock_adapter
 
         spec = {"diagram": "graph LR\n  A-->B"}
-        paths, mtype, returned_spec = _generate_media(cfg, "mermaid", spec, dry_run=False)
+        paths, mtype, returned_spec, err = _generate_media(cfg, "mermaid", spec, dry_run=False)
 
         assert paths == ["/tmp/media/diagram.png"]
         assert mtype == "mermaid"
@@ -1611,7 +1611,9 @@ class TestGenerateMediaPerTool:
         mock_get_adapter.return_value = mock_adapter
 
         spec = {"prompt": "abstract code visualization"}
-        paths, mtype, returned_spec = _generate_media(cfg, "nano_banana_pro", spec, dry_run=False)
+        paths, mtype, returned_spec, err = _generate_media(
+            cfg, "nano_banana_pro", spec, dry_run=False
+        )
 
         assert paths == ["/tmp/media/visual.png"]
         assert mtype == "nano_banana_pro"
@@ -1634,7 +1636,7 @@ class TestGenerateMediaPerTool:
         mock_get_adapter.return_value = mock_adapter
 
         spec = {"url": "https://example.com", "selector": "#main"}
-        paths, mtype, returned_spec = _generate_media(cfg, "playwright", spec, dry_run=False)
+        paths, mtype, returned_spec, err = _generate_media(cfg, "playwright", spec, dry_run=False)
 
         assert paths == ["/tmp/media/screenshot.png"]
         assert mtype == "playwright"
@@ -1650,7 +1652,7 @@ class TestGenerateMediaPerTool:
         cfg.media_generation.enabled = True
         cfg.media_generation.tools = {"ray_so": True}
 
-        paths, mtype, spec = _generate_media(cfg, "ray_so", {}, dry_run=False)
+        paths, mtype, spec, err = _generate_media(cfg, "ray_so", {}, dry_run=False)
         assert paths == []
         assert mtype is None
         assert spec is None
@@ -1663,7 +1665,7 @@ class TestGenerateMediaPerTool:
         cfg.media_generation.enabled = True
         cfg.media_generation.tools = {"ray_so": True}
 
-        paths, mtype, spec = _generate_media(cfg, "ray_so", None, dry_run=False)
+        paths, mtype, spec, err = _generate_media(cfg, "ray_so", None, dry_run=False)
         assert paths == []
         assert mtype is None
         assert spec is None

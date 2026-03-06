@@ -309,11 +309,15 @@ class CreateDraftInput(BaseModel):
     def validate(cls, data: dict[str, Any]) -> "CreateDraftInput":
         """Validate tool call input data."""
         # LLM sometimes returns a list for content (thread format) instead of a string.
-        # Convert to JSON string so validation passes and thread parsing works downstream.
+        # Extract text from each item and join with double newlines so
+        # _parse_thread_tweets() can split on the numbered "1/, 2/" pattern.
         if isinstance(data.get("content"), list):
-            import json
-
-            data = {**data, "content": json.dumps(data["content"])}
+            items = data["content"]
+            if items and isinstance(items[0], dict) and "content" in items[0]:
+                joined = "\n\n".join(item["content"] for item in items)
+            else:
+                joined = "\n\n".join(str(item) for item in items)
+            data = {**data, "content": joined}
         try:
             return cls.model_validate(data)
         except ValidationError as e:

@@ -73,11 +73,15 @@ export default function DraftDetailPage() {
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-bold">Draft Detail</h1>
         <StatusBadge status={draft.status} />
+        <code className="text-xs text-muted-foreground">{draft.id}</code>
       </div>
 
       {/* Meta info */}
       <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
         <span>Platform: <span className="font-medium text-foreground">{platformLabel}</span></span>
+        {draft.decision?.media_tool && (
+          <span>Media: <span className="font-medium text-foreground">{draft.decision.media_tool}</span></span>
+        )}
         <span>Created: {new Date(draft.created_at).toLocaleString()}</span>
         {draft.suggested_time && (
           <span>Scheduled: {new Date(draft.suggested_time).toLocaleString()}</span>
@@ -103,20 +107,27 @@ export default function DraftDetailPage() {
         </div>
       )}
 
-      {/* Media */}
-      {draft.media_paths && (
-        <div>
-          <h2 className="mb-2 text-sm font-medium text-muted-foreground">Media</h2>
-          <MediaPreview paths={draft.media_paths} />
-        </div>
-      )}
-
       {/* Media Spec Editor */}
       <MediaSpecEditor
         draftId={draft.id}
         mediaSpec={draft.media_spec ? (typeof draft.media_spec === "string" ? JSON.parse(draft.media_spec) : draft.media_spec) : {}}
         onUpdate={reload}
       />
+
+      {/* Media error */}
+      {draft.last_error && (
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive break-words whitespace-pre-wrap">
+          {draft.last_error}
+        </div>
+      )}
+
+      {/* Media (generated result) */}
+      {draft.media_paths && (
+        <div>
+          <h2 className="mb-2 text-sm font-medium text-muted-foreground">Media</h2>
+          <MediaPreview paths={draft.media_paths} />
+        </div>
+      )}
 
       {/* Reasoning */}
       {draft.reasoning && (
@@ -206,6 +217,7 @@ function EvaluatorAnalysis({ decision }: { decision: Decision }) {
             )}
           </div>
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span>Decision: <code className="text-accent">{decision.id.slice(0, 14)}</code></span>
             <span>Commit: <code>{decision.commit_hash.slice(0, 7)}</code></span>
             <span>{new Date(decision.created_at).toLocaleString()}</span>
           </div>

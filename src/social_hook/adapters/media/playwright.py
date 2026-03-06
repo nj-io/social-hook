@@ -86,6 +86,17 @@ class PlaywrightAdapter(MediaAdapter):
                                 "  playwright install chromium"
                             ),
                         )
+                    if "signal" in error_msg.lower() or "crash" in error_msg.lower():
+                        return MediaResult(
+                            success=False,
+                            error=(
+                                f"Chromium crashed: {error_msg}\n"
+                                "This usually means the cached browser binary is outdated or incompatible.\n"
+                                "Fix with:\n"
+                                "  pip install --upgrade playwright\n"
+                                "  playwright install chromium"
+                            ),
+                        )
                     raise
 
                 context = browser.new_context(viewport={"width": width, "height": height})

@@ -399,6 +399,8 @@ def list_cmd(
     ctx: typer.Context,
     status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
     project: str | None = typer.Option(None, "--project", "-p", help="Filter by project ID"),
+    decision: str | None = typer.Option(None, "--decision", "-d", help="Filter by decision ID"),
+    commit: str | None = typer.Option(None, "--commit", "-c", help="Filter by commit hash"),
     pending: bool = typer.Option(
         False, "--pending", help="Show only actionable drafts (draft/approved/scheduled)"
     ),
@@ -406,12 +408,20 @@ def list_cmd(
     """List drafts with optional filters.
 
     Example: social-hook draft list --pending --json
+    Example: social-hook draft list --decision decision-abc123
+    Example: social-hook draft list --commit 47a5191
     """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
     try:
-        drafts = ops.get_drafts_filtered(conn, status=status, project_id=project)
+        drafts = ops.get_drafts_filtered(
+            conn,
+            status=status,
+            project_id=project,
+            decision_id=decision,
+            commit_hash=commit,
+        )
         if pending:
             drafts = [d for d in drafts if d.status in ("draft", "approved", "scheduled")]
         json_output = ctx.obj.get("json", False) if ctx.obj else False

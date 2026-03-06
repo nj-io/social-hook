@@ -501,18 +501,26 @@ async def _event_bridge_loop():
 
 
 @app.get("/api/drafts")
-async def api_drafts(status: str | None = None, pending: bool = False):
-    """List drafts, optionally filtered by status or pending flag."""
+async def api_drafts(
+    status: str | None = None,
+    pending: bool = False,
+    project_id: str | None = None,
+    decision_id: str | None = None,
+    commit: str | None = None,
+):
+    """List drafts, optionally filtered by status, project, decision, or commit."""
+    from social_hook.db import operations as ops
+
     conn = _get_conn()
     try:
-        if status:
-            rows = conn.execute(
-                "SELECT * FROM drafts WHERE status = ? ORDER BY created_at DESC",
-                (status,),
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM drafts ORDER BY created_at DESC").fetchall()
-        drafts = [dict(row) for row in rows]
+        draft_models = ops.get_drafts_filtered(
+            conn,
+            status=status,
+            project_id=project_id,
+            decision_id=decision_id,
+            commit_hash=commit,
+        )
+        drafts = [d.to_dict() for d in draft_models]
         if pending:
             drafts = [d for d in drafts if d.get("status") in ("draft", "approved", "scheduled")]
         return {"drafts": drafts}
@@ -715,7 +723,23 @@ async def api_project_decisions(
             "SELECT COUNT(*) FROM decisions WHERE project_id = ?", (project_id,)
         ).fetchone()[0]
 
-        return {"decisions": [dict(r) for r in rows], "total": total}
+        decisions_list = [dict(r) for r in rows]
+
+        # Enrich with draft IDs
+        decision_ids = [d["id"] for d in decisions_list]
+        if decision_ids:
+            placeholders = ",".join("?" * len(decision_ids))
+            draft_rows = conn.execute(
+                f"SELECT id, decision_id FROM drafts WHERE decision_id IN ({placeholders})",
+                decision_ids,
+            ).fetchall()
+            drafts_by_decision: dict[str, list[str]] = {}
+            for dr in draft_rows:
+                drafts_by_decision.setdefault(dr["decision_id"], []).append(dr["id"])
+            for d in decisions_list:
+                d["draft_ids"] = drafts_by_decision.get(d["id"], [])
+
+        return {"decisions": decisions_list, "total": total}
     finally:
         conn.close()
 
@@ -876,6 +900,64 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
     draft_ids = await asyncio.to_thread(_blocking_create_draft)
 
     return {"draft_ids": draft_ids, "count": len(draft_ids), "status": "created"}
+
+
+@app.delete("/api/decisions/{decision_id}")
+async def api_delete_decision(decision_id: str):
+    """Delete a decision and all associated drafts/data."""
+    conn = _get_conn()
+    try:
+        decision = ops.get_decision(conn, decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="Decision not found")
+
+        project_id = decision.project_id
+        result = ops.delete_decision(conn, decision_id)
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to delete decision")
+
+        ops.emit_data_event(conn, "decision", "deleted", decision_id, project_id)
+        return {"status": "deleted", "decision_id": decision_id}
+    finally:
+        conn.close()
+
+
+@app.post("/api/decisions/{decision_id}/retrigger")
+async def api_retrigger_decision(decision_id: str):
+    """Delete a decision and re-evaluate the commit from scratch.
+
+    Re-runs the full evaluator pipeline, which may produce a different
+    decision, angle, episode type, or skip the commit entirely.
+    """
+    conn = _get_conn()
+    try:
+        decision = ops.get_decision(conn, decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="Decision not found")
+
+        project = ops.get_project(conn, decision.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        commit_hash = decision.commit_hash
+        repo_path = project.repo_path
+
+        ops.delete_decision(conn, decision_id)
+        ops.emit_data_event(conn, "decision", "deleted", decision_id, decision.project_id)
+    finally:
+        conn.close()
+
+    def _blocking_retrigger():
+        from social_hook.trigger import run_trigger
+
+        return run_trigger(
+            commit_hash=commit_hash,
+            repo_path=repo_path,
+        )
+
+    exit_code = await asyncio.to_thread(_blocking_retrigger)
+
+    return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
 
 @app.get("/api/platforms/enabled")

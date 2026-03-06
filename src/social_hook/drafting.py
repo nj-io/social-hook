@@ -138,7 +138,7 @@ def draft_for_platforms(
     drafter = Drafter(drafter_client)
 
     # 4. Media will be generated after first successful draft (drafter produces spec)
-    media_paths, media_type_str, media_spec_dict = [], None, None
+    media_paths, media_type_str, media_spec_dict, media_error = [], None, None, None
     media_generated = False
 
     # 4b. Assemble arc context if this is an arc post
@@ -191,7 +191,7 @@ def draft_for_platforms(
                         )
                         _mt = None
                     else:
-                        media_paths, media_type_str, media_spec_dict = _generate_media(
+                        media_paths, media_type_str, media_spec_dict, media_error = _generate_media(
                             config,
                             _mt,
                             _ms,
@@ -258,6 +258,9 @@ def draft_for_platforms(
                 media_spec_used=media_spec_dict if media_paths else None,
                 suggested_time=schedule.datetime,
                 reasoning=draft_reasoning,
+                last_error=f"Media generation failed: {media_error}"
+                if media_error and not media_paths
+                else None,
             )
             db.insert_draft(draft)
             db.emit_data_event("draft", "created", draft.id, project.id)
@@ -314,15 +317,15 @@ def _generate_media(
         project_config: Optional ProjectConfig for per-tool overrides.
 
     Returns:
-        Tuple of (media_paths, media_type_str, media_spec_dict)
+        Tuple of (media_paths, media_type_str, media_spec_dict, media_error)
     """
     if not config.media_generation.enabled:
         if verbose:
             print("Media generation disabled globally, skipping")
-        return [], None, None
+        return [], None, None, None
 
     if not media_type_str or media_type_str == "none":
-        return [], None, None
+        return [], None, None, None
 
     # Per-tool check: global toggle (config.yaml)
     tool_enabled = config.media_generation.tools.get(media_type_str, True)
@@ -334,7 +337,7 @@ def _generate_media(
     if not tool_enabled:
         if verbose:
             print(f"Media tool {media_type_str} is disabled, skipping")
-        return [], None, None
+        return [], None, None, None
 
     # Defense-in-depth: reject empty spec even if caller didn't validate
     if not media_spec_dict:
@@ -342,9 +345,10 @@ def _generate_media(
             "media_spec_dict is empty for media_type=%s — skipping media generation",
             media_type_str,
         )
-        return [], None, None
+        return [], None, None, None
 
     media_paths = []
+    media_error = None
 
     try:
         from social_hook.adapters.registry import get_media_adapter
@@ -354,12 +358,12 @@ def _generate_media(
             api_key = config.env.get("GEMINI_API_KEY")
             if not api_key:
                 logger.warning("nano_banana_pro requested but GEMINI_API_KEY not set")
-                return [], None, None
+                return [], None, None, "GEMINI_API_KEY not set"
 
         media_adapter = get_media_adapter(media_type_str, api_key=api_key)
         if media_adapter:
-            draft_id = generate_id("draft")
-            output_dir = str(get_base_path() / "media-cache" / draft_id)
+            media_id = generate_id("media")
+            output_dir = str(get_base_path() / "media-cache" / media_id)
             result = media_adapter.generate(
                 spec=media_spec_dict,
                 output_dir=output_dir,
@@ -370,11 +374,13 @@ def _generate_media(
                 if verbose:
                     print(f"Media generated: {result.file_path}")
             else:
-                logger.warning(f"Media generation failed: {result.error}")
+                media_error = result.error or "Unknown media generation failure"
+                logger.warning(f"Media generation failed: {media_error}")
     except Exception as e:
+        media_error = str(e)
         logger.warning(f"Media generation error (non-fatal): {e}")
 
-    return media_paths, media_type_str, media_spec_dict
+    return media_paths, media_type_str, media_spec_dict, media_error
 
 
 def _needs_thread(draft_result, platform: str, tier: str, thread_min: int = 4) -> bool:

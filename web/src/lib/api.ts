@@ -39,9 +39,19 @@ export async function updateEnv(key: string, value: string | null): Promise<{ st
 }
 
 // Drafts
-export async function fetchDrafts(status?: string): Promise<{ drafts: Draft[] }> {
-  const params = status ? `?status=${encodeURIComponent(status)}` : "";
-  return apiFetch(`/api/drafts${params}`);
+export async function fetchDrafts(filters?: {
+  status?: string;
+  project_id?: string;
+  decision_id?: string;
+  commit?: string;
+}): Promise<{ drafts: Draft[] }> {
+  const params = new URLSearchParams();
+  if (filters?.status) params.set("status", filters.status);
+  if (filters?.project_id) params.set("project_id", filters.project_id);
+  if (filters?.decision_id) params.set("decision_id", filters.decision_id);
+  if (filters?.commit) params.set("commit", filters.commit);
+  const qs = params.toString();
+  return apiFetch(`/api/drafts${qs ? `?${qs}` : ""}`);
 }
 
 export async function fetchDraft(id: string): Promise<Draft> {
@@ -312,6 +322,22 @@ export async function createDraftFromDecision(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(platform ? { platform } : {}),
+  });
+}
+
+export async function deleteDecision(
+  decisionId: string,
+): Promise<{ status: string; decision_id: string }> {
+  return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function retriggerDecision(
+  decisionId: string,
+): Promise<{ status: string; exit_code: number }> {
+  return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}/retrigger`, {
+    method: "POST",
   });
 }
 

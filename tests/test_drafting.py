@@ -661,7 +661,7 @@ class TestDraftMediaSpecGuards:
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch(
         "social_hook.drafting._generate_media",
-        return_value=(["/tmp/media/code.png"], "ray_so", {"code": "x=1"}),
+        return_value=(["/tmp/media/code.png"], "ray_so", {"code": "x=1"}, None),
     )
     def test_valid_spec_triggers_media(
         self,
