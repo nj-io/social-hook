@@ -5,8 +5,10 @@ import json
 import logging
 import re
 import sqlite3
+import threading
 import time
 import uuid as _uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -14,7 +16,7 @@ from typing import Any
 import yaml
 from fastapi import Body, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -131,6 +133,89 @@ def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(str(get_db_path()))
     conn.row_factory = sqlite3.Row
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Background task helper
+# ---------------------------------------------------------------------------
+
+
+def _run_background_task(
+    task_type: str,
+    ref_id: str,
+    project_id: str,
+    fn: Callable[[], Any],
+    *,
+    on_success: Callable[[Any], None] | None = None,
+) -> str:
+    """Run a blocking callable in a background thread with DB-persisted status.
+
+    Inserts a row into ``background_tasks`` with status='running', launches
+    ``fn`` in a daemon thread, and updates the row on completion or failure.
+    Emits ``task`` data-change events so the frontend can react via WebSocket.
+
+    Args:
+        task_type: Task category (e.g. "create_draft", "consolidate").
+        ref_id: Reference key the frontend uses to find this task
+            (e.g. decision_id).
+        project_id: Project this task belongs to.
+        fn: Zero-arg callable that returns a JSON-serialisable result dict.
+        on_success: Optional callback receiving ``fn``'s return value,
+            called *after* the task row is marked completed.
+
+    Returns:
+        The generated task ID.
+    """
+    from social_hook.filesystem import generate_id
+
+    task_id = generate_id("task")
+
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES (?, ?, ?, ?, 'running', datetime('now'))",
+            (task_id, task_type, ref_id, project_id),
+        )
+        conn.commit()
+        ops.emit_data_event(conn, "task", "started", task_id, project_id)
+    finally:
+        conn.close()
+
+    def _worker() -> None:
+        try:
+            result = fn()
+            conn2 = _get_conn()
+            try:
+                conn2.execute(
+                    "UPDATE background_tasks SET status='completed', result=?,"
+                    " updated_at=datetime('now') WHERE id=?",
+                    (json.dumps(result), task_id),
+                )
+                conn2.commit()
+                ops.emit_data_event(conn2, "task", "completed", task_id, project_id)
+            finally:
+                conn2.close()
+            if on_success:
+                on_success(result)
+        except Exception:
+            logger.exception("Background task %s failed", task_id)
+            conn2 = _get_conn()
+            try:
+                import traceback
+
+                conn2.execute(
+                    "UPDATE background_tasks SET status='failed', error=?,"
+                    " updated_at=datetime('now') WHERE id=?",
+                    (traceback.format_exc()[-500:], task_id),
+                )
+                conn2.commit()
+                ops.emit_data_event(conn2, "task", "failed", task_id, project_id)
+            finally:
+                conn2.close()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return task_id
 
 
 def _sanitize_value(value: str) -> str:
@@ -893,13 +978,52 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 project_config=project_config,
                 target_platform_names=[platform] if platform else None,
             )
-            return [r.draft.id for r in results]
+            return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
             conn2.close()
 
-    draft_ids = await asyncio.to_thread(_blocking_create_draft)
+    def _on_drafts_created(result: dict) -> None:
+        from social_hook.drafting import DraftResult
 
-    return {"draft_ids": draft_ids, "count": len(draft_ids), "status": "created"}
+        # Re-fetch drafts from DB for notification (thread-safe)
+        conn2 = _get_conn()
+        try:
+            from social_hook.scheduling import calculate_optimal_time
+
+            draft_results = []
+            for did in result["draft_ids"]:
+                d = ops.get_draft(conn2, did)
+                if d:
+                    sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_tweets=[]))
+            if draft_results:
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    commit_hash=commit.hash,
+                    commit_message=commit.message,
+                    draft_results=draft_results,
+                )
+        except Exception:
+            logger.debug("Draft notification failed", exc_info=True)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "create_draft",
+        ref_id=decision_id,
+        project_id=project.id,
+        fn=_blocking_create_draft,
+        on_success=_on_drafts_created,
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
 
 
 @app.delete("/api/decisions/{decision_id}")
@@ -1064,13 +1188,102 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 commit=commit,
                 project_config=project_config,
             )
-            return [r.draft.id for r in results]
+            return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
             conn2.close()
 
-    draft_ids = await asyncio.to_thread(_blocking_consolidate)
+    def _on_consolidated(result: dict) -> None:
+        from social_hook.drafting import DraftResult
 
-    return {"draft_ids": draft_ids, "count": len(draft_ids)}
+        conn2 = _get_conn()
+        try:
+            from social_hook.scheduling import calculate_optimal_time
+
+            draft_results = []
+            for did in result["draft_ids"]:
+                d = ops.get_draft(conn2, did)
+                if d:
+                    sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_tweets=[]))
+            if draft_results:
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    commit_hash=commit.hash,
+                    commit_message=commit.message,
+                    draft_results=draft_results,
+                )
+        except Exception:
+            logger.debug("Consolidation notification failed", exc_info=True)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "consolidate",
+        ref_id=anchor.id,
+        project_id=project.id,
+        fn=_blocking_consolidate,
+        on_success=_on_consolidated,
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
+
+
+@app.get("/api/tasks")
+async def api_tasks(
+    type: str | None = Query(None),
+    ref_id: str | None = Query(None),
+    project_id: str | None = Query(None),
+    status: str | None = Query(None),
+):
+    """Query background tasks, e.g. to restore spinners on page refresh."""
+    conn = _get_conn()
+    try:
+        clauses = []
+        params: list[str] = []
+        if type:
+            clauses.append("type = ?")
+            params.append(type)
+        if ref_id:
+            clauses.append("ref_id = ?")
+            params.append(ref_id)
+        if project_id:
+            clauses.append("project_id = ?")
+            params.append(project_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = " AND ".join(clauses) if clauses else "1=1"
+        rows = conn.execute(
+            f"SELECT id, type, ref_id, project_id, status, result, error,"
+            f" created_at, updated_at FROM background_tasks WHERE {where}"
+            f" ORDER BY created_at DESC LIMIT 50",
+            params,
+        ).fetchall()
+        return {
+            "tasks": [
+                {
+                    "id": r["id"],
+                    "type": r["type"],
+                    "ref_id": r["ref_id"],
+                    "project_id": r["project_id"],
+                    "status": r["status"],
+                    "result": json.loads(r["result"]) if r["result"] else None,
+                    "error": r["error"],
+                    "created_at": r["created_at"],
+                    "updated_at": r["updated_at"],
+                }
+                for r in rows
+            ]
+        }
+    finally:
+        conn.close()
 
 
 @app.get("/api/projects/{project_id}/arcs")

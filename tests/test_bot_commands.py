@@ -11,6 +11,8 @@ from social_hook.bot.commands import (
     _build_system_snapshot,
     _chat_draft_context,
     _parse_command,
+    _save_angle,
+    _save_rejection_note,
     cmd_approve,
     cmd_cancel,
     cmd_help,
@@ -888,7 +890,7 @@ class TestPendingEditSaves:
     @patch("social_hook.bot.commands._get_conn")
     def test_pending_edit_saves_content(self, mock_conn, mock_send, mock_adapter, temp_dir):
         """Mock pending edit, send message, verify update_draft called."""
-        from social_hook.bot.buttons import _pending_edits
+        from social_hook.bot.buttons import PendingReply, _pending_replies
         from social_hook.db import get_draft, insert_decision
         from social_hook.models import Decision
 
@@ -916,8 +918,10 @@ class TestPendingEditSaves:
         )
         insert_draft(conn, draft)
 
-        # Set pending edit
-        _pending_edits["123"] = (draft.id, time.time())
+        # Set pending reply
+        _pending_replies["123"] = PendingReply(
+            type="edit_text", draft_id=draft.id, timestamp=time.time()
+        )
 
         msg = _make_inbound("Brand new content here")
         handle_message(msg, mock_adapter, config=None)
@@ -933,14 +937,14 @@ class TestPendingEditSaves:
         assert updated.content == "Brand new content here"
         conn2.close()
 
-        # Verify pending edit was cleared
-        assert "123" not in _pending_edits
+        # Verify pending reply was cleared
+        assert "123" not in _pending_replies
 
     @patch("social_hook.bot.commands._send")
     @patch("social_hook.bot.commands._get_conn")
     def test_pending_edit_creates_audit_trail(self, mock_conn, mock_send, mock_adapter, temp_dir):
         """Verify insert_draft_change called with changed_by='human'."""
-        from social_hook.bot.buttons import _pending_edits
+        from social_hook.bot.buttons import PendingReply, _pending_replies
         from social_hook.db import insert_decision
         from social_hook.models import Decision
 
@@ -968,7 +972,9 @@ class TestPendingEditSaves:
         )
         insert_draft(conn, draft)
 
-        _pending_edits["123"] = (draft.id, time.time())
+        _pending_replies["123"] = PendingReply(
+            type="edit_text", draft_id=draft.id, timestamp=time.time()
+        )
 
         msg = _make_inbound("New content")
         handle_message(msg, mock_adapter, config=None)
@@ -988,19 +994,259 @@ class TestPendingEditSaves:
     @patch("social_hook.bot.commands._get_conn")
     def test_pending_edit_draft_not_found(self, mock_conn, mock_send, mock_adapter, temp_dir):
         """Verify error message when draft is gone."""
-        from social_hook.bot.buttons import _pending_edits
+        from social_hook.bot.buttons import PendingReply, _pending_replies
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
         mock_conn.return_value = conn
 
-        _pending_edits["123"] = ("nonexistent_draft", time.time())
+        _pending_replies["123"] = PendingReply(
+            type="edit_text", draft_id="nonexistent_draft", timestamp=time.time()
+        )
 
         msg = _make_inbound("New content")
         handle_message(msg, mock_adapter, config=None)
 
         text = mock_send.call_args[0][2]
         assert "not found" in text
+
+
+class TestPendingReplyHandlers:
+    """Tests for new pending reply types (schedule_custom, reject_note, edit_angle)."""
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_handle_message_routes_schedule_custom_pending(
+        self, mock_conn, mock_send, mock_adapter, temp_dir
+    ):
+        """Schedule custom pending reply should parse ISO datetime and schedule."""
+        from social_hook.bot.buttons import PendingReply, _pending_replies
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test content",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        _pending_replies["123"] = PendingReply(
+            type="schedule_custom", draft_id=draft.id, timestamp=time.time()
+        )
+
+        msg = _make_inbound("2026-03-15T14:30:00")
+        handle_message(msg, mock_adapter, config=None)
+
+        text = mock_send.call_args[0][2]
+        assert "scheduled" in text
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.status == "scheduled"
+        assert updated.scheduled_time is not None
+        conn2.close()
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_handle_message_routes_reject_note_pending(
+        self, mock_conn, mock_send, mock_adapter, temp_dir
+    ):
+        """Reject note pending reply should reject draft with note."""
+        from social_hook.bot.buttons import PendingReply, _pending_replies
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test content",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        _pending_replies["123"] = PendingReply(
+            type="reject_note", draft_id=draft.id, timestamp=time.time()
+        )
+
+        msg = _make_inbound("Too technical for this audience")
+        handle_message(msg, mock_adapter, config=None)
+
+        text = mock_send.call_args[0][2]
+        assert "rejected" in text
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.status == "rejected"
+        assert "Too technical" in updated.last_error
+        conn2.close()
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_handle_message_schedule_custom_invalid_format(
+        self, mock_conn, mock_send, mock_adapter, temp_dir
+    ):
+        """Invalid datetime should show error and re-set pending reply."""
+        from social_hook.bot.buttons import PendingReply, _pending_replies
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test content",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        _pending_replies["123"] = PendingReply(
+            type="schedule_custom", draft_id=draft.id, timestamp=time.time()
+        )
+
+        msg = _make_inbound("next tuesday at 3pm")
+        handle_message(msg, mock_adapter, config=None)
+
+        text = mock_send.call_args[0][2]
+        assert "Invalid format" in text
+
+        # Pending reply should be re-set
+        assert "123" in _pending_replies
+        assert _pending_replies["123"].type == "schedule_custom"
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_custom_schedule_emits_data_event(
+        self, mock_conn, mock_send, mock_adapter, temp_dir
+    ):
+        """Schedule custom should call emit_data_event."""
+        from social_hook.bot.buttons import PendingReply, _pending_replies
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test content",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        _pending_replies["123"] = PendingReply(
+            type="schedule_custom", draft_id=draft.id, timestamp=time.time()
+        )
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            msg = _make_inbound("2026-03-15T14:30:00")
+            handle_message(msg, mock_adapter, config=None)
+            mock_emit.assert_called_once_with(conn, "draft", "scheduled", draft.id, project.id)
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_rejection_note_emits_data_event(
+        self, mock_conn, mock_send, mock_adapter, temp_dir
+    ):
+        """Reject with note should call emit_data_event."""
+        from social_hook.bot.buttons import PendingReply, _pending_replies
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test content",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        _pending_replies["123"] = PendingReply(
+            type="reject_note", draft_id=draft.id, timestamp=time.time()
+        )
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            msg = _make_inbound("Not appropriate")
+            handle_message(msg, mock_adapter, config=None)
+            mock_emit.assert_called_once_with(conn, "draft", "rejected", draft.id, project.id)
 
 
 class TestSubstituteHandler:
@@ -1756,3 +2002,305 @@ class TestBuildChatHistory:
             assert "message for A" not in result_b
         finally:
             conn.close()
+
+
+def _make_test_draft(conn, temp_dir, status="draft", platform="x"):
+    """Helper to create a project + decision + draft for tests."""
+    from social_hook.db import insert_decision
+    from social_hook.models import Decision
+
+    project = Project(id=generate_id("project"), name="test", repo_path=str(temp_dir))
+    insert_project(conn, project)
+    decision = Decision(
+        id=generate_id("decision"),
+        project_id=project.id,
+        commit_hash="abc123",
+        decision="draft",
+        reasoning="test",
+    )
+    insert_decision(conn, decision)
+    draft = Draft(
+        id=generate_id("draft"),
+        project_id=project.id,
+        decision_id=decision.id,
+        platform=platform,
+        content="Original content",
+        status=status,
+    )
+    insert_draft(conn, draft)
+    return project, draft
+
+
+class TestSaveAngle:
+    """Tests for _save_angle function."""
+
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_angle_calls_expert_and_updates_draft(self, mock_conn, mock_adapter, temp_dir):
+        """Expert.handle() refines content -> draft updated with change record."""
+        from social_hook.llm.schemas import ExpertAction, ExpertResponseInput
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, draft = _make_test_draft(conn, temp_dir)
+
+        mock_result = ExpertResponseInput(
+            action=ExpertAction.refine_draft,
+            reasoning="Changed angle",
+            refined_content="New content from expert",
+        )
+
+        with (
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.expert.Expert") as MockExpert,
+        ):
+            mock_config.return_value = MagicMock()
+            MockExpert.return_value.handle.return_value = mock_result
+
+            _save_angle(mock_adapter, "123", draft.id, "try a different angle")
+
+            # Verify draft was updated in DB (use new connection since _save_angle closes conn)
+            from social_hook.db import get_draft as _get_draft
+
+            conn2 = get_connection(db_path)
+            updated = _get_draft(conn2, draft.id)
+            assert updated.content == "New content from expert"
+            conn2.close()
+
+            # Response should use send_message with buttons (OutboundMessage)
+            mock_adapter.send_message.assert_called_once()
+            msg = mock_adapter.send_message.call_args[0][1]
+            assert msg.buttons is not None
+            assert "New content from expert" in msg.text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_angle_expert_no_content(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        """Expert returns no refined content -> error message."""
+        from social_hook.llm.schemas import ExpertAction, ExpertResponseInput
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, draft = _make_test_draft(conn, temp_dir)
+
+        mock_result = ExpertResponseInput(
+            action=ExpertAction.refine_draft,
+            reasoning="Could not refine",
+            refined_content=None,
+            refined_media_spec=None,
+        )
+
+        with (
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.expert.Expert") as MockExpert,
+        ):
+            mock_config.return_value = MagicMock()
+            MockExpert.return_value.handle.return_value = mock_result
+
+            _save_angle(mock_adapter, "123", draft.id, "try something")
+
+            text = mock_send.call_args[0][2]
+            assert "could not refine" in text.lower()
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_angle_config_error(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        """Config error -> error message, no crash."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, draft = _make_test_draft(conn, temp_dir)
+
+        with patch(
+            "social_hook.config.yaml.load_full_config",
+            side_effect=Exception("No config"),
+        ):
+            _save_angle(mock_adapter, "123", draft.id, "try something")
+
+            text = mock_send.call_args[0][2]
+            assert "Cannot redraft" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_angle_draft_not_found(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        """Draft not in DB -> not found message."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        _save_angle(mock_adapter, "123", "nonexistent_id", "try something")
+
+        text = mock_send.call_args[0][2]
+        assert "not found" in text.lower()
+
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_angle_with_media_spec(self, mock_conn, mock_adapter, temp_dir):
+        """Expert returns both content and media spec -> both updated."""
+        from social_hook.llm.schemas import ExpertAction, ExpertResponseInput
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, draft = _make_test_draft(conn, temp_dir)
+
+        mock_result = ExpertResponseInput(
+            action=ExpertAction.refine_draft,
+            reasoning="Updated both",
+            refined_content="New content",
+            refined_media_spec={"code": "print('hi')", "language": "python"},
+        )
+
+        with (
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.expert.Expert") as MockExpert,
+        ):
+            mock_config.return_value = MagicMock()
+            MockExpert.return_value.handle.return_value = mock_result
+
+            _save_angle(mock_adapter, "123", draft.id, "new angle with code")
+
+            # Verify both updates in DB (use new connection since _save_angle closes conn)
+            from social_hook.db import get_draft as _get_draft
+
+            conn2 = get_connection(db_path)
+            updated = _get_draft(conn2, draft.id)
+            assert updated.content == "New content"
+            assert updated.media_spec == {"code": "print('hi')", "language": "python"}
+            conn2.close()
+
+            # Response message mentions media spec
+            msg = mock_adapter.send_message.call_args[0][1]
+            assert "media spec" in msg.text.lower()
+
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_angle_media_only(self, mock_conn, mock_adapter, temp_dir):
+        """Expert returns only media spec -> media spec updated, message says so."""
+        from social_hook.llm.schemas import ExpertAction, ExpertResponseInput
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, draft = _make_test_draft(conn, temp_dir)
+
+        mock_result = ExpertResponseInput(
+            action=ExpertAction.refine_draft,
+            reasoning="Updated media only",
+            refined_content=None,
+            refined_media_spec={"code": "print('hi')"},
+        )
+
+        with (
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.expert.Expert") as MockExpert,
+        ):
+            mock_config.return_value = MagicMock()
+            MockExpert.return_value.handle.return_value = mock_result
+
+            _save_angle(mock_adapter, "123", draft.id, "change the code")
+
+            # Verify media spec updated, content unchanged (use new connection)
+            from social_hook.db import get_draft as _get_draft
+
+            conn2 = get_connection(db_path)
+            updated = _get_draft(conn2, draft.id)
+            assert updated.content == "Original content"
+            assert updated.media_spec == {"code": "print('hi')"}
+            conn2.close()
+
+            msg = mock_adapter.send_message.call_args[0][1]
+            assert "media spec updated" in msg.text.lower()
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_angle_terminal_status(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        """Draft with terminal status (rejected) -> cannot redraft."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, draft = _make_test_draft(conn, temp_dir, status="rejected")
+
+        _save_angle(mock_adapter, "123", draft.id, "try something")
+
+        text = mock_send.call_args[0][2]
+        assert "cannot redraft" in text.lower()
+
+
+class TestSaveRejectionNote:
+    """Tests for _save_rejection_note function."""
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_rejection_note_saves_memory(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        """Rejection saves voice memory with correct args."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        project, draft = _make_test_draft(conn, temp_dir, platform="x")
+
+        with (
+            patch("social_hook.intro_lifecycle.on_intro_rejected", return_value=""),
+            patch("social_hook.config.project.save_memory") as mock_save,
+        ):
+            _save_rejection_note(mock_adapter, "123", draft.id, "too promotional")
+
+            mock_save.assert_called_once_with(
+                project.repo_path,
+                context="Rejected x draft",
+                feedback="too promotional",
+                draft_id=draft.id,
+            )
+            text = mock_send.call_args[0][2]
+            assert "rejected" in text.lower()
+            assert "saved" in text.lower()
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_rejection_note_memory_failure_doesnt_block(
+        self, mock_conn, mock_send, mock_adapter, temp_dir
+    ):
+        """Memory save failure doesn't block rejection."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, draft = _make_test_draft(conn, temp_dir)
+
+        with (
+            patch("social_hook.intro_lifecycle.on_intro_rejected", return_value=""),
+            patch(
+                "social_hook.config.project.save_memory",
+                side_effect=Exception("disk full"),
+            ),
+        ):
+            _save_rejection_note(mock_adapter, "123", draft.id, "too wordy")
+
+            text = mock_send.call_args[0][2]
+            assert "rejected" in text.lower()
+            assert "saved" not in text.lower()
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_rejection_note_project_not_found(
+        self, mock_conn, mock_send, mock_adapter, temp_dir
+    ):
+        """Project not found -> draft rejected, no memory save."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, draft = _make_test_draft(conn, temp_dir)
+
+        with (
+            patch("social_hook.intro_lifecycle.on_intro_rejected", return_value=""),
+            patch("social_hook.db.operations.get_project", return_value=None),
+            patch("social_hook.config.project.save_memory") as mock_save,
+        ):
+            _save_rejection_note(mock_adapter, "123", draft.id, "not good")
+
+            mock_save.assert_not_called()
+            text = mock_send.call_args[0][2]
+            assert "rejected" in text.lower()
+            assert "saved" not in text.lower()

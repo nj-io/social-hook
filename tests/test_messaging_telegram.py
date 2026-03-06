@@ -165,6 +165,20 @@ class TestEditMessage:
         keyboard = payload["reply_markup"]["inline_keyboard"]
         assert keyboard[0][0] == {"text": "OK", "callback_data": "ok"}
 
+    def test_edit_message_removes_buttons_when_empty(self, adapter):
+        """Edit message with no buttons should send empty inline_keyboard to clear them."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True, "result": {"message_id": 42}}
+
+        with patch(
+            "social_hook.messaging.telegram.requests.post", return_value=mock_response
+        ) as mock_post:
+            adapter.edit_message("123", "42", OutboundMessage(text="Status update"))
+
+        payload = mock_post.call_args[1]["json"]
+        assert payload["reply_markup"] == {"inline_keyboard": []}
+
 
 class TestAnswerCallback:
     def test_answer_callback(self, adapter):

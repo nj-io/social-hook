@@ -54,7 +54,10 @@ def reject(
     draft_id: str = typer.Argument(..., help="Draft ID to reject"),
     reason: str | None = typer.Option(None, "--reason", "-r", help="Rejection reason"),
 ):
-    """Reject a draft."""
+    """Reject a draft (saves reason as voice memory when --reason provided).
+
+    Example: social-hook draft reject draft-abc123 --reason "too technical for the audience"
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -68,6 +71,22 @@ def reject(
             kwargs["last_error"] = f"Rejected: {reason}"
         ops.update_draft(conn, draft_id, **kwargs)  # type: ignore[arg-type]
         ops.emit_data_event(conn, "draft", "rejected", draft_id, draft.project_id)
+
+        # Save rejection feedback as voice memory
+        if reason:
+            try:
+                project = ops.get_project(conn, draft.project_id)
+                if project:
+                    from social_hook.config.project import save_memory
+
+                    save_memory(
+                        project.repo_path,
+                        context=f"Rejected {draft.platform} draft",
+                        feedback=reason,
+                        draft_id=draft_id,
+                    )
+            except Exception:
+                typer.echo("Warning: could not save rejection feedback as memory.", err=True)
 
         # Cascade re-draft if this was an intro draft
         from social_hook.intro_lifecycle import on_intro_rejected
@@ -207,6 +226,97 @@ def edit(
         )
         ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
         typer.echo(f"Draft {draft_id} content updated.")
+    finally:
+        conn.close()
+
+
+@app.command()
+def redraft(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to redraft"),
+    angle: str = typer.Option(..., "--angle", "-a", help="New angle or direction for the draft"),
+):
+    """Redraft content using the Expert agent with a new angle.
+
+    Example: social-hook draft redraft draft-abc123 --angle "focus on the performance gains"
+    """
+    from social_hook.config.yaml import load_full_config
+    from social_hook.db import operations as ops
+    from social_hook.errors import ConfigError
+    from social_hook.filesystem import generate_id
+    from social_hook.llm.expert import Expert
+    from social_hook.llm.factory import create_client
+    from social_hook.models import DraftChange
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if draft.status in TERMINAL_STATUSES:
+            typer.echo(f"Cannot redraft: draft status is '{draft.status}'")
+            raise typer.Exit(1)
+
+        config_path = ctx.obj.get("config") if ctx.obj else None
+        config = load_full_config(str(config_path) if config_path else None)
+
+        try:
+            client = create_client(config.models.drafter, config)
+        except ConfigError as e:
+            typer.echo(f"Cannot redraft: {e}")
+            raise typer.Exit(1) from None
+
+        summary = ops.get_project_summary(conn, draft.project_id)
+
+        expert = Expert(client)
+        result = expert.handle(
+            draft=draft,
+            user_message=angle,
+            escalation_reason="angle_change",
+            project_summary=summary,
+            project_id=draft.project_id,
+            db=conn,
+        )
+
+        if result.refined_content or result.refined_media_spec:
+            if result.refined_content:
+                old_content = draft.content
+                ops.update_draft(conn, draft_id, content=result.refined_content)
+                ops.insert_draft_change(
+                    conn,
+                    DraftChange(
+                        id=generate_id("change"),
+                        draft_id=draft_id,
+                        field="content",
+                        old_value=old_content[:200],
+                        new_value=result.refined_content[:200],
+                        changed_by="expert",
+                    ),
+                )
+
+            if result.refined_media_spec:
+                ops.update_draft(conn, draft_id, media_spec=result.refined_media_spec)
+                ops.insert_draft_change(
+                    conn,
+                    DraftChange(
+                        id=generate_id("change"),
+                        draft_id=draft_id,
+                        field="media_spec",
+                        old_value=json_mod.dumps(draft.media_spec)[:200]
+                        if draft.media_spec
+                        else "null",
+                        new_value=json_mod.dumps(result.refined_media_spec)[:200],
+                        changed_by="expert",
+                    ),
+                )
+
+            ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
+            typer.echo(f"Draft {draft_id} redrafted.")
+            if result.refined_content:
+                typer.echo(f"\n{result.refined_content[:500]}")
+            if result.refined_media_spec:
+                typer.echo("Media spec updated. Run `social-hook draft media-regen` to regenerate.")
+        else:
+            typer.echo(f"Expert could not refine: {result.reasoning}")
+            raise typer.Exit(1)
     finally:
         conn.close()
 

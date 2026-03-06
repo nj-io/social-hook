@@ -159,6 +159,17 @@ def tmp_env(tmp_path):
             applied_at TEXT,
             description TEXT
         );
+        CREATE TABLE IF NOT EXISTS background_tasks (
+            id         TEXT PRIMARY KEY,
+            type       TEXT NOT NULL,
+            ref_id     TEXT NOT NULL DEFAULT '',
+            project_id TEXT NOT NULL DEFAULT '',
+            status     TEXT NOT NULL DEFAULT 'running',
+            result     TEXT,
+            error      TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT
+        );
         """
     )
     conn.commit()
@@ -1574,8 +1585,26 @@ def _seed_project_and_decision(db_path, decision_id="dec_1", project_id="proj_1"
 
 
 class TestCreateDraftEndpoint:
+    @staticmethod
+    def _wait_for_task(db_path, task_id, timeout=5):
+        """Poll DB until background task completes or times out."""
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT status, result FROM background_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            conn.close()
+            if row and row["status"] != "running":
+                return dict(row)
+            time.sleep(0.1)
+        return None
+
     def test_create_draft_with_platform(self, client, tmp_env):
-        """POST /api/decisions/{id}/create-draft with specific platform."""
+        """POST /api/decisions/{id}/create-draft returns 202 and runs in background."""
         _seed_project_and_decision(tmp_env["db_path"])
 
         mock_result = _make_draft_result()
@@ -1587,14 +1616,22 @@ class TestCreateDraftEndpoint:
             patch(
                 "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
             ) as mock_dfp,
+            patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
+            assert resp.status_code == 202
+            data = resp.json()
+            assert "task_id" in data
+            assert data["status"] == "processing"
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["draft_ids"] == ["draft_test_1"]
-        assert data["count"] == 1
-        assert data["status"] == "created"
+            # Wait for background thread to complete
+            task = self._wait_for_task(tmp_env["db_path"], data["task_id"])
+            assert task is not None
+            assert task["status"] == "completed"
+            result = json.loads(task["result"])
+            assert result["draft_ids"] == ["draft_test_1"]
+            assert result["count"] == 1
+
         # Verify platform was passed
         call_kwargs = mock_dfp.call_args[1]
         assert call_kwargs["target_platform_names"] == ["x"]
@@ -1615,13 +1652,17 @@ class TestCreateDraftEndpoint:
             patch(
                 "social_hook.drafting.draft_for_platforms", return_value=mock_results
             ) as mock_dfp,
+            patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={})
+            assert resp.status_code == 202
+            data = resp.json()
+            task = self._wait_for_task(tmp_env["db_path"], data["task_id"])
+            assert task is not None
+            result = json.loads(task["result"])
+            assert result["count"] == 2
+            assert result["draft_ids"] == ["d1", "d2"]
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["count"] == 2
-        assert data["draft_ids"] == ["d1", "d2"]
         # target_platform_names should be None for all-enabled
         call_kwargs = mock_dfp.call_args[1]
         assert call_kwargs["target_platform_names"] is None
@@ -1637,11 +1678,13 @@ class TestCreateDraftEndpoint:
             p2,
             p3,
             patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
+            patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
-
-        assert resp.status_code == 200
-        assert resp.json()["count"] == 1
+            assert resp.status_code == 202
+            task = self._wait_for_task(tmp_env["db_path"], resp.json()["task_id"])
+            assert task is not None
+            assert task["status"] == "completed"
 
     def test_create_draft_decision_not_found(self, client, tmp_env):
         """POST /api/decisions/{id}/create-draft returns 404 for unknown decision."""
@@ -1655,8 +1698,26 @@ class TestCreateDraftEndpoint:
 
 
 class TestConsolidateEndpoint:
+    @staticmethod
+    def _wait_for_task(db_path, task_id, timeout=5):
+        """Poll DB until background task completes or times out."""
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT status, result FROM background_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            conn.close()
+            if row and row["status"] != "running":
+                return dict(row)
+            time.sleep(0.1)
+        return None
+
     def test_consolidate_two_decisions(self, client, tmp_env):
-        """POST /api/decisions/consolidate with 2+ decisions works."""
+        """POST /api/decisions/consolidate with 2+ decisions returns 202."""
         _seed_project_and_decision(tmp_env["db_path"], decision_id="dec_1")
         _seed_project_and_decision(tmp_env["db_path"], decision_id="dec_2")
 
@@ -1667,16 +1728,23 @@ class TestConsolidateEndpoint:
             p2,
             p3,
             patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
+            patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post(
                 "/api/decisions/consolidate",
                 json={"decision_ids": ["dec_1", "dec_2"]},
             )
+            assert resp.status_code == 202
+            data = resp.json()
+            assert "task_id" in data
+            assert data["status"] == "processing"
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["draft_ids"] == ["d_con"]
-        assert data["count"] == 1
+            task = self._wait_for_task(tmp_env["db_path"], data["task_id"])
+            assert task is not None
+            assert task["status"] == "completed"
+            result = json.loads(task["result"])
+            assert result["draft_ids"] == ["d_con"]
+            assert result["count"] == 1
 
     def test_consolidate_less_than_2(self, client, tmp_env):
         """POST /api/decisions/consolidate with < 2 decisions returns 400."""

@@ -490,7 +490,16 @@ def run_trigger(
         # Notifications
         if not dry_run:
             if draft_results:
-                _send_notifications(config, project, commit, draft_results)
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    commit_hash=commit.hash,
+                    commit_message=commit.message,
+                    draft_results=draft_results,
+                )
             elif config.notification_level != "drafts_only":
                 _send_decision_notification(config, project, commit, decision)
 
@@ -498,107 +507,14 @@ def run_trigger(
     return 0
 
 
-def _send_notifications(config, project, commit, draft_results):
-    """Send notifications for created drafts to all configured channels.
-
-    Args:
-        config: Global Config object.
-        project: Project model instance.
-        commit: CommitInfo for this commit.
-        draft_results: List of DraftResult from draft_for_platforms().
-    """
-    from social_hook.bot.notifications import format_draft_review, get_review_buttons_normalized
-    from social_hook.messaging.base import OutboundMessage
-
-    for result in draft_results:
-        draft, schedule, thread_tweets = result.draft, result.schedule, result.thread_tweets
-        is_thread = bool(thread_tweets)
-        tweet_count = len(thread_tweets) if is_thread else None
-        suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
-        media_info = (
-            f"{draft.media_type} ({len(draft.media_paths)} file)" if draft.media_paths else None
-        )
-
-        msg_text = format_draft_review(
-            project_name=project.name,
-            commit_hash=commit.hash[:8],
-            commit_message=commit.message,
-            platform=draft.platform,
-            content=draft.content,
-            suggested_time=suggested_time_str,
-            draft_id=draft.id,
-            is_thread=is_thread,
-            tweet_count=tweet_count,
-            media_info=media_info,
-        )
-        buttons = get_review_buttons_normalized(draft.id)
-        msg = OutboundMessage(text=msg_text, buttons=buttons)
-
-        channels = getattr(config, "channels", None) or {}
-
-        # Web dashboard (enabled by default via DEFAULT_CONFIG)
-        web_ch = channels.get("web")
-        if not web_ch or web_ch.enabled:
-            try:
-                from social_hook.filesystem import get_db_path as _get_db_path
-                from social_hook.messaging.web import WebAdapter
-
-                web_adapter = WebAdapter(db_path=str(_get_db_path()))
-                web_adapter.send_message("web", msg)
-                if draft.media_paths:
-                    for path in draft.media_paths:
-                        web_adapter.send_media("web", path, caption=f"Media for `{draft.id[:12]}`")
-            except Exception as e:
-                logger.warning(f"Web notification failed: {e}")
-
-        # Telegram
-        token = config.env.get("TELEGRAM_BOT_TOKEN")
-        telegram_ch = channels.get("telegram")
-        telegram_enabled = telegram_ch.enabled if telegram_ch else bool(token)
-        chat_ids = (
-            telegram_ch.allowed_chat_ids
-            if telegram_ch
-            else [
-                c.strip()
-                for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
-                if c.strip()
-            ]
-        )
-
-        if telegram_enabled and token and chat_ids:
-            from social_hook.messaging.telegram import TelegramAdapter
-
-            adapter = TelegramAdapter(token=token)
-            for chat_id in chat_ids:
-                send_result = adapter.send_message(chat_id, msg)
-                if not send_result.success:
-                    logger.warning(f"Failed to send Telegram notification to {chat_id}")
-            if draft.media_paths:
-                caps = adapter.get_capabilities()
-                if caps.supports_media:
-                    for media_path in draft.media_paths:
-                        for chat_id in chat_ids:
-                            adapter.send_media(
-                                chat_id, media_path, caption=f"Media for `{draft.id[:12]}`"
-                            )
-            from social_hook.bot.commands import set_chat_draft_context
-
-            for chat_id in chat_ids:
-                set_chat_draft_context(chat_id, draft.id, project.id)
-
-
 def _send_decision_notification(config, project, commit, decision):
-    """Send a notification for an evaluated decision to all configured channels.
-
-    Used for non-draft decisions (when notification_level == all_decisions)
-    and for draft decisions where no platforms produced drafts.
-    """
+    """Send a decision notification to all configured channels."""
     from social_hook.messaging.base import OutboundMessage
+    from social_hook.notifications import broadcast_notification
 
     reasoning_preview = (
         (decision.reasoning[:200] + "...") if len(decision.reasoning) > 200 else decision.reasoning
     )
-
     msg_text = (
         f"Commit evaluated\n\n"
         f"Project: {project.name}\n"
@@ -606,44 +522,7 @@ def _send_decision_notification(config, project, commit, decision):
         f"Decision: {decision.decision}\n"
         f"Reasoning: {reasoning_preview}"
     )
-    msg = OutboundMessage(text=msg_text)
-
-    channels = getattr(config, "channels", None) or {}
-
-    # Web dashboard
-    web_ch = channels.get("web")
-    if not web_ch or web_ch.enabled:
-        try:
-            from social_hook.filesystem import get_db_path as _get_db_path
-            from social_hook.messaging.web import WebAdapter
-
-            web_adapter = WebAdapter(db_path=str(_get_db_path()))
-            web_adapter.send_message("web", msg)
-        except Exception as e:
-            logger.warning(f"Web decision notification failed: {e}")
-
-    # Telegram
-    token = config.env.get("TELEGRAM_BOT_TOKEN")
-    telegram_ch = channels.get("telegram")
-    telegram_enabled = telegram_ch.enabled if telegram_ch else bool(token)
-    chat_ids = (
-        telegram_ch.allowed_chat_ids
-        if telegram_ch
-        else [
-            c.strip()
-            for c in config.env.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
-            if c.strip()
-        ]
-    )
-
-    if telegram_enabled and token and chat_ids:
-        from social_hook.messaging.telegram import TelegramAdapter
-
-        adapter = TelegramAdapter(token=token)
-        for chat_id in chat_ids:
-            result = adapter.send_message(chat_id, msg)
-            if not result.success:
-                logger.warning(f"Failed to send Telegram decision notification to {chat_id}")
+    broadcast_notification(config, OutboundMessage(text=msg_text))
 
 
 # Backward-compatible re-exports — tests import these from trigger.py

@@ -155,6 +155,17 @@ def tmp_env(tmp_path):
             applied_at TEXT,
             description TEXT
         );
+        CREATE TABLE IF NOT EXISTS background_tasks (
+            id         TEXT PRIMARY KEY,
+            type       TEXT NOT NULL,
+            ref_id     TEXT NOT NULL DEFAULT '',
+            project_id TEXT NOT NULL DEFAULT '',
+            status     TEXT NOT NULL DEFAULT 'running',
+            result     TEXT,
+            error      TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT
+        );
         """
     )
     conn.commit()
@@ -259,8 +270,26 @@ def _mock_create_draft_patches():
 
 
 class TestCreateDraftFromDecision:
+    @staticmethod
+    def _wait_for_task(db_path, task_id, timeout=5):
+        """Poll DB until background task completes or times out."""
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT status, result FROM background_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            conn.close()
+            if row and row["status"] != "running":
+                return dict(row)
+            time.sleep(0.1)
+        return None
+
     def test_creates_draft_from_decision(self, client, tmp_env):
-        """POST /api/decisions/{id}/create-draft creates drafts via the pipeline."""
+        """POST /api/decisions/{id}/create-draft returns 202 and runs in background."""
         _seed_project_and_decision(tmp_env["db_path"])
 
         mock_result = _make_draft_result()
@@ -270,14 +299,20 @@ class TestCreateDraftFromDecision:
             p2,
             p3,
             patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
+            patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
+            assert resp.status_code == 202
+            data = resp.json()
+            assert "task_id" in data
+            assert data["status"] == "processing"
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "draft_ids" in data
-        assert data["count"] == 1
-        assert data["status"] == "created"
+            task = self._wait_for_task(tmp_env["db_path"], data["task_id"])
+            assert task is not None
+            assert task["status"] == "completed"
+            result = json.loads(task["result"])
+            assert "draft_ids" in result
+            assert result["count"] == 1
 
     def test_create_draft_no_platform_drafts_all(self, client, tmp_env):
         """POST /api/decisions/{id}/create-draft with no platform drafts for all enabled."""
@@ -295,12 +330,15 @@ class TestCreateDraftFromDecision:
             patch(
                 "social_hook.drafting.draft_for_platforms", return_value=mock_results
             ) as mock_dfp,
+            patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={})
+            assert resp.status_code == 202
+            task = self._wait_for_task(tmp_env["db_path"], resp.json()["task_id"])
+            assert task is not None
+            result = json.loads(task["result"])
+            assert result["count"] == 2
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["count"] == 2
         # Verify target_platform_names was None (all platforms)
         call_kwargs = mock_dfp.call_args[1]
         assert call_kwargs.get("target_platform_names") is None
@@ -311,7 +349,7 @@ class TestCreateDraftFromDecision:
         assert resp.status_code == 404
 
     def test_create_draft_links_to_decision(self, client, tmp_env):
-        """Created draft IDs are returned with correct response shape."""
+        """Background task result contains correct draft IDs."""
         _seed_project_and_decision(tmp_env["db_path"])
 
         mock_result = _make_draft_result(draft_id="draft_linked", platform="linkedin")
@@ -321,12 +359,14 @@ class TestCreateDraftFromDecision:
             p2,
             p3,
             patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
+            patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "linkedin"})
-
-        data = resp.json()
-        assert data["draft_ids"] == ["draft_linked"]
-        assert data["status"] == "created"
+            assert resp.status_code == 202
+            task = self._wait_for_task(tmp_env["db_path"], resp.json()["task_id"])
+            assert task is not None
+            result = json.loads(task["result"])
+            assert result["draft_ids"] == ["draft_linked"]
 
 
 # ---------------------------------------------------------------------------

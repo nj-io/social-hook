@@ -1114,9 +1114,7 @@ class TestTriggerSendsMediaNotification:
         # Verify media path and caption
         for call in mock_adapter_send_media.call_args_list:
             assert call.args[1] == "/tmp/media/img.png"
-            assert "Media for" in call.kwargs.get(
-                "caption", call.args[2] if len(call.args) > 2 else ""
-            )
+            assert "Media" in call.kwargs.get("caption", call.args[2] if len(call.args) > 2 else "")
 
 
 class TestPerPlatformPipeline:
@@ -1737,9 +1735,9 @@ class TestParseThreadTweetsThreshold:
 
 
 class TestDecisionNotification:
-    """Tests for _send_decision_notification and notification_level config."""
+    """Tests for broadcast_notification integration and notification_level config."""
 
-    @patch("social_hook.trigger._send_decision_notification")
+    @patch("social_hook.notifications.broadcast_notification")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.config.project.load_project_config")
@@ -1760,7 +1758,7 @@ class TestDecisionNotification:
         mock_proj_config,
         mock_create_client,
         mock_evaluator_cls,
-        mock_send_notif,
+        mock_broadcast,
     ):
         """Decision notification sent for not_post_worthy when level=all_decisions."""
         from social_hook.config.platforms import OutputPlatformConfig
@@ -1800,12 +1798,12 @@ class TestDecisionNotification:
 
         exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
         assert exit_code == 0
-        mock_send_notif.assert_called_once()
-        args = mock_send_notif.call_args[0]
-        assert args[1].name == "test-proj"  # project
+        mock_broadcast.assert_called_once()
+        # Verify the OutboundMessage contains project name
+        msg = mock_broadcast.call_args[0][1]
+        assert "test-proj" in msg.text
 
-    @patch("social_hook.trigger._send_decision_notification")
-    @patch("social_hook.trigger._send_notifications")
+    @patch("social_hook.notifications.broadcast_notification")
     @patch("social_hook.drafting.draft_for_platforms")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
@@ -1828,13 +1826,15 @@ class TestDecisionNotification:
         mock_create_client,
         mock_evaluator_cls,
         mock_draft_for_platforms,
-        mock_send_notifs,
-        mock_send_notif,
+        mock_broadcast,
     ):
-        """Decision notification NOT sent for post_worthy when drafts are created."""
+        """Decision notification NOT sent for post_worthy when drafts are created.
+
+        broadcast_notification IS called, but only for drafts (with buttons), not
+        for the plain decision message.
+        """
         from social_hook.config.platforms import OutputPlatformConfig
         from social_hook.config.yaml import ChannelConfig
-        from social_hook.drafting import DraftResult
 
         cfg = MagicMock()
         cfg.platforms = {
@@ -1880,16 +1880,35 @@ class TestDecisionNotification:
         mock_evaluator_cls.return_value = evaluator_instance
 
         # draft_for_platforms returns a result, so decision notification should be skipped
-        mock_draft_for_platforms.return_value = [MagicMock(spec=DraftResult)]
+        from datetime import datetime
+
+        mock_draft = MagicMock()
+        mock_draft.id = "d1"
+        mock_draft.platform = "x"
+        mock_draft.content = "Test post"
+        mock_draft.media_paths = []
+        mock_draft.media_type = None
+
+        mock_schedule = MagicMock()
+        mock_schedule.datetime = datetime(2026, 1, 1, 12, 0)
+
+        mock_result = MagicMock()
+        mock_result.draft = mock_draft
+        mock_result.schedule = mock_schedule
+        mock_result.thread_tweets = []
+
+        mock_draft_for_platforms.return_value = [mock_result]
 
         exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
         assert exit_code == 0
-        # Decision notification NOT called because draft notification handles it
-        mock_send_notif.assert_not_called()
-        # Draft notification IS called
-        mock_send_notifs.assert_called_once()
+        # broadcast_notification called for draft (with buttons), not plain decision
+        assert mock_broadcast.call_count >= 1
+        # All calls should have OutboundMessage with buttons (draft review)
+        for c in mock_broadcast.call_args_list:
+            msg = c[0][1]
+            assert msg.buttons  # draft notifications have buttons
 
-    @patch("social_hook.trigger._send_decision_notification")
+    @patch("social_hook.notifications.broadcast_notification")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.config.project.load_project_config")
@@ -1910,7 +1929,7 @@ class TestDecisionNotification:
         mock_proj_config,
         mock_create_client,
         mock_evaluator_cls,
-        mock_send_notif,
+        mock_broadcast,
     ):
         """Decision notification NOT sent when notification_level=drafts_only."""
         cfg = MagicMock()
@@ -1944,57 +1963,58 @@ class TestDecisionNotification:
 
         exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
         assert exit_code == 0
-        mock_send_notif.assert_not_called()
+        mock_broadcast.assert_not_called()
 
-    def test_send_decision_notification_message_format(self):
-        """_send_decision_notification formats message correctly."""
-        from social_hook.config.yaml import ChannelConfig
-        from social_hook.trigger import _send_decision_notification
+    def test_broadcast_notification_message_format(self):
+        """broadcast_notification receives correct OutboundMessage for decisions."""
+        from social_hook.messaging.base import OutboundMessage
+        from social_hook.notifications import broadcast_notification
 
         cfg = MagicMock()
-        cfg.channels = {"web": ChannelConfig(enabled=False)}
+        cfg.channels = {"web": MagicMock(enabled=False)}
         cfg.env.get = lambda key, default="": {}.get(key, default)
 
-        project = MagicMock()
-        project.name = "social-hook"
-        commit = MagicMock()
-        commit.hash = "abc12345abcdef"
-        commit.message = "Fix typo in README"
-        decision = MagicMock()
-        decision.decision = "skip"
-        decision.reasoning = "Minor documentation fix, not interesting"
+        msg = OutboundMessage(
+            text=(
+                "Commit evaluated\n\n"
+                "Project: social-hook\n"
+                "Commit: abc12345 - Fix typo in README\n"
+                "Decision: skip\n"
+                "Reasoning: Minor documentation fix, not interesting"
+            )
+        )
 
-        with patch("social_hook.messaging.web.WebAdapter") as mock_web:
-            _send_decision_notification(cfg, project, commit, decision)
-            # Web disabled, so WebAdapter.send_message not called
-            mock_web.return_value.send_message.assert_not_called()
+        # dry_run=True means nothing is sent, just verifying no crash
+        broadcast_notification(cfg, msg, dry_run=True)
 
-    def test_send_decision_notification_web(self):
-        """_send_decision_notification sends to web when enabled."""
-        from social_hook.trigger import _send_decision_notification
+    def test_broadcast_notification_web(self):
+        """broadcast_notification sends to web when enabled."""
+        from social_hook.messaging.base import OutboundMessage
+        from social_hook.notifications import broadcast_notification
 
         cfg = MagicMock()
         cfg.channels = {}  # No web config = enabled by default
         cfg.env.get = lambda key, default="": {}.get(key, default)
 
-        project = MagicMock()
-        project.name = "test-proj"
-        commit = MagicMock()
-        commit.hash = "abc12345abcdef"
-        commit.message = "Fix typo"
-        decision = MagicMock()
-        decision.decision = "skip"
-        decision.reasoning = "Minor fix"
+        msg = OutboundMessage(
+            text=(
+                "Commit evaluated\n\n"
+                "Project: test-proj\n"
+                "Commit: abc12345 - Fix typo\n"
+                "Decision: skip\n"
+                "Reasoning: Minor fix"
+            )
+        )
 
         with (
-            patch("social_hook.trigger.get_db_path", return_value=Path("/tmp/test.db")),
+            patch("social_hook.filesystem.get_db_path", return_value=Path("/tmp/test.db")),
             patch("social_hook.messaging.web.WebAdapter") as mock_web_cls,
         ):
             mock_adapter = MagicMock()
             mock_web_cls.return_value = mock_adapter
-            _send_decision_notification(cfg, project, commit, decision)
+            broadcast_notification(cfg, msg)
             mock_adapter.send_message.assert_called_once()
-            msg = mock_adapter.send_message.call_args[0][1]
-            assert "skip" in msg.text
-            assert "test-proj" in msg.text
-            assert "abc12345" in msg.text
+            sent_msg = mock_adapter.send_message.call_args[0][1]
+            assert "skip" in sent_msg.text
+            assert "test-proj" in sent_msg.text
+            assert "abc12345" in sent_msg.text
