@@ -409,6 +409,7 @@ export default function ProjectDetailPage() {
                     <th className="pb-2 pr-2 font-medium w-8"></th>
                     <th className="pb-2 pr-4 font-medium">Decision</th>
                     <th className="pb-2 pr-4 font-medium">Commit</th>
+                    <th className="pb-2 pr-4 font-medium">Reasoning</th>
                     <th className="pb-2 pr-4 font-medium">Angle</th>
                     <th className="hidden pb-2 pr-4 font-medium sm:table-cell">Episode</th>
                     <th className="hidden pb-2 pr-4 font-medium md:table-cell">Category</th>
@@ -461,10 +462,6 @@ export default function ProjectDetailPage() {
                                     <p className="mt-1 whitespace-pre-wrap text-xs">{d.commit_message}</p>
                                   </div>
                                 )}
-                                <div className="rounded border border-border bg-muted/50 p-2">
-                                  <p className="text-xs font-medium text-muted-foreground">Reasoning</p>
-                                  <p className="mt-1 whitespace-pre-wrap text-xs">{d.reasoning || "No reasoning recorded."}</p>
-                                </div>
                                 {d.media_tool && (
                                   <p className="text-xs text-muted-foreground">
                                     Media: <span className="font-medium text-foreground">{d.media_tool}</span>
@@ -495,6 +492,9 @@ export default function ProjectDetailPage() {
                               </div>
                             )}
                           </div>
+                        </td>
+                        <td className="py-2 pr-4 text-xs">
+                          <p className="whitespace-pre-wrap">{d.reasoning || "-"}</p>
                         </td>
                         <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
                         <td className="hidden py-2 pr-4 text-xs sm:table-cell">{d.episode_type || "-"}</td>
