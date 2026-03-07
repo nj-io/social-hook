@@ -1,9 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "python",
+  "bump-minor-pre-major": true,
   "packages": {
     ".": {
-      "package-name": "social-hook"
+      "package-name": "social-hook",
+      "tag-prefix": "v"
     }
   },
   "changelog-sections": [
