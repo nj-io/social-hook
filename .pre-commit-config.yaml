@@ -5,6 +5,14 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+  - repo: local
+    hooks:
+      - id: tsc
+        name: TypeScript check
+        entry: bash -c 'cd web && npx tsc --noEmit'
+        language: system
+        types_or: [ts, tsx]
+        pass_filenames: false
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
     hooks:
