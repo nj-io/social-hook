@@ -224,17 +224,17 @@ def run_trigger(
         conn.close()
         return 0
 
-    if project.trigger_branch:
-        current_branch = _get_current_branch(repo_path)
-        if current_branch != project.trigger_branch:
-            branch_desc = current_branch or "(detached HEAD)"
-            if verbose:
-                print(
-                    f"Branch '{branch_desc}' doesn't match trigger branch "
-                    f"'{project.trigger_branch}'. Skipping."
-                )
-            conn.close()
-            return 0
+    current_branch = _get_current_branch(repo_path)
+
+    if project.trigger_branch and current_branch != project.trigger_branch:
+        branch_desc = current_branch or "(detached HEAD)"
+        if verbose:
+            print(
+                f"Branch '{branch_desc}' doesn't match trigger branch "
+                f"'{project.trigger_branch}'. Skipping."
+            )
+        conn.close()
+        return 0
 
     # 4. Load project config
     from social_hook.config.project import load_project_config
@@ -365,6 +365,7 @@ def run_trigger(
         targets={"default": target.model_dump()},
         commit_summary=analysis.summary,
         consolidate_with=target.consolidate_with,
+        branch=current_branch,
     )
 
     # Hold count enforcement

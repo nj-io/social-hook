@@ -789,28 +789,48 @@ async def api_project_decisions(
     project_id: str,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    branch: str | None = Query(None),
 ):
     """Get decision history for a project with pagination."""
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
 
-        rows = conn.execute(
-            """
-            SELECT d.*, COUNT(dr.id) as draft_count
-            FROM decisions d
-            LEFT JOIN drafts dr ON dr.decision_id = d.id
-            WHERE d.project_id = ?
-            GROUP BY d.id
-            ORDER BY d.created_at DESC
-            LIMIT ? OFFSET ?
-        """,
-            (project_id, limit, offset),
-        ).fetchall()
+        if branch is not None:
+            rows = conn.execute(
+                """
+                SELECT d.*, COUNT(dr.id) as draft_count
+                FROM decisions d
+                LEFT JOIN drafts dr ON dr.decision_id = d.id
+                WHERE d.project_id = ? AND d.branch = ?
+                GROUP BY d.id
+                ORDER BY d.created_at DESC
+                LIMIT ? OFFSET ?
+            """,
+                (project_id, branch, limit, offset),
+            ).fetchall()
 
-        total = conn.execute(
-            "SELECT COUNT(*) FROM decisions WHERE project_id = ?", (project_id,)
-        ).fetchone()[0]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM decisions WHERE project_id = ? AND branch = ?",
+                (project_id, branch),
+            ).fetchone()[0]
+        else:
+            rows = conn.execute(
+                """
+                SELECT d.*, COUNT(dr.id) as draft_count
+                FROM decisions d
+                LEFT JOIN drafts dr ON dr.decision_id = d.id
+                WHERE d.project_id = ?
+                GROUP BY d.id
+                ORDER BY d.created_at DESC
+                LIMIT ? OFFSET ?
+            """,
+                (project_id, limit, offset),
+            ).fetchall()
+
+            total = conn.execute(
+                "SELECT COUNT(*) FROM decisions WHERE project_id = ?", (project_id,)
+            ).fetchone()[0]
 
         decisions_list = [dict(r) for r in rows]
 
@@ -831,6 +851,80 @@ async def api_project_decisions(
         return {"decisions": decisions_list, "total": total}
     finally:
         conn.close()
+
+
+@app.get("/api/projects/{project_id}/decision-branches")
+async def api_decision_branches(project_id: str):
+    """Get distinct branch names from decisions for a project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        branches = ops.get_distinct_branches(conn, project_id)
+        return {"branches": branches}
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{project_id}/import-preview")
+async def api_import_preview(project_id: str, branch: str | None = Query(None)):
+    """Preview how many commits can be imported for a project."""
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+        from social_hook.import_commits import get_import_preview
+
+        preview = get_import_preview(conn, project["id"], project["repo_path"], branch)
+        return preview
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/import-commits")
+async def api_import_commits(project_id: str, body: dict[str, Any] = Body(default={})):
+    """Import historical commits for a project as decisions.
+
+    Body:
+        branch: Target branch name (optional — omit to import from default branch)
+    """
+    branch = body.get("branch")
+
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+
+        # Check for already-running import
+        running = conn.execute(
+            "SELECT id FROM background_tasks WHERE type = 'import_commits' AND project_id = ? AND status = 'running'",
+            (project_id,),
+        ).fetchone()
+        if running:
+            raise HTTPException(status_code=409, detail="Import already in progress")
+    finally:
+        conn.close()
+
+    repo_path = project["repo_path"]
+    pid = project["id"]
+
+    def _blocking_import():
+        from social_hook.import_commits import import_project_commits
+
+        conn2 = _get_conn()
+        try:
+            return import_project_commits(conn2, pid, repo_path, branch)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "import_commits",
+        ref_id=project_id,
+        project_id=pid,
+        fn=_blocking_import,
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "started"},
+    )
 
 
 @app.get("/api/projects/{project_id}/posts")

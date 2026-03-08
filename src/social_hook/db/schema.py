@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
     commit_message TEXT,
-    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip')),
+    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
     episode_type  TEXT CHECK (episode_type IN ('decision', 'before_after', 'demo_proof', 'milestone', 'postmortem', 'launch', 'synthesis')),
@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     targets       TEXT NOT NULL DEFAULT '{}',
     commit_summary TEXT,
     consolidate_with TEXT,
+    branch        TEXT DEFAULT NULL,
     processed     INTEGER NOT NULL DEFAULT 0,
     processed_at  TEXT,
     batch_id      TEXT,
@@ -62,6 +63,8 @@ CREATE INDEX IF NOT EXISTS idx_decisions_commit ON decisions(project_id, commit_
 CREATE INDEX IF NOT EXISTS idx_decisions_arc ON decisions(arc_id) WHERE arc_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_decisions_unprocessed ON decisions(project_id, created_at)
     WHERE decision = 'hold' AND processed = 0;
+CREATE INDEX IF NOT EXISTS idx_decisions_branch ON decisions(project_id, branch)
+    WHERE branch IS NOT NULL;
 
 -- Drafts
 CREATE TABLE IF NOT EXISTS drafts (

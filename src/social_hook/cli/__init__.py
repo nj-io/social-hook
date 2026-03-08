@@ -550,7 +550,7 @@ def commit_hook():
         return  # Silently exit — not our concern
 
     command = data.get("tool_input", {}).get("command", "")
-    if not re.match(r"^git\s+(commit|merge|rebase|cherry-pick)", command):
+    if not re.search(r"git\s+(commit|merge|rebase|cherry-pick)", command):
         return  # Not a git commit command, nothing to do
 
     cwd = data.get("cwd", "")

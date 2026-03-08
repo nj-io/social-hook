@@ -13,6 +13,7 @@ from social_hook.db import (
     get_arc_posts,
     get_connection,
     get_deferred_drafts,
+    get_distinct_branches,
     get_draft,
     get_draft_changes,
     get_draft_tweets,
@@ -26,6 +27,7 @@ from social_hook.db import (
     get_project_by_path,
     get_project_summary,
     get_recent_decisions,
+    get_recent_decisions_for_llm,
     get_recent_posts,
     get_recent_posts_for_context,
     get_schema_version,
@@ -35,6 +37,7 @@ from social_hook.db import (
     init_database,
     insert_arc,
     insert_decision,
+    insert_decisions_batch,
     insert_draft,
     insert_draft_change,
     insert_draft_tweet,
@@ -1462,3 +1465,150 @@ class TestGetDeferredDrafts:
 
         results = get_deferred_drafts(temp_db)
         assert results == []
+
+
+# =============================================================================
+# Import / Branch operations
+# =============================================================================
+
+
+class TestImportOperations:
+    """Tests for imported decision operations."""
+
+    def _make_project(self, temp_db):
+        project = Project(
+            id=generate_id("project"),
+            name="test-import",
+            repo_path="/tmp/test",
+        )
+        insert_project(temp_db, project)
+        return project
+
+    def test_get_recent_decisions_for_llm_excludes_imported(self, temp_db):
+        """get_recent_decisions_for_llm excludes imported decisions."""
+        project = self._make_project(temp_db)
+
+        # Insert a normal decision
+        d1 = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Good commit",
+            branch="main",
+        )
+        insert_decision(temp_db, d1)
+
+        # Insert an imported decision
+        d2 = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="def456",
+            decision="imported",
+            reasoning="Historical commit",
+            branch="main",
+        )
+        insert_decision(temp_db, d2)
+
+        # get_recent_decisions includes both
+        all_decisions = get_recent_decisions(temp_db, project.id)
+        assert len(all_decisions) == 2
+
+        # get_recent_decisions_for_llm excludes imported
+        llm_decisions = get_recent_decisions_for_llm(temp_db, project.id)
+        assert len(llm_decisions) == 1
+        assert llm_decisions[0].decision == "draft"
+
+    def test_insert_decisions_batch_and_duplicates(self, temp_db):
+        """insert_decisions_batch handles duplicates via INSERT OR IGNORE."""
+        project = self._make_project(temp_db)
+
+        # Insert a decision normally first
+        d_existing = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Existing",
+        )
+        insert_decision(temp_db, d_existing)
+
+        # Now batch insert, including a duplicate commit_hash
+        batch = [
+            (
+                Decision(
+                    id=generate_id("decision"),
+                    project_id=project.id,
+                    commit_hash="abc123",  # duplicate
+                    decision="imported",
+                    reasoning="Historical commit",
+                ),
+                "2024-01-01T00:00:00+00:00",
+            ),
+            (
+                Decision(
+                    id=generate_id("decision"),
+                    project_id=project.id,
+                    commit_hash="def456",  # new
+                    decision="imported",
+                    reasoning="Historical commit",
+                ),
+                "2024-01-02T00:00:00+00:00",
+            ),
+        ]
+
+        inserted = insert_decisions_batch(temp_db, batch)
+        assert inserted == 1  # only def456 inserted
+
+        all_decisions = get_recent_decisions(temp_db, project.id)
+        assert len(all_decisions) == 2
+
+    def test_insert_decisions_batch_respects_created_at(self, temp_db):
+        """Batch insert uses the provided created_at timestamp."""
+        project = self._make_project(temp_db)
+
+        batch = [
+            (
+                Decision(
+                    id=generate_id("decision"),
+                    project_id=project.id,
+                    commit_hash="aaa111",
+                    decision="imported",
+                    reasoning="Historical commit",
+                ),
+                "2023-06-15T12:00:00+00:00",
+            ),
+        ]
+
+        insert_decisions_batch(temp_db, batch)
+        row = temp_db.execute(
+            "SELECT created_at FROM decisions WHERE commit_hash = 'aaa111'"
+        ).fetchone()
+        assert row[0] == "2023-06-15T12:00:00+00:00"
+
+    def test_get_distinct_branches(self, temp_db):
+        """get_distinct_branches returns sorted unique non-null branches."""
+        project = self._make_project(temp_db)
+
+        for branch, commit_hash in [
+            ("main", "a1"),
+            ("develop", "a2"),
+            ("main", "a3"),
+            (None, "a4"),
+        ]:
+            d = Decision(
+                id=generate_id("decision"),
+                project_id=project.id,
+                commit_hash=commit_hash,
+                decision="imported",
+                reasoning="Historical",
+                branch=branch,
+            )
+            insert_decision(temp_db, d)
+
+        branches = get_distinct_branches(temp_db, project.id)
+        assert branches == ["develop", "main"]
+
+    def test_insert_decisions_batch_empty(self, temp_db):
+        """insert_decisions_batch with empty list returns 0."""
+        assert insert_decisions_batch(temp_db, []) == 0
