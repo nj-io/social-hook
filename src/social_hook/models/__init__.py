@@ -21,6 +21,7 @@ class DraftStatus(Enum):
     FAILED = "failed"
     SUPERSEDED = "superseded"
     CANCELLED = "cancelled"
+    DEFERRED = "deferred"
 
 
 class DecisionType(Enum):

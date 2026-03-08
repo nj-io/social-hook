@@ -513,7 +513,7 @@ def get_pending_drafts(conn: sqlite3.Connection, project_id: str) -> list[Draft]
         """
         SELECT * FROM drafts
         WHERE project_id = ?
-          AND status IN ('draft', 'approved', 'scheduled')
+          AND status IN ('draft', 'approved', 'scheduled', 'deferred')
         ORDER BY created_at DESC
         """,
         (project_id,),
@@ -526,7 +526,7 @@ def get_all_pending_drafts(conn: sqlite3.Connection) -> list[Draft]:
     rows = conn.execute(
         """
         SELECT * FROM drafts
-        WHERE status IN ('draft', 'approved', 'scheduled')
+        WHERE status IN ('draft', 'approved', 'scheduled', 'deferred')
         ORDER BY created_at DESC
         """
     ).fetchall()
@@ -576,6 +576,18 @@ def get_due_drafts(conn: sqlite3.Connection) -> list[Draft]:
         WHERE status = 'scheduled'
           AND scheduled_time <= datetime('now')
         ORDER BY scheduled_time ASC
+        """
+    ).fetchall()
+    return [Draft.from_dict(dict(row)) for row in rows]
+
+
+def get_deferred_drafts(conn: sqlite3.Connection) -> list[Draft]:
+    """Get all deferred drafts, ordered by creation time (FIFO)."""
+    rows = conn.execute(
+        """
+        SELECT * FROM drafts
+        WHERE status = 'deferred'
+        ORDER BY created_at ASC
         """
     ).fetchall()
     return [Draft.from_dict(dict(row)) for row in rows]
@@ -1387,7 +1399,7 @@ def get_intro_draft(conn: sqlite3.Connection, project_id: str) -> Draft | None:
         """
         SELECT * FROM drafts
         WHERE project_id = ? AND is_intro = 1
-          AND status IN ('draft', 'approved', 'scheduled')
+          AND status IN ('draft', 'approved', 'scheduled', 'deferred')
         ORDER BY created_at DESC LIMIT 1
         """,
         (project_id,),

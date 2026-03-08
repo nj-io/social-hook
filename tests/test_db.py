@@ -12,6 +12,7 @@ from social_hook.db import (
     get_all_recent_posts,
     get_arc_posts,
     get_connection,
+    get_deferred_drafts,
     get_draft,
     get_draft_changes,
     get_draft_tweets,
@@ -126,9 +127,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 15."""
+        """Check schema version returns 16."""
         version = get_schema_version(temp_db)
-        assert version == 15
+        assert version == 16
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent.
@@ -1358,3 +1359,106 @@ class TestTriggerBranch:
         set_project_trigger_branch(temp_db, project.id, None)
         p = get_project(temp_db, project.id)
         assert p.trigger_branch is None
+
+
+class TestGetDeferredDrafts:
+    """Tests for get_deferred_drafts."""
+
+    def _create_draft(self, temp_db, project, decision, status="draft", content="test"):
+        """Helper to create a draft with a given status."""
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content=content,
+            status=status,
+        )
+        insert_draft(temp_db, draft)
+        return draft
+
+    def test_returns_only_deferred_drafts(self, temp_db):
+        """get_deferred_drafts returns only drafts with status='deferred'."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        # Create drafts with various statuses
+        self._create_draft(temp_db, project, decision, status="draft", content="draft one")
+        deferred1 = self._create_draft(
+            temp_db, project, decision, status="deferred", content="deferred one"
+        )
+        self._create_draft(temp_db, project, decision, status="approved", content="approved one")
+        deferred2 = self._create_draft(
+            temp_db, project, decision, status="deferred", content="deferred two"
+        )
+        self._create_draft(temp_db, project, decision, status="scheduled", content="scheduled one")
+
+        results = get_deferred_drafts(temp_db)
+        assert len(results) == 2
+        result_ids = {r.id for r in results}
+        assert deferred1.id in result_ids
+        assert deferred2.id in result_ids
+
+    def test_ordered_by_created_at_asc(self, temp_db):
+        """Deferred drafts are returned in FIFO order (oldest first)."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        # Create three deferred drafts and set explicit timestamps
+        d1 = self._create_draft(temp_db, project, decision, status="deferred", content="first")
+        d2 = self._create_draft(temp_db, project, decision, status="deferred", content="second")
+        d3 = self._create_draft(temp_db, project, decision, status="deferred", content="third")
+
+        # Force specific ordering via created_at
+        temp_db.execute(
+            "UPDATE drafts SET created_at = datetime('now', '-3 hours') WHERE id = ?", (d1.id,)
+        )
+        temp_db.execute(
+            "UPDATE drafts SET created_at = datetime('now', '-1 hour') WHERE id = ?", (d2.id,)
+        )
+        temp_db.execute("UPDATE drafts SET created_at = datetime('now') WHERE id = ?", (d3.id,))
+        temp_db.commit()
+
+        results = get_deferred_drafts(temp_db)
+        assert len(results) == 3
+        assert results[0].id == d1.id
+        assert results[1].id == d2.id
+        assert results[2].id == d3.id
+
+    def test_returns_empty_when_no_deferred(self, temp_db):
+        """get_deferred_drafts returns empty list when no deferred drafts exist."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(temp_db, decision)
+
+        self._create_draft(temp_db, project, decision, status="draft")
+        self._create_draft(temp_db, project, decision, status="approved")
+
+        results = get_deferred_drafts(temp_db)
+        assert results == []
