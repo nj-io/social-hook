@@ -95,7 +95,11 @@ export function useBackgroundTasks(
       });
       return next;
     });
-  }, [projectId]);
+    // The task may have already completed before trackTask was called
+    // (race: background thread finishes before the 202 response arrives).
+    // Refresh immediately to catch the completion.
+    refreshTasks();
+  }, [projectId, refreshTasks]);
 
   /** Stop tracking a ref_id (e.g. after processing a completion). */
   const clearTask = useCallback((refId: string) => {

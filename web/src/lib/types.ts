@@ -123,6 +123,7 @@ export interface Project {
   phase?: string;
   trigger_branch?: string | null;
   confidence?: number;
+  git_hook_installed?: boolean;
 }
 
 export interface WebEvent {

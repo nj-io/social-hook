@@ -10,14 +10,9 @@ import {
 
 const COMPONENTS = [
   {
-    key: "commit_hook",
-    name: "Commit Hook",
-    description: "Triggers evaluation on git commits via Claude Code",
-  },
-  {
     key: "narrative_hook",
-    name: "Narrative Hook",
-    description: "Captures dev narratives on context compaction",
+    name: "Claude Code Narrative Hook",
+    description: "Captures dev session context on compaction (Claude Code only)",
   },
   {
     key: "scheduler_cron",
@@ -70,7 +65,7 @@ export function InstallationsSection() {
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Installations</h2>
       <p className="text-sm text-muted-foreground">
-        Manage hooks and cron jobs that power the content pipeline.
+        Manage hooks and cron jobs that power the content pipeline. Commit hook controls are in the Projects section.
       </p>
 
       {message && (

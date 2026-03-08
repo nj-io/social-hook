@@ -1,6 +1,5 @@
 """CLI commands for project management."""
 
-import subprocess
 from pathlib import Path
 
 import typer
@@ -17,98 +16,42 @@ def register(
         None, help="Path to repository (default: current directory)"
     ),
     name: str | None = typer.Option(None, "--name", "-n", help="Project name"),
+    git_hook: bool = typer.Option(
+        True, "--git-hook/--no-git-hook", help="Install git post-commit hook"
+    ),
 ):
     """Register a project for social-hook."""
     from social_hook.config import load_full_config
-    from social_hook.db import (
-        get_project_by_origin,
-        get_project_by_path,
-        init_database,
-        insert_project,
-    )
-    from social_hook.filesystem import generate_id, get_db_path
+    from social_hook.db import init_database
+    from social_hook.db.operations import register_project
+    from social_hook.filesystem import get_db_path
+    from social_hook.setup.install import check_hook_installed, install_git_hook
 
     if path is None:
         path = Path.cwd()
-    path = path.resolve()
 
-    # Validate git repo
-    result = subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "--git-dir"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        typer.echo(f"Error: {path} is not a git repository")
-        raise typer.Exit(1)
-
-    # Extract remote origin
-    origin_result = subprocess.run(
-        ["git", "-C", str(path), "remote", "get-url", "origin"],
-        capture_output=True,
-        text=True,
-    )
-    repo_origin = origin_result.stdout.strip() if origin_result.returncode == 0 else None
-
-    # Default name from directory
-    if not name:
-        name = path.name
-
-    # Check duplicates
     load_full_config(str(ctx.obj["config"]) if ctx.obj and ctx.obj.get("config") else None)
     conn = init_database(get_db_path())
-
     try:
-        existing = get_project_by_path(conn, str(path))
-        if existing:
-            typer.echo(f"Project already registered: {existing.name} ({existing.id})")
-            raise typer.Exit(1)
+        project, repo_origin = register_project(conn, str(path), name)
 
-        if repo_origin:
-            matches = get_project_by_origin(conn, repo_origin)
-            if matches:
-                typer.echo(f"Repository origin already registered as: {matches[0].name}")
-                raise typer.Exit(1)
-
-        from social_hook.models import Project
-
-        project = Project(
-            id=generate_id("project"),
-            name=name,
-            repo_path=str(path),
-            repo_origin=repo_origin,
-        )
-        insert_project(conn, project)
-
-        # Initialize lifecycle and narrative debt
-        from social_hook.db import insert_lifecycle, insert_narrative_debt
-        from social_hook.models import Lifecycle, NarrativeDebt
-
-        lifecycle = Lifecycle(
-            project_id=project.id,
-            phase="research",
-            confidence=0.3,
-        )
-        insert_lifecycle(conn, lifecycle)
-
-        debt = NarrativeDebt(
-            project_id=project.id,
-            debt_counter=0,
-        )
-        insert_narrative_debt(conn, debt)
-
-        typer.echo(f"Registered project: {name}")
+        typer.echo(f"Registered project: {project.name}")
         typer.echo(f"  ID: {project.id}")
-        typer.echo(f"  Path: {path}")
+        typer.echo(f"  Path: {project.repo_path}")
         if repo_origin:
             typer.echo(f"  Origin: {repo_origin}")
 
-        from social_hook.setup.install import check_hook_installed
+        if git_hook:
+            success, msg = install_git_hook(project.repo_path)
+            typer.echo(f"  {msg}")
 
         if not check_hook_installed():
             typer.echo()
-            typer.echo("Warning: Claude Code commit hook is not installed.")
-            typer.echo(f"  Run '{PROJECT_SLUG} setup' or install from the web dashboard.")
+            typer.echo("Note: Claude Code commit hook is not installed.")
+            typer.echo(f"  Git hook is {'active' if git_hook else 'not installed'}.")
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1) from None
     finally:
         conn.close()
 
@@ -135,6 +78,10 @@ def unregister(
             if not confirm:
                 typer.echo("Cancelled.")
                 return
+
+        from social_hook.setup.install import uninstall_git_hook
+
+        uninstall_git_hook(project.repo_path)
 
         if delete_project(conn, project_id):
             typer.echo(f"Project '{project.name}' unregistered.")
@@ -429,3 +376,77 @@ def list_projects(ctx: typer.Context):
             typer.echo(f"  Run '{PROJECT_SLUG} setup' or install from the web dashboard.")
     finally:
         conn.close()
+
+
+@app.command("install-hook")
+def install_hook_cmd(
+    ctx: typer.Context,
+    path: Path | None = typer.Argument(
+        None, help="Path to repository (default: current directory)"
+    ),
+):
+    """Install git post-commit hook for a project.
+    Example: social-hook project install-hook /path/to/repo"""
+    from social_hook.setup.install import install_git_hook
+
+    if path is None:
+        path = Path.cwd()
+    path = path.resolve()
+
+    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+    success, msg = install_git_hook(str(path))
+
+    if json_mode:
+        import json
+
+        typer.echo(json.dumps({"success": success, "message": msg}, indent=2))
+    else:
+        typer.echo(msg)
+
+    if not success:
+        raise typer.Exit(1)
+
+
+@app.command("uninstall-hook")
+def uninstall_hook_cmd(
+    ctx: typer.Context,
+    path: Path | None = typer.Argument(
+        None, help="Path to repository (default: current directory)"
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+):
+    """Remove git post-commit hook from a project.
+    Example: social-hook project uninstall-hook /path/to/repo"""
+    from social_hook.setup.install import check_git_hook_installed, uninstall_git_hook
+
+    if path is None:
+        path = Path.cwd()
+    path = path.resolve()
+
+    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+
+    if not check_git_hook_installed(str(path)):
+        msg = "Git hook is not installed"
+        if json_mode:
+            import json
+
+            typer.echo(json.dumps({"success": True, "message": msg}, indent=2))
+        else:
+            typer.echo(msg)
+        return
+
+    if not force and not json_mode and not typer.confirm("Remove git post-commit hook?"):
+        typer.echo("Cancelled.")
+        return
+
+    success, msg = uninstall_git_hook(str(path))
+
+    if json_mode:
+        import json
+
+        typer.echo(json.dumps({"success": success, "message": msg}, indent=2))
+    else:
+        typer.echo(msg)
+
+    if not success:
+        raise typer.Exit(1)
