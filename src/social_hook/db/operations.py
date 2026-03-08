@@ -1033,9 +1033,11 @@ def update_arc(
     if status is not None:
         updates.append("status = ?")
         params.append(status)
-        # Set ended_at for terminal statuses
+        # Set ended_at for terminal statuses, clear it when reactivating
         if status in ("completed", "abandoned"):
             updates.append("ended_at = datetime('now')")
+        elif status == "active":
+            updates.append("ended_at = NULL")
     if post_count is not None:
         updates.append("post_count = ?")
         params.append(post_count)

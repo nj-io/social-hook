@@ -1451,8 +1451,9 @@ async def api_create_arc(project_id: str, body: ArcCreate):
 @app.put("/api/projects/{project_id}/arcs/{arc_id}")
 async def api_update_arc(project_id: str, arc_id: str, body: ArcUpdate):
     """Update a narrative arc (status, notes)."""
+    from social_hook.errors import MaxArcsError
     from social_hook.models import ArcStatus
-    from social_hook.narrative.arcs import update_arc
+    from social_hook.narrative.arcs import resume_arc, update_arc
 
     conn = _get_conn()
     try:
@@ -1469,6 +1470,22 @@ async def api_update_arc(project_id: str, arc_id: str, body: ArcUpdate):
                     status_code=400,
                     detail=f"Invalid status '{body.status}'. Must be one of: {valid}",
                 )
+            # Resuming requires max-3 check
+            if body.status == "active" and arc.status != "active":
+                try:
+                    resume_arc(conn, arc_id, project_id)
+                except MaxArcsError:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Maximum 3 active arcs. Complete or abandon one first.",
+                    ) from None
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from None
+                # resume_arc already did the update, just update notes if provided
+                if body.notes is not None:
+                    update_arc(conn, arc_id, notes=body.notes)
+                ops.emit_data_event(conn, "arc", "updated", arc_id, project_id)
+                return {"status": "ok"}
 
         update_arc(conn, arc_id, status=body.status, notes=body.notes)
         ops.emit_data_event(conn, "arc", "updated", arc_id, project_id)
