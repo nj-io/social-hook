@@ -185,46 +185,64 @@ export function ProjectsSection() {
       <div className="rounded-lg border border-border p-4">
         <h3 className="text-sm font-semibold">Commit Detection</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Choose how commits are detected. Git hook (recommended) is per-project. Claude Code hook is global.
+          Choose one method. Only one can be active at a time to avoid duplicate evaluations.
         </p>
-        <div className="mt-3 space-y-2">
-          {/* Git hook info */}
-          <div className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2">
-            <div>
-              <span className="text-sm font-medium">Git Hook</span>
-              <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                recommended
-              </span>
-              <p className="mt-0.5 text-xs text-muted-foreground">Per-project post-commit hook. Install individually below.</p>
+        {(() => {
+          const anyGitHook = projects.some((p) => p.git_hook_installed);
+          return (
+            <div className="mt-3 space-y-2">
+              {/* Git hook info */}
+              <div className={`flex items-center justify-between rounded-md px-3 py-2 ${claudeHookInstalled ? "bg-muted/30 opacity-60" : "bg-muted/50"}`}>
+                <div>
+                  <span className="text-sm font-medium">Git Hook</span>
+                  <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                    recommended
+                  </span>
+                  {anyGitHook && (
+                    <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                      Active
+                    </span>
+                  )}
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {claudeHookInstalled
+                      ? "Uninstall Claude Code hook first to use git hooks."
+                      : "Per-project post-commit hook. Install individually below."}
+                  </p>
+                </div>
+              </div>
+              {/* Claude Code hook */}
+              <div className={`flex items-center justify-between rounded-md px-3 py-2 ${anyGitHook ? "bg-muted/30 opacity-60" : "bg-muted/50"}`}>
+                <div>
+                  <span className="text-sm font-medium">Claude Code Hook</span>
+                  {claudeHookInstalled === true && (
+                    <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                      Installed
+                    </span>
+                  )}
+                  {claudeHookInstalled === false && !anyGitHook && (
+                    <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                      Not installed
+                    </span>
+                  )}
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {anyGitHook
+                      ? "Uninstall git hooks first to use Claude Code hook."
+                      : "Global PostToolUse hook via Claude Code settings."}
+                  </p>
+                </div>
+                {claudeHookInstalled !== null && (
+                  <button
+                    onClick={() => handleClaudeHookAction(claudeHookInstalled ? "uninstall" : "install")}
+                    disabled={claudeHookAction || (anyGitHook && !claudeHookInstalled)}
+                    className="ml-4 shrink-0 rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+                  >
+                    {claudeHookAction ? "..." : claudeHookInstalled ? "Uninstall" : "Install"}
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-          {/* Claude Code hook */}
-          <div className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2">
-            <div>
-              <span className="text-sm font-medium">Claude Code Hook</span>
-              {claudeHookInstalled === true && (
-                <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                  Installed
-                </span>
-              )}
-              {claudeHookInstalled === false && (
-                <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
-                  Not installed
-                </span>
-              )}
-              <p className="mt-0.5 text-xs text-muted-foreground">Global PostToolUse hook via Claude Code settings.</p>
-            </div>
-            {claudeHookInstalled !== null && (
-              <button
-                onClick={() => handleClaudeHookAction(claudeHookInstalled ? "uninstall" : "install")}
-                disabled={claudeHookAction}
-                className="ml-4 shrink-0 rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
-              >
-                {claudeHookAction ? "..." : claudeHookInstalled ? "Uninstall" : "Install"}
-              </button>
-            )}
-          </div>
-        </div>
+          );
+        })()}
       </div>
 
       {/* Add Project form */}
@@ -253,14 +271,18 @@ export function ProjectsSection() {
             placeholder="Project name (optional, defaults to folder name)"
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
           />
-          <label className="flex items-center gap-2 text-sm">
+          <label className={`flex items-center gap-2 text-sm ${claudeHookInstalled ? "opacity-50" : ""}`}>
             <input
               type="checkbox"
-              checked={installHook}
+              checked={installHook && !claudeHookInstalled}
               onChange={(e) => setInstallHook(e.target.checked)}
+              disabled={claudeHookInstalled === true}
               className="rounded border-border"
             />
             Install git hook
+            {claudeHookInstalled && (
+              <span className="text-xs text-muted-foreground">(Claude Code hook active)</span>
+            )}
           </label>
           {registerError && <p className="text-xs text-destructive">{registerError}</p>}
           <button
@@ -292,7 +314,7 @@ export function ProjectsSection() {
       ) : (
         <div className="space-y-2">
           {projects.map((project) => {
-            const isPaused = project.paused === 1;
+            const isPaused = !!project.paused;
             const gitHookInstalled = project.git_hook_installed === true;
             return (
               <div
@@ -376,7 +398,8 @@ export function ProjectsSection() {
                     </span>
                     <button
                       onClick={() => handleToggleGitHook(project.id, gitHookInstalled)}
-                      disabled={hookToggling[project.id]}
+                      disabled={hookToggling[project.id] || (claudeHookInstalled === true && !gitHookInstalled)}
+                      title={claudeHookInstalled === true && !gitHookInstalled ? "Uninstall Claude Code hook first" : undefined}
                       className="rounded-md border border-border px-2 py-1 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
                     >
                       {hookToggling[project.id] ? "..." : gitHookInstalled ? "Uninstall" : "Install"}

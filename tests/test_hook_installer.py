@@ -24,6 +24,14 @@ from social_hook.setup.install import (
 class TestInstallHook:
     """Tests for install_hook."""
 
+    def test_blocked_by_git_hook(self, temp_dir):
+        """install_hook refuses if any project has a git hook installed."""
+        hooks_file = temp_dir / "settings.json"
+        with patch("social_hook.setup.install.check_git_hook_installed", return_value=True):
+            success, msg = install_hook(hooks_file, git_hook_repo_paths=["/tmp/some-repo"])
+        assert success is False
+        assert "git post-commit hook" in msg.lower()
+
     def test_install_new(self, temp_dir):
         hooks_file = temp_dir / "settings.json"
         success, msg = install_hook(hooks_file)
@@ -161,6 +169,20 @@ def _git_init(path: Path) -> Path:
 class TestInstallGitHook:
     """Tests for install_git_hook."""
 
+    @pytest.fixture(autouse=True)
+    def _no_claude_hook(self):
+        """Mock check_hook_installed to return False (no Claude Code hook conflict)."""
+        with patch("social_hook.setup.install.check_hook_installed", return_value=False):
+            yield
+
+    def test_blocked_by_claude_hook(self, tmp_path):
+        """install_git_hook refuses if Claude Code hook is installed."""
+        repo = _git_init(tmp_path / "repo")
+        with patch("social_hook.setup.install.check_hook_installed", return_value=True):
+            success, msg = install_git_hook(repo)
+        assert success is False
+        assert "claude code" in msg.lower()
+
     def test_install_new(self, tmp_path):
         repo = _git_init(tmp_path / "repo")
         success, msg = install_git_hook(repo)
@@ -206,6 +228,11 @@ class TestInstallGitHook:
 
 class TestUninstallGitHook:
     """Tests for uninstall_git_hook."""
+
+    @pytest.fixture(autouse=True)
+    def _no_claude_hook(self):
+        with patch("social_hook.setup.install.check_hook_installed", return_value=False):
+            yield
 
     def test_uninstall(self, tmp_path):
         repo = _git_init(tmp_path / "repo")
@@ -307,6 +334,11 @@ class TestGitHookCommand:
 @pytest.mark.perf
 class TestGitHookPerformance:
     """Timed performance tests for git hook operations."""
+
+    @pytest.fixture(autouse=True)
+    def _no_claude_hook(self):
+        with patch("social_hook.setup.install.check_hook_installed", return_value=False):
+            yield
 
     def test_install_git_hook_under_1s(self, tmp_path):
         repo = _git_init(tmp_path / "repo")

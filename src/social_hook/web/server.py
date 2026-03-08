@@ -1977,7 +1977,18 @@ async def api_install_component(component: str):
     fn = install_fns.get(component)
     if not fn:
         raise HTTPException(status_code=400, detail=f"Unknown component: {component}")
-    success, message = fn()  # type: ignore[operator]
+
+    if component == "commit_hook":
+        # Pass registered project repo paths for mutual exclusion check
+        conn = _get_conn()
+        try:
+            rows = conn.execute("SELECT repo_path FROM projects").fetchall()
+            repo_paths = [r["repo_path"] for r in rows]
+        finally:
+            conn.close()
+        success, message = fn(git_hook_repo_paths=repo_paths)
+    else:
+        success, message = fn()  # type: ignore[operator]
     return {"success": success, "message": message}
 
 

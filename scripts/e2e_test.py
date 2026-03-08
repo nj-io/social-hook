@@ -4304,17 +4304,33 @@ def test_R_git_hooks(harness: E2EHarness, runner: E2ERunner):
 
     # R6: Duplicate project registration fails
     def r6():
+        import subprocess as sp
+
         from typer.testing import CliRunner
 
         from social_hook.cli import app
 
         cli = CliRunner()
 
-        # Re-register the same repo_path that the harness already registered
-        result = cli.invoke(app, ["project", "register", str(harness.repo_path)])
-        assert result.exit_code == 1, f"Expected exit 1, got {result.exit_code}"
-        assert "already" in result.output.lower(), f"Expected 'already' in: {result.output}"
-        return "Blocked: duplicate registration"
+        # Use a fresh temp repo — register it once, then try again
+        with tempfile.TemporaryDirectory() as td:
+            repo_dir = Path(td) / "dup-test"
+            repo_dir.mkdir()
+            sp.run(["git", "init", str(repo_dir)], capture_output=True, check=True)
+            config_dir = repo_dir / ".social-hook"
+            config_dir.mkdir()
+            (config_dir / "social-context.md").write_text("# Test\n")
+            (config_dir / "content-config.yaml").write_text("platforms:\n  x:\n    enabled: true\n")
+
+            # First registration succeeds
+            result = cli.invoke(app, ["project", "register", str(repo_dir), "--no-git-hook"])
+            assert result.exit_code == 0, f"First register failed: {result.output}"
+
+            # Second registration should fail with exit 1
+            result = cli.invoke(app, ["project", "register", str(repo_dir)])
+            assert result.exit_code == 1, f"Expected exit 1, got {result.exit_code}"
+            assert "already" in result.output.lower(), f"Expected 'already' in: {result.output}"
+            return "Blocked: duplicate registration"
 
     runner.run_scenario("R6", "Duplicate project registration fails", r6)
 

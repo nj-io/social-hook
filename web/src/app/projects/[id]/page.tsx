@@ -249,7 +249,7 @@ export default function ProjectDetailPage() {
       <div>
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold">{project.name}</h1>
-          {project.paused === 1 && <StatusBadge status="paused" />}
+          {!!project.paused && <StatusBadge status="paused" />}
         </div>
         <p className="mt-1 truncate text-sm text-muted-foreground">{project.repo_path}</p>
         {/* Project Summary */}

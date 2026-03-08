@@ -107,15 +107,33 @@ def _find_our_rule_group(rule_groups: list, command_str: str) -> int | None:
 
 def install_hook(
     settings_file: Path | None = None,
+    *,
+    skip_conflict_check: bool = False,
+    git_hook_repo_paths: list[str] | None = None,
 ) -> tuple[bool, str]:
     """Install the Claude Code post-commit hook.
 
+    Refuses if any registered project has a git post-commit hook installed —
+    only one commit detection method is allowed at a time.
+
     Args:
         settings_file: Path to settings.json (default: ~/.claude/settings.json)
+        skip_conflict_check: If True, skip the git hook conflict check.
+        git_hook_repo_paths: Repo paths to check for git hooks. Callers with
+            DB access should pass all registered project repo_paths.
 
     Returns:
         (success, message) tuple
     """
+    if not skip_conflict_check and git_hook_repo_paths:
+        for rp in git_hook_repo_paths:
+            if check_git_hook_installed(rp):
+                return False, (
+                    f"Git post-commit hook is installed in {rp}. "
+                    "Only one commit detection method is allowed at a time. "
+                    "Uninstall git hooks first (social-hook project uninstall-hook)."
+                )
+
     if settings_file is None:
         settings_file = get_hooks_path()
 
@@ -234,7 +252,7 @@ def install_narrative_hook(
 
     # Check idempotency
     if _find_our_rule_group(pre_compact, NARRATIVE_HOOK_COMMAND) is not None:
-        return True, "Narrative hook already installed"
+        return True, "Claude Code narrative hook already installed"
 
     # No matcher (runs on all compacts). Async because the LLM extraction
     # takes 10-20s and the transcript file survives compaction (append-only).
@@ -253,7 +271,7 @@ def install_narrative_hook(
     data["hooks"][NARRATIVE_HOOK_EVENT] = pre_compact
 
     _write_settings_atomic(settings_file, data)
-    return True, f"Narrative hook installed at {settings_file}"
+    return True, f"Claude Code narrative hook installed at {settings_file}"
 
 
 def uninstall_narrative_hook(
@@ -278,13 +296,13 @@ def uninstall_narrative_hook(
     idx = _find_our_rule_group(pre_compact, NARRATIVE_HOOK_COMMAND)
 
     if idx is None:
-        return True, "Narrative hook was not installed"
+        return True, "Claude Code narrative hook was not installed"
 
     pre_compact.pop(idx)
     data["hooks"][NARRATIVE_HOOK_EVENT] = pre_compact
 
     _write_settings_atomic(settings_file, data)
-    return True, "Narrative hook removed"
+    return True, "Claude Code narrative hook removed"
 
 
 def check_narrative_hook_installed(
@@ -456,9 +474,18 @@ def _get_hook_file(repo_path: str | Path) -> tuple[Path | None, str | None]:
 def install_git_hook(repo_path: str | Path) -> tuple[bool, str]:
     """Install the git post-commit hook in a repository.
 
+    Refuses if the Claude Code commit hook is already installed — only one
+    commit detection method is allowed at a time to avoid duplicate evaluations.
+
     Returns:
         (success, message) tuple
     """
+    if check_hook_installed():
+        return False, (
+            "Claude Code commit hook is already installed. "
+            "Only one commit detection method is allowed at a time. "
+            "Uninstall the Claude Code hook first (social-hook setup uninstall commit_hook)."
+        )
     hook_file, err = _get_hook_file(repo_path)
     if err:
         return False, err
