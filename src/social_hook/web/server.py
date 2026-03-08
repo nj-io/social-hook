@@ -2045,10 +2045,8 @@ async def api_git_hook_status(project_id: str):
 
     conn = _get_conn()
     try:
-        project = ops.get_project(conn, project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        return {"installed": check_git_hook_installed(project.repo_path)}
+        row = _get_project_or_404(conn, project_id)
+        return {"installed": check_git_hook_installed(row["repo_path"])}
     finally:
         conn.close()
 
@@ -2060,10 +2058,8 @@ async def api_git_hook_install(project_id: str):
 
     conn = _get_conn()
     try:
-        project = ops.get_project(conn, project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        success, message = install_git_hook(project.repo_path)
+        row = _get_project_or_404(conn, project_id)
+        success, message = install_git_hook(row["repo_path"])
         if success:
             ops.emit_data_event(conn, "project", "updated", project_id, project_id)
         return {"success": success, "message": message}
@@ -2078,10 +2074,8 @@ async def api_git_hook_uninstall(project_id: str):
 
     conn = _get_conn()
     try:
-        project = ops.get_project(conn, project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        success, message = uninstall_git_hook(project.repo_path)
+        row = _get_project_or_404(conn, project_id)
+        success, message = uninstall_git_hook(row["repo_path"])
         if success:
             ops.emit_data_event(conn, "project", "updated", project_id, project_id)
         return {"success": success, "message": message}
