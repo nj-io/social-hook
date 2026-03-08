@@ -69,6 +69,30 @@ def increment_arc_post_count(conn: sqlite3.Connection, arc_id: str) -> bool:
     )
 
 
+def resume_arc(conn: sqlite3.Connection, arc_id: str, project_id: str) -> bool:
+    """Resume a completed/abandoned arc, enforcing max 3 active arcs.
+
+    Returns:
+        True if the arc was resumed
+
+    Raises:
+        MaxArcsError: If 3 active arcs already exist
+        ValueError: If the arc is already active or not found
+    """
+    arc = ops.get_arc(conn, arc_id)
+    if arc is None:
+        raise ValueError(f"Arc not found: {arc_id}")
+    if arc.status == "active":
+        raise ValueError("Arc is already active")
+
+    active = ops.get_active_arcs(conn, project_id)
+    if len(active) >= 3:
+        themes = [a.theme for a in active]
+        raise MaxArcsError(f"Cannot resume arc: 3 active arcs already exist: {themes}")
+
+    return ops.update_arc(conn, arc_id, status="active")
+
+
 def update_arc(
     conn: sqlite3.Connection,
     arc_id: str,

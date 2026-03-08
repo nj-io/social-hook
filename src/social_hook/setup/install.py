@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +32,24 @@ NARRATIVE_HOOK_TIMEOUT = 120
 
 # Marker to identify our hook in crontab
 CRON_MARKER = f"# {PROJECT_SLUG} scheduler"
+
+# --- Git hook constants ---
+GIT_HOOK_MARKER_START = f"# >>> {PROJECT_SLUG} post-commit hook >>>"
+GIT_HOOK_MARKER_END = f"# <<< {PROJECT_SLUG} post-commit hook <<<"
+
+GIT_HOOK_SCRIPT = f"""{GIT_HOOK_MARKER_START}
+# Skip in CI environments
+if [ -n "$CI" ] || [ -n "$GITHUB_ACTIONS" ] || [ -n "$JENKINS_URL" ] || [ -n "$GITLAB_CI" ] || [ -n "$CIRCLECI" ] || [ -n "$TRAVIS" ]; then
+    exit 0
+fi
+# Skip if explicitly disabled
+if [ "$SOCIAL_HOOK_SKIP" = "1" ]; then
+    exit 0
+fi
+# Run in background to avoid slowing git commit
+nohup {PROJECT_SLUG} git-hook > /dev/null 2>&1 &
+{GIT_HOOK_MARKER_END}
+"""
 
 
 def get_hooks_path() -> Path:
@@ -88,15 +107,33 @@ def _find_our_rule_group(rule_groups: list, command_str: str) -> int | None:
 
 def install_hook(
     settings_file: Path | None = None,
+    *,
+    skip_conflict_check: bool = False,
+    git_hook_repo_paths: list[str] | None = None,
 ) -> tuple[bool, str]:
     """Install the Claude Code post-commit hook.
 
+    Refuses if any registered project has a git post-commit hook installed —
+    only one commit detection method is allowed at a time.
+
     Args:
         settings_file: Path to settings.json (default: ~/.claude/settings.json)
+        skip_conflict_check: If True, skip the git hook conflict check.
+        git_hook_repo_paths: Repo paths to check for git hooks. Callers with
+            DB access should pass all registered project repo_paths.
 
     Returns:
         (success, message) tuple
     """
+    if not skip_conflict_check and git_hook_repo_paths:
+        for rp in git_hook_repo_paths:
+            if check_git_hook_installed(rp):
+                return False, (
+                    f"Git post-commit hook is installed in {rp}. "
+                    "Only one commit detection method is allowed at a time. "
+                    "Uninstall git hooks first (social-hook project uninstall-hook)."
+                )
+
     if settings_file is None:
         settings_file = get_hooks_path()
 
@@ -215,7 +252,7 @@ def install_narrative_hook(
 
     # Check idempotency
     if _find_our_rule_group(pre_compact, NARRATIVE_HOOK_COMMAND) is not None:
-        return True, "Narrative hook already installed"
+        return True, "Claude Code narrative hook already installed"
 
     # No matcher (runs on all compacts). Async because the LLM extraction
     # takes 10-20s and the transcript file survives compaction (append-only).
@@ -234,7 +271,7 @@ def install_narrative_hook(
     data["hooks"][NARRATIVE_HOOK_EVENT] = pre_compact
 
     _write_settings_atomic(settings_file, data)
-    return True, f"Narrative hook installed at {settings_file}"
+    return True, f"Claude Code narrative hook installed at {settings_file}"
 
 
 def uninstall_narrative_hook(
@@ -259,13 +296,13 @@ def uninstall_narrative_hook(
     idx = _find_our_rule_group(pre_compact, NARRATIVE_HOOK_COMMAND)
 
     if idx is None:
-        return True, "Narrative hook was not installed"
+        return True, "Claude Code narrative hook was not installed"
 
     pre_compact.pop(idx)
     data["hooks"][NARRATIVE_HOOK_EVENT] = pre_compact
 
     _write_settings_atomic(settings_file, data)
-    return True, "Narrative hook removed"
+    return True, "Claude Code narrative hook removed"
 
 
 def check_narrative_hook_installed(
@@ -389,3 +426,115 @@ def check_cron_installed() -> bool:
         return result.returncode == 0 and CRON_MARKER in result.stdout
     except (FileNotFoundError, Exception):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Git post-commit hook
+# ---------------------------------------------------------------------------
+
+
+def _resolve_hooks_dir(repo_path: Path, git_dir: Path) -> Path:
+    """Resolve the git hooks directory, respecting core.hooksPath."""
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "config", "--get", "core.hooksPath"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        hooks_dir = Path(result.stdout.strip())
+        if not hooks_dir.is_absolute():
+            hooks_dir = repo_path / hooks_dir
+        return hooks_dir
+    return git_dir / "hooks"
+
+
+def _get_hook_file(repo_path: str | Path) -> tuple[Path | None, str | None]:
+    """Resolve the post-commit hook file path for a git repo.
+
+    Returns:
+        (hook_file, error_message) — hook_file is None on error.
+    """
+    repo_path = Path(repo_path)
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        git_dir = Path(result.stdout.strip())
+        if not git_dir.is_absolute():
+            git_dir = repo_path / git_dir
+    except (subprocess.CalledProcessError, OSError):
+        return None, f"Not a git repository: {repo_path}"
+    hooks_dir = _resolve_hooks_dir(repo_path, git_dir)
+    return hooks_dir / "post-commit", None
+
+
+def install_git_hook(repo_path: str | Path) -> tuple[bool, str]:
+    """Install the git post-commit hook in a repository.
+
+    Refuses if the Claude Code commit hook is already installed — only one
+    commit detection method is allowed at a time to avoid duplicate evaluations.
+
+    Returns:
+        (success, message) tuple
+    """
+    if check_hook_installed():
+        return False, (
+            "Claude Code commit hook is already installed. "
+            "Only one commit detection method is allowed at a time. "
+            "Uninstall the Claude Code hook first (social-hook setup uninstall commit_hook)."
+        )
+    hook_file, err = _get_hook_file(repo_path)
+    if err:
+        return False, err
+    hook_file.parent.mkdir(parents=True, exist_ok=True)
+    if hook_file.exists():
+        existing = hook_file.read_text()
+        if GIT_HOOK_MARKER_START in existing:
+            return True, "Git hook already installed"
+        new_content = existing.rstrip() + "\n\n" + GIT_HOOK_SCRIPT
+    else:
+        new_content = "#!/bin/sh\n" + GIT_HOOK_SCRIPT
+    hook_file.write_text(new_content)
+    hook_file.chmod(0o755)
+    return True, f"Git hook installed at {hook_file}"
+
+
+def uninstall_git_hook(repo_path: str | Path) -> tuple[bool, str]:
+    """Remove the git post-commit hook from a repository.
+
+    Returns:
+        (success, message) tuple
+    """
+    hook_file, err = _get_hook_file(repo_path)
+    if err:
+        return False, err
+    if not hook_file.exists():
+        return True, "No post-commit hook found"
+    content = hook_file.read_text()
+    if GIT_HOOK_MARKER_START not in content:
+        return True, "Git hook was not installed"
+    pattern = (
+        r"\n{0,2}"
+        + re.escape(GIT_HOOK_MARKER_START)
+        + r".*?"
+        + re.escape(GIT_HOOK_MARKER_END)
+        + r"\n{0,2}"
+    )
+    cleaned = re.sub(pattern, "", content, flags=re.DOTALL).strip()
+    if not cleaned or cleaned == "#!/bin/sh":
+        hook_file.unlink()
+    else:
+        hook_file.write_text(cleaned + "\n")
+        hook_file.chmod(0o755)
+    return True, "Git hook removed"
+
+
+def check_git_hook_installed(repo_path: str | Path) -> bool:
+    """Check if the git post-commit hook is installed in a repository."""
+    hook_file, err = _get_hook_file(repo_path)
+    if err:
+        return False
+    return hook_file.exists() and GIT_HOOK_MARKER_START in hook_file.read_text()

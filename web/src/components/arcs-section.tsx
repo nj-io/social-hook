@@ -17,6 +17,20 @@ export function ArcsSection({ arcs, projectId, onRefresh }: ArcsSectionProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ id: string; action: string } | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [editingNotes, setEditingNotes] = useState<{ id: string; value: string } | null>(null);
+  const [savingNotes, setSavingNotes] = useState(false);
+
+  const activeArcs = arcs.filter((a) => a.status === "active");
+  const inactiveArcs = arcs.filter((a) => a.status !== "active");
+  const visibleArcs = showAll
+    ? arcs.filter((a) => !hiddenIds.has(a.id))
+    : activeArcs.filter((a) => !hiddenIds.has(a.id));
+  const hiddenCount = hiddenIds.size;
+  const displayedArcs = visibleArcs;
 
   async function handleCreate() {
     if (!theme.trim()) return;
@@ -42,13 +56,43 @@ export function ArcsSection({ arcs, projectId, onRefresh }: ArcsSectionProps) {
 
   async function handleStatusChange(arcId: string, status: string) {
     setUpdatingId(arcId);
+    setConfirmAction(null);
     try {
       await updateProjectArc(projectId, arcId, { status });
       onRefresh();
-    } catch {
-      // Silent
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("409")) {
+        setError("Maximum 3 active arcs. Complete or abandon one first.");
+      }
     } finally {
       setUpdatingId(null);
+    }
+  }
+
+  async function handleSaveNotes(arcId: string, value: string) {
+    setSavingNotes(true);
+    try {
+      await updateProjectArc(projectId, arcId, { notes: value });
+      setEditingNotes(null);
+      onRefresh();
+    } catch {
+      // Keep editing state on failure
+    } finally {
+      setSavingNotes(false);
+    }
+  }
+
+  function formatDate(dateStr?: string) {
+    if (!dateStr) return null;
+    try {
+      return new Date(dateStr + (dateStr.endsWith("Z") ? "" : "Z")).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    } catch {
+      return dateStr;
     }
   }
 
@@ -57,19 +101,41 @@ export function ArcsSection({ arcs, projectId, onRefresh }: ArcsSectionProps) {
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">Narrative Arcs</h2>
-          {arcs.length > 0 && (
+          {activeArcs.length > 0 && (
             <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-              {arcs.length}
+              {activeArcs.length} active
             </span>
           )}
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:bg-accent/80"
-        >
-          {showForm ? "Cancel" : "Add arc"}
-        </button>
+        <div className="flex items-center gap-2">
+          {hiddenCount > 0 && (
+            <button
+              onClick={() => setHiddenIds(new Set())}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Show {hiddenCount} hidden
+            </button>
+          )}
+          {inactiveArcs.length > 0 && (
+            <button
+              onClick={() => setShowAll(!showAll)}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              {showAll ? "Show active only" : `Show all (${arcs.filter((a) => !hiddenIds.has(a.id)).length})`}
+            </button>
+          )}
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:bg-accent/80"
+          >
+            {showForm ? "Cancel" : "Add arc"}
+          </button>
+        </div>
       </div>
+
+      {error && (
+        <p className="mb-2 text-xs text-destructive">{error}</p>
+      )}
 
       {showForm && (
         <div className="mb-4 space-y-2 rounded-lg border border-border p-3">
@@ -93,9 +159,6 @@ export function ArcsSection({ arcs, projectId, onRefresh }: ArcsSectionProps) {
               className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
-          {error && (
-            <p className="text-xs text-destructive">{error}</p>
-          )}
           <button
             onClick={handleCreate}
             disabled={saving || !theme.trim()}
@@ -106,46 +169,159 @@ export function ArcsSection({ arcs, projectId, onRefresh }: ArcsSectionProps) {
         </div>
       )}
 
-      {arcs.length === 0 ? (
+      {displayedArcs.length === 0 && !showForm ? (
         <p className="text-sm text-muted-foreground">
-          No arcs yet. Arcs are content themes that help the evaluator link related commits into a narrative thread.
+          {arcs.length === 0
+            ? "No arcs yet. Arcs are content themes that help the evaluator link related commits into a narrative thread."
+            : "No active arcs."}
         </p>
       ) : (
         <div className="space-y-2">
-          {arcs.map((arc) => (
-            <div key={arc.id} className="flex items-center justify-between rounded-lg border border-border p-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">{arc.theme}</span>
-                  <span className="text-xs text-muted-foreground">{arc.post_count} posts</span>
+          {displayedArcs.map((arc) => {
+            const isExpanded = expandedId === arc.id;
+            const isConfirming = confirmAction?.id === arc.id;
+            const isUpdating = updatingId === arc.id;
+            const isEditingNotes = editingNotes?.id === arc.id;
+
+            return (
+              <div key={arc.id} className="rounded-lg border border-border">
+                {/* Collapsed row */}
+                <div
+                  className="flex cursor-pointer items-center justify-between p-3"
+                  onClick={() => setExpandedId(isExpanded ? null : arc.id)}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">{isExpanded ? "▼" : "▶"}</span>
+                      <span className="text-sm font-medium">{arc.theme}</span>
+                      <span className="text-xs text-muted-foreground">{arc.post_count} posts</span>
+                      <ArcStatusBadge status={arc.status} />
+                    </div>
+                  </div>
+                  {/* Quick actions on collapsed row */}
+                  <div className="ml-3 flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    {arc.status === "active" && !isConfirming && (
+                      <>
+                        <button
+                          onClick={() => setConfirmAction({ id: arc.id, action: "completed" })}
+                          disabled={isUpdating}
+                          className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-muted disabled:opacity-50"
+                        >
+                          Complete
+                        </button>
+                        <button
+                          onClick={() => setConfirmAction({ id: arc.id, action: "abandoned" })}
+                          disabled={isUpdating}
+                          className="rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+                        >
+                          Abandon
+                        </button>
+                      </>
+                    )}
+                    {arc.status !== "active" && (
+                      <button
+                        onClick={() => handleStatusChange(arc.id, "active")}
+                        disabled={isUpdating}
+                        className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-muted disabled:opacity-50"
+                      >
+                        {isUpdating ? "..." : "Resume"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        setHiddenIds((prev) => new Set([...prev, arc.id]));
+                        if (expandedId === arc.id) setExpandedId(null);
+                      }}
+                      className="rounded-md px-1 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                      title="Hide from list"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
-                {arc.notes && (
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{arc.notes}</p>
-                )}
-              </div>
-              <div className="ml-3 flex shrink-0 items-center gap-2">
-                {arc.status === "active" && (
-                  <>
+
+                {/* Confirmation bar */}
+                {isConfirming && (
+                  <div className="flex items-center gap-2 border-t border-border bg-muted/50 px-3 py-2">
+                    <span className="text-xs text-muted-foreground">
+                      {confirmAction.action === "completed" ? "Complete" : "Abandon"} this arc?
+                    </span>
                     <button
-                      onClick={() => handleStatusChange(arc.id, "completed")}
-                      disabled={updatingId === arc.id}
-                      className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-muted disabled:opacity-50"
+                      onClick={() => handleStatusChange(arc.id, confirmAction.action)}
+                      disabled={isUpdating}
+                      className="rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
                     >
-                      Complete
+                      {isUpdating ? "..." : "Confirm"}
                     </button>
                     <button
-                      onClick={() => handleStatusChange(arc.id, "abandoned")}
-                      disabled={updatingId === arc.id}
-                      className="rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+                      onClick={() => setConfirmAction(null)}
+                      className="text-xs text-muted-foreground hover:text-foreground"
                     >
-                      Abandon
+                      Cancel
                     </button>
-                  </>
+                  </div>
                 )}
-                <ArcStatusBadge status={arc.status} />
+
+                {/* Expanded details */}
+                {isExpanded && (
+                  <div className="space-y-3 border-t border-border px-3 pb-3 pt-2">
+                    {/* Dates */}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <span>ID: {arc.id}</span>
+                      {arc.started_at && <span>Started: {formatDate(arc.started_at)}</span>}
+                      {arc.ended_at && <span>Ended: {formatDate(arc.ended_at)}</span>}
+                      {arc.last_post_at && <span>Last post: {formatDate(arc.last_post_at)}</span>}
+                    </div>
+
+                    {/* Notes */}
+                    <div>
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">Notes</span>
+                        {!isEditingNotes && (
+                          <button
+                            onClick={() => setEditingNotes({ id: arc.id, value: arc.notes || "" })}
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                      {isEditingNotes ? (
+                        <div className="space-y-1">
+                          <textarea
+                            value={editingNotes.value}
+                            onChange={(e) => setEditingNotes({ id: arc.id, value: e.target.value })}
+                            rows={3}
+                            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-accent"
+                            placeholder="Add notes about this arc..."
+                          />
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => handleSaveNotes(arc.id, editingNotes.value)}
+                              disabled={savingNotes}
+                              className="rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                            >
+                              {savingNotes ? "..." : "Save"}
+                            </button>
+                            <button
+                              onClick={() => setEditingNotes(null)}
+                              className="text-xs text-muted-foreground hover:text-foreground"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          {arc.notes || "No notes."}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

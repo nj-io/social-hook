@@ -113,6 +113,39 @@ def complete(
 
 
 @app.command()
+def resume(
+    arc_id: str = typer.Argument(..., help="Arc ID to resume"),
+):
+    """Resume a completed or abandoned arc.
+    Example: social-hook arc resume arc_abc123"""
+    from social_hook.db import operations as ops
+    from social_hook.db.connection import init_database
+    from social_hook.errors import MaxArcsError
+    from social_hook.filesystem import get_db_path
+    from social_hook.narrative.arcs import resume_arc
+
+    conn = init_database(get_db_path())
+    try:
+        arc = ops.get_arc(conn, arc_id)
+        if not arc:
+            typer.echo(f"Arc not found: {arc_id}", err=True)
+            raise typer.Exit(1) from None
+
+        try:
+            resume_arc(conn, arc_id, arc.project_id)
+        except MaxArcsError:
+            typer.echo("Maximum 3 active arcs. Complete or abandon one first.", err=True)
+            raise typer.Exit(1) from None
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+
+        typer.echo(f"Resumed arc: {arc.theme}")
+    finally:
+        conn.close()
+
+
+@app.command()
 def abandon(
     arc_id: str = typer.Argument(..., help="Arc ID to abandon"),
     notes: str | None = typer.Option(None, "--notes", "-n", help="Optional notes"),

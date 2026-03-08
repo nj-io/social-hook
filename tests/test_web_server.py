@@ -170,6 +170,17 @@ def tmp_env(tmp_path):
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS milestone_summaries (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            milestone_type TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            items_covered TEXT NOT NULL DEFAULT '[]',
+            token_count INTEGER NOT NULL DEFAULT 0,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
         """
     )
     conn.commit()
@@ -1828,3 +1839,292 @@ class TestEnabledPlatforms:
         assert "linkedin" not in data["platforms"]
         assert data["count"] == 1
         assert data["platforms"]["x"]["priority"] == "primary"
+
+
+# ---------------------------------------------------------------------------
+# Filesystem browse endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestFilesystemBrowse:
+    def test_browse_home(self, client, tmp_env):
+        """GET /api/filesystem/browse returns directories list."""
+        tmp = tmp_env["tmp_path"]
+        (tmp / "subdir").mkdir()
+
+        with (
+            patch("social_hook.web.server.Path.home", return_value=tmp),
+            patch.dict("os.environ", {"HOME": str(tmp)}),
+        ):
+            resp = client.get(f"/api/filesystem/browse?path={tmp}")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["current"] == str(tmp)
+            assert isinstance(data["directories"], list)
+
+    def test_browse_specific_path(self, client, tmp_env):
+        """GET /api/filesystem/browse navigates to specific dir."""
+        tmp = tmp_env["tmp_path"]
+        sub = tmp / "mydir"
+        sub.mkdir()
+        (sub / "child").mkdir()
+
+        with (
+            patch("social_hook.web.server.Path.home", return_value=tmp),
+            patch.dict("os.environ", {"HOME": str(tmp)}),
+        ):
+            resp = client.get(f"/api/filesystem/browse?path={sub}")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["current"] == str(sub)
+            assert any(d["name"] == "child" for d in data["directories"])
+
+    def test_browse_detects_git_repos(self, client, tmp_env):
+        """GET /api/filesystem/browse detects git repos via is_git flag."""
+        tmp = tmp_env["tmp_path"]
+        git_repo = tmp / "myrepo"
+        git_repo.mkdir()
+        (git_repo / ".git").mkdir()
+
+        with (
+            patch("social_hook.web.server.Path.home", return_value=tmp),
+            patch.dict("os.environ", {"HOME": str(tmp)}),
+        ):
+            resp = client.get(f"/api/filesystem/browse?path={tmp}")
+            assert resp.status_code == 200
+            data = resp.json()
+            repo_entry = [d for d in data["directories"] if d["name"] == "myrepo"]
+            assert len(repo_entry) == 1
+            assert repo_entry[0]["is_git"] is True
+
+    def test_browse_hides_dotfiles(self, client, tmp_env):
+        """GET /api/filesystem/browse hides hidden directories."""
+        tmp = tmp_env["tmp_path"]
+        (tmp / ".hidden").mkdir()
+        (tmp / "visible").mkdir()
+
+        with (
+            patch("social_hook.web.server.Path.home", return_value=tmp),
+            patch.dict("os.environ", {"HOME": str(tmp)}),
+        ):
+            resp = client.get(f"/api/filesystem/browse?path={tmp}")
+            assert resp.status_code == 200
+            data = resp.json()
+            names = [d["name"] for d in data["directories"]]
+            assert ".hidden" not in names
+            assert "visible" in names
+
+    def test_browse_outside_home_forbidden(self, client, tmp_env):
+        """GET /api/filesystem/browse returns 403 for paths outside home."""
+        tmp = tmp_env["tmp_path"]
+
+        with (
+            patch("social_hook.web.server.Path.home", return_value=tmp),
+            patch.dict("os.environ", {"HOME": str(tmp)}),
+        ):
+            resp = client.get("/api/filesystem/browse?path=/etc")
+            assert resp.status_code == 403
+
+    def test_browse_nonexistent_path(self, client, tmp_env):
+        """GET /api/filesystem/browse returns 400 for nonexistent path."""
+        tmp = tmp_env["tmp_path"]
+        bad_path = tmp / "does_not_exist"
+
+        with (
+            patch("social_hook.web.server.Path.home", return_value=tmp),
+            patch.dict("os.environ", {"HOME": str(tmp)}),
+        ):
+            resp = client.get(f"/api/filesystem/browse?path={bad_path}")
+            assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Project registration / deletion endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestProjectRegistration:
+    def test_register_project(self, client, tmp_env):
+        """POST /api/projects/register creates a project."""
+        with (
+            patch("social_hook.db.operations.subprocess.run") as mock_run,
+            patch("social_hook.setup.install.subprocess.run") as mock_install_run,
+        ):
+            # Mock git rev-parse (valid repo)
+            mock_git_dir = MagicMock()
+            mock_git_dir.returncode = 0
+            mock_git_dir.stdout = ".git\n"
+            # Mock git remote get-url origin
+            mock_origin = MagicMock()
+            mock_origin.returncode = 0
+            mock_origin.stdout = "git@github.com:test/repo.git\n"
+            mock_run.side_effect = [mock_git_dir, mock_origin]
+
+            # Mock install_git_hook subprocess calls
+            mock_install_git_dir = MagicMock()
+            mock_install_git_dir.returncode = 0
+            mock_install_git_dir.stdout = ".git\n"
+            mock_install_run.return_value = mock_install_git_dir
+
+            resp = client.post(
+                "/api/projects/register",
+                json={
+                    "repo_path": "/tmp/test-repo",
+                    "name": "My Test Repo",
+                    "install_git_hook": False,
+                },
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "created"
+            assert data["project"]["name"] == "My Test Repo"
+            assert (
+                data["project"]["repo_path"] == "/private/tmp/test-repo"
+                or data["project"]["repo_path"] == "/tmp/test-repo"
+            )
+
+    def test_register_duplicate_returns_409(self, client, tmp_env):
+        """POST /api/projects/register returns 409 for duplicate."""
+        from pathlib import Path
+
+        # Use resolved path (macOS /tmp -> /private/tmp)
+        resolved = str(Path("/tmp/dup-repo").resolve())
+
+        # Seed a project with the resolved path
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_dup", "Existing", resolved),
+        )
+        conn.commit()
+        conn.close()
+
+        with patch("social_hook.db.operations.subprocess.run") as mock_run:
+            mock_git = MagicMock()
+            mock_git.returncode = 0
+            mock_git.stdout = ".git\n"
+            mock_origin = MagicMock()
+            mock_origin.returncode = 1
+            mock_origin.stdout = ""
+            mock_run.side_effect = [mock_git, mock_origin]
+
+            resp = client.post(
+                "/api/projects/register",
+                json={
+                    "repo_path": "/tmp/dup-repo",
+                },
+            )
+            assert resp.status_code == 409
+
+    def test_delete_project(self, client, tmp_env):
+        """DELETE /api/projects/{id} deletes the project."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_del", "To Delete", "/tmp/del-repo"),
+        )
+        conn.execute(
+            "INSERT INTO lifecycles (project_id, phase) VALUES (?, ?)",
+            ("proj_del", "research"),
+        )
+        conn.execute(
+            "INSERT INTO narrative_debt (project_id, debt_counter) VALUES (?, ?)",
+            ("proj_del", 0),
+        )
+        conn.commit()
+        conn.close()
+
+        with patch("social_hook.setup.install.subprocess.run") as mock_run:
+            mock_git = MagicMock()
+            mock_git.returncode = 0
+            mock_git.stdout = ".git\n"
+            mock_run.return_value = mock_git
+
+            resp = client.delete("/api/projects/proj_del")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "deleted"
+
+            # Verify project is gone
+            conn = sqlite3.connect(str(tmp_env["db_path"]))
+            row = conn.execute("SELECT id FROM projects WHERE id = ?", ("proj_del",)).fetchone()
+            conn.close()
+            assert row is None
+
+    def test_delete_nonexistent_returns_404(self, client, tmp_env):
+        """DELETE /api/projects/{id} returns 404 for unknown project."""
+        resp = client.delete("/api/projects/nonexistent")
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Per-project git hook endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestGitHookEndpoints:
+    def test_git_hook_status(self, client, tmp_env):
+        """GET /api/projects/{id}/git-hook/status returns installed flag."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_gh1", "Hook Test", "/tmp/hook-test"),
+        )
+        conn.commit()
+        conn.close()
+
+        with patch("social_hook.setup.install.check_git_hook_installed", return_value=False):
+            resp = client.get("/api/projects/proj_gh1/git-hook/status")
+            assert resp.status_code == 200
+            assert resp.json()["installed"] is False
+
+    def test_git_hook_install(self, client, tmp_env):
+        """POST /api/projects/{id}/git-hook/install installs the hook."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_gh2", "Hook Install", "/tmp/hook-install"),
+        )
+        conn.commit()
+        conn.close()
+
+        with patch(
+            "social_hook.setup.install.install_git_hook", return_value=(True, "Git hook installed")
+        ):
+            resp = client.post("/api/projects/proj_gh2/git-hook/install")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
+            assert "installed" in data["message"].lower()
+
+    def test_git_hook_uninstall(self, client, tmp_env):
+        """POST /api/projects/{id}/git-hook/uninstall removes the hook."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj_gh3", "Hook Uninstall", "/tmp/hook-uninstall"),
+        )
+        conn.commit()
+        conn.close()
+
+        with patch(
+            "social_hook.setup.install.uninstall_git_hook", return_value=(True, "Git hook removed")
+        ):
+            resp = client.post("/api/projects/proj_gh3/git-hook/uninstall")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["success"] is True
+
+    def test_git_hook_404_for_unknown_project(self, client, tmp_env):
+        """Git hook endpoints return 404 for unknown project."""
+        with patch("social_hook.setup.install.check_git_hook_installed", return_value=False):
+            resp = client.get("/api/projects/unknown_proj/git-hook/status")
+            assert resp.status_code == 404
+
+        with patch("social_hook.setup.install.install_git_hook", return_value=(True, "ok")):
+            resp = client.post("/api/projects/unknown_proj/git-hook/install")
+            assert resp.status_code == 404
+
+        with patch("social_hook.setup.install.uninstall_git_hook", return_value=(True, "ok")):
+            resp = client.post("/api/projects/unknown_proj/git-hook/uninstall")
+            assert resp.status_code == 404

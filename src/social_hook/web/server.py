@@ -695,6 +695,8 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
 @app.get("/api/projects")
 async def api_projects():
     """List all registered projects with lifecycle phase."""
+    from social_hook.setup.install import check_git_hook_installed
+
     conn = _get_conn()
     try:
         rows = conn.execute("""
@@ -703,7 +705,12 @@ async def api_projects():
             LEFT JOIN lifecycles l ON l.project_id = p.id
             ORDER BY p.created_at DESC
         """).fetchall()
-        return {"projects": [dict(row) for row in rows]}
+        projects = []
+        for row in rows:
+            p = dict(row)
+            p["git_hook_installed"] = check_git_hook_installed(p["repo_path"])
+            projects.append(p)
+        return {"projects": projects}
     finally:
         conn.close()
 
@@ -1444,8 +1451,9 @@ async def api_create_arc(project_id: str, body: ArcCreate):
 @app.put("/api/projects/{project_id}/arcs/{arc_id}")
 async def api_update_arc(project_id: str, arc_id: str, body: ArcUpdate):
     """Update a narrative arc (status, notes)."""
+    from social_hook.errors import MaxArcsError
     from social_hook.models import ArcStatus
-    from social_hook.narrative.arcs import update_arc
+    from social_hook.narrative.arcs import resume_arc, update_arc
 
     conn = _get_conn()
     try:
@@ -1462,6 +1470,22 @@ async def api_update_arc(project_id: str, arc_id: str, body: ArcUpdate):
                     status_code=400,
                     detail=f"Invalid status '{body.status}'. Must be one of: {valid}",
                 )
+            # Resuming requires max-3 check
+            if body.status == "active" and arc.status != "active":
+                try:
+                    resume_arc(conn, arc_id, project_id)
+                except MaxArcsError:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Maximum 3 active arcs. Complete or abandon one first.",
+                    ) from None
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from None
+                # resume_arc already did the update, just update notes if provided
+                if body.notes is not None:
+                    update_arc(conn, arc_id, notes=body.notes)
+                ops.emit_data_event(conn, "arc", "updated", arc_id, project_id)
+                return {"status": "ok"}
 
         update_arc(conn, arc_id, status=body.status, notes=body.notes)
         ops.emit_data_event(conn, "arc", "updated", arc_id, project_id)
@@ -1970,7 +1994,18 @@ async def api_install_component(component: str):
     fn = install_fns.get(component)
     if not fn:
         raise HTTPException(status_code=400, detail=f"Unknown component: {component}")
-    success, message = fn()  # type: ignore[operator]
+
+    if component == "commit_hook":
+        # Pass registered project repo paths for mutual exclusion check
+        conn = _get_conn()
+        try:
+            rows = conn.execute("SELECT repo_path FROM projects").fetchall()
+            repo_paths = [r["repo_path"] for r in rows]
+        finally:
+            conn.close()
+        success, message = fn(git_hook_repo_paths=repo_paths)
+    else:
+        success, message = fn()  # type: ignore[operator]
     return {"success": success, "message": message}
 
 
@@ -2084,3 +2119,152 @@ async def api_test_channel(channel: str):
             return {"success": False, "error": "Failed to connect to Telegram API"}
 
     return {"success": False, "error": f"Testing not supported for {channel}"}
+
+
+# ---------------------------------------------------------------------------
+# Filesystem browser
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/filesystem/browse")
+async def api_browse_directory(path: str = Query(default="~")):
+    """List subdirectories for folder picker UI. Local-mode only."""
+    resolved = Path(path).expanduser().resolve()
+
+    home = Path.home().resolve()
+    if not resolved.is_relative_to(home):
+        raise HTTPException(status_code=403, detail="Access restricted to home directory")
+
+    if not resolved.is_dir():
+        raise HTTPException(status_code=400, detail="Not a directory")
+
+    dirs = []
+    try:
+        for d in sorted(resolved.iterdir(), key=lambda x: x.name.lower()):
+            if d.is_dir() and not d.name.startswith("."):
+                dirs.append(
+                    {
+                        "name": d.name,
+                        "path": str(d),
+                        "is_git": (d / ".git").exists(),
+                    }
+                )
+    except PermissionError:
+        pass
+
+    return {
+        "current": str(resolved),
+        "parent": str(resolved.parent) if resolved != home else str(home),
+        "directories": dirs,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Per-project git hook endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/projects/{project_id}/git-hook/status")
+async def api_git_hook_status(project_id: str):
+    """Check if git post-commit hook is installed for a project."""
+    from social_hook.setup.install import check_git_hook_installed
+
+    conn = _get_conn()
+    try:
+        row = _get_project_or_404(conn, project_id)
+        return {"installed": check_git_hook_installed(row["repo_path"])}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/git-hook/install")
+async def api_git_hook_install(project_id: str):
+    """Install git post-commit hook for a project."""
+    from social_hook.setup.install import install_git_hook
+
+    conn = _get_conn()
+    try:
+        row = _get_project_or_404(conn, project_id)
+        success, message = install_git_hook(row["repo_path"])
+        if success:
+            ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"success": success, "message": message}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/git-hook/uninstall")
+async def api_git_hook_uninstall(project_id: str):
+    """Remove git post-commit hook from a project."""
+    from social_hook.setup.install import uninstall_git_hook
+
+    conn = _get_conn()
+    try:
+        row = _get_project_or_404(conn, project_id)
+        success, message = uninstall_git_hook(row["repo_path"])
+        if success:
+            ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"success": success, "message": message}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Project registration / deletion
+# ---------------------------------------------------------------------------
+
+
+class RegisterProjectBody(BaseModel):
+    repo_path: str
+    name: str | None = None
+    install_git_hook: bool = True
+
+
+@app.post("/api/projects/register")
+async def api_register_project(body: RegisterProjectBody):
+    """Register a new project from the web UI."""
+    from social_hook.db.operations import register_project
+    from social_hook.setup.install import install_git_hook as do_install_git_hook
+
+    conn = _get_conn()
+    try:
+        project, repo_origin = register_project(conn, body.repo_path, body.name)
+
+        hook_message = None
+        if body.install_git_hook:
+            _success, hook_message = do_install_git_hook(project.repo_path)
+
+        ops.emit_data_event(conn, "project", "created", project.id, project.id)
+        return {
+            "status": "created",
+            "project": {
+                "id": project.id,
+                "name": project.name,
+                "repo_path": project.repo_path,
+                "repo_origin": repo_origin,
+            },
+            "git_hook": hook_message,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
+    finally:
+        conn.close()
+
+
+@app.delete("/api/projects/{project_id}")
+async def api_delete_project(project_id: str):
+    """Unregister a project and delete all its data."""
+    from social_hook.setup.install import uninstall_git_hook
+
+    conn = _get_conn()
+    try:
+        project = ops.get_project(conn, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        uninstall_git_hook(project.repo_path)
+        ops.delete_project(conn, project_id)
+        ops.emit_data_event(conn, "project", "deleted", project_id, project_id)
+        return {"status": "deleted", "project_id": project_id}
+    finally:
+        conn.close()
