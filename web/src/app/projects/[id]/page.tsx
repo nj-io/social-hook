@@ -429,7 +429,7 @@ export default function ProjectDetailPage() {
             value={branchFilter}
             onChange={(e) => { setBranchFilter(e.target.value); setDecisionOffset(0); }}
           >
-            <option value="">All branches</option>
+            <option value="">All branches{!project.trigger_branch ? " (active)" : ""}</option>
             {(() => {
               const branches = [...decisionBranches];
               if (project.trigger_branch && !branches.includes(project.trigger_branch)) {
