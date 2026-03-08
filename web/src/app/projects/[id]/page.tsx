@@ -815,7 +815,7 @@ export default function ProjectDetailPage() {
                     ? "Consolidating..."
                     : `Consolidate ${selectedDecisions.size} → Create Draft`}
                 </button>
-              )
+              )}
             </div>
           </div>
         </div>
