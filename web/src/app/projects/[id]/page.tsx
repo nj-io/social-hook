@@ -45,6 +45,7 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState("");
   const [decisionOffset, setDecisionOffset] = useState(0);
   const [hasMoreDecisions, setHasMoreDecisions] = useState(false);
+  const [totalDecisions, setTotalDecisions] = useState(0);
   const [editingSummary, setEditingSummary] = useState(false);
   const [summaryDraft, setSummaryDraft] = useState("");
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -128,6 +129,7 @@ export default function ProjectDetailPage() {
       setProject(detail);
       setDecisions(dec.decisions);
       setHasMoreDecisions(dec.decisions.length === DECISIONS_PER_PAGE);
+      setTotalDecisions(dec.total ?? 0);
       setPosts(po.posts);
       setUsage(us);
       loadMemories(detail.repo_path);
@@ -152,6 +154,7 @@ export default function ProjectDetailPage() {
         setProject(detail);
         setDecisions(dec.decisions);
         setHasMoreDecisions(dec.decisions.length === DECISIONS_PER_PAGE);
+      setTotalDecisions(dec.total ?? 0);
         setPosts(po.posts);
         setUsage(us);
         setPlatformCount(plat.count);
@@ -173,6 +176,7 @@ export default function ProjectDetailPage() {
       setDecisions(res.decisions);
       setDecisionOffset(offset);
       setHasMoreDecisions(res.decisions.length === DECISIONS_PER_PAGE);
+      setTotalDecisions(res.total ?? 0);
       setSelectedDecisions(new Set());
     } catch {
       // Keep existing data
@@ -653,6 +657,7 @@ export default function ProjectDetailPage() {
               </button>
               <span className="text-xs text-muted-foreground">
                 Page {Math.floor(decisionOffset / DECISIONS_PER_PAGE) + 1}
+                {totalDecisions > 0 && ` of ${Math.ceil(totalDecisions / DECISIONS_PER_PAGE)}`}
               </span>
               <button
                 onClick={() => loadMoreDecisions(decisionOffset + DECISIONS_PER_PAGE)}

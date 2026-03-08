@@ -73,7 +73,7 @@ export async function fetchProjectDecisions(
   limit?: number,
   offset?: number,
   branch?: string | null,
-): Promise<{ decisions: Decision[] }> {
+): Promise<{ decisions: Decision[]; total: number }> {
   const params = new URLSearchParams();
   if (limit != null) params.set("limit", String(limit));
   if (offset != null) params.set("offset", String(offset));
