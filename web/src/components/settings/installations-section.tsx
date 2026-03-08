@@ -11,8 +11,8 @@ import {
 const COMPONENTS = [
   {
     key: "narrative_hook",
-    name: "Narrative Hook",
-    description: "Captures dev narratives on context compaction",
+    name: "Claude Code Narrative Hook",
+    description: "Captures dev session context on compaction (Claude Code only)",
   },
   {
     key: "scheduler_cron",

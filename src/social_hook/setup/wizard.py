@@ -1818,20 +1818,23 @@ def _setup_installations(
             Panel(
                 "The following components will be installed:\n\n"
                 "  • Git post-commit hook → .git/hooks/post-commit\n"
-                f"    Primary trigger: runs {PROJECT_SLUG} on every git commit\n\n"
-                "  • Claude Code hook → ~/.claude/settings.json\n"
-                f"    Alternative trigger: runs {PROJECT_SLUG} when Claude Code commits\n\n"
+                f"    Triggers {PROJECT_SLUG} on every git commit (works with any editor)\n\n"
+                "  • Claude Code narrative hook → ~/.claude/settings.json\n"
+                "    Captures session context on Claude Code compaction (Claude Code only)\n\n"
                 "  • Scheduler cron job → runs every minute\n"
                 "    Posts approved drafts at scheduled times\n\n"
                 "  • Telegram bot → background daemon\n"
-                "    Receives and processes draft reviews",
+                "    Receives and processes draft reviews\n\n"
+                "  Note: Only one commit detection method is allowed at a time.\n"
+                "  Git hook is recommended. Use Claude Code hook as alternative\n"
+                "  via: social-hook setup install commit_hook",
                 border_style="dim",
             )
         )
     except Exception:
         typer.echo("  The following will be installed:")
-        typer.echo("  • Git post-commit hook (primary trigger on every commit)")
-        typer.echo("  • Claude Code hook (alternative trigger for Claude Code commits)")
+        typer.echo("  • Git post-commit hook (triggers on every commit, any editor)")
+        typer.echo("  • Claude Code narrative hook (session context on compaction)")
         typer.echo("  • Scheduler cron job (posts at scheduled times)")
         typer.echo("  • Telegram bot daemon (processes reviews)")
 
@@ -1839,32 +1842,7 @@ def _setup_installations(
         _warn("Skipping installation. You can install manually later.")
         return False
 
-    # Hook
-    from social_hook.setup.install import check_hook_installed, install_hook
-
-    if check_hook_installed():
-        _success("Claude Code hook already installed")
-    else:
-        success, msg = install_hook()
-        if success:
-            _success(msg)
-        else:
-            _error(msg)
-
-    # Narrative hook (if journey capture enabled)
-    if yaml_config and yaml_config.get("journey_capture", {}).get("enabled"):
-        from social_hook.setup.install import check_narrative_hook_installed, install_narrative_hook
-
-        if check_narrative_hook_installed():
-            _success("Narrative hook already installed")
-        else:
-            success, msg = install_narrative_hook()
-            if success:
-                _success(msg)
-            else:
-                _error(msg)
-
-    # Git post-commit hook
+    # Git post-commit hook (primary commit detection)
     _info("Installing git post-commit hook...")
     cwd = Path.cwd()
     result = subprocess.run(
@@ -1882,6 +1860,20 @@ def _setup_installations(
             _warn(msg)
     else:
         _warn("Current directory is not a git repo — skipping git hook")
+        _info("You can use the Claude Code hook instead: social-hook setup install commit_hook")
+
+    # Claude Code narrative hook (if journey capture enabled — not a commit trigger, no conflict)
+    if yaml_config and yaml_config.get("journey_capture", {}).get("enabled"):
+        from social_hook.setup.install import check_narrative_hook_installed, install_narrative_hook
+
+        if check_narrative_hook_installed():
+            _success("Claude Code narrative hook already installed")
+        else:
+            success, msg = install_narrative_hook()
+            if success:
+                _success(msg)
+            else:
+                _error(msg)
 
     if progress:
         progress.advance()
