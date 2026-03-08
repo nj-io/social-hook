@@ -159,13 +159,49 @@ def get_base_path() -> Path:
     return Path.home() / CONFIG_DIR_NAME
 
 
+def _detect_worktree_name() -> str | None:
+    """Detect if running from a git worktree via PYTHONPATH.
+
+    Returns worktree name if detected, None otherwise.
+    """
+    pythonpath = os.environ.get("PYTHONPATH", "")
+    marker = ".claude/worktrees/"
+    idx = pythonpath.find(marker)
+    if idx == -1:
+        return None
+    after = pythonpath[idx + len(marker) :]
+    # Extract worktree name (up to next / or end)
+    name = after.split("/")[0]
+    return name if name else None
+
+
 def get_db_path() -> Path:
     """Get the path to the SQLite database.
 
+    In worktrees (detected via PYTHONPATH containing .claude/worktrees/),
+    uses a separate DB per worktree to avoid migration collisions. The main
+    DB is copied on first use to bootstrap the worktree with existing data.
+
     Returns:
-        Path to ~/.social-hook/social-hook.db
+        Path to ~/.social-hook/social-hook.db (or social-hook-{worktree}.db)
     """
-    return get_base_path() / DB_FILENAME
+    base = get_base_path()
+    worktree = _detect_worktree_name()
+    if not worktree:
+        return base / DB_FILENAME
+
+    stem = Path(DB_FILENAME).stem
+    suffix = Path(DB_FILENAME).suffix
+    wt_db = base / f"{stem}-{worktree}{suffix}"
+
+    if not wt_db.exists():
+        main_db = base / DB_FILENAME
+        if main_db.exists():
+            import shutil
+
+            shutil.copy2(main_db, wt_db)
+
+    return wt_db
 
 
 def get_env_path() -> Path:

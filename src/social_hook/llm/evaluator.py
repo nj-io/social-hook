@@ -8,6 +8,7 @@ from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.prompts import assemble_evaluator_prompt, load_prompt
 from social_hook.llm.schemas import LogEvaluationInput
 from social_hook.models import CommitInfo, ProjectContext
+from social_hook.scheduling import ProjectSchedulingState
 
 if TYPE_CHECKING:
     from social_hook.config.project import MediaToolGuidance, StrategyConfig, SummaryConfig
@@ -36,6 +37,7 @@ class Evaluator:
         media_guidance: dict[str, "MediaToolGuidance"] | None = None,
         strategy_config: Optional["StrategyConfig"] = None,
         summary_config: Optional["SummaryConfig"] = None,
+        scheduling_state: ProjectSchedulingState | None = None,
     ) -> LogEvaluationInput:
         """Evaluate a commit for post-worthiness.
 
@@ -65,6 +67,7 @@ class Evaluator:
             media_guidance=media_guidance,
             strategy_config=strategy_config,
             summary_config=summary_config,
+            scheduling_state=scheduling_state,
         )
 
         # Check summary freshness and include hint

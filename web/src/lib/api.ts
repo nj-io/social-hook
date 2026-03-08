@@ -72,12 +72,37 @@ export async function fetchProjectDecisions(
   id: string,
   limit?: number,
   offset?: number,
+  branch?: string | null,
 ): Promise<{ decisions: Decision[] }> {
   const params = new URLSearchParams();
   if (limit != null) params.set("limit", String(limit));
   if (offset != null) params.set("offset", String(offset));
+  if (branch) params.set("branch", branch);
   const qs = params.toString();
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/decisions${qs ? `?${qs}` : ""}`);
+}
+
+export async function fetchDecisionBranches(id: string): Promise<{ branches: string[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/decision-branches`);
+}
+
+export async function fetchImportPreview(
+  id: string,
+  branch?: string | null,
+): Promise<{ total_commits: number; already_tracked: number; importable: number }> {
+  const params = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-preview${params}`);
+}
+
+export async function importCommits(
+  id: string,
+  branch?: string | null,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-commits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(branch ? { branch } : {}),
+  });
 }
 
 export async function fetchProjectPosts(

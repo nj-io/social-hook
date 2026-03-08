@@ -50,6 +50,7 @@ def db_env(tmp_path):
         "failed",
         "superseded",
         "cancelled",
+        "deferred",
     ]
     for status in statuses:
         media_spec = json.dumps({"prompt": "test"}) if status == "draft" else None
@@ -409,7 +410,7 @@ class TestDraftList:
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert isinstance(data, list)
-            assert len(data) == 8  # All 8 statuses
+            assert len(data) == 9  # All 9 statuses
 
 
 class TestDraftShow:
@@ -585,3 +586,44 @@ class TestDraftRejectMemory:
             result = runner.invoke(app, ["draft", "reject", "draft_approved"])
             assert result.exit_code == 0
             mock_save.assert_not_called()
+
+
+class TestDeferredStatusAccepted:
+    """Verify deferred status is accepted by pending filter, schedule, and quick-approve."""
+
+    def test_pending_filter_includes_deferred(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "list", "--pending"])
+            assert result.exit_code == 0
+            output = result.output
+            assert "draft_deferred" in output
+
+    def test_schedule_accepts_deferred(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(
+                app, ["draft", "schedule", "draft_deferred", "--time", "2026-03-10T10:00:00"]
+            )
+            assert result.exit_code == 0
+            assert "scheduled" in result.output
+
+    def test_quick_approve_accepts_deferred(self, db_env):
+        from datetime import datetime
+
+        from social_hook.scheduling import ScheduleResult
+
+        mock_result = ScheduleResult(
+            datetime=datetime(2026, 3, 10, 14, 0),
+            is_optimal_day=True,
+            day_reason="test",
+            time_reason="test",
+        )
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.scheduling.calculate_optimal_time", return_value=mock_result),
+        ):
+            mock_config.return_value = MagicMock()
+            result = runner.invoke(app, ["draft", "quick-approve", "draft_deferred"])
+            assert result.exit_code == 0
+            assert "approved and scheduled" in result.output

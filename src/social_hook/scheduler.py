@@ -11,6 +11,7 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id, get_base_path, get_db_path
 from social_hook.models import Post
 from social_hook.notifications import send_notification
+from social_hook.scheduling import calculate_optimal_time
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,80 @@ def release_lock(lock_path: Path | None = None) -> None:
 # =============================================================================
 
 
+def promote_deferred_drafts(conn, config, dry_run=False):
+    """Try to promote deferred drafts to scheduled when slots open up.
+
+    Iterates deferred drafts in FIFO order. For each:
+    - If platform is gone/disabled, cancel the draft.
+    - Otherwise, recalculate scheduling. If a slot is available, promote
+      to scheduled with the computed time.
+
+    Args:
+        conn: Database connection.
+        config: Full Config object.
+        dry_run: If True, skip notifications.
+
+    Returns:
+        Number of drafts promoted.
+    """
+    from social_hook.config.platforms import resolve_platform
+
+    deferred = ops.get_deferred_drafts(conn)
+    promoted = 0
+
+    for draft in deferred:
+        # Guard: platform gone or disabled
+        pcfg = config.platforms.get(draft.platform)
+        if not pcfg or not pcfg.enabled:
+            ops.update_draft(conn, draft.id, status="cancelled")
+            ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
+            logger.info(
+                f"Deferred draft {draft.id} cancelled: platform '{draft.platform}' disabled/removed"
+            )
+            continue
+
+        resolved = resolve_platform(draft.platform, pcfg, config.scheduling)
+        schedule = calculate_optimal_time(
+            conn,
+            draft.project_id,
+            platform=draft.platform,
+            tz=config.scheduling.timezone,
+            max_posts_per_day=resolved.max_posts_per_day,
+            min_gap_minutes=resolved.min_gap_minutes,
+            optimal_days=resolved.optimal_days,
+            optimal_hours=resolved.optimal_hours,
+            max_per_week=config.scheduling.max_per_week,
+        )
+
+        if schedule.deferred:
+            # Still no slot available, stays deferred
+            continue
+
+        # Promote to scheduled
+        ops.update_draft(
+            conn,
+            draft.id,
+            status="scheduled",
+            scheduled_time=schedule.datetime.isoformat(),
+        )
+        ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
+        promoted += 1
+
+        project = ops.get_project(conn, draft.project_id)
+        project_name = project.name if project else "Unknown"
+        send_notification(
+            config,
+            f"*Deferred draft promoted*\n\n"
+            f"Project: {project_name}\n"
+            f"Platform: {draft.platform}\n"
+            f"Scheduled: {schedule.datetime.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+            f"```\n{draft.content[:300]}\n```",
+            dry_run=dry_run,
+        )
+
+    return promoted
+
+
 def scheduler_tick(
     dry_run: bool = False,
     config_path: str | None = None,
@@ -138,80 +213,85 @@ def scheduler_tick(
         db_path = get_db_path()
         conn = init_database(db_path)
 
-        # Get due drafts
-        due_drafts = ops.get_due_drafts(conn)
-        if not due_drafts:
+        try:
+            # Promote deferred drafts before checking for due drafts
+            promote_deferred_drafts(conn, config, dry_run=dry_run)
+
+            # Get due drafts
+            due_drafts = ops.get_due_drafts(conn)
+            if not due_drafts:
+                return 0
+
+            processed = 0
+
+            for draft in due_drafts:
+                try:
+                    # Apply pending changes if any
+                    changes = ops.get_draft_changes(conn, draft.id)
+                    for change in changes:
+                        if change.field == "content" and change.new_value:
+                            draft.content = change.new_value
+
+                    # Get project for this draft
+                    project = ops.get_project(conn, draft.project_id)
+                    if not project:
+                        logger.error(f"Project not found for draft {draft.id}")
+                        continue
+
+                    if project.paused:
+                        logger.info(f"Skipping draft {draft.id}: project {project.name} is paused")
+                        continue
+
+                    if dry_run:
+                        # Simulate success
+                        from social_hook.adapters.dry_run import dry_run_post_result
+
+                        result = dry_run_post_result()
+                    else:
+                        # Post via adapter
+                        result = _post_draft(conn, draft, config)
+
+                    if result.success:
+                        # Record success
+                        ops.update_draft(conn, draft.id, status="posted")
+                        ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
+                        post = Post(
+                            id=generate_id("post"),
+                            draft_id=draft.id,
+                            project_id=draft.project_id,
+                            platform=draft.platform,
+                            external_id=result.external_id,
+                            external_url=result.external_url,
+                            content=draft.content,
+                        )
+                        ops.insert_post(conn, post)
+                        ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
+
+                        send_notification(
+                            config,
+                            f"*Posted successfully*\n\n"
+                            f"Project: {project.name}\n"
+                            f"Platform: {draft.platform}\n"
+                            f"URL: {result.external_url or 'N/A'}\n\n"
+                            f"```\n{draft.content[:300]}\n```",
+                            dry_run=dry_run,
+                        )
+                    else:
+                        _handle_post_failure(
+                            conn, draft, result.error or "Unknown error", config, dry_run
+                        )
+
+                    processed += 1
+
+                except Exception as e:
+                    logger.error(f"Error processing draft {draft.id}: {e}")
+                    _handle_post_failure(conn, draft, str(e), config, dry_run)
+                    processed += 1
+
+            return processed
+
+        finally:
             conn.close()
-            return 0
-
-        processed = 0
-
-        for draft in due_drafts:
-            try:
-                # Apply pending changes if any
-                changes = ops.get_draft_changes(conn, draft.id)
-                for change in changes:
-                    if change.field == "content" and change.new_value:
-                        draft.content = change.new_value
-
-                # Get project for this draft
-                project = ops.get_project(conn, draft.project_id)
-                if not project:
-                    logger.error(f"Project not found for draft {draft.id}")
-                    continue
-
-                if project.paused:
-                    logger.info(f"Skipping draft {draft.id}: project {project.name} is paused")
-                    continue
-
-                if dry_run:
-                    # Simulate success
-                    from social_hook.adapters.dry_run import dry_run_post_result
-
-                    result = dry_run_post_result()
-                else:
-                    # Post via adapter
-                    result = _post_draft(conn, draft, config)
-
-                if result.success:
-                    # Record success
-                    ops.update_draft(conn, draft.id, status="posted")
-                    ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
-                    post = Post(
-                        id=generate_id("post"),
-                        draft_id=draft.id,
-                        project_id=draft.project_id,
-                        platform=draft.platform,
-                        external_id=result.external_id,
-                        external_url=result.external_url,
-                        content=draft.content,
-                    )
-                    ops.insert_post(conn, post)
-                    ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
-
-                    send_notification(
-                        config,
-                        f"*Posted successfully*\n\n"
-                        f"Project: {project.name}\n"
-                        f"Platform: {draft.platform}\n"
-                        f"URL: {result.external_url or 'N/A'}\n\n"
-                        f"```\n{draft.content[:300]}\n```",
-                        dry_run=dry_run,
-                    )
-                else:
-                    _handle_post_failure(
-                        conn, draft, result.error or "Unknown error", config, dry_run
-                    )
-
-                processed += 1
-
-            except Exception as e:
-                logger.error(f"Error processing draft {draft.id}: {e}")
-                _handle_post_failure(conn, draft, str(e), config, dry_run)
-                processed += 1
-
-        conn.close()
-        return processed
 
     finally:
         release_lock(effective_lock)

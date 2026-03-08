@@ -21,6 +21,7 @@ class DraftStatus(Enum):
     FAILED = "failed"
     SUPERSEDED = "superseded"
     CANCELLED = "cancelled"
+    DEFERRED = "deferred"
 
 
 class DecisionType(Enum):
@@ -29,6 +30,7 @@ class DecisionType(Enum):
     DRAFT = "draft"
     HOLD = "hold"
     SKIP = "skip"
+    IMPORTED = "imported"
 
 
 class EpisodeType(Enum):
@@ -197,6 +199,7 @@ class Decision:
     processed: bool = False
     processed_at: datetime | None = None
     batch_id: str | None = None
+    branch: str | None = None
     created_at: datetime | None = None
 
     def __post_init__(self):
@@ -244,6 +247,7 @@ class Decision:
             "processed": self.processed,
             "processed_at": _to_iso(self.processed_at),
             "batch_id": self.batch_id,
+            "branch": self.branch,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -287,11 +291,12 @@ class Decision:
             processed=bool(d.get("processed", False)),
             processed_at=_from_iso(d.get("processed_at")),
             batch_id=d.get("batch_id"),
+            branch=d.get("branch"),
             created_at=_from_iso(d.get("created_at")),
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (16 columns)."""
+        """Return tuple for INSERT (17 columns)."""
         import json
 
         return (
@@ -311,6 +316,7 @@ class Decision:
             json.dumps(self.targets),
             self.commit_summary,
             json.dumps(self.consolidate_with) if self.consolidate_with is not None else None,
+            self.branch,
         )
 
 

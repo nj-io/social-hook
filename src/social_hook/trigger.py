@@ -224,17 +224,17 @@ def run_trigger(
         conn.close()
         return 0
 
-    if project.trigger_branch:
-        current_branch = _get_current_branch(repo_path)
-        if current_branch != project.trigger_branch:
-            branch_desc = current_branch or "(detached HEAD)"
-            if verbose:
-                print(
-                    f"Branch '{branch_desc}' doesn't match trigger branch "
-                    f"'{project.trigger_branch}'. Skipping."
-                )
-            conn.close()
-            return 0
+    current_branch = _get_current_branch(repo_path)
+
+    if project.trigger_branch and current_branch != project.trigger_branch:
+        branch_desc = current_branch or "(detached HEAD)"
+        if verbose:
+            print(
+                f"Branch '{branch_desc}' doesn't match trigger branch "
+                f"'{project.trigger_branch}'. Skipping."
+            )
+        conn.close()
+        return 0
 
     # 4. Load project config
     from social_hook.config.project import load_project_config
@@ -304,6 +304,15 @@ def run_trigger(
                 summary += f" — {pcfg.description}"
             platform_summaries.append(summary)
 
+    # Gather scheduling state for evaluator awareness
+    from social_hook.scheduling import get_scheduling_state
+
+    try:
+        scheduling_state = get_scheduling_state(conn, project.id, config)
+    except Exception as e:
+        logger.warning(f"Failed to get scheduling state (non-fatal): {e}")
+        scheduling_state = None
+
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(
@@ -316,6 +325,7 @@ def run_trigger(
             media_guidance=project_config.media_guidance if project_config else None,
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
+            scheduling_state=scheduling_state,
         )
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
@@ -355,6 +365,7 @@ def run_trigger(
         targets={"default": target.model_dump()},
         commit_summary=analysis.summary,
         consolidate_with=target.consolidate_with,
+        branch=current_branch,
     )
 
     # Hold count enforcement

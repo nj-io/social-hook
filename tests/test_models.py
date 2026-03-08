@@ -265,7 +265,7 @@ class TestDecisionModel:
             reasoning="Test",
             commit_message="Add auth module",
         )
-        assert len(decision.to_row()) == 16
+        assert len(decision.to_row()) == 17
 
     def test_decision_to_dict_includes_commit_message(self):
         """Decision.to_dict() includes commit_message."""
@@ -343,11 +343,11 @@ class TestDecisionNewFields:
     """Tests for evaluator rework Decision fields."""
 
     def test_decision_to_row_column_count(self):
-        """Decision.to_row() returns 16-element tuple."""
+        """Decision.to_row() returns 17-element tuple."""
         d = Decision(
             id="test", project_id="p", commit_hash="abc", decision="draft", reasoning="test"
         )
-        assert len(d.to_row()) == 16
+        assert len(d.to_row()) == 17
 
     def test_decision_new_types_valid(self):
         """New decision types (draft, hold, skip) are accepted."""
@@ -414,6 +414,51 @@ class TestDecisionNewFields:
             consolidate_with=None,
         )
         assert d2.to_row()[15] is None
+
+
+class TestDecisionImported:
+    """Tests for the imported decision type and branch field."""
+
+    def test_imported_decision_accepted(self):
+        """Decision with decision='imported' is accepted by __post_init__."""
+        d = Decision(
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="imported",
+            reasoning="Historical commit",
+        )
+        assert d.decision == "imported"
+
+    def test_decision_branch_field(self):
+        """Decision.branch field round-trips through to_dict/from_dict."""
+        d = Decision(
+            id="t", project_id="p", commit_hash="c", decision="draft", reasoning="r", branch="main"
+        )
+        assert d.branch == "main"
+        d_dict = d.to_dict()
+        assert d_dict["branch"] == "main"
+        restored = Decision.from_dict(d_dict)
+        assert restored.branch == "main"
+
+    def test_decision_branch_in_to_row(self):
+        """branch is the 17th element (index 16) in to_row()."""
+        d = Decision(
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="draft",
+            reasoning="r",
+            branch="develop",
+        )
+        row = d.to_row()
+        assert row[16] == "develop"
+
+    def test_decision_branch_none_default(self):
+        """branch defaults to None."""
+        d = Decision(id="t", project_id="p", commit_hash="c", decision="draft", reasoning="r")
+        assert d.branch is None
+        assert d.to_row()[16] is None
 
 
 class TestDraftNewFields:
