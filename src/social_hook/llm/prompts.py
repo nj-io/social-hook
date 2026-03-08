@@ -284,14 +284,14 @@ def assemble_evaluator_prompt(
             )
         else:
             sections.append(f"Project weekly posts: {scheduling_state.weekly_posts} (no limit set)")
-        for ps in scheduling_state.platform_states:
-            sections.append(f"\n### {ps.platform}")
+        for pss in scheduling_state.platform_states:
+            sections.append(f"\n### {pss.platform}")
             sections.append(
-                f"- Today (all projects): {ps.posts_today}/{ps.max_posts_per_day} posts, "
-                f"Slots remaining: ~{ps.slots_remaining_today}"
+                f"- Today (all projects): {pss.posts_today}/{pss.max_posts_per_day} posts, "
+                f"Slots remaining: ~{pss.slots_remaining_today}"
             )
-            deferred_part = f", Deferred: {ps.deferred_drafts}" if ps.deferred_drafts else ""
-            sections.append(f"- Pending drafts: {ps.pending_drafts}{deferred_part}")
+            deferred_part = f", Deferred: {pss.deferred_drafts}" if pss.deferred_drafts else ""
+            sections.append(f"- Pending drafts: {pss.pending_drafts}{deferred_part}")
 
     # Memories
     if project_context.memories:

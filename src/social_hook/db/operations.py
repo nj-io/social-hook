@@ -295,7 +295,7 @@ def insert_decisions_batch(
     """
     if not decisions:
         return 0
-    before = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    before = int(conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0])
     conn.executemany(
         """
         INSERT OR IGNORE INTO decisions (id, project_id, commit_hash, commit_message,
@@ -307,7 +307,7 @@ def insert_decisions_batch(
         [d.to_row() + (created_at,) for d, created_at in decisions],
     )
     conn.commit()
-    after = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    after = int(conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0])
     return after - before
 
 
