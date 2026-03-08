@@ -304,6 +304,15 @@ def run_trigger(
                 summary += f" — {pcfg.description}"
             platform_summaries.append(summary)
 
+    # Gather scheduling state for evaluator awareness
+    from social_hook.scheduling import get_scheduling_state
+
+    try:
+        scheduling_state = get_scheduling_state(conn, project.id, config)
+    except Exception as e:
+        logger.warning(f"Failed to get scheduling state (non-fatal): {e}")
+        scheduling_state = None
+
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(
@@ -316,6 +325,7 @@ def run_trigger(
             media_guidance=project_config.media_guidance if project_config else None,
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
+            scheduling_state=scheduling_state,
         )
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
