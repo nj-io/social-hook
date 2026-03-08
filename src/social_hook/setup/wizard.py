@@ -1817,8 +1817,10 @@ def _setup_installations(
         Console().print(
             Panel(
                 "The following components will be installed:\n\n"
+                "  • Git post-commit hook → .git/hooks/post-commit\n"
+                f"    Primary trigger: runs {PROJECT_SLUG} on every git commit\n\n"
                 "  • Claude Code hook → ~/.claude/settings.json\n"
-                f"    Triggers {PROJECT_SLUG} on git commit\n\n"
+                f"    Alternative trigger: runs {PROJECT_SLUG} when Claude Code commits\n\n"
                 "  • Scheduler cron job → runs every minute\n"
                 "    Posts approved drafts at scheduled times\n\n"
                 "  • Telegram bot → background daemon\n"
@@ -1828,7 +1830,8 @@ def _setup_installations(
         )
     except Exception:
         typer.echo("  The following will be installed:")
-        typer.echo("  • Claude Code hook (triggers on git commit)")
+        typer.echo("  • Git post-commit hook (primary trigger on every commit)")
+        typer.echo("  • Claude Code hook (alternative trigger for Claude Code commits)")
         typer.echo("  • Scheduler cron job (posts at scheduled times)")
         typer.echo("  • Telegram bot daemon (processes reviews)")
 
@@ -1860,6 +1863,25 @@ def _setup_installations(
                 _success(msg)
             else:
                 _error(msg)
+
+    # Git post-commit hook
+    _info("Installing git post-commit hook...")
+    cwd = Path.cwd()
+    result = subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", "--git-dir"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        from social_hook.setup.install import install_git_hook
+
+        success, msg = install_git_hook(str(cwd))
+        if success:
+            _success(msg)
+        else:
+            _warn(msg)
+    else:
+        _warn("Current directory is not a git repo — skipping git hook")
 
     if progress:
         progress.advance()

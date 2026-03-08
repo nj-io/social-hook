@@ -3,6 +3,7 @@
 import json
 import logging
 import sqlite3
+import subprocess
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,72 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
     conn.commit()
     return True
+
+
+def register_project(
+    conn: sqlite3.Connection,
+    repo_path: str,
+    name: str | None = None,
+) -> tuple[Project, str | None]:
+    """Register a project from a repo path.
+
+    Validates git repo, extracts origin, checks duplicates, inserts project
+    + lifecycle + narrative debt.
+
+    Returns (project, repo_origin) on success.
+    Raises ValueError on validation failure or duplicate.
+    """
+    from pathlib import Path
+
+    from social_hook.filesystem import generate_id
+
+    path = Path(repo_path).resolve()
+
+    # Validate git repo
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--git-dir"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"{path} is not a git repository")
+
+    # Extract remote origin
+    origin_result = subprocess.run(
+        ["git", "-C", str(path), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+    )
+    repo_origin = origin_result.stdout.strip() if origin_result.returncode == 0 else None
+
+    if not name:
+        name = path.name
+
+    # Check duplicates
+    existing = get_project_by_path(conn, str(path))
+    if existing:
+        raise ValueError(f"Project already registered: {existing.name} ({existing.id})")
+
+    if repo_origin:
+        matches = get_project_by_origin(conn, repo_origin)
+        if matches:
+            raise ValueError(f"Repository origin already registered as: {matches[0].name}")
+
+    project = Project(
+        id=generate_id("project"),
+        name=name,
+        repo_path=str(path),
+        repo_origin=repo_origin,
+    )
+    insert_project(conn, project)
+
+    lifecycle = Lifecycle(project_id=project.id, phase="research", confidence=0.3)
+    insert_lifecycle(conn, lifecycle)
+
+    debt = NarrativeDebt(project_id=project.id, debt_counter=0)
+    insert_narrative_debt(conn, debt)
+
+    return project, repo_origin
 
 
 def delete_decision(conn: sqlite3.Connection, decision_id: str) -> bool:
