@@ -16,6 +16,9 @@ import {
   fetchEnabledPlatforms,
   consolidateDecisions,
   fetchMemories,
+  fetchDecisionBranches,
+  fetchImportPreview,
+  importCommits,
   type BackgroundTask,
 } from "@/lib/api";
 import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
@@ -59,6 +62,13 @@ export default function ProjectDetailPage() {
   const [confirmRetrigger, setConfirmRetrigger] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [branchFilter, setBranchFilter] = useState<string>("");
+  const [decisionBranches, setDecisionBranches] = useState<string[]>([]);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importPreview, setImportPreview] = useState<{ total_commits: number; already_tracked: number; importable: number } | null>(null);
+  const [importBranch, setImportBranch] = useState<string>("");
+  const [importLoading, setImportLoading] = useState(false);
+  const [importRefreshKey, setImportRefreshKey] = useState(0);
   // Consolidate uses a special ref_id key since it spans multiple decisions
   const CONSOLIDATE_REF = "__consolidate__";
 
@@ -78,6 +88,11 @@ export default function ProjectDetailPage() {
         const count = (task.result as Record<string, unknown>).count as number | undefined;
         setConsolidateResult({ count });
         setSelectedDecisions(new Set());
+      } else if (task.type === "import_commits") {
+        setImportModalOpen(false);
+        setImportLoading(false);
+        // Trigger re-fetch by bumping a counter
+        setImportRefreshKey((k) => k + 1);
       }
     } else if (task.status === "failed") {
       const error = task.error ?? "Task failed";
@@ -85,6 +100,8 @@ export default function ProjectDetailPage() {
         setDraftResult((prev) => ({ ...prev, [task.ref_id]: { error } }));
       } else if (task.type === "consolidate") {
         setConsolidateResult({ error });
+      } else if (task.type === "import_commits") {
+        setImportLoading(false);
       }
     }
   }, []);
@@ -104,7 +121,7 @@ export default function ProjectDetailPage() {
     try {
       const [detail, dec, po, us] = await Promise.all([
         fetchProjectDetail(id),
-        fetchProjectDecisions(id, DECISIONS_PER_PAGE, decisionOffset),
+        fetchProjectDecisions(id, DECISIONS_PER_PAGE, decisionOffset, branchFilter || null),
         fetchProjectPosts(id, 20),
         fetchProjectUsage(id),
       ]);
@@ -114,10 +131,11 @@ export default function ProjectDetailPage() {
       setPosts(po.posts);
       setUsage(us);
       loadMemories(detail.repo_path);
+      fetchDecisionBranches(id).then(({ branches }) => setDecisionBranches(branches)).catch(() => {});
     } catch {
       // Silent refresh failure
     }
-  }, [id, decisionOffset, loadMemories]);
+  }, [id, decisionOffset, branchFilter, loadMemories]);
 
   useDataEvents(["decision", "draft", "post", "project", "arc", "task"], reload, id);
 
@@ -126,7 +144,7 @@ export default function ProjectDetailPage() {
       try {
         const [detail, dec, po, us, plat] = await Promise.all([
           fetchProjectDetail(id),
-          fetchProjectDecisions(id, DECISIONS_PER_PAGE, 0),
+          fetchProjectDecisions(id, DECISIONS_PER_PAGE, 0, branchFilter || null),
           fetchProjectPosts(id, 20),
           fetchProjectUsage(id),
           fetchEnabledPlatforms(),
@@ -138,6 +156,7 @@ export default function ProjectDetailPage() {
         setUsage(us);
         setPlatformCount(plat.count);
         loadMemories(detail.repo_path);
+        fetchDecisionBranches(id).then(({ branches }) => setDecisionBranches(branches)).catch(() => {});
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load project");
       } finally {
@@ -145,11 +164,12 @@ export default function ProjectDetailPage() {
       }
     }
     load();
-  }, [id, loadMemories]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, branchFilter, importRefreshKey, loadMemories]);
 
   async function loadMoreDecisions(offset: number) {
     try {
-      const res = await fetchProjectDecisions(id, DECISIONS_PER_PAGE, offset);
+      const res = await fetchProjectDecisions(id, DECISIONS_PER_PAGE, offset, branchFilter || null);
       setDecisions(res.decisions);
       setDecisionOffset(offset);
       setHasMoreDecisions(res.decisions.length === DECISIONS_PER_PAGE);
@@ -363,7 +383,19 @@ export default function ProjectDetailPage() {
 
         {/* Stats */}
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard label="Decisions" value={Object.values(project.decision_counts || {}).reduce((a, b) => a + b, 0)} />
+          <StatCard
+            label="Decisions"
+            value={
+              Object.entries(project.decision_counts || {})
+                .filter(([k]) => k !== "imported")
+                .reduce((a, [, b]) => a + b, 0)
+            }
+            secondary={
+              (project.decision_counts?.imported ?? 0) > 0
+                ? `+${project.decision_counts.imported} imported`
+                : undefined
+            }
+          />
           <Link href={`/drafts?from=${id}&name=${encodeURIComponent(project.name)}`} className="block">
             <StatCard label="Drafts" value={project.draft_count ?? 0} />
           </Link>
@@ -392,6 +424,38 @@ export default function ProjectDetailPage() {
       <div>
         <div className="mb-3 flex items-center gap-3">
           <h2 className="text-lg font-semibold">Evaluator Decisions</h2>
+          <select
+            className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            value={branchFilter}
+            onChange={(e) => { setBranchFilter(e.target.value); setDecisionOffset(0); }}
+          >
+            <option value="">All branches</option>
+            {(() => {
+              const branches = [...decisionBranches];
+              if (project.trigger_branch && !branches.includes(project.trigger_branch)) {
+                branches.push(project.trigger_branch);
+                branches.sort();
+              }
+              return branches.map((b) => (
+                <option key={b} value={b}>
+                  {b}{project.trigger_branch === b ? " (active)" : ""}
+                </option>
+              ));
+            })()}
+          </select>
+          <button
+            onClick={async () => {
+              setImportModalOpen(true);
+              setImportBranch("");
+              try {
+                const preview = await fetchImportPreview(id);
+                setImportPreview(preview);
+              } catch { setImportPreview(null); }
+            }}
+            className="rounded-md border border-border px-2 py-1 text-xs font-medium transition-colors hover:bg-muted"
+          >
+            Import History
+          </button>
           <span className="text-xs text-muted-foreground">
             {platformCount === 0
               ? "No platforms configured — drafts use preview mode"
@@ -515,28 +579,52 @@ export default function ProjectDetailPage() {
                           )}
                         </td>
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => onCreateDraftClick(d.id, d.draft_count > 0)}
-                            disabled={isCreating}
-                            className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-70 ${
-                              d.draft_count > 0 && !isCreating
-                                ? "border border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
-                                : "bg-accent text-accent-foreground hover:bg-accent/80"
-                            }`}
-                            title={platformCount === 0 ? "Uses preview mode" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
-                          >
-                            {isCreating && (
-                              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                              </svg>
+                          <div className="flex items-center gap-1.5">
+                            {d.decision === "imported" ? (
+                              <button
+                                onClick={async () => {
+                                  setActionLoading(true);
+                                  setActionError(null);
+                                  try {
+                                    await retriggerDecision(d.id);
+                                    reload();
+                                  } catch (err) {
+                                    setActionError(err instanceof Error ? err.message : "Evaluate failed");
+                                  } finally {
+                                    setActionLoading(false);
+                                  }
+                                }}
+                                disabled={actionLoading}
+                                className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950 disabled:opacity-70"
+                                title="Run evaluator on this imported commit"
+                              >
+                                Evaluate
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => onCreateDraftClick(d.id, d.draft_count > 0)}
+                                disabled={isCreating}
+                                className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-70 ${
+                                  d.draft_count > 0 && !isCreating
+                                    ? "border border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
+                                    : "bg-accent text-accent-foreground hover:bg-accent/80"
+                                }`}
+                                title={platformCount === 0 ? "Uses preview mode" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
+                              >
+                                {isCreating && (
+                                  <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                  </svg>
+                                )}
+                                {isCreating
+                                  ? "Creating..."
+                                  : d.draft_count > 0
+                                    ? "Draft Created"
+                                    : "Create Draft"}
+                              </button>
                             )}
-                            {isCreating
-                              ? "Creating..."
-                              : d.draft_count > 0
-                                ? "Draft Created"
-                                : "Create Draft"}
-                          </button>
+                          </div>
                         </td>
                         <td className="py-2" onClick={(e) => e.stopPropagation()}>
                           {result?.count != null && (
@@ -769,6 +857,80 @@ export default function ProjectDetailPage() {
         );
       })()}
 
+      {/* Import history modal */}
+      {importModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !importLoading && setImportModalOpen(false)}>
+          <div className="mx-4 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold">Import Historical Commits</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Import past commits as &ldquo;imported&rdquo; decisions so you can evaluate them later.
+            </p>
+            {importPreview ? (
+              <div className="mt-3 space-y-1 rounded-md border border-border bg-muted/50 p-3 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Total commits</span>
+                  <span className="font-medium">{importPreview.total_commits}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Already tracked</span>
+                  <span className="font-medium">{importPreview.already_tracked}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Importable</span>
+                  <span className="font-medium text-accent">{importPreview.importable}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-muted-foreground">Loading preview...</p>
+            )}
+            <div className="mt-3">
+              <label className="text-xs text-muted-foreground">Branch (optional)</label>
+              <select
+                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
+                value={importBranch}
+                onChange={async (e) => {
+                  const branch = e.target.value;
+                  setImportBranch(branch);
+                  try {
+                    const preview = await fetchImportPreview(id, branch || null);
+                    setImportPreview(preview);
+                  } catch { setImportPreview(null); }
+                }}
+              >
+                <option value="">All branches</option>
+                {decisionBranches.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setImportModalOpen(false)}
+                disabled={importLoading}
+                className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setImportLoading(true);
+                  try {
+                    const res = await importCommits(id, importBranch || null);
+                    trackTask(res.task_id, "__import__", "import_commits");
+                  } catch {
+                    setImportLoading(false);
+                  }
+                }}
+                disabled={importLoading || isTaskRunning("__import__") || (importPreview != null && importPreview.importable === 0)}
+                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+              >
+                {importLoading || isTaskRunning("__import__") ? "Importing..." : "Import"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Floating action bar */}
       {(selectedDecisions.size >= 1 || isTaskRunning(CONSOLIDATE_REF)) && (
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border bg-background p-3 shadow-lg">
@@ -815,7 +977,7 @@ export default function ProjectDetailPage() {
                     ? "Consolidating..."
                     : `Consolidate ${selectedDecisions.size} → Create Draft`}
                 </button>
-              )
+              )}
             </div>
           </div>
         </div>
@@ -824,11 +986,12 @@ export default function ProjectDetailPage() {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number | string }) {
+function StatCard({ label, value, secondary }: { label: string; value: number | string; secondary?: string }) {
   return (
     <div className="rounded-lg border border-border p-4">
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
+      {secondary && <p className="text-xs text-muted-foreground">{secondary}</p>}
     </div>
   );
 }

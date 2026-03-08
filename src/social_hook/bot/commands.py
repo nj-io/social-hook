@@ -360,7 +360,7 @@ def handle_message(
                 summary = get_project_summary(_context_conn, project_id)
 
                 try:
-                    gk_recent_decisions = ops.get_recent_decisions(
+                    gk_recent_decisions = ops.get_recent_decisions_for_llm(
                         _context_conn, project_id, limit=10
                     )
                     gk_recent_posts = ops.get_recent_posts_for_context(

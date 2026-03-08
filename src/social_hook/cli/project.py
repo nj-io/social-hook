@@ -322,6 +322,87 @@ def set_branch(
         conn.close()
 
 
+@app.command("import-commits")
+def import_commits(
+    ctx: typer.Context,
+    branch: str | None = typer.Option(None, "--branch", "-b", help="Import only this branch"),
+    project_id: str | None = typer.Option(None, "--id", "-p", help="Project ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Import historical git commits as imported decisions.
+
+    Imports all past commits so the dashboard shows the full project timeline.
+    Imported commits are NOT evaluated — use retrigger to evaluate them later.
+
+    Examples:
+        social-hook project import-commits
+        social-hook project import-commits --branch main
+        social-hook project import-commits --id project_abc123
+    """
+    import json
+    import subprocess as sp
+
+    from social_hook.db import (
+        get_all_projects,
+        get_project,
+        get_project_by_origin,
+        get_project_by_path,
+        init_database,
+    )
+    from social_hook.db.operations import emit_data_event
+    from social_hook.filesystem import get_db_path
+    from social_hook.import_commits import import_project_commits
+
+    conn = init_database(get_db_path())
+    try:
+        project = None
+
+        if project_id:
+            project = get_project(conn, project_id)
+            if not project:
+                for p in get_all_projects(conn):
+                    if p.id.startswith(project_id):
+                        project = p
+                        break
+
+        if not project:
+            cwd = str(Path.cwd().resolve())
+            project = get_project_by_path(conn, cwd)
+
+            if not project:
+                origin_result = sp.run(
+                    ["git", "-C", cwd, "remote", "get-url", "origin"],
+                    capture_output=True,
+                    text=True,
+                )
+                if origin_result.returncode == 0:
+                    matches = get_project_by_origin(conn, origin_result.stdout.strip())
+                    if matches:
+                        project = matches[0]
+
+        if not project:
+            typer.echo("No project found. Provide a project ID or run from a registered repo.")
+            raise typer.Exit(1)
+
+        if not json_output:
+            branch_desc = f" (branch: {branch})" if branch else " (all branches)"
+            typer.echo(f"Importing commits for '{project.name}'{branch_desc}...")
+
+        result = import_project_commits(conn, project.id, project.repo_path, branch)
+        emit_data_event(conn, "decision", "created", project.id, project.id)
+
+        if json_output:
+            typer.echo(json.dumps(result))
+        else:
+            typer.echo(
+                f"Done: {result['imported']} imported, "
+                f"{result['skipped']} already tracked, "
+                f"{result['total']} total commits."
+            )
+    finally:
+        conn.close()
+
+
 @app.command("list")
 def list_projects(ctx: typer.Context):
     """List all registered projects."""

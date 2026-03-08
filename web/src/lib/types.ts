@@ -156,6 +156,7 @@ export interface Decision {
   consolidate_with: string[] | null;
   draft_count: number;
   draft_ids?: string[];
+  branch?: string | null;
   created_at: string;
 }
 
