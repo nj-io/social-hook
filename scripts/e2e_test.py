@@ -59,6 +59,7 @@ SECTION_MAP = {
     "journey": "M",
     "web": "N",
     "queue": "Q",
+    "hooks": "R",
 }
 
 # Provider presets: maps --provider flag to model configs
@@ -4206,6 +4207,119 @@ def test_Q_queue_rework(harness: E2EHarness, runner: E2ERunner):
 
 
 # ---------------------------------------------------------------------------
+# Section R: Git Hooks & Web Registration
+# ---------------------------------------------------------------------------
+
+
+def test_R_git_hooks(harness: E2EHarness, runner: E2ERunner):
+    """R1-R6: Git hooks and project registration scenarios."""
+    from social_hook.setup.install import (
+        GIT_HOOK_MARKER_START,
+        check_git_hook_installed,
+        install_git_hook,
+        uninstall_git_hook,
+    )
+
+    # R1: Install git post-commit hook
+    def r1():
+        success, msg = install_git_hook(str(harness.repo_path))
+        assert success is True, f"install_git_hook failed: {msg}"
+        assert check_git_hook_installed(str(harness.repo_path)), "Hook not detected after install"
+        return msg
+
+    runner.run_scenario("R1", "Install git post-commit hook", r1)
+
+    # R2: Git hook install is idempotent
+    def r2():
+        success, msg = install_git_hook(str(harness.repo_path))
+        assert success is True, f"idempotent install failed: {msg}"
+        assert "already installed" in msg.lower(), f"Expected 'already installed', got: {msg}"
+        # Verify marker appears exactly once
+        hook_file = Path(harness.repo_path) / ".git" / "hooks" / "post-commit"
+        content = hook_file.read_text()
+        assert content.count(GIT_HOOK_MARKER_START) == 1, "Marker duplicated"
+        return "Idempotent: OK"
+
+    runner.run_scenario("R2", "Git hook install is idempotent", r2)
+
+    # R3: Uninstall git post-commit hook
+    def r3():
+        success, msg = uninstall_git_hook(str(harness.repo_path))
+        assert success is True, f"uninstall failed: {msg}"
+        assert not check_git_hook_installed(str(harness.repo_path)), "Hook still detected"
+        return msg
+
+    runner.run_scenario("R3", "Uninstall git post-commit hook", r3)
+
+    # R4: Hook preserves existing post-commit content
+    def r4():
+        hooks_dir = Path(harness.repo_path) / ".git" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        hook_file = hooks_dir / "post-commit"
+        hook_file.write_text("#!/bin/sh\necho 'existing user hook'\n")
+        hook_file.chmod(0o755)
+
+        success, _ = install_git_hook(str(harness.repo_path))
+        assert success is True
+        content = hook_file.read_text()
+        assert "echo 'existing user hook'" in content, "Existing content lost"
+        assert GIT_HOOK_MARKER_START in content, "Our marker not added"
+
+        # Uninstall should preserve user content
+        success, _ = uninstall_git_hook(str(harness.repo_path))
+        assert success is True
+        content = hook_file.read_text()
+        assert "echo 'existing user hook'" in content, "User content lost after uninstall"
+        assert GIT_HOOK_MARKER_START not in content, "Our marker not removed"
+        return "Preserved existing hook content through install/uninstall"
+
+    runner.run_scenario("R4", "Hook preserves existing post-commit content", r4)
+
+    # R5: Register project via CLI (use tempfile.TemporaryDirectory)
+    def r5():
+        import subprocess as sp
+
+        from typer.testing import CliRunner
+
+        from social_hook.cli import app
+
+        cli = CliRunner()
+
+        with tempfile.TemporaryDirectory() as td:
+            repo_dir = Path(td) / "test-project"
+            repo_dir.mkdir()
+            sp.run(["git", "init", str(repo_dir)], capture_output=True, check=True)
+            # Create minimal config
+            config_dir = repo_dir / ".social-hook"
+            config_dir.mkdir()
+            (config_dir / "social-context.md").write_text("# Test\n")
+            (config_dir / "content-config.yaml").write_text("platforms:\n  x:\n    enabled: true\n")
+
+            result = cli.invoke(app, ["project", "register", str(repo_dir)])
+            assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+            assert "registered" in result.output.lower() or "proj_" in result.output.lower()
+            return "Registered temp project via CLI"
+
+    runner.run_scenario("R5", "Register project via CLI (temp dir)", r5)
+
+    # R6: Duplicate project registration fails
+    def r6():
+        from typer.testing import CliRunner
+
+        from social_hook.cli import app
+
+        cli = CliRunner()
+
+        # Re-register the same repo_path that the harness already registered
+        result = cli.invoke(app, ["project", "register", str(harness.repo_path)])
+        assert result.exit_code == 1, f"Expected exit 1, got {result.exit_code}"
+        assert "already" in result.output.lower(), f"Expected 'already' in: {result.output}"
+        return "Blocked: duplicate registration"
+
+    runner.run_scenario("R6", "Duplicate project registration fails", r6)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -4217,7 +4331,7 @@ def main():
         type=str,
         default=None,
         help="Run only a specific section (onboarding, pipeline, narrative, draft, "
-        "scheduler, bot, setup, cli, crosscutting, multiprovider, journey, web, queue) or scenario (A1, B1, etc.)",
+        "scheduler, bot, setup, cli, crosscutting, multiprovider, journey, web, queue, hooks) or scenario (A1, B1, etc.)",
     )
     parser.add_argument(
         "--skip-telegram", action="store_true", help="Skip Telegram-dependent sections (F, G, H)"
@@ -4261,13 +4375,13 @@ def main():
                 print("  Invalid choice. Enter 1 or 2.")
 
     # Determine which sections to run
-    sections_to_run = set("ABCDEFGHIJKLMNQ")
+    sections_to_run = set("ABCDEFGHIJKLMNQR")
     only_scenario = None
     if args.only:
         only = args.only
         if only.lower() in SECTION_MAP:
             sections_to_run = set(SECTION_MAP[only.lower()])
-        elif only.upper()[0] in "ABCDEFGHIJKLMNQ":
+        elif only.upper()[0] in "ABCDEFGHIJKLMNQR":
             # Single scenario (e.g. "C13") — run the section, skip non-matching scenarios
             sections_to_run = {only.upper()[0]}
             if any(c.isdigit() for c in only):
@@ -4367,6 +4481,10 @@ def main():
         if "Q" in sections_to_run:
             print("\n--- Q. Queue / Evaluator Rework ---")
             test_Q_queue_rework(harness, runner)
+
+        if "R" in sections_to_run:
+            print("\n--- R. Git Hooks & Web Registration ---")
+            test_R_git_hooks(harness, runner)
 
     except KeyboardInterrupt:
         print("\n\nInterrupted.")

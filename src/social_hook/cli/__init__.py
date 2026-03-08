@@ -577,6 +577,55 @@ def commit_hook():
     run_trigger(commit_hash=commit_hash, repo_path=cwd)
 
 
+@app.command("git-hook", hidden=True)
+def git_hook():
+    """Internal: called by git post-commit hook. Detects commit and triggers pipeline."""
+    import logging
+    import subprocess
+
+    from social_hook.filesystem import get_base_path
+
+    log_dir = get_base_path() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=str(log_dir / "git-hook.log"),
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logger = logging.getLogger("social_hook.git_hook")
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.error("Failed to get repo root: %s", result.stderr)
+            return
+        repo_path = result.stdout.strip()
+
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=repo_path,
+        )
+        if result.returncode != 0:
+            logger.error("Failed to get HEAD: %s", result.stderr)
+            return
+        commit_hash = result.stdout.strip()
+
+        logger.info("Git hook triggered: %s in %s", commit_hash[:8], repo_path)
+
+        from social_hook.trigger import run_trigger
+
+        exit_code = run_trigger(commit_hash=commit_hash, repo_path=repo_path)
+        logger.info("Trigger completed with exit code %d", exit_code)
+    except Exception:
+        logger.exception("Git hook failed")
+
+
 @app.command("narrative-capture", hidden=True)
 def narrative_capture():
     """Internal: called by PreCompact hook. Reads JSON from stdin."""
