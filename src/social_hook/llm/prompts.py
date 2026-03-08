@@ -835,7 +835,7 @@ def assemble_evaluator_context(
     audience_introduced = db.get_audience_introduced(project_id)
     pending_drafts = db.get_pending_drafts(project_id)
     held_decisions = db.get_held_decisions(project_id, limit=20)
-    recent_decisions = db.get_recent_decisions(project_id, limit=config.recent_decisions)
+    recent_decisions = db.get_recent_decisions_for_llm(project_id, limit=config.recent_decisions)
     recent_posts = db.get_recent_posts_for_context(project_id, limit=config.recent_posts)
     project_summary = db.get_project_summary(project_id)
     milestone_summaries = db.get_milestone_summaries(project_id)
