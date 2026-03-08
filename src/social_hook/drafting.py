@@ -241,10 +241,9 @@ def draft_for_platforms(
                 max_per_week=config.scheduling.max_per_week,
             )
 
-            if schedule.deferred:
-                if verbose:
-                    print(f"Platform {pname}: deferred ({schedule.day_reason})")
-                continue
+            is_deferred = schedule.deferred
+            if is_deferred and verbose:
+                print(f"Platform {pname}: deferred ({schedule.day_reason})")
 
             draft = Draft(
                 id=generate_id("draft"),
@@ -256,7 +255,8 @@ def draft_for_platforms(
                 media_type=media_type_str,
                 media_spec=media_spec_dict,
                 media_spec_used=media_spec_dict if media_paths else None,
-                suggested_time=schedule.datetime,
+                status="deferred" if is_deferred else "draft",
+                suggested_time=None if is_deferred else schedule.datetime,
                 reasoning=draft_reasoning,
                 last_error=f"Media generation failed: {media_error}"
                 if media_error and not media_paths
@@ -275,6 +275,16 @@ def draft_for_platforms(
                             content=tc,
                         )
                     )
+
+            if is_deferred:
+                from social_hook.notifications import send_notification
+
+                send_notification(
+                    config,
+                    f"*Draft deferred*\n\nPlatform: {pname}\nReason: {schedule.day_reason}\n\n```\n{draft.content[:300]}\n```",
+                    dry_run=dry_run,
+                )
+                continue
 
             results.append(
                 DraftResult(
