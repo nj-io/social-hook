@@ -830,3 +830,53 @@ class TestMediaRouting:
         mock_btn.assert_called_once_with(
             mock_adapter, "123", "cb1", "draft_456", None, message_id=None
         )
+
+
+class TestDeferredStatusAccepted:
+    """Verify btn_approve and btn_quick_approve accept deferred status."""
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_btn_approve_accepts_deferred(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
+        from social_hook.db import get_draft
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        _, _, draft = _create_test_draft(conn, status="deferred")
+
+        btn_approve(mock_adapter, "123", "cb1", draft.id, None)
+        mock_answer.assert_called_once()
+        assert "approved" in mock_send.call_args[0][2]
+        conn2 = get_connection(db_path)
+        assert get_draft(conn2, draft.id).status == "approved"
+        conn2.close()
+
+    @patch("social_hook.bot.buttons._send")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_btn_quick_approve_accepts_deferred(
+        self, mock_conn, mock_answer, mock_send, mock_adapter, temp_dir
+    ):
+        from social_hook.db import get_draft
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        _, _, draft = _create_test_draft(conn, status="deferred")
+
+        btn_quick_approve(mock_adapter, "123", "cb1", draft.id, None)
+        mock_answer.assert_called_once()
+        text = mock_send.call_args[0][2]
+        assert "approved" in text
+        assert "scheduled" in text
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.status == "scheduled"
+        conn2.close()

@@ -206,6 +206,80 @@ class TestCmdPending:
         msg = mock_adapter.send_message.call_args[0][1]
         assert "Test post content" in msg.text
 
+    @patch("social_hook.bot.commands._get_conn")
+    def test_deferred_icon_in_pending(self, mock_conn, mock_adapter, temp_dir):
+        """Deferred drafts should show the pause icon in /pending output."""
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Deferred draft content",
+            status="deferred",
+        )
+        insert_draft(conn, draft)
+
+        cmd_pending(mock_adapter, "123", "", None)
+        mock_adapter.send_message.assert_called_once()
+        msg = mock_adapter.send_message.call_args[0][1]
+        assert "\u23f8" in msg.text  # ⏸ icon
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_deferred_count_in_status(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        """cmd_status should include deferred count."""
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Deferred draft",
+            status="deferred",
+        )
+        insert_draft(conn, draft)
+
+        cmd_status(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "Deferred: 1" in text
+
 
 class TestCmdScheduled:
     """Tests for /scheduled command."""

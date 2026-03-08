@@ -607,7 +607,11 @@ async def api_drafts(
         )
         drafts = [d.to_dict() for d in draft_models]
         if pending:
-            drafts = [d for d in drafts if d.get("status") in ("draft", "approved", "scheduled")]
+            drafts = [
+                d
+                for d in drafts
+                if d.get("status") in ("draft", "approved", "scheduled", "deferred")
+            ]
         return {"drafts": drafts}
     finally:
         conn.close()

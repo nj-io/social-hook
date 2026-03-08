@@ -112,7 +112,7 @@ def schedule(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.status not in ("draft", "approved", "scheduled"):
+        if draft.status not in ("draft", "approved", "scheduled", "deferred"):
             typer.echo(f"Cannot schedule: draft status is '{draft.status}'")
             raise typer.Exit(1)
 
@@ -334,7 +334,7 @@ def quick_approve(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.status not in ("draft", "approved"):
+        if draft.status not in ("draft", "approved", "deferred"):
             typer.echo(f"Cannot quick-approve: draft status is '{draft.status}'")
             raise typer.Exit(1)
 
@@ -533,7 +533,9 @@ def list_cmd(
             commit_hash=commit,
         )
         if pending:
-            drafts = [d for d in drafts if d.status in ("draft", "approved", "scheduled")]
+            drafts = [
+                d for d in drafts if d.status in ("draft", "approved", "scheduled", "deferred")
+            ]
         json_output = ctx.obj.get("json", False) if ctx.obj else False
 
         if json_output:
