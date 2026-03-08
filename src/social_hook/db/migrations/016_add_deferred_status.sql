@@ -24,7 +24,19 @@ CREATE TABLE drafts_new (
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-INSERT INTO drafts_new SELECT * FROM drafts;
+INSERT INTO drafts_new (
+    id, project_id, decision_id, platform, status, content,
+    media_paths, media_type, media_spec, media_spec_used,
+    suggested_time, scheduled_time, reasoning, superseded_by,
+    retry_count, last_error, is_intro, post_format,
+    reference_post_id, created_at, updated_at
+) SELECT
+    id, project_id, decision_id, platform, status, content,
+    media_paths, media_type, media_spec, media_spec_used,
+    suggested_time, scheduled_time, reasoning, superseded_by,
+    retry_count, last_error, is_intro, post_format,
+    reference_post_id, created_at, updated_at
+FROM drafts;
 DROP TABLE drafts;
 ALTER TABLE drafts_new RENAME TO drafts;
 
