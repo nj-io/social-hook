@@ -61,6 +61,17 @@ Use queue actions when a new commit makes a pending draft obsolete or when conte
 - Would be better told alongside upcoming commits
 - Small but meaningful work that could combine with related changes
 
+## Scheduling Awareness
+
+A "Scheduling State" section shows per-platform posting capacity. Factor this into decisions:
+
+- **Queue saturated (0 slots remaining)**: Prefer `hold`. Only `draft` if highly time-sensitive.
+- **Deferred drafts queued**: Consider whether this commit adds enough value for another queued draft.
+- **Slots available**: Normal decision-making applies.
+- **Many pending drafts**: Use `queue_actions` to drop stale drafts or supersede outdated ones before adding more.
+
+When holding due to scheduling, note it in your reason. This is distinct from holding for consolidation — specify which in your reason.
+
 ## Held Commits
 
 When held commits are shown in context, you have three options for each:

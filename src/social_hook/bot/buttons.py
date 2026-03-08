@@ -161,7 +161,7 @@ def btn_approve(
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.status not in ("draft", "approved"):
+        if draft.status not in ("draft", "approved", "deferred"):
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 
@@ -338,7 +338,7 @@ def btn_quick_approve(
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.status not in ("draft", "approved"):
+        if draft.status not in ("draft", "approved", "deferred"):
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 

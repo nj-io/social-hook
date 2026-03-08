@@ -72,12 +72,37 @@ export async function fetchProjectDecisions(
   id: string,
   limit?: number,
   offset?: number,
-): Promise<{ decisions: Decision[] }> {
+  branch?: string | null,
+): Promise<{ decisions: Decision[]; total: number }> {
   const params = new URLSearchParams();
   if (limit != null) params.set("limit", String(limit));
   if (offset != null) params.set("offset", String(offset));
+  if (branch) params.set("branch", branch);
   const qs = params.toString();
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/decisions${qs ? `?${qs}` : ""}`);
+}
+
+export async function fetchDecisionBranches(id: string): Promise<{ branches: string[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/decision-branches`);
+}
+
+export async function fetchImportPreview(
+  id: string,
+  branch?: string | null,
+): Promise<{ total_commits: number; already_tracked: number; importable: number }> {
+  const params = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-preview${params}`);
+}
+
+export async function importCommits(
+  id: string,
+  branch?: string | null,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-commits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(branch ? { branch } : {}),
+  });
 }
 
 export async function fetchProjectPosts(
@@ -407,4 +432,52 @@ export async function clearMemories(projectPath: string): Promise<{ status: stri
   return apiFetch(`/api/settings/memories/clear?project_path=${encodeURIComponent(projectPath)}`, {
     method: "POST",
   });
+}
+
+// Filesystem browser
+export async function browseDirectory(path?: string): Promise<{
+  current: string;
+  parent: string;
+  directories: { name: string; path: string; is_git: boolean }[];
+}> {
+  const params = path ? `?path=${encodeURIComponent(path)}` : "";
+  return apiFetch(`/api/filesystem/browse${params}`);
+}
+
+// Git hook
+export async function fetchGitHookStatus(projectId: string): Promise<{ installed: boolean }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/git-hook/status`);
+}
+
+export async function installGitHook(projectId: string): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/git-hook/install`, { method: "POST" });
+}
+
+export async function uninstallGitHook(projectId: string): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/git-hook/uninstall`, { method: "POST" });
+}
+
+// Project registration
+export async function registerProject(
+  repoPath: string,
+  name?: string,
+  installHook: boolean = true,
+): Promise<{
+  status: string;
+  project: { id: string; name: string; repo_path: string; repo_origin: string | null };
+  git_hook: string | null;
+}> {
+  return apiFetch("/api/projects/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      repo_path: repoPath,
+      name: name || undefined,
+      install_git_hook: installHook,
+    }),
+  });
+}
+
+export async function deleteProject(projectId: string): Promise<{ status: string; project_id: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
 }

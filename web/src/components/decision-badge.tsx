@@ -1,15 +1,15 @@
 const decisionStyles: Record<string, string> = {
-  post_worthy: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
-  not_post_worthy: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
-  consolidate: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
-  deferred: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+  draft: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  hold: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  skip: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+  imported: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400",
 };
 
 const decisionLabels: Record<string, string> = {
-  post_worthy: "Post Worthy",
-  not_post_worthy: "Not Post Worthy",
-  consolidate: "Consolidate",
-  deferred: "Deferred",
+  draft: "Draft",
+  hold: "Hold",
+  skip: "Skip",
+  imported: "Imported",
 };
 
 export function DecisionBadge({ decision }: { decision: string }) {

@@ -25,7 +25,7 @@ def journey_on():
     if not success:
         typer.echo(f"Warning: Could not install narrative hook: {msg}")
     else:
-        typer.echo(f"Narrative hook: {msg}")
+        typer.echo(f"Claude Code narrative hook: {msg}")
 
     typer.echo("Development Journey capture enabled.")
     typer.echo("Restart Claude Code sessions for the hook to take effect.")
@@ -46,7 +46,7 @@ def journey_off():
     if not success:
         typer.echo(f"Warning: Could not uninstall narrative hook: {msg}")
     else:
-        typer.echo(f"Narrative hook: {msg}")
+        typer.echo(f"Claude Code narrative hook: {msg}")
 
     typer.echo("Development Journey capture disabled.")
 

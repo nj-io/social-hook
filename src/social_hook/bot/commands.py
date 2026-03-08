@@ -360,7 +360,7 @@ def handle_message(
                 summary = get_project_summary(_context_conn, project_id)
 
                 try:
-                    gk_recent_decisions = ops.get_recent_decisions(
+                    gk_recent_decisions = ops.get_recent_decisions_for_llm(
                         _context_conn, project_id, limit=10
                     )
                     gk_recent_posts = ops.get_recent_posts_for_context(
@@ -986,6 +986,7 @@ def cmd_status(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
         scheduled = [d for d in pending if d.status == "scheduled"]
         drafts = [d for d in pending if d.status == "draft"]
         approved = [d for d in pending if d.status == "approved"]
+        deferred = [d for d in pending if d.status == "deferred"]
 
         lines = [
             "*System Status*",
@@ -994,6 +995,7 @@ def cmd_status(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
             f"Pending drafts: {len(drafts)}",
             f"Approved: {len(approved)}",
             f"Scheduled: {len(scheduled)}",
+            f"Deferred: {len(deferred)}",
         ]
         _send(adapter, chat_id, "\n".join(lines))
     finally:
@@ -1012,7 +1014,9 @@ def cmd_pending(adapter: MessagingAdapter, chat_id: str, args: str, config: Any)
             return
 
         for d in drafts[:10]:
-            status_icon = {"draft": "📝", "approved": "✅", "scheduled": "⏰"}.get(d.status, "❓")
+            status_icon = {"draft": "📝", "approved": "✅", "scheduled": "⏰", "deferred": "⏸"}.get(
+                d.status, "❓"
+            )
             text = f"{status_icon} `{d.id[:12]}` [{d.platform}]\n{d.content[:80]}..."
             buttons = [
                 ButtonRow(

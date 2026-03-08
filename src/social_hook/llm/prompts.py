@@ -15,6 +15,7 @@ from social_hook.config.project import (
 from social_hook.constants import CONFIG_DIR_NAME, PROJECT_SLUG
 from social_hook.errors import PromptNotFoundError
 from social_hook.models import CommitInfo, ProjectContext
+from social_hook.scheduling import ProjectSchedulingState
 
 if TYPE_CHECKING:
     from social_hook.config.project import MediaToolGuidance, StrategyConfig, SummaryConfig
@@ -185,6 +186,7 @@ def assemble_evaluator_prompt(
     media_guidance: dict[str, "MediaToolGuidance"] | None = None,
     strategy_config: Optional["StrategyConfig"] = None,
     summary_config: Optional["SummaryConfig"] = None,
+    scheduling_state: ProjectSchedulingState | None = None,
 ) -> str:
     """Assemble full evaluator system prompt with context.
 
@@ -201,6 +203,7 @@ def assemble_evaluator_prompt(
         media_guidance: Per-tool content guidance
         strategy_config: Strategy thresholds (portfolio window, episode prefs)
         summary_config: Summary refresh thresholds
+        scheduling_state: Per-platform scheduling capacity snapshot
 
     Returns:
         Complete system prompt string
@@ -266,9 +269,29 @@ def assemble_evaluator_prompt(
         for ps in platform_summaries:
             sections.append(f"- {ps}")
         sections.append(
-            "\nNote: Your decision applies globally. Per-platform content filtering "
-            "is handled downstream. Focus on whether this commit is worth sharing."
+            "\nYour action (draft/hold/skip) applies to all platforms. The Scheduling State "
+            "section shows per-platform capacity for awareness. Per-platform content "
+            "filtering is handled downstream."
         )
+
+    # Scheduling State
+    if scheduling_state:
+        sections.append("\n---\n## Scheduling State")
+        if scheduling_state.max_per_week is not None:
+            sections.append(
+                f"Project weekly limit: {scheduling_state.weekly_posts}/{scheduling_state.max_per_week} "
+                f"posts (this project, shared across all platforms)"
+            )
+        else:
+            sections.append(f"Project weekly posts: {scheduling_state.weekly_posts} (no limit set)")
+        for pss in scheduling_state.platform_states:
+            sections.append(f"\n### {pss.platform}")
+            sections.append(
+                f"- Today (all projects): {pss.posts_today}/{pss.max_posts_per_day} posts, "
+                f"Slots remaining: ~{pss.slots_remaining_today}"
+            )
+            deferred_part = f", Deferred: {pss.deferred_drafts}" if pss.deferred_drafts else ""
+            sections.append(f"- Pending drafts: {pss.pending_drafts}{deferred_part}")
 
     # Memories
     if project_context.memories:
@@ -835,7 +858,7 @@ def assemble_evaluator_context(
     audience_introduced = db.get_audience_introduced(project_id)
     pending_drafts = db.get_pending_drafts(project_id)
     held_decisions = db.get_held_decisions(project_id, limit=20)
-    recent_decisions = db.get_recent_decisions(project_id, limit=config.recent_decisions)
+    recent_decisions = db.get_recent_decisions_for_llm(project_id, limit=config.recent_decisions)
     recent_posts = db.get_recent_posts_for_context(project_id, limit=config.recent_posts)
     project_summary = db.get_project_summary(project_id)
     milestone_summaries = db.get_milestone_summaries(project_id)

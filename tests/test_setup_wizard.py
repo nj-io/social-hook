@@ -1536,35 +1536,40 @@ class TestInstallations:
         _setup_installations()
 
     @patch("subprocess.run")
+    @patch(
+        "social_hook.setup.install.install_git_hook",
+        return_value=(True, "Git hook already installed"),
+    )
     @patch("social_hook.bot.process.is_running", return_value=True)
     @patch("social_hook.setup.install.check_cron_installed", return_value=True)
     @patch("social_hook.setup.install.check_hook_installed", return_value=True)
     @patch("social_hook.setup.wizard._confirm")
     def test_skips_already_installed(
-        self, mock_confirm, mock_hook, mock_cron, mock_bot, mock_subprocess
+        self, mock_confirm, mock_hook, mock_cron, mock_bot, mock_git_hook, mock_subprocess
     ):
         from social_hook.setup.wizard import _setup_installations
 
         mock_confirm.return_value = True
+        # subprocess.run is called for git repo detection
+        mock_subprocess.return_value = MagicMock(returncode=0)
         _setup_installations()
 
-        mock_subprocess.assert_not_called()
+        # subprocess.run called once for git repo check, not for bot start
+        mock_git_hook.assert_called_once()
 
     @patch("subprocess.run")
+    @patch("social_hook.setup.install.install_git_hook", return_value=(True, "Git hook installed"))
     @patch("social_hook.bot.process.is_running", return_value=False)
     @patch("social_hook.setup.install.install_cron", return_value=(True, "Cron installed"))
     @patch("social_hook.setup.install.check_cron_installed", return_value=False)
-    @patch("social_hook.setup.install.install_hook", return_value=(True, "Hook installed"))
-    @patch("social_hook.setup.install.check_hook_installed", return_value=False)
     @patch("social_hook.setup.wizard._confirm")
     def test_installs_all_components(
         self,
         mock_confirm,
-        mock_hook_check,
-        mock_hook_install,
         mock_cron_check,
         mock_cron_install,
         mock_bot_running,
+        mock_git_hook_install,
         mock_subprocess,
     ):
         from social_hook.setup.wizard import _setup_installations
@@ -1574,25 +1579,22 @@ class TestInstallations:
 
         _setup_installations()
 
-        mock_hook_install.assert_called_once()
         mock_cron_install.assert_called_once()
-        mock_subprocess.assert_called_once()
+        mock_git_hook_install.assert_called_once()
 
     @patch("subprocess.run")
+    @patch("social_hook.setup.install.install_git_hook", return_value=(True, "OK"))
     @patch("social_hook.bot.process.is_running", return_value=False)
     @patch("social_hook.setup.install.install_cron", return_value=(True, "OK"))
     @patch("social_hook.setup.install.check_cron_installed", return_value=False)
-    @patch("social_hook.setup.install.install_hook", return_value=(True, "OK"))
-    @patch("social_hook.setup.install.check_hook_installed", return_value=False)
     @patch("social_hook.setup.wizard._confirm")
     def test_with_progress(
         self,
         mock_confirm,
-        mock_hook_check,
-        mock_hook_install,
         mock_cron_check,
         mock_cron_install,
         mock_bot_running,
+        mock_git_hook_install,
         mock_subprocess,
     ):
         from social_hook.setup.wizard import _setup_installations

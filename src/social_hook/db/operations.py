@@ -3,6 +3,7 @@
 import json
 import logging
 import sqlite3
+import subprocess
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,72 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     return True
 
 
+def register_project(
+    conn: sqlite3.Connection,
+    repo_path: str,
+    name: str | None = None,
+) -> tuple[Project, str | None]:
+    """Register a project from a repo path.
+
+    Validates git repo, extracts origin, checks duplicates, inserts project
+    + lifecycle + narrative debt.
+
+    Returns (project, repo_origin) on success.
+    Raises ValueError on validation failure or duplicate.
+    """
+    from pathlib import Path
+
+    from social_hook.filesystem import generate_id
+
+    path = Path(repo_path).resolve()
+
+    # Validate git repo
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--git-dir"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"{path} is not a git repository")
+
+    # Extract remote origin
+    origin_result = subprocess.run(
+        ["git", "-C", str(path), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+    )
+    repo_origin = origin_result.stdout.strip() if origin_result.returncode == 0 else None
+
+    if not name:
+        name = path.name
+
+    # Check duplicates
+    existing = get_project_by_path(conn, str(path))
+    if existing:
+        raise ValueError(f"Project already registered: {existing.name} ({existing.id})")
+
+    if repo_origin:
+        matches = get_project_by_origin(conn, repo_origin)
+        if matches:
+            raise ValueError(f"Repository origin already registered as: {matches[0].name}")
+
+    project = Project(
+        id=generate_id("project"),
+        name=name,
+        repo_path=str(path),
+        repo_origin=repo_origin,
+    )
+    insert_project(conn, project)
+
+    lifecycle = Lifecycle(project_id=project.id, phase="research", confidence=0.3)
+    insert_lifecycle(conn, lifecycle)
+
+    debt = NarrativeDebt(project_id=project.id, debt_counter=0)
+    insert_narrative_debt(conn, debt)
+
+    return project, repo_origin
+
+
 def delete_decision(conn: sqlite3.Connection, decision_id: str) -> bool:
     """Delete a decision and all associated data.
 
@@ -208,8 +275,9 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
         """
         INSERT INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
-            arc_id, media_tool, platforms, targets, commit_summary, consolidate_with)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
+            branch)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )
@@ -255,6 +323,73 @@ def get_all_recent_decisions(conn: sqlite3.Connection, limit: int = 30) -> list[
         (limit,),
     ).fetchall()
     return [Decision.from_dict(dict(row)) for row in rows]
+
+
+def get_recent_decisions_for_llm(
+    conn: sqlite3.Connection, project_id: str, limit: int = 30
+) -> list[Decision]:
+    """Get recent decisions for a project, excluding imported commits.
+
+    Used only by LLM context callers (evaluator, gatekeeper) to avoid
+    polluting the model's context with historical imports.
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM decisions
+        WHERE project_id = ? AND decision != 'imported'
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (project_id, limit),
+    ).fetchall()
+    return [Decision.from_dict(dict(row)) for row in rows]
+
+
+def insert_decisions_batch(
+    conn: sqlite3.Connection,
+    decisions: list[tuple[Decision, str]],
+) -> int:
+    """Batch insert decisions with explicit created_at timestamps.
+
+    Uses INSERT OR IGNORE to skip duplicates (UNIQUE on project_id, commit_hash).
+
+    Args:
+        conn: Database connection
+        decisions: List of (Decision, iso_created_at) tuples
+
+    Returns:
+        Number of rows actually inserted.
+    """
+    if not decisions:
+        return 0
+    before = int(conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0])
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO decisions (id, project_id, commit_hash, commit_message,
+            decision, reasoning, angle, episode_type, episode_tags, post_category,
+            arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
+            branch, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [d.to_row() + (created_at,) for d, created_at in decisions],
+    )
+    conn.commit()
+    after = int(conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0])
+
+    return after - before
+
+
+def get_distinct_branches(conn: sqlite3.Connection, project_id: str) -> list[str]:
+    """Get sorted distinct branch names from decisions for a project."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT branch FROM decisions
+        WHERE project_id = ? AND branch IS NOT NULL
+        ORDER BY branch
+        """,
+        (project_id,),
+    ).fetchall()
+    return [row[0] for row in rows]
 
 
 def get_held_decisions(
@@ -513,7 +648,7 @@ def get_pending_drafts(conn: sqlite3.Connection, project_id: str) -> list[Draft]
         """
         SELECT * FROM drafts
         WHERE project_id = ?
-          AND status IN ('draft', 'approved', 'scheduled')
+          AND status IN ('draft', 'approved', 'scheduled', 'deferred')
         ORDER BY created_at DESC
         """,
         (project_id,),
@@ -526,7 +661,7 @@ def get_all_pending_drafts(conn: sqlite3.Connection) -> list[Draft]:
     rows = conn.execute(
         """
         SELECT * FROM drafts
-        WHERE status IN ('draft', 'approved', 'scheduled')
+        WHERE status IN ('draft', 'approved', 'scheduled', 'deferred')
         ORDER BY created_at DESC
         """
     ).fetchall()
@@ -576,6 +711,18 @@ def get_due_drafts(conn: sqlite3.Connection) -> list[Draft]:
         WHERE status = 'scheduled'
           AND scheduled_time <= datetime('now')
         ORDER BY scheduled_time ASC
+        """
+    ).fetchall()
+    return [Draft.from_dict(dict(row)) for row in rows]
+
+
+def get_deferred_drafts(conn: sqlite3.Connection) -> list[Draft]:
+    """Get all deferred drafts, ordered by creation time (FIFO)."""
+    rows = conn.execute(
+        """
+        SELECT * FROM drafts
+        WHERE status = 'deferred'
+        ORDER BY created_at ASC
         """
     ).fetchall()
     return [Draft.from_dict(dict(row)) for row in rows]
@@ -887,9 +1034,11 @@ def update_arc(
     if status is not None:
         updates.append("status = ?")
         params.append(status)
-        # Set ended_at for terminal statuses
+        # Set ended_at for terminal statuses, clear it when reactivating
         if status in ("completed", "abandoned"):
             updates.append("ended_at = datetime('now')")
+        elif status == "active":
+            updates.append("ended_at = NULL")
     if post_count is not None:
         updates.append("post_count = ?")
         params.append(post_count)
@@ -1387,7 +1536,7 @@ def get_intro_draft(conn: sqlite3.Connection, project_id: str) -> Draft | None:
         """
         SELECT * FROM drafts
         WHERE project_id = ? AND is_intro = 1
-          AND status IN ('draft', 'approved', 'scheduled')
+          AND status IN ('draft', 'approved', 'scheduled', 'deferred')
         ORDER BY created_at DESC LIMIT 1
         """,
         (project_id,),

@@ -123,6 +123,7 @@ export interface Project {
   phase?: string;
   trigger_branch?: string | null;
   confidence?: number;
+  git_hook_installed?: boolean;
 }
 
 export interface WebEvent {
@@ -156,6 +157,7 @@ export interface Decision {
   consolidate_with: string[] | null;
   draft_count: number;
   draft_ids?: string[];
+  branch?: string | null;
   created_at: string;
 }
 

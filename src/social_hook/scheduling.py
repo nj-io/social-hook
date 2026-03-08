@@ -19,6 +19,27 @@ class ScheduleResult:
     deferred: bool = False
 
 
+@dataclass
+class PlatformSchedulingState:
+    """Per-platform scheduling state snapshot."""
+
+    platform: str
+    posts_today: int
+    max_posts_per_day: int
+    pending_drafts: int
+    deferred_drafts: int
+    slots_remaining_today: int
+
+
+@dataclass
+class ProjectSchedulingState:
+    """Project-wide scheduling state snapshot."""
+
+    weekly_posts: int
+    max_per_week: int | None
+    platform_states: list[PlatformSchedulingState]
+
+
 # Day name to weekday number mapping (Monday=0)
 _DAY_MAP = {
     "Mon": 0,
@@ -197,4 +218,102 @@ def calculate_optimal_time(
         is_optimal_day=fallback_local.weekday() in optimal_day_nums,
         day_reason="No optimal slot available within 7 days",
         time_reason="Fallback: 1 hour from now",
+    )
+
+
+def _is_today(dt: datetime, user_tz: ZoneInfo) -> bool:
+    """Check if a datetime falls on today in the given timezone."""
+    now_local = datetime.now(timezone.utc).astimezone(user_tz)
+    dt_local = (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(user_tz)
+    return dt_local.date() == now_local.date()
+
+
+def get_scheduling_state(
+    conn: sqlite3.Connection,
+    project_id: str,
+    config,
+) -> ProjectSchedulingState:
+    """Gather current scheduling state for a project across all enabled platforms.
+
+    Args:
+        conn: Database connection.
+        project_id: Project ID.
+        config: Global Config object (needs .platforms, .scheduling).
+
+    Returns:
+        ProjectSchedulingState with per-platform breakdowns.
+    """
+    from social_hook.config.platforms import resolve_platform
+
+    try:
+        user_tz = ZoneInfo(config.scheduling.timezone)
+    except (KeyError, ValueError):
+        user_tz = ZoneInfo("UTC")
+
+    # Timezone-aware today start (same pattern as calculate_optimal_time)
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(user_tz)
+    today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_utc = today_start_local.astimezone(timezone.utc)
+
+    # Get today's posts across all platforms
+    today_posts = ops.get_all_recent_posts(conn, today_start_utc.strftime("%Y-%m-%d %H:%M:%S"))
+
+    # Get all pending drafts for this project
+    all_pending = ops.get_pending_drafts(conn, project_id)
+
+    # Weekly total
+    cursor = conn.execute(
+        "SELECT COUNT(*) FROM posts WHERE project_id = ? AND posted_at >= datetime('now', '-7 days')",
+        (project_id,),
+    )
+    weekly_posts = cursor.fetchone()[0]
+
+    platform_states = []
+    for pname, pcfg in config.platforms.items():
+        if not pcfg.enabled:
+            continue
+
+        resolved = resolve_platform(pname, pcfg, config.scheduling)
+
+        # Count today's posts for this platform
+        platform_posts_today = len([p for p in today_posts if p.platform == pname])
+
+        # Split pending drafts by status for this platform
+        platform_pending = [
+            d for d in all_pending if d.platform == pname and d.status != "deferred"
+        ]
+        platform_deferred = [
+            d for d in all_pending if d.platform == pname and d.status == "deferred"
+        ]
+
+        # Count scheduled-for-today drafts to compute remaining slots
+        scheduled_today = 0
+        for d in platform_pending:
+            if d.scheduled_time:
+                st = d.scheduled_time
+                if isinstance(st, str):
+                    st = datetime.fromisoformat(st)
+                if _is_today(st, user_tz):
+                    scheduled_today += 1
+
+        slots_remaining = max(
+            0, resolved.max_posts_per_day - platform_posts_today - scheduled_today
+        )
+
+        platform_states.append(
+            PlatformSchedulingState(
+                platform=pname,
+                posts_today=platform_posts_today,
+                max_posts_per_day=resolved.max_posts_per_day,
+                pending_drafts=len(platform_pending),
+                deferred_drafts=len(platform_deferred),
+                slots_remaining_today=slots_remaining,
+            )
+        )
+
+    return ProjectSchedulingState(
+        weekly_posts=weekly_posts,
+        max_per_week=config.scheduling.max_per_week,
+        platform_states=platform_states,
     )
