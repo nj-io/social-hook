@@ -1087,3 +1087,90 @@ class TestDrafterMediaGuide:
             sample_commit,
         )
         assert "## Media Tool Guide" not in result
+
+
+# =============================================================================
+# Scheduling State in Evaluator Prompt
+# =============================================================================
+
+
+class TestSchedulingStateSection:
+    """Scheduling state section in evaluator prompt."""
+
+    def _make_scheduling_state(self):
+        from social_hook.scheduling import PlatformSchedulingState, ProjectSchedulingState
+
+        return ProjectSchedulingState(
+            weekly_posts=8,
+            max_per_week=10,
+            platform_states=[
+                PlatformSchedulingState(
+                    platform="x",
+                    posts_today=2,
+                    max_posts_per_day=3,
+                    pending_drafts=3,
+                    deferred_drafts=1,
+                    slots_remaining_today=1,
+                ),
+                PlatformSchedulingState(
+                    platform="linkedin",
+                    posts_today=0,
+                    max_posts_per_day=1,
+                    pending_drafts=1,
+                    deferred_drafts=0,
+                    slots_remaining_today=1,
+                ),
+            ],
+        )
+
+    def test_scheduling_state_rendered(self, sample_project_context, sample_commit):
+        state = self._make_scheduling_state()
+        result = assemble_evaluator_prompt(
+            "# Eval",
+            sample_project_context,
+            sample_commit,
+            scheduling_state=state,
+        )
+        assert "## Scheduling State" in result
+        assert "Project weekly limit: 8/10 posts" in result
+        assert "### x" in result
+        assert "Today (all projects): 2/3 posts, Slots remaining: ~1" in result
+        assert "Pending drafts: 3, Deferred: 1" in result
+        assert "### linkedin" in result
+        assert "Today (all projects): 0/1 posts, Slots remaining: ~1" in result
+        assert "Pending drafts: 1" in result
+
+    def test_scheduling_state_omitted_when_none(self, sample_project_context, sample_commit):
+        result = assemble_evaluator_prompt(
+            "# Eval",
+            sample_project_context,
+            sample_commit,
+            scheduling_state=None,
+        )
+        assert "## Scheduling State" not in result
+
+    def test_scheduling_state_no_weekly_limit(self, sample_project_context, sample_commit):
+        from social_hook.scheduling import ProjectSchedulingState
+
+        state = ProjectSchedulingState(
+            weekly_posts=5,
+            max_per_week=None,
+            platform_states=[],
+        )
+        result = assemble_evaluator_prompt(
+            "# Eval",
+            sample_project_context,
+            sample_commit,
+            scheduling_state=state,
+        )
+        assert "Project weekly posts: 5 (no limit set)" in result
+
+    def test_target_platforms_note_updated(self, sample_project_context, sample_commit):
+        result = assemble_evaluator_prompt(
+            "# Eval",
+            sample_project_context,
+            sample_commit,
+            platform_summaries=["x (primary)", "linkedin (secondary)"],
+        )
+        assert "Your action (draft/hold/skip) applies to all platforms" in result
+        assert "Your decision applies globally" not in result

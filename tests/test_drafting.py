@@ -7,7 +7,8 @@ from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.drafting import DraftResult, draft_for_platforms
 from social_hook.filesystem import generate_id
-from social_hook.models import CommitInfo, Project
+from social_hook.models import CommitInfo, Decision, Project
+from social_hook.scheduling import ScheduleResult
 
 # =============================================================================
 # Helpers
@@ -727,4 +728,184 @@ class TestDraftMediaSpecGuards:
         # _generate_media SHOULD have been called
         mock_gen_media.assert_called_once()
         assert len(results) == 1
+        conn.close()
+
+
+class TestDeferredDraftCreation:
+    """Deferred scheduling creates a draft with status='deferred' and skips the results list."""
+
+    @patch("social_hook.drafting.resolve_platform")
+    @patch("social_hook.drafting.passes_content_filter", return_value=True)
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    @patch("social_hook.notifications.send_notification")
+    def test_deferred_draft_inserted_not_in_results(
+        self,
+        mock_send_notif,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
+    ):
+        """When schedule.deferred=True, draft is inserted with status='deferred'
+        and suggested_time=None, but is NOT in the returned results list."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        # Insert a decision so foreign key constraint is satisfied
+        decision_id = generate_id("decision")
+        decision = Decision(
+            id=decision_id,
+            project_id=project.id,
+            commit_hash="abc123def456",
+            decision="draft",
+            reasoning="test",
+        )
+        ops.insert_decision(conn, decision)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=False)
+
+        config = _make_config(
+            platforms={
+                "x": _make_platform_config("x"),
+            }
+        )
+
+        resolved = MagicMock()
+        resolved.filter = "all"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        mock_resolve.return_value = resolved
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Deferred test content"
+        draft_result_mock.reasoning = "Deferred reasoning"
+        draft_result_mock.platform = "x"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=False,
+            day_reason="Weekly limit (5/5) reached",
+            time_reason="deferred",
+            deferred=True,
+        )
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision_id,
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
+                commit=_make_commit(),
+                project_config=None,
+                dry_run=False,
+            )
+
+        # Deferred drafts are NOT in the results list
+        assert results == []
+
+        # But draft WAS inserted into DB with correct status and no suggested_time
+        drafts = ops.get_pending_drafts(conn, project.id)
+        deferred = [d for d in drafts if d.status == "deferred"]
+        assert len(deferred) == 1
+        assert deferred[0].suggested_time is None
+        assert deferred[0].content == "Deferred test content"
+
+        # Notification was sent
+        mock_send_notif.assert_called_once()
+        call_args = mock_send_notif.call_args
+        assert call_args[0][0] is config
+        assert "Draft deferred" in call_args[0][1]
+        assert call_args[1]["dry_run"] is False
+
+        conn.close()
+
+    @patch("social_hook.drafting.resolve_platform")
+    @patch("social_hook.drafting.passes_content_filter", return_value=True)
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    @patch("social_hook.notifications.send_notification")
+    def test_deferred_notification_uses_dry_run(
+        self,
+        mock_send_notif,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
+    ):
+        """send_notification receives dry_run=True when drafting in dry-run mode."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=True)
+
+        config = _make_config(
+            platforms={
+                "x": _make_platform_config("x"),
+            }
+        )
+
+        resolved = MagicMock()
+        resolved.filter = "all"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        mock_resolve.return_value = resolved
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Dry run deferred"
+        draft_result_mock.reasoning = "reason"
+        draft_result_mock.platform = "x"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=False,
+            day_reason="Weekly limit reached",
+            time_reason="deferred",
+            deferred=True,
+        )
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-002",
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
+                commit=_make_commit(),
+                project_config=None,
+                dry_run=True,
+            )
+
+        assert results == []
+        mock_send_notif.assert_called_once()
+        assert mock_send_notif.call_args[1]["dry_run"] is True
         conn.close()

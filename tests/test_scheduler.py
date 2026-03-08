@@ -20,6 +20,7 @@ from social_hook.scheduler import (
     acquire_lock,
     get_lock_pid,
     is_lock_stale,
+    promote_deferred_drafts,
     release_lock,
     scheduler_tick,
 )
@@ -419,3 +420,166 @@ class TestNotifications:
         msg = mock_notify.call_args[0][1]
         assert "Post failed" in msg
         assert "API down" in msg
+
+
+class TestPromoteDeferredDrafts:
+    """Tests for promote_deferred_drafts."""
+
+    def _make_config(self, platform_enabled=True):
+        """Build a Config with an X platform."""
+        from social_hook.config.platforms import OutputPlatformConfig
+        from social_hook.config.yaml import Config, SchedulingConfig
+
+        platforms = {}
+        if platform_enabled:
+            platforms["x"] = OutputPlatformConfig(enabled=True, priority="primary")
+        else:
+            platforms["x"] = OutputPlatformConfig(enabled=False, priority="primary")
+        return Config(
+            platforms=platforms,
+            scheduling=SchedulingConfig(),
+            channels={},
+        )
+
+    def _insert_deferred_draft(self, conn):
+        """Insert a project + deferred draft, return (project, draft)."""
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Deferred content here",
+            status="deferred",
+        )
+        insert_draft(conn, draft)
+        return project, draft
+
+    @patch("social_hook.scheduler.calculate_optimal_time")
+    def test_still_deferred_guard(self, mock_calc, temp_dir):
+        """Draft stays deferred when calculate_optimal_time returns deferred=True."""
+        from social_hook.scheduling import ScheduleResult
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        project, draft = self._insert_deferred_draft(conn)
+        config = self._make_config()
+
+        mock_calc.return_value = ScheduleResult(
+            datetime=MagicMock(),
+            deferred=True,
+            is_optimal_day=False,
+            day_reason="Weekly limit reached",
+            time_reason="deferred",
+        )
+
+        promoted = promote_deferred_drafts(conn, config)
+        assert promoted == 0
+
+        updated = get_draft(conn, draft.id)
+        assert updated.status == "deferred"
+        conn.close()
+
+    def test_disabled_platform_cancellation(self, temp_dir):
+        """Deferred draft is cancelled when its platform is disabled."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        _project, draft = self._insert_deferred_draft(conn)
+        config = self._make_config(platform_enabled=False)
+
+        promoted = promote_deferred_drafts(conn, config)
+        assert promoted == 0
+
+        updated = get_draft(conn, draft.id)
+        assert updated.status == "cancelled"
+        conn.close()
+
+    def test_disabled_platform_missing(self, temp_dir):
+        """Deferred draft is cancelled when its platform is missing from config."""
+        from social_hook.config.yaml import Config, SchedulingConfig
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        _project, draft = self._insert_deferred_draft(conn)
+        # Config with no platforms at all
+        config = Config(platforms={}, scheduling=SchedulingConfig(), channels={})
+
+        promoted = promote_deferred_drafts(conn, config)
+        assert promoted == 0
+
+        updated = get_draft(conn, draft.id)
+        assert updated.status == "cancelled"
+        conn.close()
+
+    @patch("social_hook.scheduler.send_notification")
+    @patch("social_hook.scheduler.calculate_optimal_time")
+    def test_successful_promotion(self, mock_calc, mock_notify, temp_dir):
+        """Deferred draft is promoted to scheduled when a slot is available."""
+        from datetime import datetime, timezone
+
+        from social_hook.scheduling import ScheduleResult
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        project, draft = self._insert_deferred_draft(conn)
+        config = self._make_config()
+
+        scheduled_dt = datetime(2026, 3, 10, 14, 0, 0, tzinfo=timezone.utc)
+        mock_calc.return_value = ScheduleResult(
+            datetime=scheduled_dt,
+            deferred=False,
+            is_optimal_day=True,
+            day_reason="Optimal day",
+            time_reason="Optimal hour",
+        )
+
+        promoted = promote_deferred_drafts(conn, config)
+        assert promoted == 1
+
+        updated = get_draft(conn, draft.id)
+        assert updated.status == "scheduled"
+        # scheduled_time may be returned as datetime or string depending on DB layer
+        st = updated.scheduled_time
+        if isinstance(st, str):
+            assert st == scheduled_dt.isoformat()
+        else:
+            assert st == scheduled_dt
+
+        # Notification was sent
+        mock_notify.assert_called_once()
+        msg = mock_notify.call_args[0][1]
+        assert "Deferred draft promoted" in msg
+        assert "2026-03-10 14:00 UTC" in msg
+        conn.close()
+
+    @patch("social_hook.scheduler.promote_deferred_drafts")
+    @patch("social_hook.scheduler.init_database")
+    @patch("social_hook.scheduler.get_db_path")
+    @patch("social_hook.scheduler.load_full_config")
+    def test_promotion_runs_before_early_return(
+        self, mock_config, mock_db_path, mock_init_db, mock_promote, temp_dir
+    ):
+        """promote_deferred_drafts is called even when get_due_drafts returns empty."""
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+
+        mock_config.return_value = MagicMock(env={}, channels={})
+        mock_db_path.return_value = db_path
+        mock_init_db.return_value = conn
+
+        lock_path = temp_dir / "scheduler.lock"
+        result = scheduler_tick(dry_run=True, lock_path=lock_path)
+
+        assert result == 0
+        # promote_deferred_drafts must have been called
+        mock_promote.assert_called_once()
+        conn.close()
