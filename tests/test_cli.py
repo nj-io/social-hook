@@ -4,6 +4,7 @@ import json
 import re
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from social_hook.cli import app
@@ -63,6 +64,11 @@ class TestSchedulerTick:
 
 class TestBotSubcommand:
     """Tests for bot subcommand group."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_pid_file(self, tmp_path, monkeypatch):
+        """Isolate from real bot state so tests don't depend on a running daemon."""
+        monkeypatch.setattr("social_hook.bot.process.get_pid_file", lambda: tmp_path / "bot.pid")
 
     def test_bot_help(self):
         result = runner.invoke(app, ["bot", "--help"])

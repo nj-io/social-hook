@@ -54,6 +54,14 @@ def save(
             typer.echo("Cancelled.")
             return
 
+    # Checkpoint WAL so all data is in the main DB file
+    try:
+        conn = sqlite3.connect(str(db))
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+    except sqlite3.DatabaseError:
+        pass  # Best-effort; copy will still work
+
     shutil.copy2(str(db), str(dest))
 
     if json_output:
@@ -107,6 +115,13 @@ def restore(
 
     shutil.copy2(str(src), str(db))
 
+    # Remove stale WAL/SHM files — they belong to the old DB and
+    # cause "database disk image is malformed" if left behind.
+    for suffix in ("-wal", "-shm"):
+        stale = db.parent / f"{db.name}{suffix}"
+        if stale.exists():
+            stale.unlink()
+
     if json_output:
         typer.echo(
             json_mod.dumps({"restored": True, "name": name, "backup": str(backup)}, indent=2)
@@ -140,6 +155,12 @@ def reset(
     if db.exists():
         shutil.copy2(str(db), str(backup))
         db.unlink()
+
+    # Remove stale WAL/SHM files from the old DB
+    for suffix in ("-wal", "-shm"):
+        stale = db.parent / f"{db.name}{suffix}"
+        if stale.exists():
+            stale.unlink()
 
     init_database(db)
 
