@@ -143,6 +143,42 @@ class E2EHarness:
                 )
                 self.conn.commit()
 
+    # --- Fixture support (hidden from users) ---
+
+    _FIXTURE_DIR = ".e2e-fixtures"
+
+    def _fixture_dir(self) -> Path:
+        d = self.real_base / self._FIXTURE_DIR
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def has_fixture(self, name: str) -> bool:
+        return (self.real_base / self._FIXTURE_DIR / f"{name}.db").exists()
+
+    def save_fixture(self, name: str):
+        """Save current DB to hidden fixture directory."""
+        if not self.conn:
+            return
+        dest = self._fixture_dir() / f"{name}.db"
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        db_path = self.base / "social-hook.db"
+        shutil.copy2(str(db_path), str(dest))
+        print(f"  Fixture saved: {name} ({dest.stat().st_size / 1024:.1f} KB)")
+
+    def load_fixture(self, name: str) -> bool:
+        """Load a fixture DB, recover project_id. Returns False if not found."""
+        fix_path = self._fixture_dir() / f"{name}.db"
+        if not fix_path.exists():
+            return False
+        db_path = self.base / "social-hook.db"
+        shutil.copy2(str(fix_path), str(db_path))
+        self.conn = sqlite3.connect(str(db_path))
+        self.conn.row_factory = sqlite3.Row
+        self._recover_project_id()
+        return True
+
+    # --- Snapshot support (user-facing) ---
+
     def save_snapshot(self, name: str):
         """Save the current DB state as a named snapshot.
 
@@ -394,6 +430,9 @@ class E2EHarness:
         self.conn.execute("DELETE FROM usage_log WHERE project_id = ?", (self.project_id,))
         self.conn.execute(
             "DELETE FROM milestone_summaries WHERE project_id = ?", (self.project_id,)
+        )
+        self.conn.execute(
+            "UPDATE projects SET audience_introduced = 0 WHERE id = ?", (self.project_id,)
         )
         self.conn.commit()
 
