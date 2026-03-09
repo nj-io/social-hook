@@ -824,3 +824,8 @@ app.add_typer(decision_app, name="decision", help="Decision management.")
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
 app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+
+from social_hook.cli.snapshot import app as snapshot_app
+
+# DB snapshot management: save, restore, reset, list, delete
+app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
