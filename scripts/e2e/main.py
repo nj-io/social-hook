@@ -11,7 +11,7 @@ from pathlib import Path
 from e2e.constants import PROVIDER_PRESETS, SECTION_MAP
 from e2e.harness import CaptureAdapter, E2EHarness
 from e2e.runner import E2ERunner
-from e2e.sections import SECTION_REGISTRY
+from e2e.sections import FIXTURE_REQUIREMENTS, SECTION_REGISTRY
 
 
 def main():
@@ -50,6 +50,12 @@ def main():
         help="Save DB snapshots after key sections complete. "
         "Snapshots are saved to ~/.social-hook/snapshots/ "
         "and can be loaded with --snapshot NAME.",
+    )
+    parser.add_argument(
+        "--build-fixtures",
+        action="store_true",
+        help="Build E2E fixtures for standalone scenario execution. "
+        "Saves to ~/.social-hook/.e2e-fixtures/ (hidden from snapshot CLI).",
     )
     args = parser.parse_args()
 
@@ -140,6 +146,37 @@ def main():
         if args.snapshot:
             print(f"  Loaded snapshot: {args.snapshot} (project_id={harness.project_id})")
 
+        # --build-fixtures: seed project, save fixture, exit
+        if args.build_fixtures:
+            print("\n  Building E2E fixtures...")
+            harness.seed_project()
+            harness.save_fixture("base-project")
+            print(
+                "  Done. You can now run: python scripts/e2e_test.py --only B6 --provider claude-cli"
+            )
+            harness.teardown()
+            sys.exit(0)
+
+        # Auto-load fixture when running a single scenario without --snapshot
+        if only_scenario and not args.snapshot and not harness.project_id:
+            letter = only_scenario[0]
+            fixture = FIXTURE_REQUIREMENTS.get(letter)
+
+            if letter == "A" and only_scenario != "A1":
+                # Section A scenarios (except A1) just need a seeded project
+                harness.seed_project()
+                print(f"  Seeded project for standalone {only_scenario}: {harness.project_id}")
+            elif fixture:
+                if harness.load_fixture(fixture):
+                    print(f"  Auto-loaded fixture: {fixture} (project_id={harness.project_id})")
+                else:
+                    print(f"\n  Fixture '{fixture}' not found.")
+                    print(
+                        f"  Build it: python scripts/e2e_test.py --build-fixtures --provider {provider}"
+                    )
+                    harness.teardown()
+                    sys.exit(1)
+
         # Run sections in order using the registry
         for letter in "ABCDEFGHIJKLMNQR":
             if letter not in sections_to_run:
@@ -149,6 +186,10 @@ def main():
             mod = importlib.import_module(f"e2e.sections.{info['module']}")
             kwargs = {"adapter": adapter} if info["needs_adapter"] else {}
             mod.run(harness, runner, **kwargs)
+
+            # Auto-save base-project fixture after section A
+            if letter == "A" and harness.project_id and not only_scenario:
+                harness.save_fixture("base-project")
 
             # Save snapshot after key sections
             if args.save_snapshots and letter in _SNAPSHOT_POINTS:
