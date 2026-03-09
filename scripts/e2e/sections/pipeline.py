@@ -7,7 +7,7 @@ from e2e.constants import COMMITS
 
 
 def run(harness, runner):
-    """B1-B11: Pipeline scenarios."""
+    """B1-B12: Pipeline scenarios."""
     from social_hook.db import get_pending_drafts, get_recent_decisions
     from social_hook.trigger import run_trigger
 
@@ -271,6 +271,14 @@ def run(harness, runner):
                 f"Draft has media_type={draft.media_type} but media_spec is empty/None"
             )
 
+        # File existence assertion: if media_paths set, files must exist on disk
+        if draft.media_paths:
+            from pathlib import Path as _Path
+
+            for mp in draft.media_paths:
+                assert _Path(mp).exists(), f"Media file not found on disk: {mp}"
+                assert _Path(mp).stat().st_size > 0, f"Media file is empty: {mp}"
+
         detail = (
             f"Draft: {draft.id}, media_type={draft.media_type}, "
             f"media_spec={draft.media_spec}, media_paths={draft.media_paths}"
@@ -344,3 +352,54 @@ def run(harness, runner):
         return detail
 
     runner.run_scenario("B11", "Per-tool media disable", b11, llm_call=True, isolate=True)
+
+    # B12: Real media generation with mermaid adapter (no API key needed)
+    def b12():
+        from pathlib import Path as _Path
+
+        from social_hook.adapters.media.mermaid import MermaidAdapter
+        from social_hook.db import operations as ops
+        from social_hook.filesystem import get_base_path
+
+        # Seed a draft with a mermaid spec
+        draft = harness.seed_draft(
+            harness.project_id,
+            status="draft",
+            media_type="mermaid",
+            media_spec={
+                "diagram": "graph LR\n  A[Commit] --> B[Evaluate] --> C[Draft] --> D[Post]"
+            },
+        )
+
+        # Generate media using the real adapter
+        adapter = MermaidAdapter()
+        output_dir = str(get_base_path() / "media-cache" / draft.id)
+        result = adapter.generate(spec=draft.media_spec, output_dir=output_dir)
+
+        assert result.success, f"Mermaid generation failed: {result.error}"
+        assert result.file_path is not None, "No file path returned"
+        assert _Path(result.file_path).exists(), f"File not on disk: {result.file_path}"
+        assert _Path(result.file_path).stat().st_size > 100, "File suspiciously small"
+
+        # Update draft with media path (as the pipeline would)
+        ops.update_draft(harness.conn, draft.id, media_paths=[result.file_path])
+
+        # Verify DB roundtrip
+        updated = ops.get_draft(harness.conn, draft.id)
+        assert updated.media_paths == [result.file_path], (
+            f"DB media_paths mismatch: {updated.media_paths}"
+        )
+
+        runner.add_review_item(
+            "B12",
+            title="Real mermaid media generation",
+            decision="draft",
+            draft_content=draft.content,
+            review_question="Is the generated mermaid diagram a valid PNG file?",
+            media_type="mermaid",
+            media_paths=[result.file_path],
+        )
+
+        return f"Generated {result.file_path}, size={_Path(result.file_path).stat().st_size}"
+
+    runner.run_scenario("B12", "Real mermaid media generation", b12)

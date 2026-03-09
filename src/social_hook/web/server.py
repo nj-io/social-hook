@@ -344,6 +344,8 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
 @app.post("/api/callback")
 async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
     """Execute a button callback via the web adapter."""
+    import asyncio
+
     from social_hook.bot.buttons import handle_callback
 
     adapter = _get_adapter(scope_id=x_session_id)
@@ -358,7 +360,9 @@ async def api_callback(body: CallbackRequest, x_session_id: str = Header("web"))
         action=body.action,
         payload=body.payload,
     )
-    handle_callback(event, adapter, config)
+    # Run in thread to avoid blocking the event loop and to allow
+    # sync libraries (e.g. Playwright) that detect a running asyncio loop.
+    await asyncio.to_thread(handle_callback, event, adapter, config)
 
     cb_conn = _get_conn()
     try:

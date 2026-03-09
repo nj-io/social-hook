@@ -4,7 +4,7 @@ from e2e.constants import COMMITS
 
 
 def run(harness, runner):
-    """N1-N8: Web Dashboard + Per-Platform scenarios."""
+    """N1-N9: Web Dashboard + Per-Platform scenarios."""
 
     if not harness.project_id:
         harness.seed_project()
@@ -282,3 +282,42 @@ def run(harness, runner):
         return f"SSE content-type: {content_type}"
 
     runner.run_scenario("N8", "SSE endpoint streams events", n8)
+
+    # N9: Media file serving endpoint
+    def n9():
+        from social_hook.filesystem import get_base_path
+
+        # Create a real media file in the cache
+        media_dir = get_base_path() / "media-cache" / "n9_test"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        media_file = media_dir / "test_image.png"
+        # Minimal valid PNG (1x1 pixel)
+        png_header = (
+            b"\x89PNG\r\n\x1a\n"  # PNG signature
+            b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+            b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx"
+            b"\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
+            b"\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        media_file.write_bytes(png_header)
+
+        client = _get_test_client()
+        from urllib.parse import quote
+
+        rel_path = "n9_test/test_image.png"
+        resp = client.get(f"/api/media/{quote(rel_path)}")
+        assert resp.status_code == 200, f"Status {resp.status_code}: {resp.text}"
+
+        content_type = resp.headers.get("content-type", "")
+        assert "image/png" in content_type, f"Expected image/png, got: {content_type}"
+        assert len(resp.content) > 0, "Empty response body"
+
+        # Path traversal protection
+        resp_bad = client.get("/api/media/../../../etc/passwd")
+        assert resp_bad.status_code in (403, 404), (
+            f"Path traversal should fail, got {resp_bad.status_code}"
+        )
+
+        return f"Served {len(resp.content)} bytes, content-type={content_type}"
+
+    runner.run_scenario("N9", "Media file serving endpoint", n9)

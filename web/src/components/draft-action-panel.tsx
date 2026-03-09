@@ -18,6 +18,9 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
   const [textPrompt, setTextPrompt] = useState<TextPrompt>(null);
   const [textInput, setTextInput] = useState("");
 
+  // Actions that stay in the edit submenu (no navigation away from current view)
+  const keepSubmenuActions = new Set(["media_regen", "media_remove"]);
+
   async function handleAction(action: string) {
     setActionPending(action);
     try {
@@ -27,7 +30,9 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
       onUpdate();
     } finally {
       setActionPending("");
-      setSubmenu(null);
+      if (!keepSubmenuActions.has(action)) {
+        setSubmenu(null);
+      }
     }
   }
 

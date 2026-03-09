@@ -5,7 +5,7 @@ import subprocess
 
 
 def run(harness, runner):
-    """J1-J6: CLI command scenarios."""
+    """J1-J8: CLI command scenarios."""
     from typer.testing import CliRunner
 
     from social_hook.cli import app
@@ -96,3 +96,48 @@ def run(harness, runner):
         return "Project unregistered"
 
     runner.run_scenario("J6", "Unregister project", j6)
+
+    # J7: Draft media-remove CLI command
+    def j7():
+        draft = harness.seed_draft(
+            harness.project_id,
+            status="draft",
+            media_paths=["/tmp/j7_media.png"],
+            media_type="mermaid",
+        )
+
+        result = cli.invoke(app, ["draft", "media-remove", draft.id])
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+
+        from social_hook.db import operations as ops
+
+        updated = ops.get_draft(harness.conn, draft.id)
+        assert updated.media_paths == [], f"Expected empty media_paths, got {updated.media_paths}"
+        return "Media removed via CLI"
+
+    runner.run_scenario("J7", "Draft media-remove CLI", j7)
+
+    # J8: Draft show displays media URL
+    def j8():
+        from social_hook.filesystem import get_base_path
+
+        # Create a real file so the path is valid
+        media_dir = get_base_path() / "media-cache" / "j8_test"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        media_file = media_dir / "test.png"
+        media_file.write_bytes(b"fake png data")
+
+        draft = harness.seed_draft(
+            harness.project_id,
+            status="draft",
+            media_paths=[str(media_file)],
+            media_type="mermaid",
+        )
+
+        result = cli.invoke(app, ["draft", "show", draft.id])
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "View:" in result.output, "Expected 'View:' URL in output"
+        assert "localhost" in result.output, "Expected localhost URL in output"
+        return "Draft show includes media URL"
+
+    runner.run_scenario("J8", "Draft show displays media URL", j8)
