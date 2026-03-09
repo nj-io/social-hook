@@ -1,5 +1,26 @@
 """Section registry for E2E test suite."""
 
+# What fixture each section needs to run standalone.
+# None = no fixture needed (self-contained or creates its own state).
+FIXTURE_REQUIREMENTS = {
+    "A": None,  # A1 creates project; A2-A10 use seed_project()
+    "B": "base-project",
+    "C": "base-project",
+    "D": "base-project",
+    "E": "base-project",
+    "F": "base-project",
+    "G": "base-project",
+    "H": "base-project",
+    "I": None,  # Pure validation
+    "J": "base-project",
+    "K": "base-project",
+    "L": "base-project",
+    "M": "base-project",
+    "N": "base-project",
+    "Q": "base-project",
+    "R": None,  # Creates own temp repos
+}
+
 SECTION_REGISTRY = {
     "A": {"name": "Project Onboarding", "module": "onboarding", "needs_adapter": False},
     "B": {"name": "Pipeline Scenarios", "module": "pipeline", "needs_adapter": False},

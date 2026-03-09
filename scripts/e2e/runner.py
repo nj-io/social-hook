@@ -17,6 +17,7 @@ class E2ERunner:
         self.start_time = 0.0
         self._harness = None
         self._only_scenario: str | None = None  # e.g. "C13" to run only that scenario
+        self._fixture_loaded: str | None = None  # Name of auto-loaded fixture
 
     def run_scenario(
         self,
