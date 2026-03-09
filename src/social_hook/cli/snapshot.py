@@ -102,6 +102,14 @@ def restore(
         typer.echo(f"Snapshot '{name}' is not a valid SQLite database.")
         raise typer.Exit(1) from None
 
+    # Refuse to restore while bot daemon has the DB open
+    from social_hook.bot.process import is_running, read_pid
+
+    if is_running():
+        pid = read_pid()
+        typer.echo(f"Bot daemon is running (PID {pid}). Stop it first: social-hook bot stop")
+        raise typer.Exit(1)
+
     if not yes:
         confirm = typer.confirm(f"Restore snapshot '{name}'? Current DB will be backed up.")
         if not confirm:
@@ -143,6 +151,14 @@ def reset(
     from social_hook.filesystem import get_db_path
 
     json_output = ctx.obj.get("json", False) if ctx.obj else False
+
+    # Refuse to reset while bot daemon has the DB open
+    from social_hook.bot.process import is_running, read_pid
+
+    if is_running():
+        pid = read_pid()
+        typer.echo(f"Bot daemon is running (PID {pid}). Stop it first: social-hook bot stop")
+        raise typer.Exit(1)
 
     if not yes:
         confirm = typer.confirm("Reset database? Current DB will be backed up.")
