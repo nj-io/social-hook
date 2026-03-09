@@ -168,7 +168,7 @@ def run(harness, runner):
         set_audience_introduced(harness.conn, harness.project_id, False)
         return "Flag operations: OK"
 
-    runner.run_scenario("A8", "Verify audience_introduced flag operations", a8)
+    runner.run_scenario("A8", "Verify audience_introduced flag operations", a8, isolate=True)
 
     # A9: Project summary freshness
     def a9():

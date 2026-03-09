@@ -395,6 +395,9 @@ class E2EHarness:
         self.conn.execute(
             "DELETE FROM milestone_summaries WHERE project_id = ?", (self.project_id,)
         )
+        self.conn.execute(
+            "UPDATE projects SET audience_introduced = 0 WHERE id = ?", (self.project_id,)
+        )
         self.conn.commit()
 
 
