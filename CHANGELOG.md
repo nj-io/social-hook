@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.4.0...social-hook-v0.5.0) (2026-03-10)
+
+
+### Features
+
+* snapshots, decision rewind, cross-post references, and E2E overhaul ([#22](https://github.com/nj-io/social-hook/issues/22)) ([5a5d710](https://github.com/nj-io/social-hook/commit/5a5d7109565a7a7e2cb02a78a0f23f8caab6b379))
+
 ## [0.4.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.3.0...social-hook-v0.4.0) (2026-03-09)
 
 
