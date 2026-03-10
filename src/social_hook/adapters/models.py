@@ -1,6 +1,7 @@
 """Result dataclasses for adapter operations."""
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 
 @dataclass
@@ -29,3 +30,20 @@ class MediaResult:
     success: bool
     file_path: str | None = None
     error: str | None = None
+
+
+class ReferenceType(Enum):
+    """Type of cross-post reference."""
+
+    REPLY = "reply"
+    QUOTE = "quote"
+    LINK = "link"
+
+
+@dataclass
+class PostReference:
+    """Reference to an existing post on a platform."""
+
+    external_id: str
+    external_url: str
+    reference_type: ReferenceType

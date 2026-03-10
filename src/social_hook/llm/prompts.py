@@ -227,10 +227,20 @@ def assemble_evaluator_prompt(
     sections.append(f"- Audience introduced: {project_context.audience_introduced}")
 
     if project_context.active_arcs:
-        arc_summaries = ", ".join(
-            f"{a.theme} ({a.post_count} posts)" for a in project_context.active_arcs
-        )
-        sections.append(f"- Active arcs: [{arc_summaries}]")
+        sections.append("### Active Arcs")
+        for a in project_context.active_arcs:
+            sections.append(
+                f"- [id={a.id}] {a.theme} ({a.post_count} posts, "
+                f"last post {_relative_time(a.last_post_at)})"
+            )
+            # Show recent posts in this arc so evaluator can reference them
+            arc_post_list = project_context.arc_posts.get(a.id, [])
+            for p in arc_post_list:
+                url_part = f", {p.external_url}" if p.external_url else ""
+                sections.append(
+                    f"  - {p.platform} [id={p.id}]: {p.content[:500]}... "
+                    f"({_relative_time(p.posted_at)}{url_part})"
+                )
 
     if project_context.pending_drafts:
         cap = getattr(config, "pending_drafts_cap", 10)
@@ -326,7 +336,7 @@ def assemble_evaluator_prompt(
             url_part = f", {p.external_url}" if p.external_url else ""
             time_ago = _relative_time(p.posted_at)
             sections.append(
-                f"- {p.platform} [id={p.id}]: {p.content[:80]}... ({time_ago}{url_part})"
+                f"- {p.platform} [id={p.id}]: {p.content[:500]}... ({time_ago}{url_part})"
             )
 
     # Project summary
@@ -429,6 +439,7 @@ def assemble_drafter_prompt(
     config: Optional["ContextConfig"] = None,
     media_config: Optional["MediaGenerationConfig"] = None,
     media_guidance: dict[str, "MediaToolGuidance"] | None = None,
+    referenced_posts: list | None = None,
 ) -> str:
     """Assemble full drafter system prompt with context.
 
@@ -601,6 +612,21 @@ def assemble_drafter_prompt(
                 sections.append(
                     f"- [id={p.id}] [{p.platform}]{url_part}: {p.content[:arc_char_limit]}"
                 )
+
+    # Referenced posts (evaluator-identified relevant previous posts)
+    if referenced_posts:
+        sections.append("\n---\n## Referenced Posts")
+        sections.append(
+            "The evaluator identified these previous posts as relevant. Reference them naturally."
+        )
+        ref_char_limit = getattr(config, "arc_context_chars", 500) if config else 500
+        for p in referenced_posts:
+            url_part = f" (url: {p.external_url})" if getattr(p, "external_url", None) else ""
+            time_ago = _relative_time(getattr(p, "posted_at", None))
+            content_preview = getattr(p, "content", "")[:ref_char_limit]
+            sections.append(
+                f'- [{getattr(p, "platform", "?")}]{url_part}: "{content_preview}" ({time_ago})'
+            )
 
     # Recent posts
     if recent_posts:
@@ -852,6 +878,13 @@ def assemble_evaluator_context(
     lifecycle = db.get_lifecycle(project_id)
     active_arcs = db.get_active_arcs(project_id)
 
+    # Fetch recent posts per arc so evaluator can reference them
+    arc_posts: dict[str, list] = {}
+    for arc in active_arcs:
+        posts = db.get_arc_posts(arc.id)
+        if posts:
+            arc_posts[arc.id] = posts[:3]  # Last 3 posts per arc
+
     debt = db.get_narrative_debt(project_id)
     narrative_debt = debt.debt_counter if debt else 0
 
@@ -903,6 +936,7 @@ def assemble_evaluator_context(
         context_notes=context_notes,
         session_narratives=session_narratives,
         held_decisions=held_decisions,
+        arc_posts=arc_posts,
     )
 
 

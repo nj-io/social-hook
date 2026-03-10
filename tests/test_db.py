@@ -22,6 +22,7 @@ from social_hook.db import (
     get_milestone_summaries,
     get_narrative_debt,
     get_pending_drafts,
+    get_posts_by_ids,
     get_project,
     get_project_by_origin,
     get_project_by_path,
@@ -130,9 +131,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 16."""
+        """Check schema version returns 17."""
         version = get_schema_version(temp_db)
-        assert version == 16
+        assert version == 17
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent.
@@ -1612,3 +1613,149 @@ class TestImportOperations:
     def test_insert_decisions_batch_empty(self, temp_db):
         """insert_decisions_batch with empty list returns 0."""
         assert insert_decisions_batch(temp_db, []) == 0
+
+
+class TestDecisionReferencePosts:
+    """Tests for reference_posts field on decisions."""
+
+    def test_insert_decision_with_reference_posts(self, temp_db):
+        """Decision with reference_posts persists through insert → get."""
+        project = Project(
+            id=generate_id("project"),
+            name="test-project",
+            repo_path="/tmp/test",
+        )
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="References previous posts",
+            reference_posts=["post_abc", "post_def"],
+        )
+        insert_decision(temp_db, decision)
+
+        decisions = get_recent_decisions(temp_db, project.id)
+        assert len(decisions) == 1
+        assert decisions[0].reference_posts == ["post_abc", "post_def"]
+
+    def test_insert_decision_without_reference_posts(self, temp_db):
+        """Decision without reference_posts stores None."""
+        project = Project(
+            id=generate_id("project"),
+            name="test-project",
+            repo_path="/tmp/test",
+        )
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="No references",
+        )
+        insert_decision(temp_db, decision)
+
+        decisions = get_recent_decisions(temp_db, project.id)
+        assert len(decisions) == 1
+        assert decisions[0].reference_posts is None
+
+
+class TestGetPostsByIds:
+    """Tests for get_posts_by_ids helper."""
+
+    def test_get_posts_by_ids_empty(self, temp_db):
+        """get_posts_by_ids with empty list returns empty list."""
+        assert get_posts_by_ids(temp_db, []) == []
+
+    def test_get_posts_by_ids_found(self, temp_db):
+        """get_posts_by_ids returns matching posts."""
+        project = Project(
+            id=generate_id("project"),
+            name="test-project",
+            repo_path="/tmp/test",
+        )
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Test",
+        )
+        insert_decision(temp_db, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test post",
+        )
+        insert_draft(temp_db, draft)
+
+        post1 = Post(
+            id="post_aaa",
+            draft_id=draft.id,
+            project_id=project.id,
+            platform="x",
+            content="First post",
+        )
+        post2 = Post(
+            id="post_bbb",
+            draft_id=draft.id,
+            project_id=project.id,
+            platform="x",
+            content="Second post",
+        )
+        insert_post(temp_db, post1)
+        insert_post(temp_db, post2)
+
+        results = get_posts_by_ids(temp_db, ["post_aaa", "post_bbb"])
+        assert len(results) == 2
+        ids = {p.id for p in results}
+        assert ids == {"post_aaa", "post_bbb"}
+
+    def test_get_posts_by_ids_partial_match(self, temp_db):
+        """get_posts_by_ids returns only existing posts."""
+        project = Project(
+            id=generate_id("project"),
+            name="test-project",
+            repo_path="/tmp/test",
+        )
+        insert_project(temp_db, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Test",
+        )
+        insert_decision(temp_db, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test post",
+        )
+        insert_draft(temp_db, draft)
+
+        post = Post(
+            id="post_ccc",
+            draft_id=draft.id,
+            project_id=project.id,
+            platform="x",
+            content="Only post",
+        )
+        insert_post(temp_db, post)
+
+        results = get_posts_by_ids(temp_db, ["post_ccc", "post_nonexistent"])
+        assert len(results) == 1
+        assert results[0].id == "post_ccc"

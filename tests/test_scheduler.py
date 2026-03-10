@@ -583,3 +583,189 @@ class TestPromoteDeferredDrafts:
         # promote_deferred_drafts must have been called
         mock_promote.assert_called_once()
         conn.close()
+
+
+class TestPostDraftReferencePosting:
+    """Tests for _post_draft reference posting via abstract adapter interface."""
+
+    def _setup_with_reference(self, conn, post_format="quote"):
+        """Create project, decision, draft with reference_post_id, and referenced post."""
+        from social_hook.db import operations as db_ops
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+
+        # Create a "previous" draft and post (the referenced post)
+        ref_draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Previous post",
+            status="posted",
+        )
+        insert_draft(conn, ref_draft)
+
+        from social_hook.models import Post
+
+        ref_post = Post(
+            id=generate_id("post"),
+            draft_id=ref_draft.id,
+            project_id=project.id,
+            platform="x",
+            content="Previous post",
+            external_id="ext_tweet_999",
+            external_url="https://x.com/user/status/ext_tweet_999",
+        )
+        db_ops.insert_post(conn, ref_post)
+
+        # Create the draft that references the previous post
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="New quote post",
+            status="scheduled",
+            post_format=post_format,
+            reference_post_id=ref_post.id,
+        )
+        insert_draft(conn, draft)
+
+        return project, draft, ref_post
+
+    @patch("social_hook.adapters.platform.factory.create_adapter")
+    def test_quote_uses_post_with_reference(self, mock_create_adapter, temp_dir):
+        """Quote draft calls adapter.post_with_reference() with ReferenceType.QUOTE."""
+        from social_hook.adapters.models import PostResult, ReferenceType
+        from social_hook.scheduler import _post_draft
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        project, draft, ref_post = self._setup_with_reference(conn, post_format="quote")
+
+        mock_adapter = MagicMock()
+        mock_adapter.supports_reference_type.return_value = True
+        mock_adapter.post_with_reference.return_value = PostResult(
+            success=True,
+            external_id="new_tweet_1",
+            external_url="https://x.com/u/status/new_tweet_1",
+        )
+        mock_create_adapter.return_value = mock_adapter
+
+        config = MagicMock()
+        result = _post_draft(conn, draft, config)
+
+        assert result.success is True
+        mock_adapter.post_with_reference.assert_called_once()
+        call_args = mock_adapter.post_with_reference.call_args
+        reference = call_args[0][1]
+        assert reference.reference_type == ReferenceType.QUOTE
+        assert reference.external_id == "ext_tweet_999"
+        conn.close()
+
+    @patch("social_hook.adapters.platform.factory.create_adapter")
+    def test_reply_uses_post_with_reference(self, mock_create_adapter, temp_dir):
+        """Reply draft calls adapter.post_with_reference() with ReferenceType.REPLY."""
+        from social_hook.adapters.models import PostResult, ReferenceType
+        from social_hook.scheduler import _post_draft
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        project, draft, ref_post = self._setup_with_reference(conn, post_format="reply")
+
+        mock_adapter = MagicMock()
+        mock_adapter.supports_reference_type.return_value = True
+        mock_adapter.post_with_reference.return_value = PostResult(
+            success=True,
+            external_id="new_tweet_2",
+            external_url="https://x.com/u/status/new_tweet_2",
+        )
+        mock_create_adapter.return_value = mock_adapter
+
+        config = MagicMock()
+        result = _post_draft(conn, draft, config)
+
+        assert result.success is True
+        call_args = mock_adapter.post_with_reference.call_args
+        reference = call_args[0][1]
+        assert reference.reference_type == ReferenceType.REPLY
+        conn.close()
+
+    @patch("social_hook.adapters.platform.factory.create_adapter")
+    def test_unsupported_ref_type_falls_back_to_link(self, mock_create_adapter, temp_dir):
+        """When adapter doesn't support QUOTE, falls back to LINK."""
+        from social_hook.adapters.models import PostResult, ReferenceType
+        from social_hook.scheduler import _post_draft
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        project, draft, ref_post = self._setup_with_reference(conn, post_format="quote")
+
+        mock_adapter = MagicMock()
+        mock_adapter.supports_reference_type.return_value = False  # Doesn't support QUOTE
+        mock_adapter.post_with_reference.return_value = PostResult(
+            success=True, external_id="new_post_3"
+        )
+        mock_create_adapter.return_value = mock_adapter
+
+        config = MagicMock()
+        result = _post_draft(conn, draft, config)
+
+        assert result.success is True
+        call_args = mock_adapter.post_with_reference.call_args
+        reference = call_args[0][1]
+        assert reference.reference_type == ReferenceType.LINK
+        conn.close()
+
+    @patch("social_hook.adapters.platform.factory.create_adapter")
+    def test_non_reference_draft_uses_standard_post(self, mock_create_adapter, temp_dir):
+        """Draft without reference_post_id uses standard adapter.post()."""
+        from social_hook.adapters.models import PostResult
+        from social_hook.scheduler import _post_draft
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Standard post",
+            status="scheduled",
+        )
+        insert_draft(conn, draft)
+
+        mock_adapter = MagicMock()
+        mock_adapter.post.return_value = PostResult(success=True, external_id="standard_1")
+        mock_create_adapter.return_value = mock_adapter
+
+        config = MagicMock()
+        result = _post_draft(conn, draft, config)
+
+        assert result.success is True
+        # post_with_reference should NOT be called
+        mock_adapter.post_with_reference.assert_not_called()
+        # Standard post() should be called
+        mock_adapter.post.assert_called_once()
+        conn.close()

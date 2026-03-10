@@ -172,6 +172,20 @@ def draft_for_platforms(
         except Exception as e:
             logger.warning(f"Arc context assembly failed (non-fatal): {e}")
 
+    # 4c. Arc safety net: if evaluator set arc_id but not reference_posts,
+    # auto-inject the arc's latest post so the draft gets a structural link
+    _ref_post_ids = getattr(evaluation, "reference_posts", None)
+    if _arc_id and not _ref_post_ids and arc_context and arc_context.get("posts"):
+        latest_arc_post = arc_context["posts"][0]
+        _ref_post_ids = [latest_arc_post.id]
+
+    # 4d. Resolve reference posts for drafter context
+    referenced_posts = None
+    if _ref_post_ids:
+        from social_hook.db import operations as _ops
+
+        referenced_posts = _ops.get_posts_by_ids(conn, _ref_post_ids)
+
     # 5. Draft for each target platform
     results = []
     for pname, rpcfg in target_platforms.items():
@@ -187,6 +201,7 @@ def draft_for_platforms(
                 config=project_config.context if project_config else None,
                 media_config=config.media_generation,
                 media_guidance=project_config.media_guidance if project_config else None,
+                referenced_posts=referenced_posts,
             )
 
             # Override platform: LLM may return any string for unconstrained field
@@ -277,6 +292,19 @@ def draft_for_platforms(
                 if media_error and not media_paths
                 else None,
             )
+
+            # Set reference post info from evaluator (prefer same-platform for native quote)
+            if referenced_posts:
+                same_platform = [
+                    p for p in referenced_posts if p.platform == pname and p.external_id
+                ]
+                any_published = [p for p in referenced_posts if p.external_id]
+                ref_post = (same_platform or any_published or [None])[0]
+                if ref_post:
+                    draft.reference_post_id = ref_post.id
+                    if ref_post.platform == pname:
+                        draft.post_format = "quote"
+
             db.insert_draft(draft)
             db.emit_data_event(
                 "draft",

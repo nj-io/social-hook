@@ -196,6 +196,7 @@ class Decision:
     targets: dict = field(default_factory=dict)
     commit_summary: str | None = None
     consolidate_with: list[str] | None = None
+    reference_posts: list[str] | None = None
     processed: bool = False
     processed_at: datetime | None = None
     batch_id: str | None = None
@@ -244,6 +245,7 @@ class Decision:
             "targets": self.targets,
             "commit_summary": self.commit_summary,
             "consolidate_with": self.consolidate_with,
+            "reference_posts": self.reference_posts,
             "processed": self.processed,
             "processed_at": _to_iso(self.processed_at),
             "batch_id": self.batch_id,
@@ -271,6 +273,10 @@ class Decision:
         if isinstance(consolidate_with, str):
             consolidate_with = json.loads(consolidate_with)
 
+        reference_posts = d.get("reference_posts")
+        if isinstance(reference_posts, str):
+            reference_posts = json.loads(reference_posts)
+
         return cls(
             id=d["id"],
             project_id=d["project_id"],
@@ -288,6 +294,7 @@ class Decision:
             targets=targets,
             commit_summary=d.get("commit_summary"),
             consolidate_with=consolidate_with,
+            reference_posts=reference_posts,
             processed=bool(d.get("processed", False)),
             processed_at=_from_iso(d.get("processed_at")),
             batch_id=d.get("batch_id"),
@@ -296,7 +303,7 @@ class Decision:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (17 columns)."""
+        """Return tuple for INSERT (18 columns)."""
         import json
 
         return (
@@ -316,6 +323,7 @@ class Decision:
             json.dumps(self.targets),
             self.commit_summary,
             json.dumps(self.consolidate_with) if self.consolidate_with is not None else None,
+            json.dumps(self.reference_posts) if self.reference_posts is not None else None,
             self.branch,
         )
 
@@ -860,3 +868,4 @@ class ProjectContext:
     context_notes: list[dict] = field(default_factory=list)
     session_narratives: list[dict] = field(default_factory=list)
     held_decisions: list["Decision"] = field(default_factory=list)
+    arc_posts: dict[str, list["Post"]] = field(default_factory=dict)

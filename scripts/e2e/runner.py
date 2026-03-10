@@ -110,6 +110,11 @@ class E2ERunner:
                 print(
                     f"       Episode: {item['episode_type']} | Category: {item.get('post_category', 'N/A')}"
                 )
+            if "evaluation" in item:
+                print("       Evaluation:")
+                for k, v in item["evaluation"].items():
+                    if v is not None:
+                        print(f"         {k}: {v}")
             if "reasoning" in item:
                 print("       Reasoning:")
                 for line in item["reasoning"].split("\n"):

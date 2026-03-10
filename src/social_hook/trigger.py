@@ -367,6 +367,7 @@ def run_trigger(
         targets={"default": target.model_dump()},
         commit_summary=analysis.summary,
         consolidate_with=target.consolidate_with,
+        reference_posts=target.reference_posts,
         branch=current_branch,
     )
 

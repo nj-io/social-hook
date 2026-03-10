@@ -7,7 +7,7 @@ from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.drafting import DraftResult, draft_for_platforms
 from social_hook.filesystem import generate_id
-from social_hook.models import CommitInfo, Decision, Project
+from social_hook.models import CommitInfo, Decision, Draft, Post, Project
 from social_hook.scheduling import ScheduleResult
 
 # =============================================================================
@@ -908,4 +908,311 @@ class TestDeferredDraftCreation:
         assert results == []
         mock_send_notif.assert_called_once()
         assert mock_send_notif.call_args[1]["dry_run"] is True
+        conn.close()
+
+
+class TestDraftReferencePostResolution:
+    """Tests for reference post resolution and reference_post_id on Draft."""
+
+    @patch("social_hook.drafting.resolve_platform")
+    @patch("social_hook.drafting.passes_content_filter", return_value=True)
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    def test_reference_posts_resolved_and_set_on_draft(
+        self,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
+    ):
+        """When evaluation has reference_posts with a valid published post,
+        the draft gets reference_post_id set and drafter gets referenced_posts."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        # Insert a decision so foreign key constraint is satisfied
+        decision_id = generate_id("decision")
+        decision = Decision(
+            id=decision_id,
+            project_id=project.id,
+            commit_hash="abc123def456",
+            decision="draft",
+            reasoning="test",
+        )
+        ops.insert_decision(conn, decision)
+
+        # Insert a published post that the evaluation references
+        ref_draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision_id,
+            platform="x",
+            content="Previous post",
+            status="posted",
+        )
+        ops.insert_draft(conn, ref_draft)
+        ref_post = Post(
+            id=generate_id("post"),
+            draft_id=ref_draft.id,
+            project_id=project.id,
+            platform="x",
+            content="Previous post",
+            external_id="tweet_123",
+            external_url="https://x.com/user/status/tweet_123",
+        )
+        ops.insert_post(conn, ref_post)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=False)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+
+        resolved = MagicMock()
+        resolved.filter = "all"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        mock_resolve.return_value = resolved
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Referencing previous post"
+        draft_result_mock.reasoning = "Continues the thread"
+        draft_result_mock.platform = "x"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=True,
+            day_reason="weekday",
+            time_reason="optimal hour",
+            deferred=False,
+        )
+
+        # Build evaluation with reference_posts pointing to our post
+        eval_with_refs = _make_evaluation()
+        eval_with_refs.reference_posts = [ref_post.id]
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision_id,
+                evaluation=eval_with_refs,
+                context=_make_context(project),
+                commit=_make_commit(),
+                project_config=None,
+                dry_run=False,
+            )
+
+        assert len(results) == 1
+        draft = results[0].draft
+
+        # reference_post_id should be set to the referenced post
+        assert draft.reference_post_id == ref_post.id
+
+        # Same platform = quote format
+        assert draft.post_format == "quote"
+
+        # Drafter should have received referenced_posts
+        call_kwargs = mock_drafter_instance.create_draft.call_args
+        ref_posts_arg = call_kwargs[1]["referenced_posts"]
+        assert ref_posts_arg is not None
+        assert len(ref_posts_arg) == 1
+        assert ref_posts_arg[0].id == ref_post.id
+
+        conn.close()
+
+    @patch("social_hook.drafting.resolve_platform")
+    @patch("social_hook.drafting.passes_content_filter", return_value=True)
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    def test_no_reference_posts_leaves_draft_unchanged(
+        self,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
+    ):
+        """When evaluation has no reference_posts, draft has no reference_post_id."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=True)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+
+        resolved = MagicMock()
+        resolved.filter = "all"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        mock_resolve.return_value = resolved
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Normal post"
+        draft_result_mock.reasoning = "Standalone"
+        draft_result_mock.platform = "x"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=True,
+            day_reason="weekday",
+            time_reason="optimal hour",
+            deferred=False,
+        )
+
+        eval_no_refs = _make_evaluation()
+        eval_no_refs.reference_posts = None
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-001",
+                evaluation=eval_no_refs,
+                context=_make_context(project),
+                commit=_make_commit(),
+                project_config=None,
+            )
+
+        assert len(results) == 1
+        assert results[0].draft.reference_post_id is None
+        assert results[0].draft.post_format is None
+
+        # Drafter should have received referenced_posts=None
+        call_kwargs = mock_drafter_instance.create_draft.call_args
+        assert call_kwargs[1]["referenced_posts"] is None
+
+        conn.close()
+
+    @patch("social_hook.drafting.resolve_platform")
+    @patch("social_hook.drafting.passes_content_filter", return_value=True)
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    def test_cross_platform_reference_no_quote_format(
+        self,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
+    ):
+        """When reference post is on a different platform, post_format stays None (LINK fallback)."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        decision_id = generate_id("decision")
+        decision = Decision(
+            id=decision_id,
+            project_id=project.id,
+            commit_hash="cross123plat456",
+            decision="draft",
+            reasoning="test",
+        )
+        ops.insert_decision(conn, decision)
+
+        # Reference post is on linkedin, but we're drafting for x
+        ref_draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision_id,
+            platform="linkedin",
+            content="Previous linkedin post",
+            status="posted",
+        )
+        ops.insert_draft(conn, ref_draft)
+        ref_post = Post(
+            id=generate_id("post"),
+            draft_id=ref_draft.id,
+            project_id=project.id,
+            platform="linkedin",
+            content="Previous linkedin post",
+            external_id="urn:li:share:123",
+            external_url="https://linkedin.com/feed/update/urn:li:share:123",
+        )
+        ops.insert_post(conn, ref_post)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=False)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+
+        resolved = MagicMock()
+        resolved.filter = "all"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        mock_resolve.return_value = resolved
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Cross-platform reference"
+        draft_result_mock.reasoning = "References linkedin post"
+        draft_result_mock.platform = "x"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=True,
+            day_reason="weekday",
+            time_reason="optimal hour",
+            deferred=False,
+        )
+
+        eval_with_refs = _make_evaluation()
+        eval_with_refs.reference_posts = [ref_post.id]
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision_id,
+                evaluation=eval_with_refs,
+                context=_make_context(project),
+                commit=_make_commit(),
+                project_config=None,
+                dry_run=False,
+            )
+
+        assert len(results) == 1
+        draft = results[0].draft
+
+        # reference_post_id should be set
+        assert draft.reference_post_id == ref_post.id
+        # Cross-platform: post_format should NOT be "quote" (LINK fallback in scheduler)
+        assert draft.post_format is None
+
         conn.close()

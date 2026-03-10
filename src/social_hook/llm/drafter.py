@@ -38,6 +38,7 @@ class Drafter:
         platform_config: Optional["ResolvedPlatformConfig"] = None,
         media_config: Optional["MediaGenerationConfig"] = None,
         media_guidance: dict[str, "MediaToolGuidance"] | None = None,
+        referenced_posts: list | None = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit.
 
@@ -72,6 +73,7 @@ class Drafter:
             config=config,
             media_config=media_config,
             media_guidance=media_guidance,
+            referenced_posts=referenced_posts,
         )
 
         # Build narrative-aware user message
