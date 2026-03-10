@@ -131,6 +131,7 @@ def draft(
             target_platform_names=target_platform_names,
             dry_run=dry_run,
             verbose=verbose,
+            skip_content_filter=True,
         )
 
         if not results:
@@ -247,6 +248,7 @@ def consolidate(
             project_config=project_config,
             dry_run=dry_run,
             verbose=verbose,
+            skip_content_filter=True,
         )
 
         if not results:

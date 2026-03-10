@@ -2,8 +2,16 @@
 
 import time
 import traceback
+from pathlib import Path
 
 from e2e.constants import rate_limit_cooldown
+
+
+def file_link(path: str) -> str:
+    """Return an OSC 8 clickable file:// hyperlink for terminal emulators."""
+    p = Path(path)
+    uri = p.as_uri() if p.is_absolute() else Path.cwd().joinpath(p).as_uri()
+    return f"\033]8;;{uri}\033\\{p.name}\033]8;;\033\\"
 
 
 class E2ERunner:
@@ -132,6 +140,13 @@ class E2ERunner:
                         print(f"         {line}")
                 else:
                     print(f'       Response: "{resp}"')
+            if "media_paths" in item and item["media_paths"]:
+                print("       Media:")
+                for mp in item["media_paths"]:
+                    if Path(mp).exists():
+                        print(f"         {file_link(mp)}")
+                    else:
+                        print(f"         {mp} (cleaned up)")
             if "review_question" in item:
                 print(f"       ^ {item['review_question']}")
 

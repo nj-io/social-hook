@@ -36,6 +36,7 @@ def draft_for_platforms(
     target_platform_names: list[str] | None = None,
     dry_run: bool = False,
     verbose: bool = False,
+    skip_content_filter: bool = False,
 ) -> list[DraftResult]:
     """Run the per-platform drafting pipeline: resolve, filter, draft, insert.
 
@@ -56,6 +57,8 @@ def draft_for_platforms(
             None means all enabled platforms.
         dry_run: If True, skip DB writes and real API calls.
         verbose: If True, print detailed output.
+        skip_content_filter: If True, bypass episode_type content filtering.
+            Used when the user explicitly requests a draft (manual override).
 
     Returns:
         List of DraftResult for each successfully created draft.
@@ -101,25 +104,37 @@ def draft_for_platforms(
             print("No enabled platforms — using built-in preview platform.")
 
     if not resolved_platforms:
+        logger.info("No matching platforms. Skipping draft creation.")
         if verbose:
             print("No matching platforms. Skipping draft creation.")
         return []
 
-    # 2. Apply content filter per platform
+    # 2. Apply content filter per platform (skipped for manual overrides)
     ep_type = getattr(evaluation, "episode_type", None)
     if ep_type is not None and hasattr(ep_type, "value"):
         ep_type = ep_type.value
-    target_platforms = {}
-    for pname, rpcfg in resolved_platforms.items():
-        if passes_content_filter(rpcfg.filter, ep_type):
-            target_platforms[pname] = rpcfg
-        elif verbose:
-            print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
+    if skip_content_filter:
+        target_platforms = dict(resolved_platforms)
+    else:
+        target_platforms = {}
+        for pname, rpcfg in resolved_platforms.items():
+            if passes_content_filter(rpcfg.filter, ep_type):
+                target_platforms[pname] = rpcfg
+            else:
+                logger.info(
+                    "Platform %s: filtered (filter=%s, episode_type=%s)",
+                    pname,
+                    rpcfg.filter,
+                    ep_type,
+                )
+                if verbose:
+                    print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
 
-    if not target_platforms:
-        if verbose:
-            print("All platforms filtered this commit.")
-        return []
+        if not target_platforms:
+            logger.info("All platforms filtered out (episode_type=%s). No drafts created.", ep_type)
+            if verbose:
+                print("All platforms filtered this commit.")
+            return []
 
     # 3. Create drafter client
     from social_hook.errors import ConfigError
