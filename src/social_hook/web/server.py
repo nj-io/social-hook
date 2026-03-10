@@ -1075,6 +1075,7 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit_timestamp=commit.timestamp,
                 parent_timestamp=commit.parent_timestamp,
             )
+            db.emit_data_event("pipeline", "drafting", decision.commit_hash[:8], project.id)
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1286,6 +1287,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 project.id,
                 project_config,
             )
+            db.emit_data_event("pipeline", "drafting", anchor.commit_hash[:8], project.id)
             results = draft_for_platforms(
                 config,
                 conn2,

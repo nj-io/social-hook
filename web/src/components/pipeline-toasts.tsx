@@ -36,8 +36,10 @@ export function PipelineToasts() {
   // Listen for pipeline/draft events
   useEffect(() => {
     const handler = (envelope: GatewayEnvelope) => {
-      if (envelope.type !== "data_change") return;
-      const data = envelope.payload as unknown as DataChangeEvent;
+      // Server wraps web_events as: { type: "event", payload: { type: "data_change", data: {...} } }
+      const inner = envelope.payload as Record<string, unknown>;
+      if (envelope.type !== "event" || inner?.type !== "data_change") return;
+      const data = inner.data as DataChangeEvent;
 
       if (data.entity === "pipeline") {
         if (data.action === "evaluating") {
