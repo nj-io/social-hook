@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.4.0...social-hook-v0.5.0) (2026-03-10)
+
+
+### Features
+
+* ✨ cross-post references with abstract adapter interface ([#19](https://github.com/nj-io/social-hook/issues/19)) ([7793518](https://github.com/nj-io/social-hook/commit/779351846b3f8cc8352ed0d1b4c340099d15e23d))
+* ✨ snapshot CLI, E2E test suite split, and E2E snapshot integration ([#14](https://github.com/nj-io/social-hook/issues/14)) ([5896820](https://github.com/nj-io/social-hook/commit/589682082c5f4216214369570e5d29b34683385c))
+* snapshots, decision rewind, cross-post references, and E2E overhaul ([40403a5](https://github.com/nj-io/social-hook/commit/40403a5c4bbf840766d954fea799a5d6d5c7c9e1))
+
+
+### Bug Fixes
+
+* 🐛 media generation fixes, CLI improvements, and E2E coverage ([87a6eef](https://github.com/nj-io/social-hook/commit/87a6eef4de5e01d6f170f1303f26917e740cadd8))
+* 🐛 snapshot restore WAL corruption and flaky bot status test ([cc1ada1](https://github.com/nj-io/social-hook/commit/cc1ada10de237e7d665bfcf849bf67c1863f6cca))
+* 🐛 snapshot restore/reset refuse while bot daemon is running ([095b374](https://github.com/nj-io/social-hook/commit/095b37421a8cbfe3fea32f185b19222ef943d918))
+* 🐛 stale background task recovery + manual draft content filter bypass ([#16](https://github.com/nj-io/social-hook/issues/16)) ([8690d5d](https://github.com/nj-io/social-hook/commit/8690d5d9a418052483e1db14f144cebf7488c92b))
+* resolve lint and typecheck CI failures ([1937cf9](https://github.com/nj-io/social-hook/commit/1937cf9398b455c4a2a1aa013f2bb485e2c351d1))
+
 ## [0.4.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.3.0...social-hook-v0.4.0) (2026-03-09)
 
 
