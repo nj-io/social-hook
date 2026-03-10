@@ -36,6 +36,7 @@ def draft_for_platforms(
     target_platform_names: list[str] | None = None,
     dry_run: bool = False,
     verbose: bool = False,
+    skip_content_filter: bool = False,
 ) -> list[DraftResult]:
     """Run the per-platform drafting pipeline: resolve, filter, draft, insert.
 
@@ -105,13 +106,13 @@ def draft_for_platforms(
             print("No matching platforms. Skipping draft creation.")
         return []
 
-    # 2. Apply content filter per platform
+    # 2. Apply content filter per platform (skip when manually triggered)
     ep_type = getattr(evaluation, "episode_type", None)
     if ep_type is not None and hasattr(ep_type, "value"):
         ep_type = ep_type.value
     target_platforms = {}
     for pname, rpcfg in resolved_platforms.items():
-        if passes_content_filter(rpcfg.filter, ep_type):
+        if skip_content_filter or passes_content_filter(rpcfg.filter, ep_type):
             target_platforms[pname] = rpcfg
         elif verbose:
             print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
