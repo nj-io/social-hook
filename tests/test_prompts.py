@@ -205,6 +205,7 @@ class TestAssembleEvaluatorPrompt:
     def test_includes_active_arcs(self, sample_project_context, sample_commit):
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "Building auth" in result
+        assert "[id=arc_1]" in result
 
     def test_includes_commit_info(self, sample_project_context, sample_commit):
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
@@ -1174,3 +1175,117 @@ class TestSchedulingStateSection:
         )
         assert "Your action (draft/hold/skip) applies to all platforms" in result
         assert "Your decision applies globally" not in result
+
+
+class TestReferencedPostsSection:
+    """Drafter prompt: Referenced Posts section."""
+
+    def test_referenced_posts_included(self, sample_project_context, sample_commit):
+        """Referenced posts appear in drafter prompt when provided."""
+        from datetime import datetime, timezone
+
+        ref_post = Post(
+            id="post_ref1",
+            draft_id="draft_1",
+            project_id="proj_test1",
+            platform="x",
+            content="Built the auth module with OAuth2 support",
+            external_url="https://x.com/user/123",
+            posted_at=datetime(2026, 3, 6, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        decision = Decision(
+            id="dec_1",
+            project_id="proj_test1",
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Test",
+        )
+        result = assemble_drafter_prompt(
+            "# Drafter",
+            decision,
+            sample_project_context,
+            [],
+            sample_commit,
+            referenced_posts=[ref_post],
+        )
+        assert "## Referenced Posts" in result
+        assert "evaluator identified these previous posts as relevant" in result
+        assert "Built the auth module" in result
+        assert "https://x.com/user/123" in result
+
+    def test_referenced_posts_omitted_when_none(self, sample_project_context, sample_commit):
+        """Referenced Posts section is not included when None."""
+        decision = Decision(
+            id="dec_1",
+            project_id="proj_test1",
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Test",
+        )
+        result = assemble_drafter_prompt(
+            "# Drafter",
+            decision,
+            sample_project_context,
+            [],
+            sample_commit,
+            referenced_posts=None,
+        )
+        assert "## Referenced Posts" not in result
+
+    def test_referenced_posts_omitted_when_empty(self, sample_project_context, sample_commit):
+        """Referenced Posts section is not included when empty list."""
+        decision = Decision(
+            id="dec_1",
+            project_id="proj_test1",
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Test",
+        )
+        result = assemble_drafter_prompt(
+            "# Drafter",
+            decision,
+            sample_project_context,
+            [],
+            sample_commit,
+            referenced_posts=[],
+        )
+        assert "## Referenced Posts" not in result
+
+    def test_referenced_posts_before_recent_posts(self, sample_project_context, sample_commit):
+        """Referenced Posts section appears before Recent Posts section."""
+        from datetime import datetime, timezone
+
+        ref_post = Post(
+            id="post_ref1",
+            draft_id="draft_1",
+            project_id="proj_test1",
+            platform="x",
+            content="A referenced post",
+            posted_at=datetime(2026, 3, 6, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        recent_post = Post(
+            id="post_recent",
+            draft_id="draft_2",
+            project_id="proj_test1",
+            platform="x",
+            content="A recent post",
+            posted_at=datetime(2026, 3, 8, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        decision = Decision(
+            id="dec_1",
+            project_id="proj_test1",
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Test",
+        )
+        result = assemble_drafter_prompt(
+            "# Drafter",
+            decision,
+            sample_project_context,
+            [recent_post],
+            sample_commit,
+            referenced_posts=[ref_post],
+        )
+        ref_idx = result.index("## Referenced Posts")
+        recent_idx = result.index("## Recent Posts")
+        assert ref_idx < recent_idx

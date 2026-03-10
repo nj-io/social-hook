@@ -6,7 +6,13 @@ Source: WS3_ADAPTERS.md T1 (lines 118-128), T6 (lines 168-174)
 import pytest
 
 from social_hook.adapters.media.base import MediaAdapter
-from social_hook.adapters.models import MediaResult, PostResult, ThreadResult
+from social_hook.adapters.models import (
+    MediaResult,
+    PostReference,
+    PostResult,
+    ReferenceType,
+    ThreadResult,
+)
 from social_hook.adapters.platform.base import PlatformAdapter
 
 # =============================================================================
@@ -247,3 +253,106 @@ class TestDataclasses:
         mr = MediaResult(success=False, error="API timeout")
         assert mr.success is False
         assert mr.file_path is None
+
+
+# =============================================================================
+# ReferenceType and PostReference
+# =============================================================================
+
+
+class TestReferenceType:
+    """ReferenceType enum values."""
+
+    def test_reply_value(self):
+        assert ReferenceType.REPLY.value == "reply"
+
+    def test_quote_value(self):
+        assert ReferenceType.QUOTE.value == "quote"
+
+    def test_link_value(self):
+        assert ReferenceType.LINK.value == "link"
+
+    def test_all_members(self):
+        assert set(ReferenceType) == {ReferenceType.REPLY, ReferenceType.QUOTE, ReferenceType.LINK}
+
+
+class TestPostReference:
+    """PostReference dataclass fields."""
+
+    def test_fields(self):
+        ref = PostReference(
+            external_id="123",
+            external_url="https://x.com/user/status/123",
+            reference_type=ReferenceType.QUOTE,
+        )
+        assert ref.external_id == "123"
+        assert ref.external_url == "https://x.com/user/status/123"
+        assert ref.reference_type == ReferenceType.QUOTE
+
+
+# =============================================================================
+# PlatformAdapter base class - LINK fallback
+# =============================================================================
+
+
+class TestPlatformAdapterLinkFallback:
+    """PlatformAdapter.post_with_reference() default LINK fallback."""
+
+    def _make_adapter(self):
+        """Create a minimal concrete adapter for testing base class behavior."""
+
+        class MinimalAdapter(PlatformAdapter):
+            def __init__(self):
+                self.last_post_content = None
+
+            def post(self, content, media_paths=None, dry_run=False):
+                self.last_post_content = content
+                return PostResult(success=True, external_id="base_post")
+
+            def post_thread(self, tweets, dry_run=False):
+                return ThreadResult(success=True)
+
+            def delete(self, external_id):
+                return True
+
+            def get_rate_limit_status(self):
+                return {}
+
+            def validate(self):
+                return (True, "test")
+
+        return MinimalAdapter()
+
+    def test_link_fallback_appends_url(self):
+        """Base class appends external_url to content for any reference type."""
+        adapter = self._make_adapter()
+        ref = PostReference(
+            external_id="abc",
+            external_url="https://example.com/post/abc",
+            reference_type=ReferenceType.LINK,
+        )
+        result = adapter.post_with_reference("Check this", ref)
+
+        assert result.success is True
+        assert "https://example.com/post/abc" in adapter.last_post_content
+        assert "Check this" in adapter.last_post_content
+
+    def test_link_fallback_handles_empty_url(self):
+        """Base class handles empty external_url gracefully."""
+        adapter = self._make_adapter()
+        ref = PostReference(
+            external_id="abc",
+            external_url="",
+            reference_type=ReferenceType.LINK,
+        )
+        result = adapter.post_with_reference("No URL", ref)
+
+        assert result.success is True
+        assert adapter.last_post_content == "No URL"
+
+    def test_base_supports_only_link(self):
+        """Base class only supports LINK reference type."""
+        adapter = self._make_adapter()
+        assert adapter.supports_reference_type(ReferenceType.LINK) is True
+        assert adapter.supports_reference_type(ReferenceType.REPLY) is False
+        assert adapter.supports_reference_type(ReferenceType.QUOTE) is False

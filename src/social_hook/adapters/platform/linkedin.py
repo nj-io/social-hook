@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 import requests
 
 from social_hook.adapters.dry_run import dry_run_post_result
-from social_hook.adapters.models import PostResult, ThreadResult
+from social_hook.adapters.models import PostReference, PostResult, ReferenceType, ThreadResult
 from social_hook.adapters.platform.base import PlatformAdapter
 from social_hook.adapters.rate_limit import RateLimitState, handle_rate_limit
 from social_hook.errors import ErrorType, classify_error
@@ -182,39 +182,7 @@ class LinkedInAdapter(PlatformAdapter):
             "isReshareDisabledByAuthor": False,
         }
 
-        try:
-            response = requests.post(
-                LINKEDIN_POSTS_URL,
-                headers=self._post_headers(),
-                json=body,
-                timeout=30,
-            )
-
-            if response.status_code in (200, 201):
-                # Post ID is in x-restli-id header
-                post_id = response.headers.get("x-restli-id", "")
-                return PostResult(
-                    success=True,
-                    external_id=post_id,
-                    external_url=f"https://www.linkedin.com/feed/update/{post_id}",
-                )
-            else:
-                error_type = classify_error(response)
-                if error_type == ErrorType.RATE_LIMITED:
-                    self.rate_limit_state = handle_rate_limit(
-                        response, self.rate_limit_state, platform="linkedin"
-                    )
-
-                error_detail = response.json().get("message", response.text)
-                logger.warning(f"LinkedIn post failed: {error_type} - {error_detail}")
-                return PostResult(
-                    success=False,
-                    error=f"{error_type.value}: {error_detail}",
-                )
-
-        except requests.RequestException as e:
-            logger.error(f"LinkedIn post request failed: {e}")
-            return PostResult(success=False, error=f"Request failed: {e}")
+        return self._post_to_api(body, "post")
 
     def post_thread(self, tweets: list[dict], dry_run: bool = False) -> ThreadResult:
         """LinkedIn does not support threads.
@@ -231,6 +199,64 @@ class LinkedInAdapter(PlatformAdapter):
             tweet_results=[],
             error="LinkedIn does not support threads",
         )
+
+    def post_with_reference(
+        self,
+        content: str,
+        reference: PostReference,
+        media_paths: list[str] | None = None,
+        dry_run: bool = False,
+    ) -> PostResult:
+        """Post content with a reference to an existing post.
+
+        Args:
+            content: Post text
+            reference: Reference to an existing post
+            media_paths: Optional list of media file paths to attach
+            dry_run: If True, return simulated success without API call
+
+        Returns:
+            PostResult with external_id and external_url on success
+        """
+        if dry_run:
+            return dry_run_post_result()
+
+        if reference.reference_type == ReferenceType.QUOTE and reference.external_id.startswith(
+            "urn:li:"
+        ):
+            # Native reshare for LinkedIn-to-LinkedIn references
+            if not self.author_urn:
+                valid, info = self.validate()
+                if not valid:
+                    return PostResult(success=False, error=f"Failed to get author URN: {info}")
+
+            body = {
+                "author": self.author_urn,
+                "commentary": content,
+                "visibility": "PUBLIC",
+                "distribution": {
+                    "feedDistribution": "MAIN_FEED",
+                    "targetEntities": [],
+                    "thirdPartyDistributionChannels": [],
+                },
+                "lifecycleState": "PUBLISHED",
+                "isReshareDisabledByAuthor": False,
+                "reshareContext": {
+                    "parent": reference.external_id,
+                },
+            }
+
+            return self._post_to_api(body, "reshare")
+
+        # TODO: LinkedIn REPLY via Comments API — excluded this iteration
+        # REPLY, cross-platform QUOTE, and LINK all embed the URL in commentary
+        if reference.external_url:
+            content = f"{content}\n\n{reference.external_url}"
+        return self.post(content, media_paths, dry_run)
+
+    def supports_reference_type(self, ref_type: ReferenceType) -> bool:
+        """LinkedIn supports QUOTE (reshare) and LINK, but not REPLY."""
+        return ref_type in (ReferenceType.QUOTE, ReferenceType.LINK)
 
     def delete(self, external_id: str) -> bool:
         """Delete a post by ID.
@@ -266,6 +292,40 @@ class LinkedInAdapter(PlatformAdapter):
                 else None
             ),
         }
+
+    def _post_to_api(self, body: dict, operation: str = "post") -> PostResult:
+        """Post a body to the LinkedIn Posts API and return a PostResult."""
+        try:
+            response = requests.post(
+                LINKEDIN_POSTS_URL,
+                headers=self._post_headers(),
+                json=body,
+                timeout=30,
+            )
+
+            if response.status_code in (200, 201):
+                post_id = response.headers.get("x-restli-id", "")
+                return PostResult(
+                    success=True,
+                    external_id=post_id,
+                    external_url=f"https://www.linkedin.com/feed/update/{post_id}",
+                )
+            else:
+                error_type = classify_error(response)
+                if error_type == ErrorType.RATE_LIMITED:
+                    self.rate_limit_state = handle_rate_limit(
+                        response, self.rate_limit_state, platform="linkedin"
+                    )
+                error_detail = response.json().get("message", response.text)
+                logger.warning(f"LinkedIn {operation} failed: {error_type} - {error_detail}")
+                return PostResult(
+                    success=False,
+                    error=f"{error_type.value}: {error_detail}",
+                )
+
+        except requests.RequestException as e:
+            logger.error(f"LinkedIn {operation} request failed: {e}")
+            return PostResult(success=False, error=f"Request failed: {e}")
 
     def _auth_headers(self) -> dict:
         """Get authorization headers for API requests."""

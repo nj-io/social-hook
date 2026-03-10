@@ -407,8 +407,8 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
         INSERT INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            branch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )
@@ -515,8 +515,8 @@ def insert_decisions_batch(
         INSERT OR IGNORE INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            branch, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [d.to_row() + (created_at,) for d, created_at in decisions],
     )
@@ -1069,6 +1069,18 @@ def get_all_recent_posts(conn: sqlite3.Connection, since_datetime: str) -> list[
         (since_datetime,),
     ).fetchall()
     return [Post.from_dict(dict(row)) for row in rows]
+
+
+def get_posts_by_ids(conn: sqlite3.Connection, post_ids: list[str]) -> list[Post]:
+    """Get multiple posts by their IDs."""
+    if not post_ids:
+        return []
+    placeholders = ",".join("?" * len(post_ids))
+    rows = conn.execute(
+        f"SELECT * FROM posts WHERE id IN ({placeholders})",
+        post_ids,
+    ).fetchall()
+    return [Post.from_dict(dict(r)) for r in rows]
 
 
 # =============================================================================

@@ -33,6 +33,7 @@ SECTION_MAP = {
     "web": "N",
     "queue": "Q",
     "hooks": "R",
+    "crosspost": "S",
 }
 
 # Provider presets: maps --provider flag to model configs

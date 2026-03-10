@@ -6,7 +6,7 @@ import requests
 from requests_oauthlib import OAuth1
 
 from social_hook.adapters.dry_run import dry_run_post_result, dry_run_thread_result
-from social_hook.adapters.models import PostResult, ThreadResult
+from social_hook.adapters.models import PostReference, PostResult, ReferenceType, ThreadResult
 from social_hook.adapters.platform.base import PlatformAdapter
 from social_hook.adapters.rate_limit import RateLimitState, handle_rate_limit
 from social_hook.config.yaml import TIER_CHAR_LIMITS, VALID_TIERS
@@ -121,12 +121,7 @@ class XAdapter(PlatformAdapter):
 
         # Build request body
         body: dict = {"text": content}
-
-        # Upload and attach media if present
-        if media_paths:
-            media_ids = self._upload_media(media_paths)
-            if media_ids:
-                body["media"] = {"media_ids": media_ids}
+        self._attach_media(body, media_paths)
 
         return self._post_tweet(body)
 
@@ -179,11 +174,7 @@ class XAdapter(PlatformAdapter):
             if reply_to_id:
                 body["reply"] = {"in_reply_to_tweet_id": reply_to_id}
 
-            # Upload and attach media if present
-            if media_paths:
-                media_ids = self._upload_media(media_paths)
-                if media_ids:
-                    body["media"] = {"media_ids": media_ids}
+            self._attach_media(body, media_paths)
 
             result = self._post_tweet(body)
             results.append(result)
@@ -200,13 +191,50 @@ class XAdapter(PlatformAdapter):
 
         return ThreadResult(success=True, tweet_results=results)
 
-    def post_raw(self, body: dict) -> PostResult:
-        """Post with a pre-built request body.
+    def post_with_reference(
+        self,
+        content: str,
+        reference: PostReference,
+        media_paths: list[str] | None = None,
+        dry_run: bool = False,
+    ) -> PostResult:
+        """Post content with a reference to an existing tweet.
 
-        Used for quote tweets and replies where the caller builds
-        the full request body including quote_tweet_id or reply fields.
+        Args:
+            content: Tweet text
+            reference: Reference to an existing post
+            media_paths: Optional list of media file paths to attach
+            dry_run: If True, return simulated success without API call
+
+        Returns:
+            PostResult with external_id and external_url on success
         """
-        return self._post_tweet(body)
+        if reference.reference_type == ReferenceType.QUOTE:
+            if dry_run:
+                return dry_run_post_result()
+            body: dict = {"text": content, "quote_tweet_id": reference.external_id}
+            self._attach_media(body, media_paths)
+            return self._post_tweet(body)
+
+        if reference.reference_type == ReferenceType.REPLY:
+            if dry_run:
+                return dry_run_post_result()
+            body = {
+                "text": content,
+                "reply": {"in_reply_to_tweet_id": reference.external_id},
+            }
+            self._attach_media(body, media_paths)
+            return self._post_tweet(body)
+
+        # LINK fallback: append URL to content
+        content_with_url = (
+            f"{content}\n\n{reference.external_url}" if reference.external_url else content
+        )
+        return self.post(content_with_url, media_paths, dry_run)
+
+    def supports_reference_type(self, ref_type: ReferenceType) -> bool:
+        """X supports all reference types natively."""
+        return ref_type in (ReferenceType.REPLY, ReferenceType.QUOTE, ReferenceType.LINK)
 
     def delete(self, external_id: str) -> bool:
         """Delete a tweet by ID.
@@ -242,6 +270,13 @@ class XAdapter(PlatformAdapter):
                 else None
             ),
         }
+
+    def _attach_media(self, body: dict, media_paths: list[str] | None) -> None:
+        """Upload and attach media to a tweet body (in-place)."""
+        if media_paths:
+            media_ids = self._upload_media(media_paths)
+            if media_ids:
+                body["media"] = {"media_ids": media_ids}
 
     def _post_tweet(self, body: dict) -> PostResult:
         """Internal method to post a tweet.

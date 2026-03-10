@@ -110,6 +110,7 @@ def draft(
             post_category=decision.post_category,
             arc_id=decision.arc_id,
             media_tool=decision.media_tool,
+            reference_posts=getattr(decision, "reference_posts", None),
             include_project_docs=True,
             commit_summary=decision.commit_summary,
         )
@@ -230,7 +231,9 @@ def consolidate(
             post_category=anchor.post_category,
             arc_id=anchor.arc_id,
             media_tool=anchor.media_tool,
+            reference_posts=getattr(anchor, "reference_posts", None),
             include_project_docs=True,
+            commit_summary=anchor.commit_summary,
         )
 
         # Draft for platforms

@@ -1399,6 +1399,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         post_category=anchor.post_category,
         arc_id=anchor.arc_id,
         media_tool=anchor.media_tool,
+        reference_posts=anchor.reference_posts,
         include_project_docs=True,
         commit_summary=anchor.commit_summary,
     )
