@@ -1194,6 +1194,55 @@ async def api_retrigger_decision(decision_id: str):
     return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
 
+@app.post("/api/decisions/{decision_id}/rewind")
+async def api_rewind_decision(decision_id: str, body: dict[str, Any] = Body(default={})):
+    """Rewind a decision: keep the evaluation but delete all downstream artifacts.
+
+    Body:
+        force: bool (default false) - allow rewind even if drafts are posted
+    """
+    import shutil
+    import sqlite3 as sqlite3_mod
+
+    force = body.get("force", False)
+    conn = _get_conn()
+    try:
+        decision = ops.get_decision(conn, decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="Decision not found")
+
+        # Auto-snapshot before rewind (safety net)
+        backup_name = "_pre_rewind"
+        try:
+            from social_hook.filesystem import get_base_path, get_db_path
+
+            db_path = get_db_path()
+            snap_dir = get_base_path() / "snapshots"
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            snap_conn = sqlite3_mod.connect(str(db_path))
+            snap_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            snap_conn.close()
+            shutil.copy2(str(db_path), str(snap_dir / f"{backup_name}.db"))
+        except Exception:
+            backup_name = None
+
+        try:
+            result = ops.rewind_decision(conn, decision_id, force=force)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+        if result is None:
+            raise HTTPException(status_code=500, detail="Rewind failed")
+
+        ops.emit_data_event(conn, "decision", "rewound", decision_id, decision.project_id)
+        resp = {"status": "rewound", **result}
+        if backup_name:
+            resp["backup"] = backup_name
+        return resp
+    finally:
+        conn.close()
+
+
 @app.get("/api/platforms/enabled")
 async def api_enabled_platforms():
     """Return all enabled platforms with their config."""
