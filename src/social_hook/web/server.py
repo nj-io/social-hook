@@ -34,6 +34,10 @@ from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
 
 logger = logging.getLogger(__name__)
 
+# Background task staleness thresholds
+_STALE_TASK_TIMEOUT_SECONDS = 600  # 10 min; longest expected task is ~5 min (LLM subprocess)
+_STALE_CHECK_INTERVAL_TICKS = 60  # every 60 bridge-loop ticks (60 × 0.5s = 30s)
+
 # ---------------------------------------------------------------------------
 # WebSocket gateway
 # ---------------------------------------------------------------------------
@@ -45,7 +49,9 @@ _hub = GatewayHub()
 async def lifespan(app_instance: FastAPI):
     # Ensure DB schema exists before any endpoint or bridge loop runs.
     # Safe on existing DBs (CREATE TABLE IF NOT EXISTS), required on fresh installs.
-    init_database(get_db_path())
+    db_path = get_db_path()
+    init_database(db_path)
+    _cleanup_stale_tasks(db_path)
     task = asyncio.create_task(_event_bridge_loop())
     yield
     task.cancel()
@@ -133,6 +139,78 @@ def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(str(get_db_path()))
     conn.row_factory = sqlite3.Row
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Stale background task cleanup
+# ---------------------------------------------------------------------------
+
+
+def _cleanup_stale_tasks(db_path: Path) -> int:
+    """Mark any 'running' tasks as 'failed' on server startup.
+
+    After a restart, daemon threads from the previous process are dead,
+    so any task still marked 'running' will never complete.
+    No data events are emitted — no WebSocket clients exist at startup.
+
+    Returns the number of tasks cleaned up.
+    """
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.execute(
+            "UPDATE background_tasks SET status = 'failed',"
+            " error = 'Interrupted by server restart',"
+            " updated_at = datetime('now')"
+            " WHERE status = 'running'"
+        )
+        conn.commit()
+        count = cursor.rowcount
+        if count:
+            logger.info("Marked %d stale background task(s) as failed on startup", count)
+        return count
+    finally:
+        conn.close()
+
+
+def _expire_hung_tasks(conn: sqlite3.Connection) -> int:
+    """Mark tasks running longer than the timeout as failed.
+
+    Uses BEGIN IMMEDIATE to acquire a write lock before SELECT, preventing
+    a race where a worker thread completes a task between SELECT and UPDATE.
+    This is safe because bridge_conn is otherwise SELECT-only in the event
+    bridge loop — no other DML will conflict with the explicit transaction.
+
+    Emits data-change events for each expired task so connected frontends
+    update immediately via the useBackgroundTasks WebSocket listener.
+
+    Returns the number of tasks expired.
+    """
+    threshold = f"-{_STALE_TASK_TIMEOUT_SECONDS} seconds"
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            "SELECT id, project_id FROM background_tasks"
+            " WHERE status = 'running' AND created_at < datetime('now', ?)",
+            (threshold,),
+        ).fetchall()
+        if rows:
+            conn.execute(
+                "UPDATE background_tasks SET status = 'failed',"
+                " error = ?, updated_at = datetime('now')"
+                " WHERE status = 'running' AND created_at < datetime('now', ?)",
+                (f"Timed out after {_STALE_TASK_TIMEOUT_SECONDS} seconds", threshold),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.debug("Failed to expire hung tasks", exc_info=True)
+        return 0
+    for r in rows:
+        ops.emit_data_event(conn, "task", "failed", r["id"], r["project_id"])
+    if rows:
+        logger.info("Expired %d hung background task(s)", len(rows))
+    return len(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -550,8 +628,12 @@ async def _event_bridge_loop():
     try:
         row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
         last_id = row[0] if row else 0
+        tick_count = 0
         while True:
             await asyncio.sleep(0.5)
+            tick_count += 1
+            if tick_count % _STALE_CHECK_INTERVAL_TICKS == 0:
+                _expire_hung_tasks(bridge_conn)
             if _hub.connection_count == 0:
                 row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
                 last_id = row[0] if row else 0
@@ -1087,6 +1169,7 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform] if platform else None,
+                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
@@ -1298,6 +1381,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 context=context,
                 commit=commit,
                 project_config=project_config,
+                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
