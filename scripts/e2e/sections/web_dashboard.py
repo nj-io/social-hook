@@ -321,3 +321,93 @@ def run(harness, runner):
         return f"Served {len(resp.content)} bytes, content-type={content_type}"
 
     runner.run_scenario("N9", "Media file serving endpoint", n9)
+
+    # N10-N12: Synthetic event tests (no LLM calls)
+    # Wrapped in snapshot_rollback to prevent events leaking into later scenarios.
+
+    from scripts.e2e.helpers.events import emit_fake_pipeline_run
+    from scripts.e2e.helpers.snapshots import snapshot_rollback
+
+    # N10: CLI events --no-follow
+    def n10():
+        from typer.testing import CliRunner
+
+        from social_hook.cli import app
+
+        cli_runner = CliRunner()
+
+        with snapshot_rollback(harness):
+            emit_fake_pipeline_run(harness.conn, harness.project_id, "n10test1")
+
+            result = cli_runner.invoke(app, ["events", "--since", "0", "--no-follow"])
+            assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+            assert "pipeline" in result.output, f"Missing 'pipeline' in: {result.output}"
+            assert "draft" in result.output, f"Missing 'draft' in: {result.output}"
+
+            # Entity filter
+            result2 = cli_runner.invoke(
+                app, ["events", "--since", "0", "--no-follow", "--entity", "draft"]
+            )
+            assert result2.exit_code == 0
+            for line in result2.output.strip().splitlines():
+                assert "draft" in line.lower(), f"Filter leak: {line}"
+
+        return "CLI events output verified with entity filter"
+
+    runner.run_scenario("N10", "CLI events --no-follow", n10)
+
+    # N11: CLI events --json output
+    def n11():
+        import json
+
+        from typer.testing import CliRunner
+
+        from social_hook.cli import app
+
+        cli_runner = CliRunner()
+
+        with snapshot_rollback(harness):
+            emit_fake_pipeline_run(harness.conn, harness.project_id, "n11test1")
+
+            result = cli_runner.invoke(app, ["--json", "events", "--since", "0", "--no-follow"])
+            assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+
+            lines = [ln for ln in result.output.strip().splitlines() if ln.strip()]
+            assert len(lines) >= 4, f"Expected >=4 JSON lines, got {len(lines)}"
+            for line in lines:
+                data = json.loads(line)
+                assert "entity" in data, f"Missing 'entity' in: {data}"
+                assert "action" in data, f"Missing 'action' in: {data}"
+
+        return f"JSON output: {len(lines)} valid lines"
+
+    runner.run_scenario("N11", "CLI events --json output", n11)
+
+    # N12: web_events populated by synthetic pipeline
+    def n12():
+        import json
+
+        with snapshot_rollback(harness):
+            emit_fake_pipeline_run(
+                harness.conn,
+                harness.project_id,
+                "n12test1",
+                platform="linkedin",
+                content="Synthetic test content for N12",
+            )
+
+            rows = harness.conn.execute(
+                "SELECT data FROM web_events WHERE type = 'data_change' ORDER BY id DESC LIMIT 4"
+            ).fetchall()
+            assert len(rows) == 4, f"Expected 4 events, got {len(rows)}"
+
+            # Most recent is draft/created (DESC order)
+            draft_event = json.loads(rows[0]["data"])
+            assert draft_event["entity"] == "draft"
+            assert draft_event["action"] == "created"
+            assert draft_event["content"] == "Synthetic test content for N12"
+            assert draft_event["platform"] == "linkedin"
+
+        return "4 events in web_events with correct payload"
+
+    runner.run_scenario("N12", "web_events synthetic pipeline events", n12)
