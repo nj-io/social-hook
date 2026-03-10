@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from social_hook.adapters.models import PostReference, ReferenceType
 from social_hook.adapters.platform.x import XAdapter
 from social_hook.errors import ConfigError, ErrorType, classify_x_error
 
@@ -438,3 +439,115 @@ class TestClassifyXError:
             detail="Something unexpected happened.",
         )
         assert classify_x_error(resp) == ErrorType.UNKNOWN
+
+
+# =============================================================================
+# XAdapter - post_with_reference
+# =============================================================================
+
+
+class TestXAdapterPostWithReference:
+    """XAdapter.post_with_reference() for quote tweets, replies, and link fallback."""
+
+    def _make_ref(self, ref_type, ext_id="999", url="https://x.com/other/status/999"):
+        return PostReference(external_id=ext_id, external_url=url, reference_type=ref_type)
+
+    @patch("social_hook.adapters.platform.x.requests.post")
+    def test_quote_tweet_builds_correct_body(self, mock_post):
+        """QUOTE reference sends quote_tweet_id in request body."""
+        mock_post.return_value = _x_success_response("new_tweet_1")
+        adapter = XAdapter("k", "s", "t", "ts")
+        ref = self._make_ref(ReferenceType.QUOTE)
+
+        result = adapter.post_with_reference("Check this out", ref)
+
+        assert result.success is True
+        body = mock_post.call_args.kwargs["json"]
+        assert body["text"] == "Check this out"
+        assert body["quote_tweet_id"] == "999"
+        assert "reply" not in body
+
+    @patch("social_hook.adapters.platform.x.requests.post")
+    def test_reply_builds_correct_body(self, mock_post):
+        """REPLY reference sends reply.in_reply_to_tweet_id in request body."""
+        mock_post.return_value = _x_success_response("new_tweet_2")
+        adapter = XAdapter("k", "s", "t", "ts")
+        ref = self._make_ref(ReferenceType.REPLY)
+
+        result = adapter.post_with_reference("Great thread!", ref)
+
+        assert result.success is True
+        body = mock_post.call_args.kwargs["json"]
+        assert body["text"] == "Great thread!"
+        assert body["reply"]["in_reply_to_tweet_id"] == "999"
+        assert "quote_tweet_id" not in body
+
+    @patch("social_hook.adapters.platform.x.requests.post")
+    def test_link_appends_url_to_content(self, mock_post):
+        """LINK reference appends URL to content and uses post()."""
+        mock_post.return_value = _x_success_response("new_tweet_3")
+        adapter = XAdapter("k", "s", "t", "ts")
+        ref = self._make_ref(ReferenceType.LINK)
+
+        result = adapter.post_with_reference("Related post", ref)
+
+        assert result.success is True
+        body = mock_post.call_args.kwargs["json"]
+        assert "https://x.com/other/status/999" in body["text"]
+        assert "Related post" in body["text"]
+        assert "quote_tweet_id" not in body
+        assert "reply" not in body
+
+    def test_quote_dry_run_no_api_call(self):
+        """QUOTE dry_run returns success without API call."""
+        adapter = XAdapter("k", "s", "t", "ts")
+        ref = self._make_ref(ReferenceType.QUOTE)
+
+        with patch("social_hook.adapters.platform.x.requests.post") as mock_post:
+            result = adapter.post_with_reference("Quote this", ref, dry_run=True)
+            mock_post.assert_not_called()
+
+        assert result.success is True
+
+    def test_reply_dry_run_no_api_call(self):
+        """REPLY dry_run returns success without API call."""
+        adapter = XAdapter("k", "s", "t", "ts")
+        ref = self._make_ref(ReferenceType.REPLY)
+
+        with patch("social_hook.adapters.platform.x.requests.post") as mock_post:
+            result = adapter.post_with_reference("Replying", ref, dry_run=True)
+            mock_post.assert_not_called()
+
+        assert result.success is True
+
+    def test_link_dry_run_no_api_call(self):
+        """LINK dry_run returns success without API call."""
+        adapter = XAdapter("k", "s", "t", "ts")
+        ref = self._make_ref(ReferenceType.LINK)
+
+        with patch("social_hook.adapters.platform.x.requests.post") as mock_post:
+            result = adapter.post_with_reference("Link post", ref, dry_run=True)
+            mock_post.assert_not_called()
+
+        assert result.success is True
+
+
+# =============================================================================
+# XAdapter - supports_reference_type
+# =============================================================================
+
+
+class TestXAdapterSupportsReferenceType:
+    """XAdapter.supports_reference_type() returns True for all types."""
+
+    def test_supports_reply(self):
+        adapter = XAdapter("k", "s", "t", "ts")
+        assert adapter.supports_reference_type(ReferenceType.REPLY) is True
+
+    def test_supports_quote(self):
+        adapter = XAdapter("k", "s", "t", "ts")
+        assert adapter.supports_reference_type(ReferenceType.QUOTE) is True
+
+    def test_supports_link(self):
+        adapter = XAdapter("k", "s", "t", "ts")
+        assert adapter.supports_reference_type(ReferenceType.LINK) is True

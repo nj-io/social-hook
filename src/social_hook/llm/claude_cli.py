@@ -110,6 +110,8 @@ class ClaudeCliClient(LLMClient):
             "--tools",
             "",
             "--no-session-persistence",
+            "--setting-sources",
+            "local",
             "--system-prompt",
             effective_system,
         ]
@@ -211,12 +213,18 @@ class ClaudeCliClient(LLMClient):
         if self.verbose:
             turns = envelope.get("num_turns", "?")
             cost = envelope.get("total_cost_usd", 0)
+            dur_ms = envelope.get("duration_ms", 0)
+            api_ms = envelope.get("duration_api_ms", 0)
+            overhead_ms = dur_ms - api_ms if dur_ms and api_ms else 0
             in_tok = usage_data.get("input_tokens", 0)
             out_tok = usage_data.get("output_tokens", 0)
             cache_read = usage_data.get("cache_read_input_tokens", 0)
             cache_create = usage_data.get("cache_creation_input_tokens", 0)
             print(
-                f"       [claude-cli] Done: {turns} turns, ${cost:.4f}", file=sys.stderr, flush=True
+                f"       [claude-cli] Done: {turns} turns, ${cost:.4f}, "
+                f"{dur_ms / 1000:.1f}s total ({api_ms / 1000:.1f}s API + {overhead_ms / 1000:.1f}s overhead)",
+                file=sys.stderr,
+                flush=True,
             )
             print(
                 f"       [claude-cli] Tokens: in={in_tok} out={out_tok} cache_read={cache_read} cache_create={cache_create}",

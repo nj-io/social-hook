@@ -27,7 +27,12 @@ For `draft` actions, also provide:
 - **media_tool**: Suggested media type from "Available Media Tools" below, or `none`
 - **include_project_docs**: Set true when the Drafter needs project docs (introductions, launches, synthesis)
 - **consolidate_with**: IDs of held decisions to absorb into this draft
-- **reference_posts**: IDs of previous posts to reference or build upon
+- **reference_posts**: IDs of previous posts to reference or build upon. Check Post History and Active Arcs for posts with `[id=...]`. Include a post's ID here when:
+  - This commit directly extends or iterates on work from a previous post
+  - This is a deeper dive or follow-up to an earlier introduction
+  - This commit completes or resolves something mentioned in a previous post
+  - This is an arc continuation (the arc's previous posts are shown under Active Arcs)
+  This enables cross-posting features like quote tweets and reshares, connecting the narrative for the audience.
 
 For `hold` actions:
 - The commit will be saved for potential consolidation with future commits
@@ -125,7 +130,7 @@ Consider the current project state:
 - If audience hasn't been introduced, favor introductory content (set `include_project_docs: true`)
 - Vary episode types to keep the feed interesting
 - Don't post about the same topic repeatedly
-- Use `reference_posts` when building on a previous post's topic
+- **Always check Post History and Active Arcs for referencing opportunities.** If the current commit extends, deepens, or follows up on a previously published post, include that post's `id` in `reference_posts`. Common patterns: intro post → feature deep-dive, feature announcement → technical breakdown, bug report → postmortem. For arc posts, the previous arc posts are listed under Active Arcs with their IDs — reference the most relevant one.
 
 ## Summary Refresh
 
