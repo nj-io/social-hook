@@ -1168,14 +1168,8 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform] if platform else None,
-                skip_content_filter=True,
             )
-            result = {"draft_ids": [r.draft.id for r in results], "count": len(results)}
-            if not results:
-                result["warning"] = (
-                    "No drafts were created — the LLM may have failed or no platforms matched"
-                )
-            return result
+            return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
             conn2.close()
 

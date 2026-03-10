@@ -76,12 +76,8 @@ export default function ProjectDetailPage() {
   const onTaskCompleted = useCallback((task: BackgroundTask) => {
     if (task.status === "completed" && task.result) {
       if (task.type === "create_draft") {
-        const res = task.result as Record<string, unknown>;
-        const count = res.count as number | undefined;
-        const warning = res.warning as string | undefined;
-        if (warning && count === 0) {
-          setDraftResult((prev) => ({ ...prev, [task.ref_id]: { error: warning } }));
-        } else if (count != null) {
+        const count = (task.result as Record<string, unknown>).count as number | undefined;
+        if (count != null) {
           setDraftResult((prev) => ({ ...prev, [task.ref_id]: { count } }));
           setDecisions((prev) =>
             prev.map((d) =>
