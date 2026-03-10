@@ -109,7 +109,10 @@ class NanaBananaAdapter(MediaAdapter):
                     logger.warning(
                         "No image data found in Gemini response. Parts: %s",
                         [
-                            {k: (v[:50] + "...") if isinstance(v, str) and len(v) > 50 else v for k, v in p.items()}
+                            {
+                                k: (v[:50] + "...") if isinstance(v, str) and len(v) > 50 else v
+                                for k, v in p.items()
+                            }
                             for p in parts
                         ],
                     )

@@ -1,9 +1,12 @@
 """Shared drafting pipeline: platform resolution, content generation, DB insertion."""
 
+from __future__ import annotations
+
 import logging
 import re
 import sqlite3
 from dataclasses import dataclass
+from typing import Any
 
 from social_hook.config.platforms import passes_content_filter, resolve_platform
 from social_hook.config.yaml import TIER_CHAR_LIMITS
@@ -157,7 +160,7 @@ def draft_for_platforms(
     media_generated = False
 
     # 4b. Assemble arc context if this is an arc post
-    arc_context = None
+    arc_context: dict[str, Any] | None = None
     _arc_id = getattr(evaluation, "arc_id", None)
     if _arc_id:
         try:
@@ -175,9 +178,10 @@ def draft_for_platforms(
     # 4c. Arc safety net: if evaluator set arc_id but not reference_posts,
     # auto-inject the arc's latest post so the draft gets a structural link
     _ref_post_ids = getattr(evaluation, "reference_posts", None)
-    if _arc_id and not _ref_post_ids and arc_context and arc_context.get("posts"):
-        latest_arc_post = arc_context["posts"][0]
-        _ref_post_ids = [latest_arc_post.id]
+    if _arc_id and not _ref_post_ids and arc_context:
+        _arc_posts: list = arc_context.get("posts", [])
+        if _arc_posts:
+            _ref_post_ids = [_arc_posts[0].id]
 
     # 4d. Resolve reference posts for drafter context
     referenced_posts = None
@@ -299,7 +303,11 @@ def draft_for_platforms(
                     p for p in referenced_posts if p.platform == pname and p.external_id
                 ]
                 any_published = [p for p in referenced_posts if p.external_id]
-                ref_post = (same_platform or any_published or [None])[0]
+                ref_post = (
+                    same_platform[0]
+                    if same_platform
+                    else (any_published[0] if any_published else None)
+                )
                 if ref_post:
                     draft.reference_post_id = ref_post.id
                     if ref_post.platform == pname:

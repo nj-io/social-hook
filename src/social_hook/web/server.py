@@ -1295,7 +1295,7 @@ async def api_rewind_decision(decision_id: str, body: dict[str, Any] = Body(defa
             raise HTTPException(status_code=404, detail="Decision not found")
 
         # Auto-snapshot before rewind (safety net)
-        backup_name = "_pre_rewind"
+        backup_name: str | None = "_pre_rewind"
         try:
             from social_hook.filesystem import get_base_path, get_db_path
 
