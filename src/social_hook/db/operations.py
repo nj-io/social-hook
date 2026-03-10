@@ -1595,25 +1595,28 @@ def emit_data_event(
     action: str,
     entity_id: str = "",
     project_id: str = "",
+    extra: dict | None = None,
 ) -> None:
     """Write a data-change event to web_events for WebSocket broadcast.
 
     Non-fatal: failures are logged but don't interrupt the caller.
+
+    Args:
+        extra: Optional dict of additional fields merged into the payload.
+            Used to embed content preview, platform, etc. in draft events.
     """
     try:
+        payload = {
+            "entity": entity,
+            "action": action,
+            "entity_id": entity_id,
+            "project_id": project_id,
+        }
+        if extra:
+            payload.update(extra)
         conn.execute(
             "INSERT INTO web_events (type, data) VALUES (?, ?)",
-            (
-                "data_change",
-                json.dumps(
-                    {
-                        "entity": entity,
-                        "action": action,
-                        "entity_id": entity_id,
-                        "project_id": project_id,
-                    }
-                ),
-            ),
+            ("data_change", json.dumps(payload)),
         )
         conn.commit()
     except Exception:

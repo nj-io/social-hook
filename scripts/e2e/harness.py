@@ -69,7 +69,9 @@ class E2EHarness:
         # Patch HOME before any imports that use Path.home()
         self._patch_home()
 
-        db_path = self.base / "social-hook.db"
+        from social_hook.filesystem import get_db_path
+
+        db_path = get_db_path()
 
         if snapshot:
             # Load snapshot instead of fresh DB
@@ -159,18 +161,22 @@ class E2EHarness:
         """Save current DB to hidden fixture directory."""
         if not self.conn:
             return
+        from social_hook.filesystem import get_db_path
+
         dest = self._fixture_dir() / f"{name}.db"
         self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        db_path = self.base / "social-hook.db"
+        db_path = get_db_path()
         shutil.copy2(str(db_path), str(dest))
         print(f"  Fixture saved: {name} ({dest.stat().st_size / 1024:.1f} KB)")
 
     def load_fixture(self, name: str) -> bool:
         """Load a fixture DB, recover project_id. Returns False if not found."""
+        from social_hook.filesystem import get_db_path
+
         fix_path = self._fixture_dir() / f"{name}.db"
         if not fix_path.exists():
             return False
-        db_path = self.base / "social-hook.db"
+        db_path = get_db_path()
         shutil.copy2(str(fix_path), str(db_path))
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
@@ -192,10 +198,12 @@ class E2EHarness:
         snap_dir.mkdir(parents=True, exist_ok=True)
         dest = snap_dir / f"{name}.db"
 
+        from social_hook.filesystem import get_db_path
+
         # Flush WAL to ensure all data is in the main DB file
         self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
-        db_path = self.base / "social-hook.db"
+        db_path = get_db_path()
         shutil.copy2(str(db_path), str(dest))
 
         # Save metadata sidecar

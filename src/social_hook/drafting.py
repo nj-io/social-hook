@@ -278,7 +278,13 @@ def draft_for_platforms(
                 else None,
             )
             db.insert_draft(draft)
-            db.emit_data_event("draft", "created", draft.id, project.id)
+            db.emit_data_event(
+                "draft",
+                "created",
+                draft.id,
+                project.id,
+                extra={"content": draft.content[:500], "platform": pname},
+            )
 
             if thread_tweets:
                 for pos, tc in enumerate(thread_tweets):

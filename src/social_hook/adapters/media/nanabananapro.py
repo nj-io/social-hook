@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Gemini API endpoint for image generation
 GEMINI_ENDPOINT = (
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
 )
 
 
@@ -68,8 +68,7 @@ class NanaBananaAdapter(MediaAdapter):
                 }
             ],
             "generationConfig": {
-                "responseModalities": ["image", "text"],
-                "responseMimeType": "text/plain",
+                "responseModalities": ["TEXT", "IMAGE"],
             },
         }
 
@@ -106,6 +105,14 @@ class NanaBananaAdapter(MediaAdapter):
                             break
 
                 if not image_data:
+                    # Log response structure for debugging
+                    logger.warning(
+                        "No image data found in Gemini response. Parts: %s",
+                        [
+                            {k: (v[:50] + "...") if isinstance(v, str) and len(v) > 50 else v for k, v in p.items()}
+                            for p in parts
+                        ],
+                    )
                     return MediaResult(
                         success=False,
                         error="No image data in response",

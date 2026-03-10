@@ -244,6 +244,8 @@ export interface DataChangeEvent {
   action: string;
   entity_id: string;
   project_id: string;
+  content?: string;
+  platform?: string;
 }
 
 export interface Memory {
