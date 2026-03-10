@@ -282,6 +282,8 @@ def run_trigger(
     if verbose:
         print(f"Evaluating commit {commit.hash[:8]}: {commit.message}")
 
+    db.emit_data_event("pipeline", "evaluating", commit_hash[:8], project.id)
+
     # 7. Evaluate
     from social_hook.llm.evaluator import Evaluator
     from social_hook.llm.factory import create_client
@@ -365,6 +367,7 @@ def run_trigger(
         targets={"default": target.model_dump()},
         commit_summary=analysis.summary,
         consolidate_with=target.consolidate_with,
+        reference_posts=target.reference_posts,
         branch=current_branch,
     )
 
@@ -441,6 +444,7 @@ def run_trigger(
         from social_hook.compat import make_eval_compat
         from social_hook.drafting import draft_for_platforms
 
+        db.emit_data_event("pipeline", "drafting", commit_hash[:8], project.id)
         eval_compat = make_eval_compat(evaluation, decision.decision)
 
         # Duplicate intro check

@@ -265,7 +265,7 @@ class TestDecisionModel:
             reasoning="Test",
             commit_message="Add auth module",
         )
-        assert len(decision.to_row()) == 17
+        assert len(decision.to_row()) == 18
 
     def test_decision_to_dict_includes_commit_message(self):
         """Decision.to_dict() includes commit_message."""
@@ -343,11 +343,11 @@ class TestDecisionNewFields:
     """Tests for evaluator rework Decision fields."""
 
     def test_decision_to_row_column_count(self):
-        """Decision.to_row() returns 17-element tuple."""
+        """Decision.to_row() returns 18-element tuple."""
         d = Decision(
             id="test", project_id="p", commit_hash="abc", decision="draft", reasoning="test"
         )
-        assert len(d.to_row()) == 17
+        assert len(d.to_row()) == 18
 
     def test_decision_new_types_valid(self):
         """New decision types (draft, hold, skip) are accepted."""
@@ -416,6 +416,57 @@ class TestDecisionNewFields:
         assert d2.to_row()[15] is None
 
 
+class TestDecisionReferencePosts:
+    """Tests for reference_posts field on Decision."""
+
+    def test_reference_posts_roundtrip_dict(self):
+        """reference_posts round-trips through to_dict/from_dict."""
+        d = Decision(
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="draft",
+            reasoning="r",
+            reference_posts=["post_abc", "post_def"],
+        )
+        d_dict = d.to_dict()
+        assert d_dict["reference_posts"] == ["post_abc", "post_def"]
+
+        # Simulate SQLite round-trip (JSON string)
+        d_dict["reference_posts"] = '["post_abc", "post_def"]'
+        restored = Decision.from_dict(d_dict)
+        assert restored.reference_posts == ["post_abc", "post_def"]
+
+    def test_reference_posts_none(self):
+        """reference_posts defaults to None."""
+        d = Decision(id="t", project_id="p", commit_hash="c", decision="draft", reasoning="r")
+        assert d.reference_posts is None
+        assert d.to_dict()["reference_posts"] is None
+
+    def test_reference_posts_in_to_row(self):
+        """reference_posts is serialized as JSON in to_row()."""
+        d = Decision(
+            id="t",
+            project_id="p",
+            commit_hash="c",
+            decision="draft",
+            reasoning="r",
+            reference_posts=["post_abc"],
+        )
+        row = d.to_row()
+        assert row[16] == '["post_abc"]'
+
+    def test_reference_posts_none_in_to_row(self):
+        """reference_posts=None produces None in to_row()."""
+        d = Decision(id="t", project_id="p", commit_hash="c", decision="draft", reasoning="r")
+        assert d.to_row()[16] is None
+
+    def test_to_row_length_with_reference_posts(self):
+        """Decision.to_row() returns 18-element tuple."""
+        d = Decision(id="t", project_id="p", commit_hash="c", decision="draft", reasoning="r")
+        assert len(d.to_row()) == 18
+
+
 class TestDecisionImported:
     """Tests for the imported decision type and branch field."""
 
@@ -442,7 +493,7 @@ class TestDecisionImported:
         assert restored.branch == "main"
 
     def test_decision_branch_in_to_row(self):
-        """branch is the 17th element (index 16) in to_row()."""
+        """branch is the 18th element (index 17) in to_row()."""
         d = Decision(
             id="t",
             project_id="p",
@@ -452,13 +503,13 @@ class TestDecisionImported:
             branch="develop",
         )
         row = d.to_row()
-        assert row[16] == "develop"
+        assert row[17] == "develop"
 
     def test_decision_branch_none_default(self):
         """branch defaults to None."""
         d = Decision(id="t", project_id="p", commit_hash="c", decision="draft", reasoning="r")
         assert d.branch is None
-        assert d.to_row()[16] is None
+        assert d.to_row()[17] is None
 
 
 class TestDraftNewFields:

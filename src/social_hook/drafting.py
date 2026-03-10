@@ -36,6 +36,7 @@ def draft_for_platforms(
     target_platform_names: list[str] | None = None,
     dry_run: bool = False,
     verbose: bool = False,
+    skip_content_filter: bool = False,
 ) -> list[DraftResult]:
     """Run the per-platform drafting pipeline: resolve, filter, draft, insert.
 
@@ -56,6 +57,8 @@ def draft_for_platforms(
             None means all enabled platforms.
         dry_run: If True, skip DB writes and real API calls.
         verbose: If True, print detailed output.
+        skip_content_filter: If True, bypass episode_type content filtering.
+            Used when the user explicitly requests a draft (manual override).
 
     Returns:
         List of DraftResult for each successfully created draft.
@@ -101,25 +104,37 @@ def draft_for_platforms(
             print("No enabled platforms — using built-in preview platform.")
 
     if not resolved_platforms:
+        logger.info("No matching platforms. Skipping draft creation.")
         if verbose:
             print("No matching platforms. Skipping draft creation.")
         return []
 
-    # 2. Apply content filter per platform
+    # 2. Apply content filter per platform (skipped for manual overrides)
     ep_type = getattr(evaluation, "episode_type", None)
     if ep_type is not None and hasattr(ep_type, "value"):
         ep_type = ep_type.value
-    target_platforms = {}
-    for pname, rpcfg in resolved_platforms.items():
-        if passes_content_filter(rpcfg.filter, ep_type):
-            target_platforms[pname] = rpcfg
-        elif verbose:
-            print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
+    if skip_content_filter:
+        target_platforms = dict(resolved_platforms)
+    else:
+        target_platforms = {}
+        for pname, rpcfg in resolved_platforms.items():
+            if passes_content_filter(rpcfg.filter, ep_type):
+                target_platforms[pname] = rpcfg
+            else:
+                logger.info(
+                    "Platform %s: filtered (filter=%s, episode_type=%s)",
+                    pname,
+                    rpcfg.filter,
+                    ep_type,
+                )
+                if verbose:
+                    print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
 
-    if not target_platforms:
-        if verbose:
-            print("All platforms filtered this commit.")
-        return []
+        if not target_platforms:
+            logger.info("All platforms filtered out (episode_type=%s). No drafts created.", ep_type)
+            if verbose:
+                print("All platforms filtered this commit.")
+            return []
 
     # 3. Create drafter client
     from social_hook.errors import ConfigError
@@ -157,6 +172,20 @@ def draft_for_platforms(
         except Exception as e:
             logger.warning(f"Arc context assembly failed (non-fatal): {e}")
 
+    # 4c. Arc safety net: if evaluator set arc_id but not reference_posts,
+    # auto-inject the arc's latest post so the draft gets a structural link
+    _ref_post_ids = getattr(evaluation, "reference_posts", None)
+    if _arc_id and not _ref_post_ids and arc_context and arc_context.get("posts"):
+        latest_arc_post = arc_context["posts"][0]
+        _ref_post_ids = [latest_arc_post.id]
+
+    # 4d. Resolve reference posts for drafter context
+    referenced_posts = None
+    if _ref_post_ids:
+        from social_hook.db import operations as _ops
+
+        referenced_posts = _ops.get_posts_by_ids(conn, _ref_post_ids)
+
     # 5. Draft for each target platform
     results = []
     for pname, rpcfg in target_platforms.items():
@@ -172,6 +201,7 @@ def draft_for_platforms(
                 config=project_config.context if project_config else None,
                 media_config=config.media_generation,
                 media_guidance=project_config.media_guidance if project_config else None,
+                referenced_posts=referenced_posts,
             )
 
             # Override platform: LLM may return any string for unconstrained field
@@ -262,8 +292,27 @@ def draft_for_platforms(
                 if media_error and not media_paths
                 else None,
             )
+
+            # Set reference post info from evaluator (prefer same-platform for native quote)
+            if referenced_posts:
+                same_platform = [
+                    p for p in referenced_posts if p.platform == pname and p.external_id
+                ]
+                any_published = [p for p in referenced_posts if p.external_id]
+                ref_post = (same_platform or any_published or [None])[0]
+                if ref_post:
+                    draft.reference_post_id = ref_post.id
+                    if ref_post.platform == pname:
+                        draft.post_format = "quote"
+
             db.insert_draft(draft)
-            db.emit_data_event("draft", "created", draft.id, project.id)
+            db.emit_data_event(
+                "draft",
+                "created",
+                draft.id,
+                project.id,
+                extra={"content": draft.content[:500], "platform": pname},
+            )
 
             if thread_tweets:
                 for pos, tc in enumerate(thread_tweets):

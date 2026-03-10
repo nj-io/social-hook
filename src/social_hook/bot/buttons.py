@@ -564,7 +564,11 @@ def btn_media_regen(
         if result.success and result.file_path:
             old_paths = draft.media_paths
             update_draft(
-                conn, draft_id, media_paths=[result.file_path], media_spec_used=draft.media_spec
+                conn,
+                draft_id,
+                media_paths=[result.file_path],
+                media_spec_used=draft.media_spec,
+                last_error="",
             )
 
             insert_draft_change(

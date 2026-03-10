@@ -34,6 +34,10 @@ from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
 
 logger = logging.getLogger(__name__)
 
+# Background task staleness thresholds
+_STALE_TASK_TIMEOUT_SECONDS = 600  # 10 min; longest expected task is ~5 min (LLM subprocess)
+_STALE_CHECK_INTERVAL_TICKS = 60  # every 60 bridge-loop ticks (60 × 0.5s = 30s)
+
 # ---------------------------------------------------------------------------
 # WebSocket gateway
 # ---------------------------------------------------------------------------
@@ -45,7 +49,9 @@ _hub = GatewayHub()
 async def lifespan(app_instance: FastAPI):
     # Ensure DB schema exists before any endpoint or bridge loop runs.
     # Safe on existing DBs (CREATE TABLE IF NOT EXISTS), required on fresh installs.
-    init_database(get_db_path())
+    db_path = get_db_path()
+    init_database(db_path)
+    _cleanup_stale_tasks(db_path)
     task = asyncio.create_task(_event_bridge_loop())
     yield
     task.cancel()
@@ -133,6 +139,78 @@ def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(str(get_db_path()))
     conn.row_factory = sqlite3.Row
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Stale background task cleanup
+# ---------------------------------------------------------------------------
+
+
+def _cleanup_stale_tasks(db_path: Path) -> int:
+    """Mark any 'running' tasks as 'failed' on server startup.
+
+    After a restart, daemon threads from the previous process are dead,
+    so any task still marked 'running' will never complete.
+    No data events are emitted — no WebSocket clients exist at startup.
+
+    Returns the number of tasks cleaned up.
+    """
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.execute(
+            "UPDATE background_tasks SET status = 'failed',"
+            " error = 'Interrupted by server restart',"
+            " updated_at = datetime('now')"
+            " WHERE status = 'running'"
+        )
+        conn.commit()
+        count = cursor.rowcount
+        if count:
+            logger.info("Marked %d stale background task(s) as failed on startup", count)
+        return count
+    finally:
+        conn.close()
+
+
+def _expire_hung_tasks(conn: sqlite3.Connection) -> int:
+    """Mark tasks running longer than the timeout as failed.
+
+    Uses BEGIN IMMEDIATE to acquire a write lock before SELECT, preventing
+    a race where a worker thread completes a task between SELECT and UPDATE.
+    This is safe because bridge_conn is otherwise SELECT-only in the event
+    bridge loop — no other DML will conflict with the explicit transaction.
+
+    Emits data-change events for each expired task so connected frontends
+    update immediately via the useBackgroundTasks WebSocket listener.
+
+    Returns the number of tasks expired.
+    """
+    threshold = f"-{_STALE_TASK_TIMEOUT_SECONDS} seconds"
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            "SELECT id, project_id FROM background_tasks"
+            " WHERE status = 'running' AND created_at < datetime('now', ?)",
+            (threshold,),
+        ).fetchall()
+        if rows:
+            conn.execute(
+                "UPDATE background_tasks SET status = 'failed',"
+                " error = ?, updated_at = datetime('now')"
+                " WHERE status = 'running' AND created_at < datetime('now', ?)",
+                (f"Timed out after {_STALE_TASK_TIMEOUT_SECONDS} seconds", threshold),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.debug("Failed to expire hung tasks", exc_info=True)
+        return 0
+    for r in rows:
+        ops.emit_data_event(conn, "task", "failed", r["id"], r["project_id"])
+    if rows:
+        logger.info("Expired %d hung background task(s)", len(rows))
+    return len(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +422,8 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
 @app.post("/api/callback")
 async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
     """Execute a button callback via the web adapter."""
+    import asyncio
+
     from social_hook.bot.buttons import handle_callback
 
     adapter = _get_adapter(scope_id=x_session_id)
@@ -358,7 +438,9 @@ async def api_callback(body: CallbackRequest, x_session_id: str = Header("web"))
         action=body.action,
         payload=body.payload,
     )
-    handle_callback(event, adapter, config)
+    # Run in thread to avoid blocking the event loop and to allow
+    # sync libraries (e.g. Playwright) that detect a running asyncio loop.
+    await asyncio.to_thread(handle_callback, event, adapter, config)
 
     cb_conn = _get_conn()
     try:
@@ -546,8 +628,12 @@ async def _event_bridge_loop():
     try:
         row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
         last_id = row[0] if row else 0
+        tick_count = 0
         while True:
             await asyncio.sleep(0.5)
+            tick_count += 1
+            if tick_count % _STALE_CHECK_INTERVAL_TICKS == 0:
+                _expire_hung_tasks(bridge_conn)
             if _hub.connection_count == 0:
                 row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
                 last_id = row[0] if row else 0
@@ -1071,6 +1157,7 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit_timestamp=commit.timestamp,
                 parent_timestamp=commit.parent_timestamp,
             )
+            db.emit_data_event("pipeline", "drafting", decision.commit_hash[:8], project.id)
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1082,6 +1169,7 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform] if platform else None,
+                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
@@ -1189,6 +1277,55 @@ async def api_retrigger_decision(decision_id: str):
     return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
 
+@app.post("/api/decisions/{decision_id}/rewind")
+async def api_rewind_decision(decision_id: str, body: dict[str, Any] = Body(default={})):
+    """Rewind a decision: keep the evaluation but delete all downstream artifacts.
+
+    Body:
+        force: bool (default false) - allow rewind even if drafts are posted
+    """
+    import shutil
+    import sqlite3 as sqlite3_mod
+
+    force = body.get("force", False)
+    conn = _get_conn()
+    try:
+        decision = ops.get_decision(conn, decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="Decision not found")
+
+        # Auto-snapshot before rewind (safety net)
+        backup_name = "_pre_rewind"
+        try:
+            from social_hook.filesystem import get_base_path, get_db_path
+
+            db_path = get_db_path()
+            snap_dir = get_base_path() / "snapshots"
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            snap_conn = sqlite3_mod.connect(str(db_path))
+            snap_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            snap_conn.close()
+            shutil.copy2(str(db_path), str(snap_dir / f"{backup_name}.db"))
+        except Exception:
+            backup_name = None
+
+        try:
+            result = ops.rewind_decision(conn, decision_id, force=force)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+        if result is None:
+            raise HTTPException(status_code=500, detail="Rewind failed")
+
+        ops.emit_data_event(conn, "decision", "rewound", decision_id, decision.project_id)
+        resp = {"status": "rewound", **result}
+        if backup_name:
+            resp["backup"] = backup_name
+        return resp
+    finally:
+        conn.close()
+
+
 @app.get("/api/platforms/enabled")
 async def api_enabled_platforms():
     """Return all enabled platforms with their config."""
@@ -1262,6 +1399,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         post_category=anchor.post_category,
         arc_id=anchor.arc_id,
         media_tool=anchor.media_tool,
+        reference_posts=anchor.reference_posts,
         include_project_docs=True,
         commit_summary=anchor.commit_summary,
     )
@@ -1282,6 +1420,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 project.id,
                 project_config,
             )
+            db.emit_data_event("pipeline", "drafting", anchor.commit_hash[:8], project.id)
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1292,6 +1431,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 context=context,
                 commit=commit,
                 project_config=project_config,
+                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
