@@ -25,9 +25,18 @@ export function useBackgroundTasks(
   const refreshTasks = useCallback(async () => {
     try {
       const { tasks: allTasks } = await fetchTasks({ project_id: projectId });
+      // Deduplicate: keep only the newest task per ref_id.
+      // API returns ORDER BY created_at DESC, so first seen = newest.
+      const seen = new Set<string>();
+      const latestTasks: BackgroundTask[] = [];
+      for (const t of allTasks) {
+        if (seen.has(t.ref_id)) continue;
+        seen.add(t.ref_id);
+        latestTasks.push(t);
+      }
       setTasks((prev) => {
         const next = new Map(prev);
-        for (const t of allTasks) {
+        for (const t of latestTasks) {
           const existing = next.get(t.ref_id);
           // Only update if we're tracking this ref_id or it's running
           if (existing || t.status === "running") {
@@ -35,7 +44,7 @@ export function useBackgroundTasks(
           }
         }
         // Fire callback for tasks that just completed
-        for (const t of allTasks) {
+        for (const t of latestTasks) {
           const existing = prev.get(t.ref_id);
           if (existing?.status === "running" && t.status !== "running") {
             onCompletedRef.current?.(t);
