@@ -2,6 +2,8 @@
 
 import json as json_mod
 from datetime import datetime
+from pathlib import Path
+from urllib.parse import quote
 
 import typer
 
@@ -15,6 +17,18 @@ def _get_conn():
     from social_hook.filesystem import get_db_path
 
     return init_database(get_db_path())
+
+
+def _media_url(file_path: str, api_port: int = 8741) -> str | None:
+    """Build a localhost URL for a media file path."""
+    from social_hook.filesystem import get_base_path
+
+    media_dir = get_base_path() / "media-cache"
+    try:
+        rel = Path(file_path).relative_to(media_dir)
+        return f"http://localhost:{api_port}/api/media/{quote(str(rel))}"
+    except ValueError:
+        return None
 
 
 def _get_draft_or_exit(conn, draft_id: str):
@@ -546,14 +560,17 @@ def list_cmd(
             typer.echo("No drafts found.")
             return
 
-        typer.echo(f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Fmt':<8} {'Content'}")
-        typer.echo("-" * 80)
+        typer.echo(
+            f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Fmt':<8} {'Media':<7} {'Content'}"
+        )
+        typer.echo("-" * 87)
         for d in drafts:
             content_preview = d.content[:40].replace("\n", " ") if d.content else ""
             intro = " [INTRO]" if getattr(d, "is_intro", False) else ""
             fmt = d.post_format or "single"
+            media = d.media_type[:5] if d.media_type else "-"
             typer.echo(
-                f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {fmt:<8} {content_preview}{intro}"
+                f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {fmt:<8} {media:<7} {content_preview}{intro}"
             )
     finally:
         conn.close()
@@ -563,6 +580,7 @@ def list_cmd(
 def show(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to show"),
+    open_media: bool = typer.Option(False, "--open", help="Open media files in default viewer"),
 ):
     """Show full detail for a draft including media spec and change history.
 
@@ -598,6 +616,20 @@ def show(
             typer.echo(f"Media type: {draft.media_type}")
         if draft.media_paths:
             typer.echo(f"Media:      {', '.join(draft.media_paths)}")
+            for mp in draft.media_paths:
+                url = _media_url(mp)
+                if url:
+                    typer.echo(f"  View:     {url}")
+            if open_media:
+                import platform as plat
+                import subprocess
+
+                for mp in draft.media_paths:
+                    if Path(mp).exists():
+                        cmd = "open" if plat.system() == "Darwin" else "xdg-open"
+                        subprocess.Popen(
+                            [cmd, mp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                        )
         if draft.media_spec:
             typer.echo(f"Media spec: {json_mod.dumps(draft.media_spec, indent=2)}")
         if draft.last_error:

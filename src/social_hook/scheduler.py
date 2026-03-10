@@ -339,28 +339,21 @@ def _post_draft(conn, draft, config):
                 reference_post_id=draft.reference_post_id,
             )
 
-    # Handle quote/reply posting for X platform
-    if (
-        draft.platform == "x"
-        and draft.post_format in ("quote", "reply")
-        and draft.reference_post_id
-    ):
+    # Handle reference posting via abstract adapter interface
+    if draft.reference_post_id and draft.post_format in ("quote", "reply"):
         ref_post = ops.get_post(conn, draft.reference_post_id)
         if ref_post and ref_post.external_id:
-            from social_hook.adapters.platform.x import XAdapter
+            from social_hook.adapters.models import PostReference, ReferenceType
 
-            if isinstance(adapter, XAdapter):
-                if draft.post_format == "quote":
-                    return adapter.post_raw(
-                        {"text": draft.content, "quote_tweet_id": ref_post.external_id}
-                    )
-                else:  # reply
-                    return adapter.post_raw(
-                        {
-                            "text": draft.content,
-                            "reply": {"in_reply_to_tweet_id": ref_post.external_id},
-                        }
-                    )
+            ref_type = ReferenceType.QUOTE if draft.post_format == "quote" else ReferenceType.REPLY
+            if not adapter.supports_reference_type(ref_type):
+                ref_type = ReferenceType.LINK
+            reference = PostReference(
+                external_id=ref_post.external_id,
+                external_url=ref_post.external_url or "",
+                reference_type=ref_type,
+            )
+            return adapter.post_with_reference(draft.content, reference, draft.media_paths or None)
 
     # X-specific: check if this is a thread (has draft_tweets)
     if draft.platform == "x":

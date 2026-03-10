@@ -41,7 +41,7 @@ dependencies = [
 
 [project.optional-dependencies]
 media = [
-    "playwright>=1.40.0",
+    "playwright>=1.50.0",
 ]
 multi-provider = ["openai>=1.0.0"]
 slack = ["slack-bolt>=1.18.0"]

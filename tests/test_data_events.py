@@ -39,6 +39,34 @@ class TestEmitDataEvent:
         assert payload["entity_id"] == ""
         assert payload["project_id"] == ""
 
+    def test_extra_fields_merged_into_payload(self, temp_db):
+        """Extra dict fields are merged into the event payload."""
+        emit_data_event(
+            temp_db,
+            "draft",
+            "created",
+            "draft-456",
+            "proj-1",
+            extra={"content": "hello world", "platform": "x"},
+        )
+
+        row = temp_db.execute("SELECT data FROM web_events ORDER BY id DESC LIMIT 1").fetchone()
+        payload = json.loads(row[0])
+        assert payload["content"] == "hello world"
+        assert payload["platform"] == "x"
+        # Core fields still present
+        assert payload["entity"] == "draft"
+        assert payload["entity_id"] == "draft-456"
+
+    def test_extra_none_is_safe(self, temp_db):
+        """Passing extra=None does not break anything."""
+        emit_data_event(temp_db, "pipeline", "evaluating", "abc123", "p-1", extra=None)
+
+        row = temp_db.execute("SELECT data FROM web_events ORDER BY id DESC LIMIT 1").fetchone()
+        payload = json.loads(row[0])
+        assert "content" not in payload
+        assert payload["entity"] == "pipeline"
+
     def test_non_fatal_on_closed_connection(self, temp_db):
         """emit_data_event does not raise on a closed connection."""
         temp_db.close()

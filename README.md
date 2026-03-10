@@ -67,8 +67,23 @@ social-hook setup          # Interactive configuration wizard
 social-hook project list   # List registered projects
 social-hook draft list     # List pending drafts
 social-hook arc list       # List narrative arcs
+social-hook snapshot save  # Save/restore/reset DB snapshots
 social-hook test evaluate  # Test commit evaluation
 ```
+
+## E2E Testing
+
+The E2E test suite exercises full user workflows with real API calls. Entry point: `scripts/e2e_test.py`.
+
+```bash
+python scripts/e2e_test.py --provider claude-cli                     # Full suite
+python scripts/e2e_test.py --only onboarding                         # Single section
+python scripts/e2e_test.py --only A1                                 # Single scenario
+python scripts/e2e_test.py --save-snapshots --provider claude-cli    # Save DB after each section
+python scripts/e2e_test.py --only draft --snapshot after-pipeline    # Load saved state, skip A+B
+```
+
+See [E2E_TESTING.md](docs/E2E_TESTING.md) for full documentation.
 
 ## Web Dashboard
 

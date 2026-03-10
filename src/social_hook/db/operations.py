@@ -211,6 +211,9 @@ def delete_decision(conn: sqlite3.Connection, decision_id: str) -> bool:
     Cascades to: draft_changes, draft_tweets, posts, drafts for this decision.
     Returns True if the decision was deleted.
     """
+    # TODO: backport reference NULL-out from rewind_decision() — superseded_by
+    # and reference_post_id on other decisions' drafts can cause FK violations
+    # with PRAGMA foreign_keys = ON when cross-references exist.
     row = conn.execute("SELECT id FROM decisions WHERE id = ?", (decision_id,)).fetchone()
     if not row:
         return False
@@ -234,6 +237,134 @@ def delete_decision(conn: sqlite3.Connection, decision_id: str) -> bool:
     conn.execute("DELETE FROM decisions WHERE id = ?", (decision_id,))
     conn.commit()
     return True
+
+
+def rewind_decision(conn: sqlite3.Connection, decision_id: str, force: bool = False) -> dict | None:
+    """Rewind a decision to its evaluation point, removing all downstream artifacts.
+
+    Keeps the decision row but deletes drafts, draft_tweets, draft_changes,
+    and posts. Resets the decision to unprocessed state (processed=0,
+    processed_at=NULL, batch_id=NULL). Decrements the arc post_count if
+    applicable and resets audience_introduced if the only intro drafts were
+    deleted.
+
+    This function operates on decision_id and is trigger-source-agnostic — it
+    works whether the decision originated from a git commit, a plugin-injected
+    event, or a user-initiated campaign. Commit-hash-based lookup is a CLI
+    convenience layer, not part of this operation.
+
+    Args:
+        conn: Database connection.
+        decision_id: The decision to rewind.
+        force: If True, allow rewind even when drafts have been posted
+            (the content remains live on the platform — only DB rows are removed).
+
+    Returns:
+        Summary dict on success, None if decision not found.
+
+    Raises:
+        ValueError: If any draft has status='posted' and force is False.
+    """
+    decision = get_decision(conn, decision_id)
+    if not decision:
+        return None
+
+    # Fetch all drafts for this decision
+    draft_rows = conn.execute(
+        "SELECT id, status, is_intro FROM drafts WHERE decision_id = ?",
+        (decision_id,),
+    ).fetchall()
+    draft_ids = [r[0] for r in draft_rows]
+
+    # Safety gate: refuse if posted drafts exist unless forced
+    posted_statuses = [r for r in draft_rows if r[1] == "posted"]
+    if posted_statuses and not force:
+        raise ValueError(
+            f"Decision has {len(posted_statuses)} posted draft(s). "
+            "Use force=True to rewind anyway (cannot un-publish from platform)."
+        )
+
+    # Fetch post IDs being deleted (needed for reference NULL-out and count)
+    if draft_ids:
+        placeholders = ",".join("?" * len(draft_ids))
+        post_rows = conn.execute(
+            f"SELECT id FROM posts WHERE draft_id IN ({placeholders})",
+            draft_ids,
+        ).fetchall()
+        post_ids = [r[0] for r in post_rows]
+    else:
+        post_ids = []
+
+    # NULL out all references to artifacts being deleted — including same-decision
+    # drafts that may reference their own posts. Required to avoid FK violations
+    # with PRAGMA foreign_keys = ON.
+    if draft_ids:
+        placeholders_d = ",".join("?" * len(draft_ids))
+        conn.execute(
+            f"UPDATE drafts SET superseded_by = NULL WHERE superseded_by IN ({placeholders_d})",
+            draft_ids,
+        )
+    if post_ids:
+        placeholders_p = ",".join("?" * len(post_ids))
+        conn.execute(
+            f"UPDATE drafts SET reference_post_id = NULL WHERE reference_post_id IN ({placeholders_p})",
+            post_ids,
+        )
+
+    # Delete in FK dependency order
+    for did in draft_ids:
+        conn.execute("DELETE FROM draft_changes WHERE draft_id = ?", (did,))
+        conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (did,))
+
+    if draft_ids:
+        placeholders_d = ",".join("?" * len(draft_ids))
+        conn.execute(
+            f"DELETE FROM posts WHERE draft_id IN ({placeholders_d})",
+            draft_ids,
+        )
+    conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
+
+    # Decrement arc post_count (raw SQL to avoid intermediate commit from update_arc)
+    arc_decremented = False
+    if decision.arc_id and draft_ids:
+        conn.execute(
+            "UPDATE arcs SET post_count = MAX(0, post_count - 1) WHERE id = ?",
+            (decision.arc_id,),
+        )
+        arc_decremented = True
+
+    # Reset audience_introduced if deleted drafts were the only intros
+    audience_reset = False
+    intro_drafts = [r for r in draft_rows if r[2]]
+    if intro_drafts:
+        remaining = conn.execute(
+            """SELECT COUNT(*) FROM drafts
+               WHERE project_id = ? AND is_intro = 1 AND decision_id != ?""",
+            (decision.project_id, decision_id),
+        ).fetchone()[0]
+        if remaining == 0:
+            conn.execute(
+                "UPDATE projects SET audience_introduced = 0 WHERE id = ?",
+                (decision.project_id,),
+            )
+            audience_reset = True
+
+    # Reset decision to unprocessed state
+    conn.execute(
+        "UPDATE decisions SET processed = 0, processed_at = NULL, batch_id = NULL WHERE id = ?",
+        (decision_id,),
+    )
+    conn.commit()
+
+    return {
+        "decision_id": decision_id,
+        "commit_hash": decision.commit_hash,
+        "drafts_deleted": len(draft_ids),
+        "posts_deleted": len(post_ids),
+        "arc_decremented": arc_decremented,
+        "audience_reset": audience_reset,
+        "had_posted_drafts": bool(posted_statuses),
+    }
 
 
 def update_discovery_files(
@@ -276,8 +407,8 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
         INSERT INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            branch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )
@@ -288,6 +419,22 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
 def get_decision(conn: sqlite3.Connection, decision_id: str) -> Decision | None:
     """Get a decision by ID."""
     row = conn.execute("SELECT * FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+    if row:
+        return Decision.from_dict(dict(row))
+    return None
+
+
+def get_decision_by_commit(
+    conn: sqlite3.Connection, project_id: str, commit_hash: str
+) -> Decision | None:
+    """Get a decision by project and commit hash.
+
+    Leverages the UNIQUE(project_id, commit_hash) constraint.
+    """
+    row = conn.execute(
+        "SELECT * FROM decisions WHERE project_id = ? AND commit_hash = ?",
+        (project_id, commit_hash),
+    ).fetchone()
     if row:
         return Decision.from_dict(dict(row))
     return None
@@ -368,8 +515,8 @@ def insert_decisions_batch(
         INSERT OR IGNORE INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            branch, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [d.to_row() + (created_at,) for d, created_at in decisions],
     )
@@ -922,6 +1069,18 @@ def get_all_recent_posts(conn: sqlite3.Connection, since_datetime: str) -> list[
         (since_datetime,),
     ).fetchall()
     return [Post.from_dict(dict(row)) for row in rows]
+
+
+def get_posts_by_ids(conn: sqlite3.Connection, post_ids: list[str]) -> list[Post]:
+    """Get multiple posts by their IDs."""
+    if not post_ids:
+        return []
+    placeholders = ",".join("?" * len(post_ids))
+    rows = conn.execute(
+        f"SELECT * FROM posts WHERE id IN ({placeholders})",
+        post_ids,
+    ).fetchall()
+    return [Post.from_dict(dict(r)) for r in rows]
 
 
 # =============================================================================
@@ -1595,25 +1754,28 @@ def emit_data_event(
     action: str,
     entity_id: str = "",
     project_id: str = "",
+    extra: dict | None = None,
 ) -> None:
     """Write a data-change event to web_events for WebSocket broadcast.
 
     Non-fatal: failures are logged but don't interrupt the caller.
+
+    Args:
+        extra: Optional dict of additional fields merged into the payload.
+            Used to embed content preview, platform, etc. in draft events.
     """
     try:
+        payload = {
+            "entity": entity,
+            "action": action,
+            "entity_id": entity_id,
+            "project_id": project_id,
+        }
+        if extra:
+            payload.update(extra)
         conn.execute(
             "INSERT INTO web_events (type, data) VALUES (?, ?)",
-            (
-                "data_change",
-                json.dumps(
-                    {
-                        "entity": entity,
-                        "action": action,
-                        "entity_id": entity_id,
-                        "project_id": project_id,
-                    }
-                ),
-            ),
+            ("data_change", json.dumps(payload)),
         )
         conn.commit()
     except Exception:

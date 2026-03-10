@@ -2128,3 +2128,164 @@ class TestGitHookEndpoints:
         with patch("social_hook.setup.install.uninstall_git_hook", return_value=(True, "ok")):
             resp = client.post("/api/projects/unknown_proj/git-hook/uninstall")
             assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Stale background task cleanup tests
+# ---------------------------------------------------------------------------
+
+
+class TestStaleTaskCleanup:
+    """Tests for startup cleanup and periodic TTL expiration of background tasks."""
+
+    def test_startup_cleanup_marks_running_as_failed(self, tmp_env):
+        """On server start, all running tasks are marked failed."""
+        from social_hook.web.server import _cleanup_stale_tasks
+
+        db_path = tmp_env["db_path"]
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES ('t1', 'create_draft', 'ref1', 'p1', 'running',"
+            " datetime('now', '-1 hour'))"
+        )
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES ('t2', 'consolidate', 'ref2', 'p1', 'running',"
+            " datetime('now', '-5 minutes'))"
+        )
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES ('t3', 'import_commits', 'ref3', 'p1', 'completed',"
+            " datetime('now', '-2 hours'))"
+        )
+        conn.commit()
+        conn.close()
+
+        count = _cleanup_stale_tasks(db_path)
+
+        assert count == 2
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        rows = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM background_tasks")}
+        conn.close()
+
+        assert rows["t1"]["status"] == "failed"
+        assert rows["t1"]["error"] == "Interrupted by server restart"
+        assert rows["t1"]["updated_at"] is not None
+        assert rows["t2"]["status"] == "failed"
+        assert rows["t2"]["error"] == "Interrupted by server restart"
+        # Completed task should be untouched
+        assert rows["t3"]["status"] == "completed"
+
+    def test_startup_cleanup_noop_when_no_running(self, tmp_env):
+        """Cleanup is a no-op when no running tasks exist (including empty table)."""
+        from social_hook.web.server import _cleanup_stale_tasks
+
+        db_path = tmp_env["db_path"]
+
+        # Empty table
+        assert _cleanup_stale_tasks(db_path) == 0
+
+        # Only completed/failed tasks
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES ('t1', 'create_draft', 'ref1', 'p1', 'completed',"
+            " datetime('now', '-1 hour'))"
+        )
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES ('t2', 'consolidate', 'ref2', 'p1', 'failed',"
+            " datetime('now', '-30 minutes'))"
+        )
+        conn.commit()
+        conn.close()
+
+        assert _cleanup_stale_tasks(db_path) == 0
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        rows = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM background_tasks")}
+        conn.close()
+        assert rows["t1"]["status"] == "completed"
+        assert rows["t2"]["status"] == "failed"
+
+    def test_expire_hung_tasks_respects_threshold(self, tmp_env):
+        """Tasks running longer than the timeout are expired; recent ones are kept."""
+        from social_hook.web.server import _expire_hung_tasks
+
+        db_path = tmp_env["db_path"]
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        # Old task: should be expired (20 min ago, well past 10 min threshold)
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES ('old', 'create_draft', 'r1', 'p1', 'running',"
+            " datetime('now', '-20 minutes'))"
+        )
+        # Recent task: should be kept (2 min ago, within 10 min threshold)
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES ('new', 'create_draft', 'r2', 'p1', 'running',"
+            " datetime('now', '-2 minutes'))"
+        )
+        conn.commit()
+
+        count = _expire_hung_tasks(conn)
+
+        assert count == 1
+        rows = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM background_tasks")}
+        assert rows["old"]["status"] == "failed"
+        assert "Timed out" in rows["old"]["error"]
+        assert rows["old"]["updated_at"] is not None
+        assert rows["new"]["status"] == "running"
+        conn.close()
+
+    def test_expire_hung_tasks_emits_data_events(self, tmp_env):
+        """Expired tasks emit data_change events for WebSocket broadcast."""
+        from social_hook.web.server import _expire_hung_tasks
+
+        db_path = tmp_env["db_path"]
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES ('stale1', 'consolidate', 'r1', 'proj1', 'running',"
+            " datetime('now', '-1 hour'))"
+        )
+        conn.commit()
+
+        _expire_hung_tasks(conn)
+
+        events = conn.execute("SELECT * FROM web_events WHERE type = 'data_change'").fetchall()
+        assert len(events) >= 1
+        data = json.loads(events[-1]["data"])
+        assert data["entity"] == "task"
+        assert data["action"] == "failed"
+        assert data["entity_id"] == "stale1"
+        assert data["project_id"] == "proj1"
+        conn.close()
+
+    def test_expire_hung_tasks_does_not_overwrite_completed(self, tmp_env):
+        """A completed task with old created_at is not overwritten to failed."""
+        from social_hook.web.server import _expire_hung_tasks
+
+        db_path = tmp_env["db_path"]
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        # Task has old created_at but is already completed
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at,"
+            " updated_at)"
+            " VALUES ('done', 'create_draft', 'r1', 'p1', 'completed',"
+            " datetime('now', '-1 hour'), datetime('now', '-59 minutes'))"
+        )
+        conn.commit()
+
+        count = _expire_hung_tasks(conn)
+
+        assert count == 0
+        row = dict(conn.execute("SELECT * FROM background_tasks WHERE id = 'done'").fetchone())
+        assert row["status"] == "completed"
+        conn.close()

@@ -6,6 +6,7 @@ Source: WS3_ASSUMPTIONS.md A5-A6 (OAuth, endpoint)
 
 from unittest.mock import MagicMock, patch
 
+from social_hook.adapters.models import PostReference, ReferenceType
 from social_hook.adapters.platform.linkedin import (
     LinkedInAdapter,
 )
@@ -259,3 +260,136 @@ class TestLinkedInOAuthHelpers:
 
         assert result["access_token"] == "new_token"
         assert result["expires_in"] == 5184000
+
+
+# =============================================================================
+# LinkedInAdapter - post_with_reference
+# =============================================================================
+
+
+class TestLinkedInAdapterPostWithReference:
+    """LinkedInAdapter.post_with_reference() for reshares, replies, and links."""
+
+    def _make_ref(
+        self,
+        ref_type,
+        ext_id="urn:li:share:12345",
+        url="https://www.linkedin.com/feed/update/urn:li:share:12345",
+    ):
+        return PostReference(external_id=ext_id, external_url=url, reference_type=ref_type)
+
+    @patch("social_hook.adapters.platform.linkedin.requests.post")
+    @patch("social_hook.adapters.platform.linkedin.requests.get")
+    def test_quote_linkedin_reshare(self, mock_get, mock_post):
+        """QUOTE with LinkedIn URN uses reshare API with reshareContext."""
+        mock_get.return_value = _li_userinfo_response("abc123", "Test")
+        mock_post.return_value = _li_post_success_response("urn:li:share:99999")
+
+        adapter = LinkedInAdapter("token")
+        ref = self._make_ref(ReferenceType.QUOTE)
+        result = adapter.post_with_reference("Great insight!", ref)
+
+        assert result.success is True
+        assert result.external_id == "urn:li:share:99999"
+
+        body = mock_post.call_args.kwargs["json"]
+        assert body["reshareContext"]["parent"] == "urn:li:share:12345"
+        assert body["commentary"] == "Great insight!"
+        assert body["visibility"] == "PUBLIC"
+
+    @patch("social_hook.adapters.platform.linkedin.requests.post")
+    @patch("social_hook.adapters.platform.linkedin.requests.get")
+    def test_quote_cross_platform_falls_back_to_link(self, mock_get, mock_post):
+        """QUOTE with non-LinkedIn external_id falls back to LINK behavior."""
+        mock_get.return_value = _li_userinfo_response("abc123", "Test")
+        mock_post.return_value = _li_post_success_response("urn:li:share:88888")
+
+        adapter = LinkedInAdapter("token")
+        # Cross-platform reference (X tweet ID, not a LinkedIn URN)
+        ref = PostReference(
+            external_id="tweet_12345",
+            external_url="https://x.com/user/status/12345",
+            reference_type=ReferenceType.QUOTE,
+        )
+        result = adapter.post_with_reference("From X", ref)
+
+        assert result.success is True
+        # Should embed the URL in commentary, not use reshareContext
+        body = mock_post.call_args.kwargs["json"]
+        assert "reshareContext" not in body
+        assert "https://x.com/user/status/12345" in body["commentary"]
+
+    @patch("social_hook.adapters.platform.linkedin.requests.post")
+    @patch("social_hook.adapters.platform.linkedin.requests.get")
+    def test_reply_embeds_url_in_content(self, mock_get, mock_post):
+        """REPLY embeds reference URL in commentary text."""
+        mock_get.return_value = _li_userinfo_response("abc123", "Test")
+        mock_post.return_value = _li_post_success_response("urn:li:share:77777")
+
+        adapter = LinkedInAdapter("token")
+        ref = self._make_ref(ReferenceType.REPLY)
+        result = adapter.post_with_reference("Responding to this", ref)
+
+        assert result.success is True
+        body = mock_post.call_args.kwargs["json"]
+        assert "https://www.linkedin.com/feed/update/urn:li:share:12345" in body["commentary"]
+        assert "reshareContext" not in body
+
+    @patch("social_hook.adapters.platform.linkedin.requests.post")
+    @patch("social_hook.adapters.platform.linkedin.requests.get")
+    def test_link_embeds_url_in_content(self, mock_get, mock_post):
+        """LINK embeds reference URL in commentary text."""
+        mock_get.return_value = _li_userinfo_response("abc123", "Test")
+        mock_post.return_value = _li_post_success_response("urn:li:share:66666")
+
+        adapter = LinkedInAdapter("token")
+        ref = self._make_ref(ReferenceType.LINK)
+        result = adapter.post_with_reference("Check this out", ref)
+
+        assert result.success is True
+        body = mock_post.call_args.kwargs["json"]
+        assert "https://www.linkedin.com/feed/update/urn:li:share:12345" in body["commentary"]
+        assert "reshareContext" not in body
+
+    def test_dry_run_no_api_call(self):
+        """dry_run returns success without API call."""
+        adapter = LinkedInAdapter("token")
+        ref = self._make_ref(ReferenceType.QUOTE)
+
+        with patch("social_hook.adapters.platform.linkedin.requests.post") as mock_post:
+            result = adapter.post_with_reference("Test", ref, dry_run=True)
+            mock_post.assert_not_called()
+
+        assert result.success is True
+
+    def test_dry_run_link_no_api_call(self):
+        """LINK dry_run also returns success without API call."""
+        adapter = LinkedInAdapter("token")
+        ref = self._make_ref(ReferenceType.LINK)
+
+        with patch("social_hook.adapters.platform.linkedin.requests.post") as mock_post:
+            result = adapter.post_with_reference("Test", ref, dry_run=True)
+            mock_post.assert_not_called()
+
+        assert result.success is True
+
+
+# =============================================================================
+# LinkedInAdapter - supports_reference_type
+# =============================================================================
+
+
+class TestLinkedInSupportsReferenceType:
+    """LinkedInAdapter.supports_reference_type() capabilities."""
+
+    def test_supports_quote(self):
+        adapter = LinkedInAdapter("token")
+        assert adapter.supports_reference_type(ReferenceType.QUOTE) is True
+
+    def test_supports_link(self):
+        adapter = LinkedInAdapter("token")
+        assert adapter.supports_reference_type(ReferenceType.LINK) is True
+
+    def test_does_not_support_reply(self):
+        adapter = LinkedInAdapter("token")
+        assert adapter.supports_reference_type(ReferenceType.REPLY) is False
