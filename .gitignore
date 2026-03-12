@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Environment
+.env
+.env.local
+.env.*
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Internal development docs (kept locally, scrubbed from history)
+CLAUDE.md
+TODO.md
+archive/
+docs/
+
+# Claude Code internals
+.claude/
+
+# Local project config
+.social-hook/
+
+# Credentials
+credentials.json
+token.json
+*.pem
+*.key

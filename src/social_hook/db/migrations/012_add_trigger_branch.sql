@@ -1,0 +1,1 @@
+ALTER TABLE projects ADD COLUMN trigger_branch TEXT DEFAULT NULL;

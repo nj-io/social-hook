@@ -1,0 +1,69 @@
+"""Expert agent: handles escalated requests from Gatekeeper (T16)."""
+
+from typing import Any
+
+from social_hook.llm._usage_logger import log_usage
+from social_hook.llm.base import LLMClient, extract_tool_call
+from social_hook.llm.prompts import assemble_expert_prompt, load_prompt
+from social_hook.llm.schemas import ExpertResponseInput
+
+
+class Expert:
+    """Handles escalated requests requiring creative judgment.
+
+    Shares the Drafter's model and prompt template but receives
+    escalation-specific context.
+
+    Args:
+        client: ClaudeClient configured with the drafter model
+    """
+
+    def __init__(self, client: LLMClient) -> None:
+        self.client = client
+
+    def handle(
+        self,
+        draft: Any,
+        user_message: str,
+        escalation_reason: str,
+        escalation_context: str | None = None,
+        project_summary: str | None = None,
+        db: Any | None = None,
+        project_id: str | None = None,
+    ) -> ExpertResponseInput:
+        """Handle an escalated request.
+
+        Args:
+            draft: Current draft object
+            user_message: Original Telegram message that triggered escalation
+            escalation_reason: Why the Gatekeeper escalated
+            escalation_context: Additional context from Gatekeeper
+            project_summary: Pre-injected project summary
+            db: Database context for usage logging
+            project_id: Project ID for usage tracking
+
+        Returns:
+            Validated ExpertResponseInput with response
+        """
+        prompt = load_prompt("drafter")  # Expert shares Drafter's prompt
+
+        system = assemble_expert_prompt(
+            prompt,
+            draft,
+            user_message,
+            escalation_reason,
+            escalation_context,
+            project_summary,
+        )
+
+        response = self.client.complete(
+            messages=[{"role": "user", "content": user_message}],
+            tools=[ExpertResponseInput.to_tool_schema()],
+            system=system,
+        )
+        log_usage(
+            db, "expert", getattr(self.client, "full_id", "unknown"), response.usage, project_id
+        )
+
+        tool_input = extract_tool_call(response, "expert_response")
+        return ExpertResponseInput.validate(tool_input)
