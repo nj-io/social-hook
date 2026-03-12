@@ -134,6 +134,23 @@ class PlaywrightAdapter(MediaAdapter):
                 error=f"Screenshot failed: {e}",
             )
 
+    @classmethod
+    def spec_schema(cls) -> dict:
+        """Return spec schema for web screenshots."""
+        return {
+            "required": {"url": "URL to screenshot"},
+            "optional": {
+                "selector": "CSS selector for element screenshot",
+                "width": "int (default 1280)",
+                "height": "int (default 720)",
+                "full_page": "bool (default false)",
+            },
+        }
+
+    def preview_text(self, spec: dict) -> str:
+        """Return human-readable preview of the screenshot spec."""
+        return spec.get("url") or "No URL specified"
+
     def supports(self, media_type: str) -> bool:
         """Check if adapter handles this media type.
 

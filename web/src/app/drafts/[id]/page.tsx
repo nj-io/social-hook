@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchDraft } from "@/lib/api";
+import { fetchChannelsStatus, fetchDraft, generateMediaSpec, resendDraftNotification } from "@/lib/api";
 import type { Decision, Draft } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 import { DecisionBadge } from "@/components/decision-badge";
-import { MediaPreview } from "@/components/media-preview";
-import { MediaSpecEditor } from "@/components/media-spec-editor";
+import { MediaSection } from "@/components/media-section";
 import { DraftActionPanel } from "@/components/draft-action-panel";
 import { useDataEvents } from "@/lib/use-data-events";
+import { useBackgroundTasks } from "@/lib/use-background-tasks";
 
 export default function DraftDetailPage() {
   const params = useParams();
@@ -30,6 +30,33 @@ export default function DraftDetailPage() {
   }, [id]);
 
   useDataEvents(["draft"], reload);
+
+  const { trackTask, isRunning } = useBackgroundTasks(draft?.project_id ?? "");
+
+  const handleGenerateSpec = useCallback(async (draftId: string, mediaType: string) => {
+    const res = await generateMediaSpec(draftId, mediaType);
+    trackTask(res.task_id, draftId, "generate_spec");
+  }, [trackTask]);
+
+  const isGeneratingSpec = draft ? isRunning(draft.id) : false;
+
+  const [daemonRunning, setDaemonRunning] = useState(false);
+  useEffect(() => {
+    fetchChannelsStatus().then((s) => setDaemonRunning(!!s.daemon_running)).catch(() => {});
+  }, []);
+
+  const [resending, setResending] = useState(false);
+  const handleResend = useCallback(async () => {
+    if (!draft) return;
+    setResending(true);
+    try {
+      await resendDraftNotification(draft.id);
+    } catch {
+      // Silent — user can retry
+    } finally {
+      setResending(false);
+    }
+  }, [draft]);
 
   useEffect(() => {
     async function load() {
@@ -74,6 +101,15 @@ export default function DraftDetailPage() {
         <h1 className="text-2xl font-bold">Draft Detail</h1>
         <StatusBadge status={draft.status} />
         <code className="text-xs text-muted-foreground">{draft.id}</code>
+        {daemonRunning && (
+          <button
+            onClick={handleResend}
+            disabled={resending}
+            className="ml-auto rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            {resending ? "Sending..." : "Resend Notification"}
+          </button>
+        )}
       </div>
 
       {/* Meta info */}
@@ -107,27 +143,8 @@ export default function DraftDetailPage() {
         </div>
       )}
 
-      {/* Media Spec Editor */}
-      <MediaSpecEditor
-        draftId={draft.id}
-        mediaSpec={draft.media_spec ? (typeof draft.media_spec === "string" ? JSON.parse(draft.media_spec) : draft.media_spec) : {}}
-        onUpdate={reload}
-      />
-
-      {/* Media error */}
-      {draft.last_error && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive break-words whitespace-pre-wrap">
-          {draft.last_error}
-        </div>
-      )}
-
-      {/* Media (generated result) */}
-      {draft.media_paths && (
-        <div>
-          <h2 className="mb-2 text-sm font-medium text-muted-foreground">Media</h2>
-          <MediaPreview paths={draft.media_paths} />
-        </div>
-      )}
+      {/* Media section: tool selector, spec form, upload, preview */}
+      <MediaSection draft={draft} onUpdate={reload} onGenerateSpec={handleGenerateSpec} isGeneratingSpec={isGeneratingSpec} />
 
       {/* Reasoning */}
       {draft.reasoning && (

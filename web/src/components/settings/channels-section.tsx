@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ChannelConfig, ChannelsStatusResponse } from "@/lib/types";
 import { fetchChannelsStatus, testChannel, startBotDaemon, stopBotDaemon, updateEnv } from "@/lib/api";
+import { ElapsedTime, Spinner } from "@/components/async-button";
 
 interface ChannelsSectionProps {
   channels: Record<string, ChannelConfig>;
@@ -16,6 +17,7 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
   const [loading, setLoading] = useState(true);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [testStartTime, setTestStartTime] = useState<string | null>(null);
   const [daemonAction, setDaemonAction] = useState(false);
   const [tokenValue, setTokenValue] = useState("");
   const [tokenSaving, setTokenSaving] = useState(false);
@@ -51,6 +53,7 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
 
   async function handleTest() {
     setTesting(true);
+    setTestStartTime(new Date().toISOString());
     setTestResult(null);
     try {
       const res = await testChannel("telegram");
@@ -63,18 +66,32 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
       setTestResult({ success: false, message: e instanceof Error ? e.message : "Test failed" });
     } finally {
       setTesting(false);
+      setTestStartTime(null);
       setTimeout(() => setTestResult(null), 5000);
     }
   }
 
   async function handleDaemonToggle() {
     setDaemonAction(true);
+    const wasRunning = status?.daemon_running;
     try {
-      if (status?.daemon_running) {
+      if (wasRunning) {
         await stopBotDaemon();
       } else {
         await startBotDaemon();
       }
+      // Poll until the daemon state flips (the subprocess needs time to
+      // write/remove its PID file) or we time out after ~3 seconds.
+      const target = !wasRunning;
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const res = await fetchChannelsStatus();
+        if (!!res.daemon_running === target) {
+          setStatus(res);
+          return;
+        }
+      }
+      // Timed out — refresh with whatever we have
       await loadStatus();
     } catch {
       // Silently handle
@@ -217,7 +234,13 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
               disabled={testing}
               className="rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
             >
-              {testing ? "Testing..." : "Test Connection"}
+              {testing ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <Spinner className="h-3 w-3" />
+                  <span>Testing</span>
+                  {testStartTime && <ElapsedTime startTime={testStartTime} />}
+                </span>
+              ) : "Test Connection"}
             </button>
             {testResult && (
               <span

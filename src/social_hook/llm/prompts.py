@@ -990,3 +990,70 @@ def compact_by_truncation(context: str, max_tokens: int) -> str:
         history_lines.append("[...history truncated for context budget]")
 
     return "\n".join(pre_history + history_lines + post_history)
+
+
+# =============================================================================
+# Media Spec Generation
+# =============================================================================
+
+
+def assemble_spec_generation_prompt(
+    tool_name: str,
+    schema: dict,
+    draft_content: str,
+) -> str:
+    """Build a prompt asking the LLM to generate a media spec for a given tool.
+
+    Args:
+        tool_name: Media tool name (e.g. "mermaid", "ray_so")
+        schema: Tool spec schema from registry (has "required" and "optional" keys)
+        draft_content: The draft's text content to inspire the spec
+
+    Returns:
+        Complete prompt string for the LLM
+    """
+    # Build a natural-language field list instead of dumping raw schema JSON.
+    # The tool's input_schema already provides the structural schema, so the prompt
+    # adds semantic context rather than duplicating the schema in a different format.
+    fields = []
+    for field, desc in schema.get("required", {}).items():
+        fields.append(f"- {field} (required): {desc}")
+    for field, desc in schema.get("optional", {}).items():
+        fields.append(f"- {field} (optional): {desc}")
+    fields_text = "\n".join(fields)
+
+    return (
+        f"You are a media spec generator. Given a social media post and a media tool, "
+        f"produce a spec that would create a compelling visual for the post.\n\n"
+        f"## Tool: {tool_name}\n\n"
+        f"## Available Fields\n{fields_text}\n\n"
+        f"## Post Content\n{draft_content}\n\n"
+        f"## Instructions\n"
+        f"- Fill in all required fields with values appropriate for the post content.\n"
+        f"- Optionally include optional fields if they improve the result.\n"
+        f"- Be creative — the spec should produce a compelling visual that complements the post.\n"
+    )
+
+
+def build_spec_generation_tool(tool_name: str, schema: dict) -> dict:
+    """Convert a media spec_schema() dict to a tool definition for LLM calls.
+
+    The spec_schema format is {"required": {"field": "desc"}, "optional": {"field": "desc"}}.
+    This converts it to a standard tool definition with JSON Schema input_schema.
+    """
+    properties = {}
+    required = []
+    for field, desc in schema.get("required", {}).items():
+        properties[field] = {"type": "string", "description": desc}
+        required.append(field)
+    for field, desc in schema.get("optional", {}).items():
+        properties[field] = {"type": "string", "description": desc}
+    return {
+        "name": "generate_media_spec",
+        "description": f"Generate a {tool_name} media spec for the given social media post",
+        "input_schema": {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+        },
+    }

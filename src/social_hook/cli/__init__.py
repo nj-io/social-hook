@@ -384,9 +384,13 @@ def bot_start(
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run as background daemon"),
 ):
     """Start the bot daemon."""
-    from social_hook.bot.process import is_running
+    import os
 
-    if is_running():
+    from social_hook.bot.process import is_running, read_pid
+
+    # If the PID file contains our own PID, we were spawned by the
+    # parent daemon launcher (eager PID write) — proceed normally.
+    if is_running() and read_pid() != os.getpid():
         typer.echo("Bot is already running.")
         raise typer.Exit(1)
 
@@ -429,9 +433,22 @@ def bot_start(
             kwargs["start_new_session"] = True
 
         proc = sp.Popen(cmd, **kwargs)
+        log_fd.close()  # Child inherited the FD; parent doesn't need it
+        # Write PID eagerly so is_running() returns true immediately,
+        # preventing duplicate daemons from concurrent start requests.
+        # The child will overwrite with the same PID in bot.run().
+        pid_file = get_pid_file()
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(proc.pid))
         typer.echo(f"Bot started (PID {proc.pid})")
         return
     else:
+        import logging
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
         typer.echo("Bot starting (foreground mode, Ctrl+C to stop)...")
         bot.run(pid_file=get_pid_file())
 
@@ -445,6 +462,7 @@ def bot_stop():
         typer.echo("Bot is not running.")
         return
 
+    typer.echo("Stopping bot (may take up to 40s)...")
     if stop_bot():
         typer.echo("Bot stopped.")
     else:
@@ -824,6 +842,11 @@ app.add_typer(decision_app, name="decision", help="Decision management.")
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
 app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+
+from social_hook.cli.media import app as media_app
+
+# Media commands: gc
+app.add_typer(media_app, name="media", help="Media management.")
 
 from social_hook.cli.snapshot import app as snapshot_app
 

@@ -27,6 +27,15 @@ class MediaAdapter(ABC):
         """
         pass
 
+    @classmethod
+    def spec_schema(cls) -> dict:
+        """Return spec schema: {"required": {...}, "optional": {...}}."""
+        return {"required": {}, "optional": {}}
+
+    def preview_text(self, spec: dict) -> str:
+        """Return human-readable preview of what will be generated."""
+        return str(spec)
+
     @abstractmethod
     def supports(self, media_type: str) -> bool:
         """Check if adapter handles this media type.

@@ -330,11 +330,53 @@ export async function testChannel(channel: string): Promise<{ success: boolean; 
 export async function updateDraftMediaSpec(
   draftId: string,
   mediaSpec: Record<string, unknown>,
+  mediaType?: string,
 ): Promise<{ status: string }> {
+  const body: Record<string, unknown> = { media_spec: mediaSpec };
+  if (mediaType) body.media_type = mediaType;
   return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/media-spec`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_spec: mediaSpec }),
+    body: JSON.stringify(body),
+  });
+}
+
+export async function uploadDraftMedia(
+  draftId: string,
+  file: File,
+): Promise<{ status: string; media_paths: string[] }> {
+  const form = new FormData();
+  form.append("file", file);
+  const headers = new Headers();
+  headers.set("X-Session-Id", getSessionId());
+  const res = await fetch(`/api/drafts/${encodeURIComponent(draftId)}/media-upload`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Upload failed ${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+export async function generateMediaSpec(
+  draftId: string,
+  mediaType: string,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/generate-spec`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tool_name: mediaType }),
+  });
+}
+
+export async function resendDraftNotification(
+  draftId: string,
+): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/resend-notification`, {
+    method: "POST",
   });
 }
 
