@@ -252,78 +252,63 @@ class TestAssembleEvaluatorPrompt:
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit)
         assert "## Project Context" in result  # Section header still present
 
-    def test_prompt_docs_loads_files(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: prompt_docs on project causes files to be loaded into Project Documentation."""
-        import json
-
+    def test_include_readme(self, sample_project_context, sample_commit, temp_dir):
+        """T20d: include_readme=True includes README.md content."""
         repo = temp_dir / "repo"
         repo.mkdir()
         (repo / "README.md").write_text("# My Project\nA CLI tool for automation.")
         sample_project_context.project.repo_path = str(repo)
-        sample_project_context.project.prompt_docs = json.dumps(["README.md"])
 
-        config = ContextConfig()
+        config = ContextConfig(include_readme=True)
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
-        assert "## Project Documentation" in result
+        assert "## README" in result
         assert "A CLI tool for automation" in result
 
-    def test_no_prompt_docs_omits_section(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: No prompt_docs omits Project Documentation section."""
+    def test_include_readme_false_excludes(self, sample_project_context, sample_commit, temp_dir):
+        """T20d: include_readme=False omits README.md."""
         repo = temp_dir / "repo"
         repo.mkdir()
         (repo / "README.md").write_text("# My Project\nShould not appear.")
         sample_project_context.project.repo_path = str(repo)
-        sample_project_context.project.prompt_docs = None
 
-        config = ContextConfig()
+        config = ContextConfig(include_readme=False)
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
-        assert "## Project Documentation" not in result
+        assert "## README" not in result
 
-    def test_prompt_docs_multiple_files(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: prompt_docs loads multiple files into Project Documentation."""
-        import json
-
+    def test_include_claude_md(self, sample_project_context, sample_commit, temp_dir):
+        """T20d: include_claude_md=True includes CLAUDE.md content."""
         repo = temp_dir / "repo"
         repo.mkdir()
-        (repo / "README.md").write_text("# My Project\nA CLI tool for automation.")
         (repo / "CLAUDE.md").write_text("# Project Conventions\nUse snake_case.")
         sample_project_context.project.repo_path = str(repo)
-        sample_project_context.project.prompt_docs = json.dumps(["README.md", "CLAUDE.md"])
 
-        config = ContextConfig()
+        config = ContextConfig(include_claude_md=True)
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
-        assert "## Project Documentation" in result
-        assert "A CLI tool for automation" in result
+        assert "## CLAUDE.md" in result
         assert "Use snake_case" in result
 
-    def test_prompt_docs_truncates_large_files(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: Large prompt_docs content truncated to max_doc_tokens."""
-        import json
-
+    def test_max_doc_tokens_truncates(self, sample_project_context, sample_commit, temp_dir):
+        """T20d: Large docs truncated to max_doc_tokens."""
         repo = temp_dir / "repo"
         repo.mkdir()
         (repo / "README.md").write_text("# Big Doc\n" + "x" * 50000)
         sample_project_context.project.repo_path = str(repo)
-        sample_project_context.project.prompt_docs = json.dumps(["README.md"])
 
-        config = ContextConfig(max_doc_tokens=200)
+        config = ContextConfig(include_readme=True, max_doc_tokens=100)
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
-        assert "## Project Documentation" in result
+        assert "## README" in result
         assert "[...truncated]" in result
 
-    def test_prompt_docs_missing_files_no_error(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: prompt_docs pointing to nonexistent files doesn't error."""
-        import json
-
+    def test_missing_docs_no_error(self, sample_project_context, sample_commit, temp_dir):
+        """T20d: Missing README/CLAUDE.md doesn't error."""
         repo = temp_dir / "repo"
         repo.mkdir()
         sample_project_context.project.repo_path = str(repo)
-        sample_project_context.project.prompt_docs = json.dumps(["nonexistent.md", "also_missing.md"])
 
-        config = ContextConfig()
+        config = ContextConfig(include_readme=True, include_claude_md=True)
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
-        # Should not crash, and should not include the section since no files loaded
-        assert "nonexistent.md" not in result
+        assert "## README" not in result
+        assert "## CLAUDE.md" not in result
 
 
 # =============================================================================

@@ -467,7 +467,11 @@ def _handle_pending_reply(adapter, chat_id, pending, text, config):
     elif pending.type == "edit_angle":
         _save_angle(adapter, chat_id, pending.draft_id, text)
     elif pending.type == "reject_note":
-        _save_rejection_note(adapter, chat_id, pending.draft_id, text)
+        _save_rejection_note(adapter, chat_id, pending.draft_id, text, config)
+    elif pending.type == "edit_media_spec":
+        _save_media_spec(adapter, chat_id, pending.draft_id, text, config)
+    elif pending.type == "media_upload":
+        _save_media_upload(adapter, chat_id, pending.draft_id, text)
 
 
 def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
@@ -503,11 +507,22 @@ def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
         update_draft(conn, draft_id, status="scheduled", scheduled_time=text.strip())
         ops.emit_data_event(conn, "draft", "scheduled", draft_id, draft.project_id)
         _send(adapter, chat_id, f"Draft `{draft_id[:12]}` scheduled for {text.strip()}")
+        if config:
+            from social_hook.messaging.base import OutboundMessage
+            from social_hook.notifications import broadcast_notification
+
+            broadcast_notification(
+                config,
+                OutboundMessage(
+                    text=f"Draft `{draft_id[:12]}` scheduled for {text.strip()} ({draft.platform})"
+                ),
+                exclude_chat=chat_id,
+            )
     finally:
         conn.close()
 
 
-def _save_rejection_note(adapter, chat_id, draft_id, text):
+def _save_rejection_note(adapter, chat_id, draft_id, text, config=None):
     """Reject a draft with a user-provided note and save as voice memory."""
     from social_hook.db import get_draft, update_draft
     from social_hook.db import operations as ops
@@ -548,6 +563,116 @@ def _save_rejection_note(adapter, chat_id, draft_id, text):
         if cascade_msg:
             reject_msg += f"\n{cascade_msg}"
         _send(adapter, chat_id, reject_msg)
+        if config:
+            from social_hook.messaging.base import OutboundMessage
+            from social_hook.notifications import broadcast_notification
+
+            broadcast_notification(
+                config,
+                OutboundMessage(
+                    text=f"Draft `{draft_id[:12]}` rejected: {text} ({draft.platform})"
+                ),
+                exclude_chat=chat_id,
+            )
+    finally:
+        conn.close()
+
+
+def _save_media_spec(adapter, chat_id, draft_id, text, config):
+    """Parse user-provided JSON spec, update draft, and trigger generation."""
+    import json as json_mod
+
+    from social_hook.db import get_draft, update_draft
+
+    conn = _get_conn()
+    try:
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        # Parse JSON from the reply (strip markdown code blocks)
+        raw = text.strip()
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        try:
+            spec = json_mod.loads(raw)
+        except json_mod.JSONDecodeError as e:
+            _send(adapter, chat_id, f"Invalid JSON: {e}\nPlease send valid JSON.")
+            # Re-register pending reply so user can try again
+            import time as _time
+
+            from social_hook.bot.buttons import PendingReply, _pending_replies
+
+            _pending_replies[chat_id] = PendingReply(
+                type="edit_media_spec", draft_id=draft_id, timestamp=_time.time()
+            )
+            return
+
+        update_draft(conn, draft_id, media_spec=spec)
+
+        # Auto-generate via btn_media_confirm_gen flow
+        from social_hook.bot.buttons import btn_media_confirm_gen
+
+        # Close conn before calling the button handler (it opens its own)
+        conn.close()
+        conn = None
+
+        btn_media_confirm_gen(adapter, chat_id, "", draft_id, config)
+    finally:
+        if conn:
+            conn.close()
+
+
+def _save_media_upload(adapter, chat_id, draft_id, text):
+    """Handle media upload reply — text contains the file path from the adapter."""
+    import json as json_mod
+
+    from social_hook.db import get_draft, update_draft
+    from social_hook.db import operations as ops
+    from social_hook.db.operations import insert_draft_change
+    from social_hook.filesystem import generate_id
+    from social_hook.models import DraftChange
+
+    conn = _get_conn()
+    try:
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        # The text should be a file path from the adapter's file download
+        file_path = text.strip()
+        if not file_path:
+            _send(adapter, chat_id, "No file received. Send a photo or file.")
+            return
+
+        old_paths = draft.media_paths
+        update_draft(
+            conn,
+            draft_id,
+            media_paths=[file_path],
+            media_type="upload",
+        )
+
+        insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft_id,
+                field="media_paths",
+                old_value=json_mod.dumps(old_paths),
+                new_value=json_mod.dumps([file_path]),
+                changed_by="human",
+            ),
+        )
+
+        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
+        _send(adapter, chat_id, f"Media attached to `{draft_id[:12]}`.")
     finally:
         conn.close()
 

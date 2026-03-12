@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 17
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS projects (
     audience_introduced   INTEGER NOT NULL DEFAULT 0,
     paused                INTEGER NOT NULL DEFAULT 0,
     discovery_files       TEXT DEFAULT NULL,
-    prompt_docs           TEXT DEFAULT NULL,
     trigger_branch        TEXT DEFAULT NULL,
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -232,17 +231,6 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_lookup
     ON chat_messages(chat_id, created_at DESC);
-
--- File Summaries (Per-file Discovery Summaries)
-CREATE TABLE IF NOT EXISTS file_summaries (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    file_path  TEXT NOT NULL,
-    summary    TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(project_id, file_path)
-);
-CREATE INDEX IF NOT EXISTS idx_file_summaries_project ON file_summaries(project_id);
 
 -- Background Tasks (Long-running operations tracked for web UI)
 CREATE TABLE IF NOT EXISTS background_tasks (

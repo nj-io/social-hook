@@ -33,7 +33,7 @@ class WebAdapter(MessagingAdapter):
         self._write_count = 0
         self._ensure_table()
 
-    def send_message(self, chat_id: str, message: OutboundMessage) -> SendResult:
+    def _do_send_message(self, chat_id: str, message: OutboundMessage) -> SendResult:
         """Write a message event to web_events."""
         data: dict[str, Any] = {
             "chat_id": chat_id,
@@ -45,7 +45,9 @@ class WebAdapter(MessagingAdapter):
         row_id = self._insert_event("message", data)
         return SendResult(success=True, message_id=str(row_id))
 
-    def edit_message(self, chat_id: str, message_id: str, message: OutboundMessage) -> SendResult:
+    def _do_edit_message(
+        self, chat_id: str, message_id: str, message: OutboundMessage
+    ) -> SendResult:
         """Write an edit event to web_events."""
         data: dict[str, Any] = {
             "chat_id": chat_id,
@@ -64,7 +66,7 @@ class WebAdapter(MessagingAdapter):
         self._insert_event("callback_ack", data)
         return True
 
-    def send_media(
+    def _do_send_media(
         self,
         chat_id: str,
         file_path: str,

@@ -860,6 +860,9 @@ class TestInstallationEndpoints:
         assert resp.status_code == 400
 
     def test_bot_daemon_start(self, client, tmp_env):
+        import social_hook.web.server as srv
+
+        srv._bot_proc = None
         with (
             patch("social_hook.bot.process.is_running", return_value=False),
             patch("subprocess.Popen"),
@@ -868,8 +871,12 @@ class TestInstallationEndpoints:
             assert resp.status_code == 200
             data = resp.json()
             assert data["success"] is True
+        srv._bot_proc = None
 
     def test_bot_daemon_stop(self, client, tmp_env):
+        import social_hook.web.server as srv
+
+        srv._bot_proc = None
         with (
             patch("social_hook.bot.process.is_running", return_value=True),
             patch("social_hook.bot.process.stop_bot", return_value=True),
@@ -878,6 +885,7 @@ class TestInstallationEndpoints:
             assert resp.status_code == 200
             data = resp.json()
             assert data["success"] is True
+        srv._bot_proc = None
 
     def test_journey_capture_toggle_installs_hook(self, client, tmp_env):
         """Toggling journey_capture.enabled to True installs narrative hook."""
@@ -918,13 +926,48 @@ class TestInstallationEndpoints:
             assert resp.status_code == 200
             mock_uninstall.assert_called_once()
 
-    def test_bot_daemon_start_already_running(self, client, tmp_env):
-        with patch("social_hook.bot.process.is_running", return_value=True):
+    def test_bot_daemon_start_replaces_existing(self, client, tmp_env):
+        """Starting bot when one is already running stops the old one first."""
+        import social_hook.web.server as srv
+
+        srv._bot_proc = None
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        with (
+            patch("social_hook.bot.process.is_running", return_value=True),
+            patch("social_hook.bot.process.stop_bot", return_value=True) as mock_stop,
+            patch("asyncio.sleep", return_value=None),
+            patch("shutil.which", return_value="/usr/bin/social-hook"),
+            patch("subprocess.Popen", return_value=mock_proc),
+        ):
             resp = client.post("/api/installations/bot_daemon/start")
             assert resp.status_code == 200
             data = resp.json()
             assert data["success"] is True
-            assert "already running" in data["message"]
+            assert "starting" in data["message"].lower()
+            mock_stop.assert_called_once()
+        srv._bot_proc = None
+
+    def test_bot_daemon_start_writes_pid_eagerly(self, client, tmp_env):
+        """PID file is written immediately after Popen, not waiting for child."""
+        import social_hook.web.server as srv
+
+        srv._bot_proc = None
+        mock_proc = MagicMock()
+        mock_proc.pid = 99999
+        with (
+            patch("social_hook.bot.process.is_running", return_value=False),
+            patch("shutil.which", return_value="/usr/bin/social-hook"),
+            patch("subprocess.Popen", return_value=mock_proc),
+        ):
+            resp = client.post("/api/installations/bot_daemon/start")
+            assert resp.status_code == 200
+        # Verify PID was written
+        from social_hook.bot.process import get_pid_file
+
+        pid_file = get_pid_file()
+        assert pid_file.exists()
+        assert pid_file.read_text().strip() == "99999"
 
     def test_project_detail_includes_journey_capture(self, client, tmp_env):
         """Project detail response includes journey_capture_enabled."""
@@ -2289,3 +2332,122 @@ class TestStaleTaskCleanup:
         row = dict(conn.execute("SELECT * FROM background_tasks WHERE id = 'done'").fetchone())
         assert row["status"] == "completed"
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Generate-spec endpoint tests
+# ---------------------------------------------------------------------------
+
+
+def _seed_draft_with_media_type(db_path, draft_id="draft_1", project_id="proj_1"):
+    """Seed a project, decision, and draft with media_type set."""
+    conn = sqlite3.connect(str(db_path))
+    existing = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not existing:
+        conn.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            (project_id, "Test Project", "/tmp/test"),
+        )
+    dec_exists = conn.execute("SELECT id FROM decisions WHERE id = 'dec_spec'").fetchone()
+    if not dec_exists:
+        conn.execute(
+            "INSERT INTO decisions (id, project_id, commit_hash, commit_message, decision, reasoning)"
+            " VALUES ('dec_spec', ?, 'abc123', 'feat: test', 'draft', 'test')",
+            (project_id,),
+        )
+    conn.execute(
+        "INSERT INTO drafts (id, project_id, decision_id, platform, content, media_type)"
+        " VALUES (?, ?, 'dec_spec', 'x', 'Test draft about CI pipelines', 'mermaid')",
+        (draft_id, project_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _make_tool_call_response(tool_name, input_dict):
+    """Create a NormalizedResponse with a NormalizedToolCall."""
+    from social_hook.llm.base import NormalizedResponse, NormalizedToolCall
+
+    return NormalizedResponse(
+        content=[NormalizedToolCall(type="tool_use", name=tool_name, input=input_dict)]
+    )
+
+
+class TestGenerateSpecEndpoint:
+    @staticmethod
+    def _wait_for_task(db_path, task_id, timeout=5):
+        """Poll DB until background task completes or times out."""
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT status, result, error FROM background_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            conn.close()
+            if row and row["status"] != "running":
+                return dict(row)
+            time.sleep(0.1)
+        return None
+
+    def test_generate_spec_returns_202(self, client, tmp_env):
+        """POST /api/drafts/{id}/generate-spec returns 202 with task_id."""
+        _seed_draft_with_media_type(tmp_env["db_path"])
+        mock_response = _make_tool_call_response("generate_media_spec", {"diagram": "graph TD"})
+        with (
+            patch("social_hook.llm.factory.create_client") as mock_cc,
+            patch("social_hook.config.yaml.load_full_config"),
+        ):
+            mock_cc.return_value.complete.return_value = mock_response
+            resp = client.post("/api/drafts/draft_1/generate-spec", json={"tool_name": "mermaid"})
+            assert resp.status_code == 202
+            data = resp.json()
+            assert "task_id" in data
+            assert data["status"] == "processing"
+
+            task = self._wait_for_task(tmp_env["db_path"], data["task_id"])
+            assert task is not None
+            assert task["status"] == "completed"
+
+    def test_generate_spec_persists(self, client, tmp_env):
+        """Spec is persisted to draft after background task completes."""
+        _seed_draft_with_media_type(tmp_env["db_path"])
+        mock_response = _make_tool_call_response("generate_media_spec", {"diagram": "graph TD"})
+        with (
+            patch("social_hook.llm.factory.create_client") as mock_cc,
+            patch("social_hook.config.yaml.load_full_config"),
+        ):
+            mock_cc.return_value.complete.return_value = mock_response
+            resp = client.post("/api/drafts/draft_1/generate-spec", json={"tool_name": "mermaid"})
+            self._wait_for_task(tmp_env["db_path"], resp.json()["task_id"])
+
+        # Verify draft updated
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        row = conn.execute("SELECT media_spec FROM drafts WHERE id='draft_1'").fetchone()
+        conn.close()
+        assert json.loads(row[0])["diagram"] == "graph TD"
+
+    def test_generate_spec_missing_tool_name(self, client, tmp_env):
+        resp = client.post("/api/drafts/draft_1/generate-spec", json={})
+        assert resp.status_code == 400
+
+    def test_generate_spec_draft_not_found(self, client, tmp_env):
+        resp = client.post("/api/drafts/nonexistent/generate-spec", json={"tool_name": "mermaid"})
+        assert resp.status_code == 404
+
+    def test_generate_spec_duplicate_guard(self, client, tmp_env):
+        """Returns 409 when spec generation is already running."""
+        _seed_draft_with_media_type(tmp_env["db_path"])
+        # Insert a fake running task
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        conn.execute(
+            "INSERT INTO background_tasks (id, type, ref_id, project_id, status, created_at)"
+            " VALUES ('t1', 'generate_spec', 'draft_1', 'proj_1', 'running', datetime('now'))"
+        )
+        conn.commit()
+        conn.close()
+        resp = client.post("/api/drafts/draft_1/generate-spec", json={"tool_name": "mermaid"})
+        assert resp.status_code == 409

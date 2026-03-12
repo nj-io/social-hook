@@ -79,6 +79,17 @@ class TelegramRunner(ChannelRunner):
         chat_id = str(message.get("chat", {}).get("id", ""))
         if not self._is_authorized(chat_id):
             return
+
+        # Handle photo messages (for media_upload pending replies)
+        photo = message.get("photo")
+        if photo and not message.get("text"):
+            if self.on_message:
+                try:
+                    self.on_message(message)
+                except Exception:
+                    logger.exception("Error handling photo message")
+            return
+
         text = message.get("text", "")
         if not text:
             return

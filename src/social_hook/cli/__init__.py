@@ -339,9 +339,6 @@ def web(
     api_port = _find_free_port(api_port, host)
 
     # Start FastAPI in background
-    from social_hook.filesystem import get_db_path
-
-    typer.echo(f"Database: {get_db_path()}")
     typer.echo(f"Starting API server on {host}:{api_port}...")
     api_proc = sp.Popen(
         ["uvicorn", "social_hook.web.server:app", "--host", host, "--port", str(api_port)],
@@ -387,9 +384,13 @@ def bot_start(
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run as background daemon"),
 ):
     """Start the bot daemon."""
-    from social_hook.bot.process import is_running
+    import os
 
-    if is_running():
+    from social_hook.bot.process import is_running, read_pid
+
+    # If the PID file contains our own PID, we were spawned by the
+    # parent daemon launcher (eager PID write) — proceed normally.
+    if is_running() and read_pid() != os.getpid():
         typer.echo("Bot is already running.")
         raise typer.Exit(1)
 
@@ -432,9 +433,22 @@ def bot_start(
             kwargs["start_new_session"] = True
 
         proc = sp.Popen(cmd, **kwargs)
+        log_fd.close()  # Child inherited the FD; parent doesn't need it
+        # Write PID eagerly so is_running() returns true immediately,
+        # preventing duplicate daemons from concurrent start requests.
+        # The child will overwrite with the same PID in bot.run().
+        pid_file = get_pid_file()
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(proc.pid))
         typer.echo(f"Bot started (PID {proc.pid})")
         return
     else:
+        import logging
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
         typer.echo("Bot starting (foreground mode, Ctrl+C to stop)...")
         bot.run(pid_file=get_pid_file())
 
@@ -448,6 +462,7 @@ def bot_stop():
         typer.echo("Bot is not running.")
         return
 
+    typer.echo("Stopping bot (may take up to 40s)...")
     if stop_bot():
         typer.echo("Bot stopped.")
     else:
@@ -510,40 +525,22 @@ def discover(
 
     typer.echo(f"Discovering project: {project.name} ({project.repo_path})")
 
-    summary, selected_files, file_summaries, prompt_docs = discover_project(
+    summary, selected_files = discover_project(
         client=client,
         repo_path=project.repo_path,
         project_docs=project_config.context.project_docs,
-        max_discovery_tokens=project_config.context.max_discovery_tokens,
-        max_file_size=project_config.context.max_file_size,
+        max_doc_tokens=project_config.context.max_doc_tokens,
         db=db_ctx,
         project_id=project.id,
-        on_progress=lambda stage: (
-            typer.echo(f"[{stage}] {project.name}"),  # type: ignore[func-returns-value]
-            ops.emit_data_event(conn, "pipeline", stage, project.id, project.id),  # type: ignore[func-returns-value]
-        ),
     )
 
     if summary:
         if not dry_run:
             ops.update_project_summary(conn, project.id, summary)
             ops.update_discovery_files(conn, project.id, selected_files)
-            if file_summaries:
-                ops.upsert_file_summaries(conn, project.id, file_summaries)
-            if prompt_docs:
-                ops.update_prompt_docs(conn, project.id, prompt_docs)
-            ops.emit_data_event(conn, "project", "updated", project.id, project.id)
         typer.echo(f"\nSelected files ({len(selected_files)}):")
         for f in selected_files:
             typer.echo(f"  {f}")
-        if file_summaries:
-            typer.echo(f"\nFile summaries ({len(file_summaries)}):")
-            for fs in file_summaries:
-                typer.echo(f"  {fs['path']}: {fs['summary'][:80]}")
-        if prompt_docs:
-            typer.echo(f"\nPrompt docs ({len(prompt_docs)}):")
-            for pd in prompt_docs:
-                typer.echo(f"  {pd}")
         typer.echo(f"\nSummary:\n{summary}")
     else:
         typer.echo("Discovery failed - no summary generated.", err=True)
@@ -845,6 +842,11 @@ app.add_typer(decision_app, name="decision", help="Decision management.")
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
 app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+
+from social_hook.cli.media import app as media_app
+
+# Media commands: gc
+app.add_typer(media_app, name="media", help="Media management.")
 
 from social_hook.cli.snapshot import app as snapshot_app
 

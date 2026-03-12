@@ -10,25 +10,6 @@ from pathlib import Path
 
 from e2e.constants import PROVIDER_PRESETS
 
-_E2E_FIXTURE_SUMMARY = (
-    "social-media-auto-hook is an automated social media content pipeline that transforms "
-    "git commit activity into engaging social media posts. It uses a multi-agent LLM architecture "
-    "with evaluator, drafter, and gatekeeper agents to analyze commits, decide post-worthiness, "
-    "draft platform-specific content, and manage human review workflows. Key technologies include "
-    "Python/FastAPI backend, Next.js web dashboard, SQLite persistence, and Claude API integration. "
-    "The system supports multiple platforms (X/Twitter, LinkedIn) with scheduling, rate limiting, "
-    "narrative arc tracking, and media generation capabilities. Currently in active development "
-    "with features like journey capture, consolidation, and cross-post references."
-)
-
-_E2E_FIXTURE_FILE_SUMMARIES = [
-    {"path": "src/social_hook/trigger.py", "summary": "Core pipeline entry point. Parses git commits, runs evaluator LLM, creates decisions and drafts per platform."},
-    {"path": "src/social_hook/llm/prompts.py", "summary": "Prompt assembly for evaluator, drafter, and gatekeeper agents. Builds context from DB state, project docs, and commit info."},
-    {"path": "src/social_hook/llm/discovery.py", "summary": "Two-pass project discovery: file selection via LLM, then summary generation with per-file summaries and prompt doc selection."},
-    {"path": "src/social_hook/web/server.py", "summary": "FastAPI web server powering the dashboard. WebSocket events, project management, draft lifecycle, and settings endpoints."},
-    {"path": "src/social_hook/config/project.py", "summary": "Per-project configuration loading from content-config.yaml with typed dataclasses for context, strategy, media guidance, and summary settings."},
-]
-
 
 class E2EHarness:
     """Isolated temp environment for E2E tests."""
@@ -341,8 +322,6 @@ class E2EHarness:
             insert_lifecycle,
             insert_narrative_debt,
             insert_project,
-            update_project_summary,
-            upsert_file_summaries,
         )
         from social_hook.filesystem import generate_id
         from social_hook.models import Lifecycle, NarrativeDebt, Project
@@ -362,9 +341,6 @@ class E2EHarness:
             paused=paused,
         )
         insert_project(self.conn, project)
-
-        update_project_summary(self.conn, project.id, _E2E_FIXTURE_SUMMARY)
-        upsert_file_summaries(self.conn, project.id, _E2E_FIXTURE_FILE_SUMMARIES)
 
         lifecycle = Lifecycle(
             project_id=project.id,

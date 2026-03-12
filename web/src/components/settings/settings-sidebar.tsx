@@ -16,7 +16,6 @@ const sections = [
   { id: "voice-style", label: "Voice & Style" },
   { id: "content-config", label: "Content Config" },
   { id: "context", label: "Context" },
-  { id: "discovery", label: "Discovery" },
 ];
 
 export { sections };

@@ -134,26 +134,19 @@ class TestDiscoverProject:
         summary_response = _make_response(
             "generate_summary",
             {
-                "project_summary": "Test Project is a Python application that does X.",
-                "file_summaries": [{"path": "README.md", "summary": "Project readme"}],
-                "prompt_docs": ["README.md"],
+                "summary": "Test Project is a Python application that does X.",
             },
         )
 
         mock_client.complete.side_effect = [select_response, summary_response]
 
-        summary, files, file_summaries, prompt_docs = discover_project(
+        summary, files = discover_project(
             client=mock_client,
             repo_path=str(temp_repo),
         )
 
         assert summary == "Test Project is a Python application that does X."
         assert "README.md" in files
-        assert isinstance(file_summaries, list)
-        assert isinstance(prompt_docs, list)
-        assert len(file_summaries) == 1
-        assert file_summaries[0]["path"] == "README.md"
-        assert prompt_docs == ["README.md"]
         assert mock_client.complete.call_count == 2
 
         # Verify pass 1 used select_files tool
@@ -184,15 +177,13 @@ class TestDiscoverProject:
         summary_response = _make_response(
             "generate_summary",
             {
-                "project_summary": "A project.",
-                "file_summaries": [],
-                "prompt_docs": [],
+                "summary": "A project.",
             },
         )
 
         mock_client.complete.side_effect = [select_response, summary_response]
 
-        summary, files, file_summaries, prompt_docs = discover_project(
+        summary, files = discover_project(
             client=mock_client,
             repo_path=str(temp_repo),
             project_docs=["docs/guide.md"],
@@ -222,14 +213,12 @@ class TestDiscoverProject:
         summary_response = _make_response(
             "generate_summary",
             {
-                "project_summary": "A project.",
-                "file_summaries": [],
-                "prompt_docs": [],
+                "summary": "A project.",
             },
         )
         mock_client.complete.side_effect = [select_response, summary_response]
 
-        summary, files, file_summaries, prompt_docs = discover_project(
+        summary, files = discover_project(
             client=mock_client,
             repo_path=str(temp_repo),
             project_docs=["docs/*.md"],  # Glob pattern
@@ -240,7 +229,7 @@ class TestDiscoverProject:
         assert "docs/guide.md" in files or "docs/api.md" in files
 
     def test_token_budget_respected(self, temp_repo):
-        """Verify max_discovery_tokens limit is respected."""
+        """Verify max_doc_tokens limit is respected."""
         # Create a large file
         large_content = "x" * 100000
         (temp_repo / "big.md").write_text(large_content)
@@ -257,17 +246,15 @@ class TestDiscoverProject:
         summary_response = _make_response(
             "generate_summary",
             {
-                "project_summary": "A project with a big file.",
-                "file_summaries": [],
-                "prompt_docs": [],
+                "summary": "A project with a big file.",
             },
         )
         mock_client.complete.side_effect = [select_response, summary_response]
 
-        summary, files, file_summaries, prompt_docs = discover_project(
+        summary, files = discover_project(
             client=mock_client,
             repo_path=str(temp_repo),
-            max_discovery_tokens=500,  # Very small budget
+            max_doc_tokens=500,  # Very small budget
         )
 
         assert summary is not None
@@ -288,29 +275,25 @@ class TestDiscoverProject:
         )
         mock_client.complete.return_value = bad_response
 
-        summary, files, file_summaries, prompt_docs = discover_project(
+        summary, files = discover_project(
             client=mock_client,
             repo_path=str(temp_repo),
         )
 
         assert summary is None
         assert files == []
-        assert file_summaries == []
-        assert prompt_docs == []
 
     def test_empty_repo_returns_none(self, tmp_path):
         """Verify empty repo returns None."""
         mock_client = MagicMock()
 
-        summary, files, file_summaries, prompt_docs = discover_project(
+        summary, files = discover_project(
             client=mock_client,
             repo_path=str(tmp_path),
         )
 
         assert summary is None
         assert files == []
-        assert file_summaries == []
-        assert prompt_docs == []
         # Should not have called the LLM at all
         mock_client.complete.assert_not_called()
 
@@ -330,9 +313,7 @@ class TestDiscoverProject:
         summary_response = _make_response(
             "generate_summary",
             {
-                "project_summary": "A project.",
-                "file_summaries": [],
-                "prompt_docs": [],
+                "summary": "A project.",
             },
         )
         mock_client.complete.side_effect = [select_response, summary_response]
@@ -429,8 +410,8 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
         assert "Test Project" in result  # README.md content
         assert "User Guide" in result  # docs/guide.md content
 
-    def test_drafter_falls_back_to_prompt_docs(self, temp_repo):
-        """Verify drafter falls back to prompt_docs when no discovery files."""
+    def test_drafter_falls_back_without_discovery_files(self, temp_repo):
+        """Verify drafter falls back to README+CLAUDE.md when no discovery files."""
         from social_hook.llm.prompts import assemble_drafter_prompt
         from social_hook.models import CommitInfo, Project, ProjectContext
 
@@ -439,7 +420,6 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             name="Test",
             repo_path=str(temp_repo),
             discovery_files=None,
-            prompt_docs=json.dumps(["README.md"]),
         )
         context = ProjectContext(
             project=project,
@@ -465,9 +445,9 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             commit=commit,
         )
 
-        # Should fall back to prompt_docs (README.md)
-        assert "Project Documentation" in result
-        assert "Test Project" in result  # README.md content
+        # Should fall back to README/CLAUDE.md sections
+        assert "## README" in result
+        assert "## CLAUDE.md" in result
         assert "Project Documentation (Discovery)" not in result
 
     def test_drafter_uses_readme_when_audience_introduced(self, temp_repo):
@@ -507,9 +487,10 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             commit=commit,
         )
 
-        # audience_introduced=True with include_project_docs=True,
-        # should use prompt_docs fallback if no discovery files priority
+        # audience_introduced=True, so should NOT use discovery files
+        # even though they exist; should use README/CLAUDE.md instead
         assert "Project Documentation (Discovery)" not in result
+        assert "## README" in result
 
 
 class TestDbOperations:
@@ -581,12 +562,10 @@ class TestContextConfigProjectDocs:
         data = {
             "project_docs": ["docs/*.md", "README.md"],
             "max_doc_tokens": 5000,
-            "max_discovery_tokens": 30000,
         }
         config = _parse_context_config(data)
         assert config.project_docs == ["docs/*.md", "README.md"]
         assert config.max_doc_tokens == 5000
-        assert config.max_discovery_tokens == 30000
 
     def test_parse_empty_project_docs(self):
         from social_hook.config.project import _parse_context_config
@@ -597,133 +576,3 @@ class TestContextConfigProjectDocs:
     def test_default_context_config_has_empty_project_docs(self):
         config = ContextConfig()
         assert config.project_docs == []
-
-
-class TestDiscoveryConstants:
-    """Test DISCOVERY_EXTENSIONS and IGNORE_DIRS constants."""
-
-    def test_claude_dir_ignored(self):
-        """Verify .claude is in IGNORE_DIRS."""
-        from social_hook.llm.discovery import IGNORE_DIRS
-
-        assert ".claude" in IGNORE_DIRS
-
-    def test_new_extensions_present(self):
-        """Verify new file extensions are in DISCOVERY_EXTENSIONS."""
-        from social_hook.llm.discovery import DISCOVERY_EXTENSIONS
-
-        for ext in [".txt", ".js", ".jsx", ".rst", ".sql", ".sh", ".rs", ".go"]:
-            assert ext in DISCOVERY_EXTENSIONS, f"{ext} missing from DISCOVERY_EXTENSIONS"
-
-    def test_claude_dir_excluded_from_listing(self, tmp_path):
-        """Verify files under .claude/ are excluded from project file listing."""
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        (claude_dir / "config.json").write_text("{}")
-        (tmp_path / "main.py").write_text("print('hello')")
-
-        listing = list_project_files(str(tmp_path))
-        assert ".claude" not in listing
-        assert "main.py" in listing
-
-    def test_max_file_size_excludes_large_files(self, tmp_path):
-        """Verify list_project_files skips files larger than max_file_size."""
-        (tmp_path / "small.py").write_text("x = 1")
-        (tmp_path / "big.py").write_text("x" * 1000)
-
-        listing = list_project_files(str(tmp_path), max_file_size=500)
-        assert "small.py" in listing
-        assert "big.py" not in listing
-
-
-class TestFileSummariesDbOperations:
-    """Test upsert_file_summaries and get_file_summaries DB operations."""
-
-    def test_upsert_file_summaries_insert(self, temp_db):
-        """Insert new file summaries and verify they're stored."""
-        from social_hook.db.operations import get_file_summaries, upsert_file_summaries
-
-        # Create a project first
-        temp_db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
-            ("proj_1", "Test", "/tmp/test"),
-        )
-        temp_db.commit()
-
-        summaries = [
-            {"path": "README.md", "summary": "Project readme file"},
-            {"path": "src/main.py", "summary": "Main entry point"},
-        ]
-        upsert_file_summaries(temp_db, "proj_1", summaries)
-
-        result = get_file_summaries(temp_db, "proj_1")
-        assert len(result) == 2
-        paths = [r["path"] for r in result]
-        assert "README.md" in paths
-        assert "src/main.py" in paths
-
-    def test_upsert_file_summaries_replace(self, temp_db):
-        """Upsert again with different files, verify old entries are cleaned."""
-        from social_hook.db.operations import get_file_summaries, upsert_file_summaries
-
-        temp_db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
-            ("proj_1", "Test", "/tmp/test"),
-        )
-        temp_db.commit()
-
-        # First upsert
-        upsert_file_summaries(
-            temp_db, "proj_1", [{"path": "old.py", "summary": "Old file"}]
-        )
-        assert len(get_file_summaries(temp_db, "proj_1")) == 1
-
-        # Second upsert with different files
-        upsert_file_summaries(
-            temp_db, "proj_1", [{"path": "new.py", "summary": "New file"}]
-        )
-        result = get_file_summaries(temp_db, "proj_1")
-        assert len(result) == 1
-        assert result[0]["path"] == "new.py"
-
-    def test_get_file_summaries_empty(self, temp_db):
-        """Returns [] for project with no summaries."""
-        from social_hook.db.operations import get_file_summaries
-
-        temp_db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
-            ("proj_1", "Test", "/tmp/test"),
-        )
-        temp_db.commit()
-
-        result = get_file_summaries(temp_db, "proj_1")
-        assert result == []
-
-    def test_get_file_summaries_returns_correct_project(self, temp_db):
-        """Verify project isolation."""
-        from social_hook.db.operations import get_file_summaries, upsert_file_summaries
-
-        temp_db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
-            ("proj_1", "Project A", "/tmp/a"),
-        )
-        temp_db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
-            ("proj_2", "Project B", "/tmp/b"),
-        )
-        temp_db.commit()
-
-        upsert_file_summaries(
-            temp_db, "proj_1", [{"path": "a.py", "summary": "File A"}]
-        )
-        upsert_file_summaries(
-            temp_db, "proj_2", [{"path": "b.py", "summary": "File B"}]
-        )
-
-        result_1 = get_file_summaries(temp_db, "proj_1")
-        result_2 = get_file_summaries(temp_db, "proj_2")
-
-        assert len(result_1) == 1
-        assert result_1[0]["path"] == "a.py"
-        assert len(result_2) == 1
-        assert result_2[0]["path"] == "b.py"

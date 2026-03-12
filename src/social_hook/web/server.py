@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import sqlite3
+import subprocess
 import threading
 import time
 import uuid as _uuid
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import Body, FastAPI, Header, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -742,8 +743,9 @@ async def api_draft_detail(draft_id: str):
 
 @app.put("/api/drafts/{draft_id}/media-spec")
 async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body(...)):
-    """Update media_spec on a draft."""
+    """Update media_spec and optionally media_type on a draft."""
     media_spec = body.get("media_spec")
+    media_type = body.get("media_type")
     if media_spec is None:
         raise HTTPException(status_code=400, detail="media_spec is required")
     conn = _get_conn()
@@ -754,7 +756,10 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
             raise HTTPException(status_code=404, detail="Draft not found")
         old_spec = draft.media_spec
 
-        ops.update_draft(conn, draft_id, media_spec=media_spec)
+        update_kwargs: dict[str, Any] = {"media_spec": media_spec}
+        if media_type is not None:
+            update_kwargs["media_type"] = media_type
+        ops.update_draft(conn, draft_id, **update_kwargs)
 
         # Audit: create DraftChange record
         from social_hook.filesystem import generate_id
@@ -776,6 +781,191 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
         return {"status": "updated"}
     finally:
         conn.close()
+
+
+_ALLOWED_UPLOAD_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "svg"}
+_MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+@app.post("/api/drafts/{draft_id}/media-upload")
+async def api_upload_draft_media(draft_id: str, file: UploadFile):
+    """Upload a media file and attach it to a draft.
+
+    Accepts multipart/form-data with a 'file' field.
+    """
+    from social_hook.filesystem import generate_id, get_base_path
+    from social_hook.models import DraftChange
+
+    # Validate extension
+    ext = ""
+    if file.filename and "." in file.filename:
+        ext = file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Invalid file type: .{ext}")
+
+    # Read and validate size
+    content = await file.read()
+    if len(content) > _MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large ({len(content)} bytes). Max {_MAX_UPLOAD_SIZE} bytes.",
+        )
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.status not in ("draft", "deferred"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot upload media — draft is {draft.status}",
+            )
+
+        # Save uploaded file with UUID filename
+        upload_dir = get_base_path() / "media-cache" / "uploads" / draft_id
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"{_uuid.uuid4()}.{ext}"
+        dest = upload_dir / filename
+        dest.write_bytes(content)
+
+        file_path = str(dest)
+        old_paths = draft.media_paths
+
+        ops.update_draft(conn, draft_id, media_paths=[file_path], media_type="custom")
+        ops.insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft_id,
+                field="media_paths",
+                old_value=json.dumps(old_paths),
+                new_value=json.dumps([file_path]),
+                changed_by="human",
+            ),
+        )
+        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
+
+        return {"status": "uploaded", "file_path": file_path}
+    finally:
+        conn.close()
+
+
+@app.post("/api/drafts/{draft_id}/generate-spec")
+async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Generate a media spec from draft content using LLM. Returns 202 with task_id."""
+    tool_name = body.get("tool_name")
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="tool_name is required")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+
+        # Duplicate-task guard
+        existing = conn.execute(
+            "SELECT id FROM background_tasks"
+            " WHERE type='generate_spec' AND ref_id=? AND status='running'",
+            (draft_id,),
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="Spec generation already running")
+
+        from social_hook.adapters.registry import get_tool_spec_schema
+
+        schema = get_tool_spec_schema(tool_name)
+
+        # Capture values for the closure (conn can't be shared across threads)
+        draft_content = draft.content
+        draft_project_id = draft.project_id
+        old_spec = draft.media_spec
+    finally:
+        conn.close()
+
+    def _blocking_generate_spec() -> dict:
+        from social_hook.config.yaml import load_full_config
+        from social_hook.filesystem import generate_id
+        from social_hook.llm.base import extract_tool_call
+        from social_hook.llm.factory import create_client
+        from social_hook.llm.prompts import (
+            assemble_spec_generation_prompt,
+            build_spec_generation_tool,
+        )
+        from social_hook.models import DraftChange
+
+        config = load_full_config()
+        prompt = assemble_spec_generation_prompt(
+            tool_name=tool_name,
+            schema=schema,
+            draft_content=draft_content,
+        )
+        spec_tool = build_spec_generation_tool(tool_name, schema)
+        client = create_client(config.models.drafter, config)
+        response = client.complete(
+            messages=[{"role": "user", "content": prompt}],
+            tools=[spec_tool],
+        )
+        spec = extract_tool_call(response, "generate_media_spec")
+
+        # Persist to DB
+        conn2 = _get_conn()
+        try:
+            ops.update_draft(conn2, draft_id, media_spec=spec, media_type=tool_name)
+            ops.insert_draft_change(
+                conn2,
+                DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft_id,
+                    field="media_spec",
+                    old_value=json.dumps(old_spec)[:200] if old_spec else "null",
+                    new_value=json.dumps(spec)[:200],
+                    changed_by="human",
+                ),
+            )
+            ops.emit_data_event(conn2, "draft", "updated", draft_id, draft_project_id)
+        finally:
+            conn2.close()
+
+        return {"spec": spec, "tool_name": tool_name}
+
+    task_id = _run_background_task(
+        "generate_spec",
+        ref_id=draft_id,
+        project_id=draft_project_id,
+        fn=_blocking_generate_spec,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
+
+
+@app.post("/api/drafts/{draft_id}/resend-notification")
+async def api_resend_draft_notification(draft_id: str):
+    """Re-send a draft's review notification to all configured channels."""
+    from social_hook.bot.process import is_running
+    from social_hook.config.yaml import load_full_config
+    from social_hook.notifications import resend_draft_notification
+
+    if not is_running():
+        raise HTTPException(status_code=409, detail="Bot daemon is not running")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+    finally:
+        conn.close()
+
+    try:
+        config = load_full_config()
+        resend_draft_notification(config, draft_id)
+        return {"success": True, "message": "Notification resent"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from None
 
 
 @app.get("/api/projects")
@@ -2036,33 +2226,33 @@ async def api_regenerate_summary(project_id: str):
 
         client = create_client(evaluator_model, config)
 
-        from social_hook.config.project import load_project_config
+        # Load context settings from content-config.yaml
+        cc_path = get_db_path().parent / "content-config.yaml"
+        max_doc_tokens = 10000
+        project_docs: list[str] | None = None
+        if cc_path.exists():
+            try:
+                cc_raw = yaml.safe_load(cc_path.read_text()) or {}
+                ctx = cc_raw.get("context", {})
+                max_doc_tokens = ctx.get("max_doc_tokens", 10000)
+                project_docs = ctx.get("project_docs") or None
+            except yaml.YAMLError:
+                pass
 
-        project_config = load_project_config(project.repo_path)
-        max_discovery_tokens = project_config.context.max_discovery_tokens if project_config else 60000
-        max_file_size = project_config.context.max_file_size if project_config else 256000
-        project_docs = project_config.context.project_docs if project_config else None
-
-        summary, files, file_summaries, prompt_docs = await asyncio.to_thread(
+        summary, files = await asyncio.to_thread(
             discover_project,
             client,
             project.repo_path,
             project_docs=project_docs,
-            max_discovery_tokens=max_discovery_tokens,
-            max_file_size=max_file_size,
+            max_doc_tokens=max_doc_tokens,
             db=conn,
             project_id=project_id,
-            on_progress=lambda stage: ops.emit_data_event(conn, "pipeline", stage, project_id, project_id),
         )
 
         if summary:
             ops.update_project_summary(conn, project_id, summary)
             if files:
                 ops.update_discovery_files(conn, project_id, files)
-            if file_summaries:
-                ops.upsert_file_summaries(conn, project_id, file_summaries)
-            if prompt_docs:
-                ops.update_prompt_docs(conn, project_id, prompt_docs)
             ops.emit_data_event(conn, "project", "updated", project_id, project_id)
 
         return {"summary": summary or ""}
@@ -2113,6 +2303,10 @@ async def api_installations_status():
         check_hook_installed,
         check_narrative_hook_installed,
     )
+
+    # Reap zombie if needed before checking
+    if _bot_proc is not None:
+        _bot_proc.poll()
 
     return {
         "commit_hook": check_hook_installed(),
@@ -2165,16 +2359,55 @@ async def api_uninstall_component(component: str):
     return {"success": success, "message": message}
 
 
+_bot_proc: "subprocess.Popen | None" = None  # Single-worker: safe as module state
+
+
 @app.post("/api/installations/bot_daemon/start")
 async def api_start_bot_daemon():
+    import shutil
     import subprocess as sp
+    import sys
 
-    from social_hook.bot.process import is_running
+    from social_hook.bot.process import get_pid_file, is_running, stop_bot
+    from social_hook.filesystem import get_base_path
 
+    global _bot_proc
+    # Reap any previous zombie
+    if _bot_proc is not None:
+        _bot_proc.poll()
+        _bot_proc = None
+
+    # Stop any existing daemon first — only one can poll a Telegram token.
+    # This handles the case where a daemon was started from a different
+    # worktree or the main branch and is now stale.
     if is_running():
-        return {"success": True, "message": "Bot daemon is already running"}
+        await asyncio.to_thread(stop_bot)
+        await asyncio.sleep(0.5)
     try:
-        sp.Popen([PROJECT_SLUG, "bot", "start", "--daemon"])
+        # Launch directly in foreground mode (no --daemon) with detached session.
+        # Avoids the double-Popen problem where --daemon spawns another child,
+        # leaving a gap where is_running() returns false.
+        binary = shutil.which(PROJECT_SLUG) or PROJECT_SLUG
+        log_path = get_base_path() / "logs" / "bot.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_fd = open(log_path, "a")  # noqa: SIM115
+
+        kwargs: dict = {"stdout": log_fd, "stderr": log_fd, "stdin": sp.DEVNULL}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = sp.DETACHED_PROCESS | sp.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+
+        proc = sp.Popen([binary, "bot", "start"], **kwargs)
+        log_fd.close()  # Child inherited the FD; parent doesn't need it
+        _bot_proc = proc
+
+        # Write PID eagerly so is_running() returns true immediately,
+        # preventing duplicate daemons from concurrent start requests.
+        pid_file = get_pid_file()
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(proc.pid))
+
         return {"success": True, "message": "Bot daemon starting"}
     except Exception as e:
         return {"success": False, "message": str(e)}
@@ -2184,9 +2417,14 @@ async def api_start_bot_daemon():
 async def api_stop_bot_daemon():
     from social_hook.bot.process import is_running, stop_bot
 
+    global _bot_proc
     if not is_running():
         return {"success": True, "message": "Bot daemon is not running"}
-    if stop_bot():
+    if await asyncio.to_thread(stop_bot):
+        # Reap after stopping
+        if _bot_proc is not None:
+            _bot_proc.poll()
+            _bot_proc = None
         return {"success": True, "message": "Bot daemon stopped"}
     return {"success": False, "message": "Failed to stop bot daemon"}
 
@@ -2204,6 +2442,10 @@ _CHANNEL_CREDENTIALS = {
 async def api_channels_status():
     """Return status of all known channels and daemon running state."""
     from social_hook.bot.process import is_running
+
+    # Reap zombie if needed before checking
+    if _bot_proc is not None:
+        _bot_proc.poll()
 
     config = _get_config()
     channels_status = {}

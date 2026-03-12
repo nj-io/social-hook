@@ -128,7 +128,6 @@ class Project:
     audience_introduced: bool = False
     paused: bool = False
     discovery_files: str | None = None  # JSON-serialized list of file paths
-    prompt_docs: str | None = None
     trigger_branch: str | None = None
     created_at: datetime | None = None
 
@@ -143,7 +142,6 @@ class Project:
             "audience_introduced": self.audience_introduced,
             "paused": self.paused,
             "discovery_files": self.discovery_files,
-            "prompt_docs": self.prompt_docs,
             "trigger_branch": self.trigger_branch,
             "created_at": _to_iso(self.created_at),
         }
@@ -160,7 +158,6 @@ class Project:
             audience_introduced=bool(d.get("audience_introduced", False)),
             paused=bool(d.get("paused", False)),
             discovery_files=d.get("discovery_files"),
-            prompt_docs=d.get("prompt_docs"),
             trigger_branch=d.get("trigger_branch"),
             created_at=_from_iso(d.get("created_at")),
         )
@@ -872,4 +869,3 @@ class ProjectContext:
     session_narratives: list[dict] = field(default_factory=list)
     held_decisions: list["Decision"] = field(default_factory=list)
     arc_posts: dict[str, list["Post"]] = field(default_factory=dict)
-    file_summaries: list[dict[str, str]] = field(default_factory=list)

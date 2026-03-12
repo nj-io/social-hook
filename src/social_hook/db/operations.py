@@ -392,36 +392,6 @@ def update_discovery_files(
     return cursor.rowcount > 0
 
 
-def upsert_file_summaries(conn: sqlite3.Connection, project_id: str, file_summaries: list[dict[str, str]]) -> None:
-    """Replace all file summaries for a project. Deletes existing summaries first
-    to remove stale entries from previous discovery runs, then inserts new ones."""
-    conn.execute("DELETE FROM file_summaries WHERE project_id = ?", (project_id,))
-    for fs in file_summaries:
-        conn.execute(
-            "INSERT INTO file_summaries (project_id, file_path, summary) VALUES (?, ?, ?)",
-            (project_id, fs["path"], fs["summary"]),
-        )
-    conn.commit()
-
-
-def get_file_summaries(conn: sqlite3.Connection, project_id: str) -> list[dict[str, str]]:
-    """Get all file summaries for a project. Returns [{"path": str, "summary": str}]."""
-    rows = conn.execute(
-        "SELECT file_path, summary FROM file_summaries WHERE project_id = ? ORDER BY file_path",
-        (project_id,),
-    ).fetchall()
-    return [{"path": row[0], "summary": row[1]} for row in rows]
-
-
-def update_prompt_docs(conn: sqlite3.Connection, project_id: str, prompt_docs: list[str]) -> None:
-    """Store LLM-selected prompt docs for a project."""
-    conn.execute(
-        "UPDATE projects SET prompt_docs = ? WHERE id = ?",
-        (json.dumps(prompt_docs), project_id),
-    )
-    conn.commit()
-
-
 # =============================================================================
 # Decisions
 # =============================================================================
@@ -1016,6 +986,70 @@ def get_draft_changes(conn: sqlite3.Connection, draft_id: str) -> list[DraftChan
         (draft_id,),
     ).fetchall()
     return [DraftChange.from_dict(dict(row)) for row in rows]
+
+
+def get_sister_drafts(
+    conn: sqlite3.Connection, draft_id: str, *, include_self: bool = False
+) -> list[Draft]:
+    """Get all drafts sharing the same decision_id (sister/cross-post drafts).
+
+    Args:
+        draft_id: The source draft ID
+        include_self: If True, include the source draft in results
+
+    Returns:
+        List of sister Draft objects
+    """
+    draft = get_draft(conn, draft_id)
+    if not draft:
+        return []
+
+    if include_self:
+        rows = conn.execute(
+            "SELECT * FROM drafts WHERE decision_id = ? ORDER BY platform",
+            (draft.decision_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM drafts WHERE decision_id = ? AND id != ? ORDER BY platform",
+            (draft.decision_id, draft_id),
+        ).fetchall()
+
+    return [Draft.from_dict(dict(row)) for row in rows]
+
+
+def sync_media_to_drafts(
+    conn: sqlite3.Connection,
+    source_draft_id: str,
+    target_draft_ids: list[str],
+) -> int:
+    """Copy media_type, media_spec, media_spec_used, and media_paths from source to targets.
+
+    Args:
+        source_draft_id: Draft to copy media from
+        target_draft_ids: Draft IDs to sync to
+
+    Returns:
+        Number of drafts updated
+    """
+    source = get_draft(conn, source_draft_id)
+    if not source:
+        return 0
+
+    count = 0
+    for target_id in target_draft_ids:
+        updated = update_draft(
+            conn,
+            target_id,
+            media_type=source.media_type or "",
+            media_spec=source.media_spec,
+            media_spec_used=source.media_spec_used,
+            media_paths=source.media_paths,
+        )
+        if updated:
+            count += 1
+
+    return count
 
 
 # =============================================================================
