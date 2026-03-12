@@ -29,6 +29,7 @@ import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { ElapsedTime, Spinner } from "@/components/async-button";
 
 const DECISIONS_PER_PAGE = 10;
 
@@ -49,6 +50,7 @@ export default function ProjectDetailPage() {
   const [editingSummary, setEditingSummary] = useState(false);
   const [summaryDraft, setSummaryDraft] = useState("");
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryStartTime, setSummaryStartTime] = useState<string | null>(null);
   const [summaryExpanded, setSummaryExpanded] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("project-summary-expanded") !== "false";
@@ -62,6 +64,8 @@ export default function ProjectDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRetrigger, setConfirmRetrigger] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionStartTime, setActionStartTime] = useState<string | null>(null);
+  const [evaluatingId, setEvaluatingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [branchFilter, setBranchFilter] = useState<string>("");
   const [decisionBranches, setDecisionBranches] = useState<string[]>([]);
@@ -107,7 +111,7 @@ export default function ProjectDetailPage() {
     }
   }, []);
 
-  const { trackTask, isRunning: isTaskRunning } = useBackgroundTasks(id, onTaskCompleted);
+  const { trackTask, isRunning: isTaskRunning, getTask } = useBackgroundTasks(id, onTaskCompleted);
 
   const loadMemories = useCallback(async (repoPath: string) => {
     try {
@@ -295,6 +299,7 @@ export default function ProjectDetailPage() {
                     <button
                       onClick={async () => {
                         setSummaryLoading(true);
+                        setSummaryStartTime(new Date().toISOString());
                         try {
                           const res = await regenerateProjectSummary(id);
                           setProject((prev) => prev ? { ...prev, summary: res.summary } : prev);
@@ -302,12 +307,19 @@ export default function ProjectDetailPage() {
                           // Silent failure
                         } finally {
                           setSummaryLoading(false);
+                          setSummaryStartTime(null);
                         }
                       }}
                       disabled={summaryLoading}
                       className="text-xs text-accent hover:underline disabled:opacity-50"
                     >
-                      {summaryLoading ? "Regenerating..." : "Regenerate"}
+                      {summaryLoading ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Spinner className="h-3 w-3" />
+                          <span>Regenerating</span>
+                          {summaryStartTime && <ElapsedTime startTime={summaryStartTime} />}
+                        </span>
+                      ) : "Regenerate"}
                     </button>
                   </>
                 )}
@@ -587,7 +599,9 @@ export default function ProjectDetailPage() {
                             {d.decision === "imported" ? (
                               <button
                                 onClick={async () => {
+                                  setEvaluatingId(d.id);
                                   setActionLoading(true);
+                                  setActionStartTime(new Date().toISOString());
                                   setActionError(null);
                                   try {
                                     await retriggerDecision(d.id);
@@ -596,13 +610,21 @@ export default function ProjectDetailPage() {
                                     setActionError(err instanceof Error ? err.message : "Evaluate failed");
                                   } finally {
                                     setActionLoading(false);
+                                    setActionStartTime(null);
+                                    setEvaluatingId(null);
                                   }
                                 }}
                                 disabled={actionLoading}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950 disabled:opacity-70"
                                 title="Run evaluator on this imported commit"
                               >
-                                Evaluate
+                                {evaluatingId === d.id ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Spinner className="h-3 w-3" />
+                                    <span>Evaluating</span>
+                                    {actionStartTime && <ElapsedTime startTime={actionStartTime} />}
+                                  </span>
+                                ) : "Evaluate"}
                               </button>
                             ) : (
                               <button
@@ -615,17 +637,15 @@ export default function ProjectDetailPage() {
                                 }`}
                                 title={platformCount === 0 ? "Uses preview mode" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
                               >
-                                {isCreating && (
-                                  <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                  </svg>
-                                )}
-                                {isCreating
-                                  ? "Creating..."
-                                  : d.draft_count > 0
-                                    ? "Draft Created"
-                                    : "Create Draft"}
+                                {isCreating ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Spinner className="h-3 w-3" />
+                                    <span>Creating</span>
+                                    {getTask(d.id)?.created_at && <ElapsedTime startTime={getTask(d.id)!.created_at} />}
+                                  </span>
+                                ) : d.draft_count > 0
+                                  ? "Draft Created"
+                                  : "Create Draft"}
                               </button>
                             )}
                           </div>
@@ -835,6 +855,7 @@ export default function ProjectDetailPage() {
                 <button
                   onClick={async () => {
                     setActionLoading(true);
+                    setActionStartTime(new Date().toISOString());
                     setActionError(null);
                     try {
                       const res = await retriggerDecision(did);
@@ -849,12 +870,19 @@ export default function ProjectDetailPage() {
                       setActionError(err instanceof Error ? err.message : "Retrigger failed");
                     } finally {
                       setActionLoading(false);
+                      setActionStartTime(null);
                     }
                   }}
                   disabled={actionLoading}
                   className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
                 >
-                  {actionLoading ? "Re-evaluating..." : "Re-evaluate"}
+                  {actionLoading ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Spinner className="h-3 w-3" />
+                      <span>Re-evaluating</span>
+                      {actionStartTime && <ElapsedTime startTime={actionStartTime} />}
+                    </span>
+                  ) : "Re-evaluate"}
                 </button>
               </div>
             </div>
@@ -929,7 +957,13 @@ export default function ProjectDetailPage() {
                 disabled={importLoading || isTaskRunning("__import__") || (importPreview != null && importPreview.importable === 0)}
                 className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
               >
-                {importLoading || isTaskRunning("__import__") ? "Importing..." : "Import"}
+                {importLoading || isTaskRunning("__import__") ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Spinner className="h-3 w-3" />
+                    <span>Importing</span>
+                    {getTask("__import__")?.created_at && <ElapsedTime startTime={getTask("__import__")!.created_at} />}
+                  </span>
+                ) : "Import"}
               </button>
             </div>
           </div>
@@ -978,9 +1012,13 @@ export default function ProjectDetailPage() {
                   disabled={isTaskRunning(CONSOLIDATE_REF)}
                   className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
                 >
-                  {isTaskRunning(CONSOLIDATE_REF)
-                    ? "Consolidating..."
-                    : `Consolidate ${selectedDecisions.size} → Create Draft`}
+                  {isTaskRunning(CONSOLIDATE_REF) ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Spinner className="h-3 w-3" />
+                      <span>Consolidating</span>
+                      {getTask(CONSOLIDATE_REF)?.created_at && <ElapsedTime startTime={getTask(CONSOLIDATE_REF)!.created_at} />}
+                    </span>
+                  ) : `Consolidate ${selectedDecisions.size} → Create Draft`}
                 </button>
               )}
             </div>
