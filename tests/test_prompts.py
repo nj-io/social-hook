@@ -253,57 +253,76 @@ class TestAssembleEvaluatorPrompt:
         assert "## Project Context" in result  # Section header still present
 
     def test_include_readme(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: include_readme=True includes README.md content."""
+        """T20d: prompt_docs pointing to README.md includes it in the prompt."""
+        import json
+
         repo = temp_dir / "repo"
         repo.mkdir()
         (repo / "README.md").write_text("# My Project\nA CLI tool for automation.")
         sample_project_context.project.repo_path = str(repo)
+        sample_project_context.project.prompt_docs = json.dumps(["README.md"])
 
-        config = ContextConfig(include_readme=True)
+        config = ContextConfig()
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
-        assert "## README" in result
+        assert "## Project Documentation" in result
         assert "A CLI tool for automation" in result
 
     def test_include_readme_false_excludes(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: include_readme=False omits README.md."""
+        """T20d: No prompt_docs means no README included."""
         repo = temp_dir / "repo"
         repo.mkdir()
         (repo / "README.md").write_text("# My Project\nShould not appear.")
         sample_project_context.project.repo_path = str(repo)
+        sample_project_context.project.prompt_docs = None
 
-        config = ContextConfig(include_readme=False)
+        config = ContextConfig()
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
-        assert "## README" not in result
+        assert "## Project Documentation" not in result
 
     def test_include_claude_md(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: include_claude_md=True includes CLAUDE.md content."""
+        """T20d: prompt_docs pointing to CLAUDE.md includes it in the prompt."""
+        import json
+
         repo = temp_dir / "repo"
         repo.mkdir()
         (repo / "CLAUDE.md").write_text("# Project Conventions\nUse snake_case.")
         sample_project_context.project.repo_path = str(repo)
+        sample_project_context.project.prompt_docs = json.dumps(["CLAUDE.md"])
 
-        config = ContextConfig(include_claude_md=True)
+        config = ContextConfig()
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
-        assert "## CLAUDE.md" in result
+        assert "## Project Documentation" in result
         assert "Use snake_case" in result
 
-    def test_max_doc_tokens_truncates(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: Large docs truncated to max_doc_tokens."""
+    def test_prompt_docs_truncates_large_files(
+        self, sample_project_context, sample_commit, temp_dir
+    ):
+        """T20d: Large prompt_docs content truncated to max_doc_tokens."""
+        import json
+
         repo = temp_dir / "repo"
         repo.mkdir()
         (repo / "README.md").write_text("# Big Doc\n" + "x" * 50000)
         sample_project_context.project.repo_path = str(repo)
+        sample_project_context.project.prompt_docs = json.dumps(["README.md"])
 
-        config = ContextConfig(include_readme=True, max_doc_tokens=100)
+        config = ContextConfig(max_doc_tokens=200)
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
-        assert "## README" in result
+        assert "## Project Documentation" in result
         assert "[...truncated]" in result
 
-    def test_missing_docs_no_error(self, sample_project_context, sample_commit, temp_dir):
-        """T20d: Missing README/CLAUDE.md doesn't error."""
+    def test_prompt_docs_missing_files_no_error(
+        self, sample_project_context, sample_commit, temp_dir
+    ):
+        """T20d: prompt_docs pointing to nonexistent files doesn't error."""
+        import json
+
         repo = temp_dir / "repo"
         repo.mkdir()
         sample_project_context.project.repo_path = str(repo)
+        sample_project_context.project.prompt_docs = json.dumps(
+            ["nonexistent.md", "also_missing.md"]
+        )
 
         config = ContextConfig(include_readme=True, include_claude_md=True)
         result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
@@ -1289,3 +1308,95 @@ class TestReferencedPostsSection:
         ref_idx = result.index("## Referenced Posts")
         recent_idx = result.index("## Recent Posts")
         assert ref_idx < recent_idx
+
+
+# =============================================================================
+# Pending Draft ID Formatting
+# =============================================================================
+
+
+class TestPendingDraftIdFormatting:
+    """Pending drafts include draft IDs so the evaluator can reference them in queue_actions."""
+
+    def test_full_content_mode_includes_draft_id(self, sample_project_context, sample_commit):
+        """full_content mode renders [id=<draft_id>][platform:status] format."""
+        sample_project_context.pending_drafts = [
+            Draft(
+                id="draft_abc123",
+                project_id="proj_test1",
+                decision_id="dec_1",
+                platform="x",
+                content="A pending post about auth",
+                status="draft",
+            ),
+        ]
+        config = ContextConfig(pending_draft_detail="full_content")
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
+        assert "[id=draft_abc123]" in result
+        assert "[id=draft_abc123][x:draft]" in result
+
+    def test_summary_mode_includes_draft_id(self, sample_project_context, sample_commit):
+        """summary mode renders id:platform:status format."""
+        sample_project_context.pending_drafts = [
+            Draft(
+                id="draft_xyz789",
+                project_id="proj_test1",
+                decision_id="dec_1",
+                platform="linkedin",
+                content="A pending LinkedIn post",
+                status="draft",
+            ),
+        ]
+        config = ContextConfig(pending_draft_detail="summary")
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
+        assert "draft_xyz789:linkedin:draft" in result
+
+    def test_full_content_multiple_drafts_have_ids(self, sample_project_context, sample_commit):
+        """Multiple pending drafts each show their own ID in full_content mode."""
+        sample_project_context.pending_drafts = [
+            Draft(
+                id="draft_001",
+                project_id="proj_test1",
+                decision_id="dec_1",
+                platform="x",
+                content="First draft",
+                status="draft",
+            ),
+            Draft(
+                id="draft_002",
+                project_id="proj_test1",
+                decision_id="dec_1",
+                platform="linkedin",
+                content="Second draft",
+                status="draft",
+            ),
+        ]
+        config = ContextConfig(pending_draft_detail="full_content")
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
+        assert "[id=draft_001]" in result
+        assert "[id=draft_002]" in result
+
+    def test_summary_mode_multiple_drafts_have_ids(self, sample_project_context, sample_commit):
+        """Multiple pending drafts each show their ID in summary mode."""
+        sample_project_context.pending_drafts = [
+            Draft(
+                id="draft_aaa",
+                project_id="proj_test1",
+                decision_id="dec_1",
+                platform="x",
+                content="First",
+                status="draft",
+            ),
+            Draft(
+                id="draft_bbb",
+                project_id="proj_test1",
+                decision_id="dec_1",
+                platform="linkedin",
+                content="Second",
+                status="approved",
+            ),
+        ]
+        config = ContextConfig(pending_draft_detail="summary")
+        result = assemble_evaluator_prompt("# Eval", sample_project_context, sample_commit, config)
+        assert "draft_aaa:x:draft" in result
+        assert "draft_bbb:linkedin:approved" in result

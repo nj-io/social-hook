@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchDrafts, fetchEnabledPlatforms, fetchProjects } from "@/lib/api";
 import type { Draft, Project } from "@/lib/types";
+import { RateLimitCard } from "@/components/rate-limit-card";
 import { StatusBadge } from "@/components/status-badge";
 import { useDataEvents } from "@/lib/use-data-events";
 
@@ -84,11 +85,12 @@ export default function DashboardPage() {
       )}
 
       {/* Summary stats */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
         <StatCard label="Total Drafts" value={drafts.length} />
         <StatCard label="Pending Review" value={statusCounts["draft"] ?? 0} />
         <StatCard label="Scheduled" value={statusCounts["scheduled"] ?? 0} />
         <StatCard label="Posted" value={statusCounts["posted"] ?? 0} />
+        <RateLimitCard />
       </div>
 
       {/* Projects */}

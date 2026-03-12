@@ -525,11 +525,12 @@ def discover(
 
     typer.echo(f"Discovering project: {project.name} ({project.repo_path})")
 
-    summary, selected_files = discover_project(
+    summary, selected_files, file_summaries, prompt_docs = discover_project(
         client=client,
         repo_path=project.repo_path,
         project_docs=project_config.context.project_docs,
-        max_doc_tokens=project_config.context.max_doc_tokens,
+        max_discovery_tokens=project_config.context.max_discovery_tokens,
+        max_file_size=project_config.context.max_file_size,
         db=db_ctx,
         project_id=project.id,
     )
@@ -538,6 +539,10 @@ def discover(
         if not dry_run:
             ops.update_project_summary(conn, project.id, summary)
             ops.update_discovery_files(conn, project.id, selected_files)
+            if file_summaries:
+                ops.upsert_file_summaries(conn, project.id, file_summaries)
+            if prompt_docs:
+                ops.update_prompt_docs(conn, project.id, prompt_docs)
         typer.echo(f"\nSelected files ({len(selected_files)}):")
         for f in selected_files:
             typer.echo(f"  {f}")
@@ -854,5 +859,7 @@ from social_hook.cli.snapshot import app as snapshot_app
 app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
 
 from social_hook.cli.events import events as events_cmd
+from social_hook.cli.rate_limits import rate_limits as rate_limits_cmd
 
 app.command("events")(events_cmd)
+app.command("rate-limits")(rate_limits_cmd)

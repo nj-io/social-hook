@@ -9,9 +9,11 @@ from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id, get_base_path, get_db_path
-from social_hook.models import Post
+from social_hook.models import CommitInfo, Decision, Post
 from social_hook.notifications import send_notification
+from social_hook.rate_limits import check_rate_limit
 from social_hook.scheduling import calculate_optimal_time
+from social_hook.trigger import parse_commit_info, run_trigger
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +185,224 @@ def promote_deferred_drafts(conn, config, dry_run=False):
     return promoted
 
 
+def _drain_deferred_evaluations(conn, config, dry_run):
+    """Process deferred evaluations when rate limit slots are available.
+
+    Called during scheduler_tick after promote_deferred_drafts. For each project,
+    drains deferred_eval decisions by re-triggering evaluation (individual mode)
+    or combining them into a single evaluator call (batch mode).
+
+    Skipped entirely in dry_run mode since drain deletes decisions before
+    re-evaluating, which is destructive.
+    """
+    if dry_run:
+        return
+
+    projects = ops.get_all_projects(conn)
+
+    for project in projects:
+        if project.paused:
+            continue
+
+        deferred = ops.get_deferred_eval_decisions(conn, project.id)
+        if not deferred:
+            continue
+
+        if config.rate_limits.batch_throttled:
+            _drain_batch(conn, config, project, deferred)
+        else:
+            _drain_individual(conn, config, project, deferred)
+
+
+def _drain_individual(conn, config, project, deferred):
+    """Drain deferred_eval decisions one at a time, re-checking rate limits."""
+    for d in deferred:
+        gate = check_rate_limit(conn, config.rate_limits)
+        if gate.blocked:
+            break
+
+        commit_hash = d.commit_hash
+        ops.delete_decision(conn, d.id)
+
+        try:
+            run_trigger(
+                commit_hash=commit_hash,
+                repo_path=project.repo_path,
+                dry_run=False,
+                trigger_source="drain",
+            )
+        except Exception as e:
+            logger.error(
+                "Drain failed for commit %s (project %s): %s",
+                commit_hash,
+                project.id,
+                e,
+            )
+            # Re-insert deferred_eval only if run_trigger didn't create a real decision
+            existing = conn.execute(
+                "SELECT id FROM decisions WHERE project_id = ? AND commit_hash = ?",
+                (project.id, commit_hash),
+            ).fetchone()
+            if not existing:
+                ops.insert_decision(
+                    conn,
+                    Decision(
+                        id=generate_id("decision"),
+                        project_id=project.id,
+                        commit_hash=commit_hash,
+                        decision="deferred_eval",
+                        reasoning=f"Drain failed: {e}",
+                        trigger_source="commit",
+                    ),
+                )
+
+
+def _drain_batch(conn, config, project, deferred):
+    """Combine all deferred evals into a single evaluator call."""
+    gate = check_rate_limit(conn, config.rate_limits)
+    if gate.blocked:
+        return
+
+    # Delete all deferred decisions first
+    for d in deferred:
+        ops.delete_decision(conn, d.id)
+
+    # Parse real commit info for each hash
+    parsed_summaries = []
+    for d in deferred:
+        try:
+            ci = parse_commit_info(d.commit_hash, project.repo_path)
+            parsed_summaries.append(f"- {ci.message.splitlines()[0]}")
+        except Exception:
+            parsed_summaries.append(f"- {d.commit_hash[:8]}")
+
+    commit = CommitInfo(
+        hash=f"batch-{deferred[-1].commit_hash[:8]}",
+        message=f"Batch of {len(deferred)} deferred triggers:\n" + "\n".join(parsed_summaries),
+        diff="",
+        files_changed=[],
+    )
+
+    try:
+        _run_batch_evaluation(conn, config, project, commit, deferred)
+    except Exception as e:
+        logger.error("Batch drain failed for project %s: %s", project.id, e)
+        # Re-insert all deferred decisions to avoid permanent loss
+        for d in deferred:
+            existing = conn.execute(
+                "SELECT id FROM decisions WHERE project_id = ? AND commit_hash = ?",
+                (project.id, d.commit_hash),
+            ).fetchone()
+            if not existing:
+                ops.insert_decision(
+                    conn,
+                    Decision(
+                        id=generate_id("decision"),
+                        project_id=project.id,
+                        commit_hash=d.commit_hash,
+                        decision="deferred_eval",
+                        reasoning=f"Batch drain failed: {e}",
+                        trigger_source="commit",
+                    ),
+                )
+
+
+def _run_batch_evaluation(conn, config, project, commit, deferred):
+    """Run evaluator on a batch of deferred decisions. Follows consolidation.py pattern."""
+    from social_hook.config.project import load_project_config
+    from social_hook.errors import ConfigError
+    from social_hook.llm.dry_run import DryRunContext
+    from social_hook.llm.factory import create_client
+
+    project_config = load_project_config(project.repo_path)
+
+    db = DryRunContext(conn, dry_run=False)
+    db.trigger_source = "drain"
+
+    from social_hook.llm.prompts import assemble_evaluator_context
+
+    context = assemble_evaluator_context(db, project.id, project_config)
+
+    try:
+        evaluator_client = create_client(config.models.evaluator, config)
+    except ConfigError as e:
+        logger.error("Config error creating evaluator client for drain batch: %s", e)
+        return
+
+    from social_hook.llm.evaluator import Evaluator
+
+    try:
+        evaluator = Evaluator(evaluator_client)
+
+        platform_summaries = []
+        for pname, pcfg in config.platforms.items():
+            if pcfg.enabled:
+                summary = f"{pname} ({pcfg.priority})"
+                if pcfg.type == "custom" and pcfg.description:
+                    summary += f" -- {pcfg.description}"
+                platform_summaries.append(summary)
+
+        evaluation = evaluator.evaluate(
+            commit,
+            context,
+            db,
+            platform_summaries=platform_summaries or None,
+            media_config=config.media_generation,
+            media_guidance=project_config.media_guidance if project_config else None,
+            strategy_config=project_config.strategy if project_config else None,
+            summary_config=project_config.summary if project_config else None,
+        )
+    except Exception as e:
+        logger.error("LLM API error during drain batch evaluation: %s", e)
+        return
+
+    target = evaluation.targets.get("default")
+    if not target:
+        logger.info("Drain batch re-evaluation for %s: no default target", project.name)
+        return
+
+    def _val(x):
+        return x.value if hasattr(x, "value") else x
+
+    if _val(target.action) != "draft":
+        logger.info("Drain batch re-evaluation for %s: %s", project.name, _val(target.action))
+        return
+
+    # Insert a decision for the batch result
+    decision = Decision(
+        id=generate_id("decision"),
+        project_id=project.id,
+        commit_hash=commit.hash,
+        decision="draft",
+        reasoning=target.reason,
+        angle=target.angle,
+        episode_type=_val(target.episode_type),
+        post_category=_val(target.post_category),
+        media_tool=_val(target.media_tool),
+        trigger_source="drain",
+    )
+    ops.insert_decision(conn, decision)
+    ops.emit_data_event(conn, "decision", "created", decision.id, project.id)
+
+    # Create drafts per platform via shared pipeline
+    from social_hook.compat import make_eval_compat
+    from social_hook.drafting import draft_for_platforms
+
+    eval_compat = make_eval_compat(evaluation, "draft")
+    draft_for_platforms(
+        config,
+        conn,
+        db,
+        project,
+        decision_id=decision.id,
+        evaluation=eval_compat,
+        context=context,
+        commit=commit,
+        project_config=project_config,
+        dry_run=False,
+    )
+
+
 def scheduler_tick(
     dry_run: bool = False,
     config_path: str | None = None,
@@ -216,6 +436,9 @@ def scheduler_tick(
         try:
             # Promote deferred drafts before checking for due drafts
             promote_deferred_drafts(conn, config, dry_run=dry_run)
+
+            # Drain deferred evaluations when rate limit slots are available
+            _drain_deferred_evaluations(conn, config, dry_run)
 
             # Get due drafts
             due_drafts = ops.get_due_drafts(conn)

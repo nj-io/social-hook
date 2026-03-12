@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +23,22 @@ SAMPLE_TOOL = {
 
 SAMPLE_MESSAGES = [{"role": "user", "content": "Evaluate this commit"}]
 
-VALID_RESULT_ELEMENT = {
+# stream-json NDJSON format: one JSON object per line
+SYSTEM_EVENT = {"type": "system", "subtype": "init"}
+
+TEXT_DELTA_EVENT = {
+    "type": "stream_event",
+    "event": {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+            "type": "text_delta",
+            "text": '{"decision": "post_worthy"}',
+        },
+    },
+}
+
+RESULT_EVENT = {
     "type": "result",
     "subtype": "success",
     "result": '{"decision": "post_worthy"}',
@@ -34,24 +50,47 @@ VALID_RESULT_ELEMENT = {
     },
 }
 
-# --output-format json returns a JSON array of event objects
-VALID_ENVELOPE = [
-    {"type": "system", "subtype": "init"},
-    {"type": "assistant", "message": {}},
-    VALID_RESULT_ELEMENT,
-]
+
+def _make_ndjson(*events):
+    """Create NDJSON string from event objects."""
+    return "\n".join(json.dumps(e) for e in events)
+
+
+# Default valid NDJSON output with text delta + result
+VALID_NDJSON = _make_ndjson(SYSTEM_EVENT, TEXT_DELTA_EVENT, RESULT_EVENT)
 
 
 def _make_mock_popen(returncode=0, stdout=None, stderr=""):
     """Create a mock Popen that returns the given output on communicate()."""
     if stdout is None:
-        stdout = json.dumps(VALID_ENVELOPE)
+        stdout = VALID_NDJSON
     mock_proc = MagicMock()
     mock_proc.communicate.return_value = (stdout, stderr)
     mock_proc.returncode = returncode
     mock_proc.kill = MagicMock()
     mock_proc.wait = MagicMock()
     return mock_proc
+
+
+def _capture_system_prompt(mock_popen, mock_proc):
+    """Set up a Popen side_effect that captures the system prompt file content.
+
+    The temp file is deleted in complete()'s finally block, so we must read it
+    during the Popen call (while the file still exists).
+
+    Returns a dict with a 'content' key that will be populated after complete() runs.
+    """
+    captured = {"content": None, "path": None}
+
+    def side_effect(cmd, **kwargs):
+        idx = cmd.index("--system-prompt-file")
+        path = cmd[idx + 1]
+        captured["path"] = path
+        captured["content"] = Path(path).read_text(encoding="utf-8")
+        return mock_proc
+
+    mock_popen.side_effect = side_effect
+    return captured
 
 
 class TestExtractJson:
@@ -104,11 +143,11 @@ class TestClaudeCliClientInit:
 class TestCommandConstruction:
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_basic_command(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
+        mock_proc = _make_mock_popen()
+        _capture_system_prompt(mock_popen, mock_proc)
         client = ClaudeCliClient(model="sonnet")
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
         assert cmd[0] == "claude"
         assert cmd[1] == "-p"
@@ -117,28 +156,27 @@ class TestCommandConstruction:
         assert "--model" in cmd
         assert "sonnet" in cmd
         assert "--output-format" in cmd
-        assert "json" in cmd
+        assert "stream-json" in cmd
         assert "--tools" in cmd
         assert "--no-session-persistence" in cmd
         # Must NOT use --json-schema (causes multi-turn validation loops)
         assert "--json-schema" not in cmd
+        # Must use --system-prompt-file, not --system-prompt (avoids ARG_MAX)
+        assert "--system-prompt-file" in cmd
+        assert "--system-prompt" not in cmd
         # Verify prompt sent via stdin
-        mock_popen.return_value.communicate.assert_called_once()
-        call_kwargs = mock_popen.return_value.communicate.call_args
+        mock_proc.communicate.assert_called_once()
+        call_kwargs = mock_proc.communicate.call_args
         assert call_kwargs[1]["input"] == "Evaluate this commit"
-        # Must always include --system-prompt with JSON instructions
-        assert "--system-prompt" in cmd
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_system_prompt_includes_json_instructions(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
+        mock_proc = _make_mock_popen()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL], system="Be concise")
 
-        cmd = mock_popen.call_args[0][0]
-        assert "--system-prompt" in cmd
-        idx = cmd.index("--system-prompt")
-        system_prompt = cmd[idx + 1]
+        system_prompt = captured["content"]
         # Original system prompt is preserved
         assert "Be concise" in system_prompt
         # JSON instructions are appended
@@ -147,27 +185,23 @@ class TestCommandConstruction:
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_system_prompt_has_json_instructions_when_no_system(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
+        mock_proc = _make_mock_popen()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        cmd = mock_popen.call_args[0][0]
-        # --system-prompt is always present (for JSON instructions)
-        assert "--system-prompt" in cmd
-        idx = cmd.index("--system-prompt")
-        system_prompt = cmd[idx + 1]
+        system_prompt = captured["content"]
         assert "Required Output Format" in system_prompt
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_schema_embedded_in_system_prompt(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
+        mock_proc = _make_mock_popen()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        cmd = mock_popen.call_args[0][0]
-        idx = cmd.index("--system-prompt")
-        system_prompt = cmd[idx + 1]
-        # The full schema should be embedded in the system prompt
+        system_prompt = captured["content"]
+        # The full schema should be embedded in the system prompt file
         assert '"type": "object"' in system_prompt
         assert '"decision"' in system_prompt
         assert '"required"' in system_prompt
@@ -203,9 +237,74 @@ class TestCommandConstruction:
         assert mock_popen.call_args[1]["start_new_session"] is True
 
 
+class TestSystemPromptFileCleanup:
+    """Verify the temp file is cleaned up on all exit paths."""
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_file_cleaned_up_on_success(self, mock_popen):
+        mock_proc = _make_mock_popen()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
+        client = ClaudeCliClient()
+        client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert captured["path"] is not None
+        assert not Path(captured["path"]).exists(), "Temp file should be deleted after success"
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_file_cleaned_up_on_nonzero_exit(self, mock_popen):
+        mock_proc = _make_mock_popen(returncode=1, stderr="Some error")
+        captured = _capture_system_prompt(mock_popen, mock_proc)
+        client = ClaudeCliClient()
+
+        with pytest.raises(MalformedResponseError):
+            client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert captured["path"] is not None
+        assert not Path(captured["path"]).exists(), "Temp file should be deleted after error"
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_file_cleaned_up_on_timeout(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = subprocess.TimeoutExpired("claude", 300)
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = MagicMock()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
+        client = ClaudeCliClient()
+
+        with pytest.raises(MalformedResponseError, match="timed out"):
+            client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert captured["path"] is not None
+        assert not Path(captured["path"]).exists(), "Temp file should be deleted after timeout"
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen", side_effect=FileNotFoundError)
+    def test_file_cleaned_up_when_cli_not_found(self, mock_popen):
+        """Temp file is created before Popen — must be cleaned up even if CLI is missing."""
+        client = ClaudeCliClient()
+
+        # Track the temp file via os.write mock
+        written_paths = []
+        original_mkstemp = __import__("tempfile").mkstemp
+
+        def tracking_mkstemp(**kwargs):
+            fd, path = original_mkstemp(**kwargs)
+            written_paths.append(path)
+            return fd, path
+
+        with (
+            patch("social_hook.llm.claude_cli.tempfile.mkstemp", side_effect=tracking_mkstemp),
+            pytest.raises(ConfigError, match="Claude CLI not found"),
+        ):
+            client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert len(written_paths) == 1
+        assert not Path(written_paths[0]).exists(), "Temp file should be deleted when CLI not found"
+
+
 class TestResponseParsing:
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_result_text_to_tool_call(self, mock_popen):
+    def test_text_delta_to_tool_call(self, mock_popen):
+        """Text from stream_event content_block_delta is parsed into a tool call."""
         mock_popen.return_value = _make_mock_popen()
         client = ClaudeCliClient()
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
@@ -217,6 +316,50 @@ class TestResponseParsing:
         assert tc.name == "log_decision"
         assert tc.input == {"decision": "post_worthy"}
         assert tc.type == "tool_use"
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_multiple_text_deltas_accumulated(self, mock_popen):
+        """Multiple text deltas are joined to form the complete response."""
+        delta1 = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": '{"decision":'},
+            },
+        }
+        delta2 = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": ' "post_worthy"}'},
+            },
+        }
+        ndjson = _make_ndjson(SYSTEM_EVENT, delta1, delta2, RESULT_EVENT)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
+        client = ClaudeCliClient()
+        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert resp.content[0].input == {"decision": "post_worthy"}
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_thinking_deltas_ignored(self, mock_popen):
+        """Thinking deltas are not included in the text output."""
+        thinking_delta = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": "Let me think..."},
+            },
+        }
+        ndjson = _make_ndjson(SYSTEM_EVENT, thinking_delta, TEXT_DELTA_EVENT, RESULT_EVENT)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
+        client = ClaudeCliClient()
+        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert resp.content[0].input == {"decision": "post_worthy"}
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_usage_parsed(self, mock_popen):
@@ -231,9 +374,10 @@ class TestResponseParsing:
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_missing_usage_defaults_to_zero(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen(
-            stdout=json.dumps({"result": '{"decision": "skip"}'}),
-        )
+        """Result event without usage field defaults to zero tokens."""
+        result_no_usage = {"type": "result", "subtype": "success", "result": "ignored"}
+        ndjson = _make_ndjson(SYSTEM_EVENT, TEXT_DELTA_EVENT, result_no_usage)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
         client = ClaudeCliClient()
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
@@ -246,16 +390,40 @@ class TestResponseParsing:
         client = ClaudeCliClient()
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        assert resp.raw == VALID_RESULT_ELEMENT
+        assert resp.raw == RESULT_EVENT
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_fallback_to_result_field(self, mock_popen):
+        """When no text deltas, falls back to the result field."""
+        result_only = {
+            "type": "result",
+            "subtype": "success",
+            "result": '{"decision": "post_worthy"}',
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        ndjson = _make_ndjson(SYSTEM_EVENT, result_only)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
+        client = ClaudeCliClient()
+        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert resp.content[0].input == {"decision": "post_worthy"}
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_json_in_code_fence_parsed(self, mock_popen):
         """Model outputs JSON in markdown code fence — still works."""
-        envelope = {
-            "result": '```json\n{"decision": "post_worthy"}\n```',
-            "usage": {"input_tokens": 10, "output_tokens": 5},
+        delta = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                    "type": "text_delta",
+                    "text": '```json\n{"decision": "post_worthy"}\n```',
+                },
+            },
         }
-        mock_popen.return_value = _make_mock_popen(stdout=json.dumps(envelope))
+        ndjson = _make_ndjson(SYSTEM_EVENT, delta, RESULT_EVENT)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
         client = ClaudeCliClient()
         resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
@@ -310,36 +478,32 @@ class TestErrorHandling:
             client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_invalid_json_raises_malformed(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen(stdout="not json{")
+    def test_no_text_content_raises_malformed(self, mock_popen):
+        """No text deltas and no result field raises error."""
+        ndjson = _make_ndjson(SYSTEM_EVENT, {"type": "result", "subtype": "success"})
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
         client = ClaudeCliClient()
-        with pytest.raises(MalformedResponseError, match="invalid JSON"):
-            client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
-
-    @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_missing_result_raises_malformed(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen(
-            stdout=json.dumps({"usage": {}}),
-        )
-        client = ClaudeCliClient()
-        with pytest.raises(MalformedResponseError, match="No result"):
+        with pytest.raises(MalformedResponseError, match="No text content"):
             client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_unparseable_result_raises_malformed(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen(
-            stdout=json.dumps({"result": "not json at all"}),
-        )
+        """Result field with non-JSON text raises error when no deltas present."""
+        result = {
+            "type": "result",
+            "subtype": "success",
+            "result": "not json at all",
+        }
+        ndjson = _make_ndjson(SYSTEM_EVENT, result)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
         client = ClaudeCliClient()
         with pytest.raises(MalformedResponseError, match="Could not extract JSON"):
             client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
-    def test_array_without_result_element_raises_malformed(self, mock_popen):
-        """CLI returns JSON array but no element has type=result."""
-        mock_popen.return_value = _make_mock_popen(
-            stdout=json.dumps([{"type": "system"}, {"type": "assistant"}]),
-        )
+    def test_garbage_stdout_raises_malformed(self, mock_popen):
+        """Complete garbage stdout (no valid NDJSON lines) raises error."""
+        mock_popen.return_value = _make_mock_popen(stdout="not json at all{")
         client = ClaudeCliClient()
-        with pytest.raises(MalformedResponseError, match="No result element"):
+        with pytest.raises(MalformedResponseError, match="No text content"):
             client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])

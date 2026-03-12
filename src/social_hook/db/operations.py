@@ -392,6 +392,38 @@ def update_discovery_files(
     return cursor.rowcount > 0
 
 
+def upsert_file_summaries(
+    conn: sqlite3.Connection, project_id: str, file_summaries: list[dict[str, str]]
+) -> None:
+    """Replace all file summaries for a project. Deletes existing summaries first
+    to remove stale entries from previous discovery runs, then inserts new ones."""
+    conn.execute("DELETE FROM file_summaries WHERE project_id = ?", (project_id,))
+    for fs in file_summaries:
+        conn.execute(
+            "INSERT INTO file_summaries (project_id, file_path, summary) VALUES (?, ?, ?)",
+            (project_id, fs["path"], fs["summary"]),
+        )
+    conn.commit()
+
+
+def get_file_summaries(conn: sqlite3.Connection, project_id: str) -> list[dict[str, str]]:
+    """Get all file summaries for a project. Returns [{"path": str, "summary": str}]."""
+    rows = conn.execute(
+        "SELECT file_path, summary FROM file_summaries WHERE project_id = ? ORDER BY file_path",
+        (project_id,),
+    ).fetchall()
+    return [{"path": row[0], "summary": row[1]} for row in rows]
+
+
+def update_prompt_docs(conn: sqlite3.Connection, project_id: str, prompt_docs: list[str]) -> None:
+    """Store LLM-selected prompt docs for a project."""
+    conn.execute(
+        "UPDATE projects SET prompt_docs = ? WHERE id = ?",
+        (json.dumps(prompt_docs), project_id),
+    )
+    conn.commit()
+
+
 # =============================================================================
 # Decisions
 # =============================================================================
@@ -407,8 +439,8 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
         INSERT INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            reference_posts, branch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch, trigger_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )
@@ -483,7 +515,7 @@ def get_recent_decisions_for_llm(
     rows = conn.execute(
         """
         SELECT * FROM decisions
-        WHERE project_id = ? AND decision != 'imported'
+        WHERE project_id = ? AND decision NOT IN ('imported', 'deferred_eval')
         ORDER BY created_at DESC
         LIMIT ?
         """,
@@ -515,8 +547,8 @@ def insert_decisions_batch(
         INSERT OR IGNORE INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            reference_posts, branch, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch, trigger_source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [d.to_row() + (created_at,) for d, created_at in decisions],
     )
@@ -1462,8 +1494,8 @@ def insert_usage(conn: sqlite3.Connection, usage: UsageLog) -> str:
     """
     conn.execute(
         """
-        INSERT INTO usage_log (id, project_id, operation_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_cents, commit_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO usage_log (id, project_id, operation_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_cents, commit_hash, trigger_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         usage.to_row(),
     )
@@ -1517,6 +1549,57 @@ def get_recent_usage(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
         (limit,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_today_auto_evaluation_count(conn: sqlite3.Connection) -> int:
+    """Count auto-triggered evaluations today (UTC).
+
+    Used by rate limiter to enforce max_evaluations_per_day.
+    """
+    row = conn.execute(
+        """
+        SELECT COUNT(*) FROM usage_log
+        WHERE operation_type = 'evaluate'
+          AND trigger_source = 'auto'
+          AND created_at >= date('now')
+        """
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def get_last_auto_evaluation_time(conn: sqlite3.Connection) -> str | None:
+    """Get the most recent auto-triggered evaluation timestamp.
+
+    Used by rate limiter to enforce min_evaluation_gap_minutes.
+    Returns ISO timestamp string or None if no auto evaluations exist.
+    """
+    row = conn.execute(
+        """
+        SELECT MAX(created_at) FROM usage_log
+        WHERE operation_type = 'evaluate'
+          AND trigger_source = 'auto'
+        """
+    ).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def get_deferred_eval_decisions(conn: sqlite3.Connection, project_id: str) -> list[Decision]:
+    """Get unprocessed deferred_eval decisions for a project.
+
+    Returns decisions ordered by created_at ascending (oldest first)
+    for drain processing.
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM decisions
+        WHERE project_id = ?
+          AND decision = 'deferred_eval'
+          AND processed = 0
+        ORDER BY created_at ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [Decision.from_dict(dict(row)) for row in rows]
 
 
 # =============================================================================
@@ -1797,9 +1880,10 @@ def execute_queue_action(
     """Execute an evaluator queue action on a draft.
 
     supersede -> update status to 'superseded'
+    merge -> update status to 'superseded' (content merged into new draft)
     drop -> update status to 'cancelled' with reason
     """
-    if action_type == "supersede":
+    if action_type in ("supersede", "merge"):
         update_draft(conn, draft_id, status="superseded")
     elif action_type == "drop":
         update_draft(conn, draft_id, status="cancelled", last_error=reason)

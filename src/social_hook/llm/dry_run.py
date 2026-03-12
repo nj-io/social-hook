@@ -35,6 +35,7 @@ class DryRunContext:
     def __init__(self, conn: sqlite3.Connection, dry_run: bool = False) -> None:
         self.conn = conn
         self.dry_run = dry_run
+        self.trigger_source: str = "auto"
 
     def __getattr__(self, name: str) -> Any:
         """Delegate to db.operations, intercepting writes in dry-run mode."""

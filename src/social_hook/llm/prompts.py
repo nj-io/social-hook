@@ -251,11 +251,11 @@ def assemble_evaluator_prompt(
             sections.append("### Pending Drafts")
             for d in to_show:
                 intro = " [INTRO]" if getattr(d, "is_intro", False) else ""
-                sections.append(f"- [{d.platform}:{d.status}]{intro}: {d.content}")
+                sections.append(f"- [id={d.id}][{d.platform}:{d.status}]{intro}: {d.content}")
             if overflow > 0:
                 sections.append(f"  (+{overflow} older drafts)")
         else:
-            summaries = ", ".join(f"{d.platform}:{d.status}" for d in to_show)
+            summaries = ", ".join(f"{d.id}:{d.platform}:{d.status}" for d in to_show)
             sections.append(f"- Pending drafts: [{summaries}]")
 
     if project_context.held_decisions:
@@ -302,6 +302,11 @@ def assemble_evaluator_prompt(
             )
             deferred_part = f", Deferred: {pss.deferred_drafts}" if pss.deferred_drafts else ""
             sections.append(f"- Pending drafts: {pss.pending_drafts}{deferred_part}")
+            if pss.pending_drafts > pss.slots_remaining_today:
+                sections.append(
+                    f"- NOTE: {pss.pending_drafts} pending drafts for ~{pss.slots_remaining_today} "
+                    f"slot(s) today. Review pending drafts for overlap — merge redundant ones."
+                )
 
     # Memories
     if project_context.memories:
@@ -344,6 +349,21 @@ def assemble_evaluator_prompt(
         sections.append("\n---\n## Project Summary")
         sections.append(project_context.project_summary)
 
+    # Commit-relevant file context
+    if project_context.file_summaries and commit.files_changed:
+        changed_dirs = {fp.rsplit("/", 1)[0] + "/" for fp in commit.files_changed if "/" in fp}
+        changed_exact = set(commit.files_changed)
+
+        relevant = [
+            fs
+            for fs in project_context.file_summaries
+            if fs["path"] in changed_exact or any(fs["path"].startswith(d) for d in changed_dirs)
+        ]
+        if relevant:
+            sections.append("\n---\n## Relevant File Context")
+            for fs in relevant[:20]:
+                sections.append(f"- **{fs['path']}**: {fs['summary']}")
+
     # Milestone summaries (compacted narrative history)
     if project_context.milestone_summaries:
         sections.append("\n---\n## Milestone Summaries")
@@ -355,25 +375,37 @@ def assemble_evaluator_prompt(
                 period = f" ({ms['period_start']} to {ms['period_end']})"
             sections.append(f"- [{ms_type}]{period}: {ms_text}")
 
-    # Documentation (T20d: include_readme, include_claude_md, max_doc_tokens)
-    if project_context.project.repo_path:
-        repo = Path(project_context.project.repo_path)
-        if config.include_readme:
-            readme_path = repo / "README.md"
-            if readme_path.exists():
-                readme_text = readme_path.read_text(encoding="utf-8")
-                if count_tokens(readme_text) > config.max_doc_tokens:
-                    readme_text = readme_text[: config.max_doc_tokens * 4] + "\n[...truncated]"
-                sections.append("\n---\n## README")
-                sections.append(readme_text)
-        if config.include_claude_md:
-            claude_path = repo / "CLAUDE.md"
-            if claude_path.exists():
-                claude_text = claude_path.read_text(encoding="utf-8")
-                if count_tokens(claude_text) > config.max_doc_tokens:
-                    claude_text = claude_text[: config.max_doc_tokens * 4] + "\n[...truncated]"
-                sections.append("\n---\n## CLAUDE.md")
-                sections.append(claude_text)
+    # Project documentation — LLM-selected during discovery
+    if project_context.project.repo_path and project_context.project.prompt_docs:
+        import json as _json
+
+        try:
+            doc_paths = _json.loads(project_context.project.prompt_docs)
+        except (ValueError, TypeError):
+            doc_paths = []
+        if doc_paths:
+            repo = Path(project_context.project.repo_path)
+            sections.append("\n---\n## Project Documentation")
+            tokens_used = 0
+            for rel_path in doc_paths:
+                fpath = repo / rel_path
+                if not fpath.exists() or not fpath.is_file():
+                    continue
+                try:
+                    content = fpath.read_text(encoding="utf-8", errors="replace")
+                    file_tokens = count_tokens(content)
+                    if tokens_used + file_tokens > config.max_doc_tokens:
+                        remaining = config.max_doc_tokens - tokens_used
+                        if remaining > 100:
+                            content = content[: remaining * 4] + "\n[...truncated]"
+                            sections.append(f"\n### {rel_path}")
+                            sections.append(content)
+                        break
+                    sections.append(f"\n### {rel_path}")
+                    sections.append(content)
+                    tokens_used += file_tokens
+                except (OSError, UnicodeDecodeError):
+                    continue
 
     # Available media tools (dynamic, from config)
     _append_media_tools_section(sections, media_config, media_guidance)
@@ -553,24 +585,36 @@ def assemble_drafter_prompt(
             except (ValueError, TypeError):
                 pass
 
-        # Fallback to README + CLAUDE.md when no discovery files loaded
-        if not discovery_files_loaded:
-            if config.include_readme:
-                readme_path = repo / "README.md"
-                if readme_path.exists():
-                    readme_text = readme_path.read_text(encoding="utf-8")
-                    if count_tokens(readme_text) > config.max_doc_tokens:
-                        readme_text = readme_text[: config.max_doc_tokens * 4] + "\n[...truncated]"
-                    sections.append("\n---\n## README")
-                    sections.append(readme_text)
-            if config.include_claude_md:
-                claude_path = repo / "CLAUDE.md"
-                if claude_path.exists():
-                    claude_text = claude_path.read_text(encoding="utf-8")
-                    if count_tokens(claude_text) > config.max_doc_tokens:
-                        claude_text = claude_text[: config.max_doc_tokens * 4] + "\n[...truncated]"
-                    sections.append("\n---\n## CLAUDE.md")
-                    sections.append(claude_text)
+        # Fallback to prompt_docs when no discovery files loaded
+        if not discovery_files_loaded and project_context.project.prompt_docs:
+            import json as _json
+
+            try:
+                doc_paths = _json.loads(project_context.project.prompt_docs)
+            except (ValueError, TypeError):
+                doc_paths = []
+            if doc_paths:
+                sections.append("\n---\n## Project Documentation")
+                tokens_used = 0
+                for rel_path in doc_paths:
+                    fpath = repo / rel_path
+                    if not fpath.exists() or not fpath.is_file():
+                        continue
+                    try:
+                        content = fpath.read_text(encoding="utf-8", errors="replace")
+                        file_tokens = count_tokens(content)
+                        if tokens_used + file_tokens > config.max_doc_tokens:
+                            remaining = config.max_doc_tokens - tokens_used
+                            if remaining > 100:
+                                content = content[: remaining * 4] + "\n[...truncated]"
+                                sections.append(f"\n### {rel_path}")
+                                sections.append(content)
+                            break
+                        sections.append(f"\n### {rel_path}")
+                        sections.append(content)
+                        tokens_used += file_tokens
+                    except (OSError, UnicodeDecodeError):
+                        continue
 
     # Project summary
     if project_context.project_summary:
