@@ -37,7 +37,16 @@ function SettingsContent() {
   const [contentCfg, setContentCfg] = useState<{ content: string; path: string } | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectPath, setSelectedProjectPath] = useState("");
-  const [contextConfig, setContextConfig] = useState<{ max_doc_tokens?: number; project_docs?: string[] }>({});
+  const [contextConfig, setContextConfig] = useState<{
+    max_doc_tokens?: number;
+    max_discovery_tokens?: number;
+    max_file_size?: number;
+    project_docs?: string[];
+  }>({});
+  const [summaryConfig, setSummaryConfig] = useState<{
+    refresh_after_commits?: number;
+    refresh_after_days?: number;
+  }>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -68,6 +77,7 @@ function SettingsContent() {
       setContentCfg(ccRes);
       setProjects(projRes.projects);
       setContextConfig(ccParsed.context || {});
+      setSummaryConfig(ccParsed.summary || {});
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load settings");
     } finally {
@@ -433,11 +443,9 @@ function SettingsContent() {
               </p>
 
               <div>
-                <label className="mb-1 block text-sm font-medium">Max Document Tokens</label>
+                <label className="mb-1 block text-sm font-medium">Max Document Tokens (Prompt)</label>
                 <p className="mb-2 text-xs text-muted-foreground">
-                  Maximum tokens to include from project documentation files (README, CLAUDE.md, discovery files)
-                  when generating summaries and drafts. Higher values give the AI more project context but use
-                  more of the context window. Default: 10,000.
+                  Maximum tokens for LLM-selected prompt docs in evaluator/drafter prompts. Default: 10,000.
                 </p>
                 <input
                   type="number"
@@ -449,6 +457,61 @@ function SettingsContent() {
                     const val = parseInt(e.target.value, 10);
                     if (isNaN(val)) return;
                     setContextConfig((prev) => ({ ...prev, max_doc_tokens: val }));
+                  }}
+                  onBlur={async () => {
+                    await updateContentConfigParsed({ context: { ...contextConfig } });
+                  }}
+                  className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+                />
+              </div>
+            </div>
+          </section>
+
+          <section id="discovery" className="pt-1">
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold">Discovery</h2>
+              <p className="text-sm text-muted-foreground">
+                Configure project discovery settings that control how the system scans and summarizes your codebase.
+              </p>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Max Discovery Tokens</label>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Token budget for file loading during project discovery. Higher = more files analyzed, but slower on Claude CLI. Default: 60,000.
+                </p>
+                <input
+                  type="number"
+                  min={10000}
+                  max={200000}
+                  step={5000}
+                  value={contextConfig.max_discovery_tokens ?? 60000}
+                  onChange={async (e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (isNaN(val)) return;
+                    setContextConfig((prev) => ({ ...prev, max_discovery_tokens: val }));
+                  }}
+                  onBlur={async () => {
+                    await updateContentConfigParsed({ context: { ...contextConfig } });
+                  }}
+                  className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Max File Size (bytes)</label>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Skip individual files larger than this during discovery (bytes). Default: 250 KB.
+                </p>
+                <input
+                  type="number"
+                  min={10000}
+                  max={1000000}
+                  step={10000}
+                  value={contextConfig.max_file_size ?? 256000}
+                  onChange={async (e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (isNaN(val)) return;
+                    setContextConfig((prev) => ({ ...prev, max_file_size: val }));
                   }}
                   onBlur={async () => {
                     await updateContentConfigParsed({ context: { ...contextConfig } });
@@ -476,6 +539,52 @@ function SettingsContent() {
                   }}
                   placeholder="docs/ARCHITECTURE.md&#10;src/**/README.md"
                   className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-accent"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Refresh After Commits</label>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Regenerate project summary after this many commits. Default: 20.
+                </p>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  value={summaryConfig.refresh_after_commits ?? 20}
+                  onChange={async (e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (isNaN(val)) return;
+                    setSummaryConfig((prev) => ({ ...prev, refresh_after_commits: val }));
+                  }}
+                  onBlur={async () => {
+                    await updateContentConfigParsed({ summary: { ...summaryConfig } });
+                  }}
+                  className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium">Refresh After Days</label>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Regenerate project summary after this many days. Default: 14.
+                </p>
+                <input
+                  type="number"
+                  min={1}
+                  max={90}
+                  step={1}
+                  value={summaryConfig.refresh_after_days ?? 14}
+                  onChange={async (e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (isNaN(val)) return;
+                    setSummaryConfig((prev) => ({ ...prev, refresh_after_days: val }));
+                  }}
+                  onBlur={async () => {
+                    await updateContentConfigParsed({ summary: { ...summaryConfig } });
+                  }}
+                  className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
                 />
               </div>
             </div>

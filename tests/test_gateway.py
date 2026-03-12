@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytest_asyncio = pytest.importorskip("pytest_asyncio", reason="pytest-asyncio required")
+
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
 
 

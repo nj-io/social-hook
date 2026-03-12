@@ -42,7 +42,11 @@ export function PipelineToasts() {
       const data = inner.data as DataChangeEvent;
 
       if (data.entity === "pipeline") {
-        if (data.action === "evaluating") {
+        if (data.action === "discovering") {
+          addToast("Discovering project", data.entity_id);
+        } else if (data.action === "discovered") {
+          addToast("Discovery complete", data.entity_id);
+        } else if (data.action === "evaluating") {
           addToast("Evaluating commit", data.entity_id);
         } else if (data.action === "drafting") {
           addToast("Drafting content", data.entity_id);

@@ -392,6 +392,36 @@ def update_discovery_files(
     return cursor.rowcount > 0
 
 
+def upsert_file_summaries(conn: sqlite3.Connection, project_id: str, file_summaries: list[dict[str, str]]) -> None:
+    """Replace all file summaries for a project. Deletes existing summaries first
+    to remove stale entries from previous discovery runs, then inserts new ones."""
+    conn.execute("DELETE FROM file_summaries WHERE project_id = ?", (project_id,))
+    for fs in file_summaries:
+        conn.execute(
+            "INSERT INTO file_summaries (project_id, file_path, summary) VALUES (?, ?, ?)",
+            (project_id, fs["path"], fs["summary"]),
+        )
+    conn.commit()
+
+
+def get_file_summaries(conn: sqlite3.Connection, project_id: str) -> list[dict[str, str]]:
+    """Get all file summaries for a project. Returns [{"path": str, "summary": str}]."""
+    rows = conn.execute(
+        "SELECT file_path, summary FROM file_summaries WHERE project_id = ? ORDER BY file_path",
+        (project_id,),
+    ).fetchall()
+    return [{"path": row[0], "summary": row[1]} for row in rows]
+
+
+def update_prompt_docs(conn: sqlite3.Connection, project_id: str, prompt_docs: list[str]) -> None:
+    """Store LLM-selected prompt docs for a project."""
+    conn.execute(
+        "UPDATE projects SET prompt_docs = ? WHERE id = ?",
+        (json.dumps(prompt_docs), project_id),
+    )
+    conn.commit()
+
+
 # =============================================================================
 # Decisions
 # =============================================================================

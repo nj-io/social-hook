@@ -2,6 +2,7 @@
 
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from social_hook.llm._usage_logger import log_usage
@@ -22,6 +23,12 @@ DISCOVERY_EXTENSIONS = {
     ".json",
     ".rs",
     ".go",
+    ".txt",
+    ".js",
+    ".jsx",
+    ".rst",
+    ".sql",
+    ".sh",
 }
 
 # Directories to skip during file listing
@@ -41,6 +48,7 @@ IGNORE_DIRS = {
     ".pytest_cache",
     ".ruff_cache",
     "egg-info",
+    ".claude",
 }
 
 # Tool schemas for two-pass discovery
@@ -66,16 +74,42 @@ SELECT_FILES_TOOL = {
 
 GENERATE_SUMMARY_TOOL = {
     "name": "generate_summary",
-    "description": "Generate a comprehensive project summary",
+    "description": "Generate a project summary, per-file summaries, and identify key documentation files",
     "input_schema": {
         "type": "object",
         "properties": {
-            "summary": {
+            "project_summary": {
                 "type": "string",
-                "description": "Comprehensive project summary (~500-800 tokens)",
+                "description": "Comprehensive project summary (~1000-1500 tokens)",
+            },
+            "file_summaries": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Relative file path"},
+                        "summary": {
+                            "type": "string",
+                            "description": "Summary of what this file does. Length should be proportional to the file's importance: 1 sentence for simple/utility files, minimum 3 sentences for core files that drive key functionality.",
+                        },
+                    },
+                    "required": ["path", "summary"],
+                },
+                "description": "Per-file summaries for each loaded file",
+            },
+            "prompt_docs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "3-5 file paths that provide the most useful ongoing context for "
+                    "understanding this project. These will be loaded into future LLM "
+                    "prompts. Prioritize: architecture docs, requirements, API specs, "
+                    "config schemas, key README files. Avoid: changelogs, license files, "
+                    "auto-generated docs."
+                ),
             },
         },
-        "required": ["summary"],
+        "required": ["project_summary", "file_summaries", "prompt_docs"],
     },
 }
 
@@ -90,6 +124,7 @@ def list_project_files(
     extensions: set[str] | None = None,
     ignore_dirs: set[str] | None = None,
     max_files: int = 500,
+    max_file_size: int = 256000,
 ) -> str:
     """Walk repo tree and return formatted file listing.
 
@@ -98,6 +133,7 @@ def list_project_files(
         extensions: File extensions to include (default: DISCOVERY_EXTENSIONS)
         ignore_dirs: Directory names to skip (default: IGNORE_DIRS)
         max_files: Maximum files to list
+        max_file_size: Skip files larger than this many bytes
 
     Returns:
         Formatted string with one "path (size)" per line
@@ -127,6 +163,9 @@ def list_project_files(
             rel_path = rel_dir / fname
             try:
                 size = fpath.stat().st_size
+                if size > max_file_size:
+                    logger.info("Skipping oversized file from listing: %s (%d bytes)", rel_path, size)
+                    continue
                 if size < 1024:
                     size_str = f"{size}B"
                 elif size < 1024 * 1024:
@@ -168,10 +207,12 @@ def discover_project(
     client: LLMClient,
     repo_path: str,
     project_docs: list[str] | None = None,
-    max_doc_tokens: int = 10000,
+    max_discovery_tokens: int = 60000,
+    max_file_size: int = 256000,
     db: object | None = None,
     project_id: str | None = None,
-) -> tuple[str | None, list[str]]:
+    on_progress: Callable | None = None,
+) -> tuple[str | None, list[str], list[dict[str, str]], list[str]]:
     """Two-pass project discovery: select files then generate summary.
 
     Pass 1: Given the file listing, LLM selects the most important files.
@@ -181,19 +222,24 @@ def discover_project(
         client: LLM client for making API calls
         repo_path: Path to the repository
         project_docs: User-specified glob patterns for priority files
-        max_doc_tokens: Token budget for file loading
+        max_discovery_tokens: Token budget for file loading
+        max_file_size: Skip files larger than this many bytes
         db: Optional DB context for usage tracking
         project_id: Optional project ID for usage tracking
+        on_progress: Optional callback(stage: str) called at lifecycle points
 
     Returns:
-        Tuple of (summary_text, selected_file_paths).
-        Returns (None, []) on failure.
+        Tuple of (summary_text, selected_file_paths, file_summaries, prompt_docs).
+        Returns (None, [], [], []) on failure.
     """
+    if on_progress:
+        on_progress("discovering")
+
     # Build file listing
-    file_listing = list_project_files(repo_path)
+    file_listing = list_project_files(repo_path, max_file_size=max_file_size)
     if not file_listing:
         logger.warning("No files found in %s for discovery", repo_path)
-        return None, []
+        return None, [], [], []
 
     # Resolve user-specified project docs
     priority_files = []
@@ -229,7 +275,7 @@ def discover_project(
     tool_input = _extract_tool_input(response, "select_files")
     if not tool_input or "files" not in tool_input:
         logger.warning("Discovery pass 1 failed: no select_files tool call")
-        return None, []
+        return None, [], [], []
 
     selected_files = tool_input["files"]
 
@@ -255,11 +301,15 @@ def discover_project(
         if not fpath.exists() or not fpath.is_file():
             continue
         try:
+            file_size = fpath.stat().st_size
+            if file_size > max_file_size:
+                logger.info("Skipping oversized file: %s (%d bytes)", rel_path, file_size)
+                continue
             content = fpath.read_text(encoding="utf-8", errors="replace")
             file_tokens = count_tokens(content)
-            if tokens_used + file_tokens > max_doc_tokens:
+            if tokens_used + file_tokens > max_discovery_tokens:
                 # Truncate this file to fit remaining budget
-                remaining = max_doc_tokens - tokens_used
+                remaining = max_discovery_tokens - tokens_used
                 if remaining > 100:  # Only include if meaningful
                     content = content[: remaining * 4] + "\n[...truncated]"
                     loaded_content.append(f"--- {rel_path} ---\n{content}")
@@ -273,19 +323,23 @@ def discover_project(
 
     if not loaded_content:
         logger.warning("Discovery pass 2: no files could be loaded")
-        return None, []
+        return None, [], [], []
 
     summary_system = (
-        "Generate a comprehensive project summary (~500-800 tokens) covering: "
+        "Generate a comprehensive project summary (~1000-1500 tokens) covering: "
         "what the project does, the problem it solves, architecture overview, "
-        "key technologies, and current development state. Be specific and concrete."
+        "key technologies, and current development state. "
+        "Also provide a summary for each file included below — scale length to importance: "
+        "1 sentence for simple/utility files, minimum 3 sentences for core files. "
+        "and select 3-5 file paths that would provide the most useful ongoing "
+        "context for understanding this project."
     )
 
     summary_response = client.complete(
         messages=[{"role": "user", "content": "\n\n".join(loaded_content)}],
         tools=[GENERATE_SUMMARY_TOOL],
         system=summary_system,
-        max_tokens=2048,
+        max_tokens=4096,
     )
     log_usage(
         db,
@@ -296,8 +350,14 @@ def discover_project(
     )
 
     summary_input = _extract_tool_input(summary_response, "generate_summary")
-    if not summary_input or "summary" not in summary_input:
+    if not summary_input or "project_summary" not in summary_input:
         logger.warning("Discovery pass 2 failed: no generate_summary tool call")
-        return None, []
+        return None, [], [], []
 
-    return summary_input["summary"], files_loaded
+    file_summaries = summary_input.get("file_summaries", [])
+    prompt_docs = summary_input.get("prompt_docs", [])[:5]
+
+    if on_progress:
+        on_progress("discovered")
+
+    return summary_input["project_summary"], files_loaded, file_summaries, prompt_docs

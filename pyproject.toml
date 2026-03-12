@@ -72,6 +72,7 @@ packages = ["src/social_hook"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v"
+asyncio_mode = "auto"
 markers = ["perf: timed performance tests (can be slow, skip with -m 'not perf')"]
 
 [tool.ruff]
