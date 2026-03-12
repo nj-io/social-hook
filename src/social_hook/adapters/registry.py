@@ -1,6 +1,7 @@
 """Media adapter registry with lazy initialization."""
 
 import importlib
+from typing import Any
 
 from social_hook.adapters.media.base import MediaAdapter
 
@@ -104,7 +105,8 @@ def get_tool_spec_schema(name: str) -> dict:
         return {"required": {}, "optional": {}}
     mod = importlib.import_module(entry[0])
     cls = getattr(mod, entry[1])
-    return cls.spec_schema()
+    result: dict[str, Any] = cls.spec_schema()
+    return result
 
 
 def get_blank_template(name: str) -> dict:
