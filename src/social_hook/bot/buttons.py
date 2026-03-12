@@ -477,6 +477,7 @@ def btn_edit_submenu(
 ) -> None:
     """Show edit submenu with text/media/angle options."""
     _answer_callback(adapter, callback_id)
+    _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "editing")
 
     buttons = [
         ButtonRow(

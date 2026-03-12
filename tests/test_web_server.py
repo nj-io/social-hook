@@ -918,13 +918,19 @@ class TestInstallationEndpoints:
             assert resp.status_code == 200
             mock_uninstall.assert_called_once()
 
-    def test_bot_daemon_start_already_running(self, client, tmp_env):
-        with patch("social_hook.bot.process.is_running", return_value=True):
+    def test_bot_daemon_start_replaces_existing(self, client, tmp_env):
+        """Starting bot when one is already running stops the old one first."""
+        with (
+            patch("social_hook.bot.process.is_running", return_value=True),
+            patch("social_hook.bot.process.stop_bot", return_value=True) as mock_stop,
+            patch("time.sleep"),
+        ):
             resp = client.post("/api/installations/bot_daemon/start")
             assert resp.status_code == 200
             data = resp.json()
             assert data["success"] is True
-            assert "already running" in data["message"]
+            assert "starting" in data["message"].lower()
+            mock_stop.assert_called_once()
 
     def test_project_detail_includes_journey_capture(self, client, tmp_env):
         """Project detail response includes journey_capture_enabled."""

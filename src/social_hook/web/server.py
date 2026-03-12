@@ -2330,10 +2330,17 @@ async def api_uninstall_component(component: str):
 async def api_start_bot_daemon():
     import subprocess as sp
 
-    from social_hook.bot.process import is_running
+    from social_hook.bot.process import is_running, stop_bot
 
+    # Stop any existing daemon first — only one can poll a Telegram token.
+    # This handles the case where a daemon was started from a different
+    # worktree or the main branch and is now stale.
     if is_running():
-        return {"success": True, "message": "Bot daemon is already running"}
+        stop_bot()
+        # Brief pause for the old process to release the polling connection
+        import time
+
+        time.sleep(0.5)
     try:
         sp.Popen([PROJECT_SLUG, "bot", "start", "--daemon"])
         return {"success": True, "message": "Bot daemon starting"}

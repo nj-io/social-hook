@@ -4,12 +4,15 @@ import os
 import signal
 from pathlib import Path
 
-from social_hook.filesystem import get_base_path
-
 
 def get_pid_file() -> Path:
-    """Get the path to the bot PID file."""
-    return get_base_path() / "bot.pid"
+    """Get the path to the bot PID file.
+
+    Always uses the main base path (~/.social-hook/bot.pid), not a
+    worktree-specific path. Only one bot daemon can run per Telegram
+    token, so all worktrees share the same PID file.
+    """
+    return Path.home() / ".social-hook" / "bot.pid"
 
 
 def write_pid(pid_file: Path | None = None) -> None:
