@@ -1,5 +1,6 @@
 """CLI commands for configuration management."""
 
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -52,9 +53,61 @@ def _traverse(data: dict, dotted_key: str):
     return current
 
 
+def _resolve_content_config_path(project_path: str | None = None) -> Path:
+    """Resolve content-config.yaml: {project}/.social-hook/ -> ~/.social-hook/ fallback."""
+    from social_hook.constants import CONFIG_DIR_NAME
+
+    if project_path:
+        project_cfg = Path(project_path) / CONFIG_DIR_NAME / "content-config.yaml"
+        if project_cfg.exists():
+            return project_cfg
+    global_cfg = Path.home() / CONFIG_DIR_NAME / "content-config.yaml"
+    return global_cfg
+
+
+def _deep_merge(base: dict, updates: dict) -> dict:
+    """Recursively merge updates into base dict."""
+    for key, value in updates.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def _get_content_config_with_defaults(overrides: dict) -> dict:
+    """Build full content-config dict with all defaults, then merge overrides on top."""
+    from dataclasses import asdict
+
+    from social_hook.config.project import ContextConfig, StrategyConfig, SummaryConfig
+
+    defaults: dict[str, Any] = {
+        "context": asdict(ContextConfig()),
+        "strategy": asdict(StrategyConfig()),
+        "summary": asdict(SummaryConfig()),
+    }
+    return _deep_merge(defaults, overrides)
+
+
 @app.command()
-def show():
+def show(
+    content: bool = typer.Option(False, "--content", help="Show content-config.yaml instead of config.yaml. Example: social-hook config show --content"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Project path for project-specific config"),
+):
     """Show the full configuration as YAML."""
+    if content:
+        config_path = _resolve_content_config_path(project_path)
+        if config_path.exists():
+            try:
+                overrides = yaml.safe_load(config_path.read_text()) or {}
+            except yaml.YAMLError:
+                overrides = {}
+        else:
+            overrides = {}
+        data = _get_content_config_with_defaults(overrides)
+        typer.echo(yaml.dump(data, default_flow_style=False, sort_keys=False).rstrip())
+        return
+
     from social_hook.filesystem import get_config_path
 
     config_path = get_config_path()
@@ -72,20 +125,35 @@ def show():
 
 
 @app.command("get")
-def get_key(key: str = typer.Argument(help="Dotted key path (e.g. platforms.x.account_tier)")):
+def get_key(
+    key: str = typer.Argument(help="Dotted key path (e.g. context.max_discovery_tokens)"),
+    content: bool = typer.Option(False, "--content", help="Read from content-config.yaml. Example: social-hook config get context.max_discovery_tokens --content"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Project path"),
+):
     """Get a single configuration value by dotted key path."""
-    from social_hook.filesystem import get_config_path
-
-    config_path = get_config_path()
-    if config_path.exists():
-        try:
-            data = yaml.safe_load(config_path.read_text()) or {}
-        except yaml.YAMLError:
-            data = {}
+    if content:
+        config_path = _resolve_content_config_path(project_path)
+        if config_path.exists():
+            try:
+                overrides = yaml.safe_load(config_path.read_text()) or {}
+            except yaml.YAMLError:
+                overrides = {}
+        else:
+            overrides = {}
+        data = _get_content_config_with_defaults(overrides)
     else:
-        from social_hook.config.yaml import DEFAULT_CONFIG
+        from social_hook.filesystem import get_config_path
 
-        data = DEFAULT_CONFIG.copy()
+        config_path = get_config_path()
+        if config_path.exists():
+            try:
+                data = yaml.safe_load(config_path.read_text()) or {}
+            except yaml.YAMLError:
+                data = {}
+        else:
+            from social_hook.config.yaml import DEFAULT_CONFIG
+
+            data = DEFAULT_CONFIG.copy()
 
     try:
         value = _traverse(data, key)
@@ -101,19 +169,34 @@ def get_key(key: str = typer.Argument(help="Dotted key path (e.g. platforms.x.ac
 
 @app.command("set")
 def set_key(
-    key: str = typer.Argument(help="Dotted key path (e.g. platforms.x.account_tier)"),
-    value: str = typer.Argument(help="Value to set (scalars only; use web UI for lists/arrays)"),
+    key: str = typer.Argument(help="Dotted key path (e.g. context.max_discovery_tokens)"),
+    value: str = typer.Argument(help="Value to set (scalars only)"),
+    content: bool = typer.Option(False, "--content", help="Write to content-config.yaml. Example: social-hook config set context.max_discovery_tokens 80000 --content"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Project path"),
 ):
-    """Set a configuration value by dotted key path.
+    """Set a configuration value by dotted key path."""
+    parsed = _parse_value(value)
 
-    Only scalar values (strings, numbers, booleans) are supported.
-    For lists/arrays, edit the YAML directly or use the web UI.
-    """
+    if content:
+        config_path = _resolve_content_config_path(project_path)
+        if config_path.exists():
+            try:
+                data = yaml.safe_load(config_path.read_text()) or {}
+            except yaml.YAMLError:
+                data = {}
+        else:
+            data = {}
+        updates = _build_nested(key, parsed)
+        _deep_merge(data, updates)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+        typer.echo(f"Set {key} = {parsed}")
+        return
+
     from social_hook.config.yaml import save_config
     from social_hook.errors import ConfigError
     from social_hook.filesystem import get_config_path
 
-    parsed = _parse_value(value)
     updates = _build_nested(key, parsed)
 
     try:

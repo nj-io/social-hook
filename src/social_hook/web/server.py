@@ -2036,33 +2036,33 @@ async def api_regenerate_summary(project_id: str):
 
         client = create_client(evaluator_model, config)
 
-        # Load context settings from content-config.yaml
-        cc_path = get_db_path().parent / "content-config.yaml"
-        max_doc_tokens = 10000
-        project_docs: list[str] | None = None
-        if cc_path.exists():
-            try:
-                cc_raw = yaml.safe_load(cc_path.read_text()) or {}
-                ctx = cc_raw.get("context", {})
-                max_doc_tokens = ctx.get("max_doc_tokens", 10000)
-                project_docs = ctx.get("project_docs") or None
-            except yaml.YAMLError:
-                pass
+        from social_hook.config.project import load_project_config
 
-        summary, files = await asyncio.to_thread(
+        project_config = load_project_config(project.repo_path)
+        max_discovery_tokens = project_config.context.max_discovery_tokens if project_config else 60000
+        max_file_size = project_config.context.max_file_size if project_config else 256000
+        project_docs = project_config.context.project_docs if project_config else None
+
+        summary, files, file_summaries, prompt_docs = await asyncio.to_thread(
             discover_project,
             client,
             project.repo_path,
             project_docs=project_docs,
-            max_doc_tokens=max_doc_tokens,
+            max_discovery_tokens=max_discovery_tokens,
+            max_file_size=max_file_size,
             db=conn,
             project_id=project_id,
+            on_progress=lambda stage: ops.emit_data_event(conn, "pipeline", stage, project_id, project_id),
         )
 
         if summary:
             ops.update_project_summary(conn, project_id, summary)
             if files:
                 ops.update_discovery_files(conn, project_id, files)
+            if file_summaries:
+                ops.upsert_file_summaries(conn, project_id, file_summaries)
+            if prompt_docs:
+                ops.update_prompt_docs(conn, project_id, prompt_docs)
             ops.emit_data_event(conn, "project", "updated", project_id, project_id)
 
         return {"summary": summary or ""}

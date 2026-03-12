@@ -390,9 +390,9 @@ class TestContextConfig:
         assert config.recent_decisions == 30
         assert config.recent_posts == 15
         assert config.max_tokens == 150000
-        assert config.include_readme is True
-        assert config.include_claude_md is True
         assert config.max_doc_tokens == 10000
+        assert config.max_discovery_tokens == 60000
+        assert config.max_file_size == 256000
 
     def test_default_strategy_values(self):
         """Strategy config with no section uses defaults."""
@@ -407,17 +407,17 @@ class TestContextConfig:
             "recent_decisions": 50,
             "recent_posts": 20,
             "max_tokens": 200000,
-            "include_readme": False,
-            "include_claude_md": False,
             "max_doc_tokens": 5000,
+            "max_discovery_tokens": 80000,
+            "max_file_size": 512000,
         }
         config = _parse_context_config(data)
         assert config.recent_decisions == 50
         assert config.recent_posts == 20
         assert config.max_tokens == 200000
-        assert config.include_readme is False
-        assert config.include_claude_md is False
         assert config.max_doc_tokens == 5000
+        assert config.max_discovery_tokens == 80000
+        assert config.max_file_size == 512000
 
     def test_parse_strategy_from_dict(self):
         """Parse strategy config from content-config.yaml data."""

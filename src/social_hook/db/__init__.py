@@ -73,6 +73,10 @@ from social_hook.db.operations import (
     update_draft_tweet,
     update_lifecycle,
     update_project_summary,
+    update_discovery_files,
+    upsert_file_summaries,
+    get_file_summaries,
+    update_prompt_docs,
 )
 from social_hook.db.schema import SCHEMA_VERSION, apply_migrations, create_schema
 
@@ -161,4 +165,9 @@ __all__ = [
     "emit_data_event",
     # Evaluator Rework
     "execute_queue_action",
+    # Discovery
+    "update_discovery_files",
+    "upsert_file_summaries",
+    "get_file_summaries",
+    "update_prompt_docs",
 ]

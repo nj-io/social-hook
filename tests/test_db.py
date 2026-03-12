@@ -96,7 +96,7 @@ class TestDatabaseInitialization:
         assert result[0] == 1
 
     def test_all_tables_exist(self, temp_db):
-        """Verify all 15 tables exist."""
+        """Verify all 16 tables exist."""
         tables = temp_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
@@ -118,6 +118,7 @@ class TestDatabaseInitialization:
             "web_events",
             "chat_messages",
             "background_tasks",
+            "file_summaries",
         }
 
         assert table_names == expected_tables
@@ -131,9 +132,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 17."""
+        """Check schema version returns 18."""
         version = get_schema_version(temp_db)
-        assert version == 17
+        assert version == 18
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent.

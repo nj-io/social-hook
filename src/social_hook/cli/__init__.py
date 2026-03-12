@@ -339,6 +339,9 @@ def web(
     api_port = _find_free_port(api_port, host)
 
     # Start FastAPI in background
+    from social_hook.filesystem import get_db_path
+
+    typer.echo(f"Database: {get_db_path()}")
     typer.echo(f"Starting API server on {host}:{api_port}...")
     api_proc = sp.Popen(
         ["uvicorn", "social_hook.web.server:app", "--host", host, "--port", str(api_port)],
@@ -507,22 +510,40 @@ def discover(
 
     typer.echo(f"Discovering project: {project.name} ({project.repo_path})")
 
-    summary, selected_files = discover_project(
+    summary, selected_files, file_summaries, prompt_docs = discover_project(
         client=client,
         repo_path=project.repo_path,
         project_docs=project_config.context.project_docs,
-        max_doc_tokens=project_config.context.max_doc_tokens,
+        max_discovery_tokens=project_config.context.max_discovery_tokens,
+        max_file_size=project_config.context.max_file_size,
         db=db_ctx,
         project_id=project.id,
+        on_progress=lambda stage: (
+            typer.echo(f"[{stage}] {project.name}"),
+            ops.emit_data_event(conn, "pipeline", stage, project.id, project.id),
+        ),
     )
 
     if summary:
         if not dry_run:
             ops.update_project_summary(conn, project.id, summary)
             ops.update_discovery_files(conn, project.id, selected_files)
+            if file_summaries:
+                ops.upsert_file_summaries(conn, project.id, file_summaries)
+            if prompt_docs:
+                ops.update_prompt_docs(conn, project.id, prompt_docs)
+            ops.emit_data_event(conn, "project", "updated", project.id, project.id)
         typer.echo(f"\nSelected files ({len(selected_files)}):")
         for f in selected_files:
             typer.echo(f"  {f}")
+        if file_summaries:
+            typer.echo(f"\nFile summaries ({len(file_summaries)}):")
+            for fs in file_summaries:
+                typer.echo(f"  {fs['path']}: {fs['summary'][:80]}")
+        if prompt_docs:
+            typer.echo(f"\nPrompt docs ({len(prompt_docs)}):")
+            for pd in prompt_docs:
+                typer.echo(f"  {pd}")
         typer.echo(f"\nSummary:\n{summary}")
     else:
         typer.echo("Discovery failed - no summary generated.", err=True)
