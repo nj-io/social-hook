@@ -11,6 +11,7 @@ const sections = [
   { id: "platforms", label: "Platforms" },
   { id: "scheduling", label: "Scheduling" },
   { id: "media-generation", label: "Media Generation" },
+  { id: "rate-limits", label: "Rate Limits" },
   { id: "consolidation", label: "Consolidation" },
   { id: "journey-capture", label: "Journey Capture" },
   { id: "voice-style", label: "Voice & Style" },

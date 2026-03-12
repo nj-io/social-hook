@@ -3,6 +3,7 @@ const decisionStyles: Record<string, string> = {
   hold: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
   skip: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
   imported: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400",
+  deferred_eval: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
 };
 
 const decisionLabels: Record<string, string> = {
@@ -10,6 +11,7 @@ const decisionLabels: Record<string, string> = {
   hold: "Hold",
   skip: "Skip",
   imported: "Imported",
+  deferred_eval: "Deferred",
 };
 
 export function DecisionBadge({ decision }: { decision: string }) {

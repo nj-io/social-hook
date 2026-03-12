@@ -137,11 +137,13 @@ models:
 
     def test_missing_config_returns_default(self):
         """Missing config.yaml returns default Config."""
+        from social_hook.config.yaml import DEFAULT_CONFIG
+
         config = load_config(None)
 
-        assert config.models.evaluator == "anthropic/claude-opus-4-5"
-        assert config.models.drafter == "anthropic/claude-opus-4-5"
-        assert config.models.gatekeeper == "anthropic/claude-haiku-4-5"
+        assert config.models.evaluator == DEFAULT_CONFIG["models"]["evaluator"]
+        assert config.models.drafter == DEFAULT_CONFIG["models"]["drafter"]
+        assert config.models.gatekeeper == DEFAULT_CONFIG["models"]["gatekeeper"]
 
     def test_load_full_config(self, temp_dir):
         """Load full config merges env and yaml."""

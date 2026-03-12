@@ -10,7 +10,9 @@ from social_hook.llm.schemas import (
     ExpertAction,
     ExpertResponseInput,
     GatekeeperOperation,
+    LogEvaluationInput,
     MediaTool,
+    QueueAction,
     RouteAction,
     RouteActionInput,
 )
@@ -339,3 +341,52 @@ class TestExtractToolCall:
         result = extract_tool_call(response, "log_decision")
         assert result["decision"] == "post_worthy"
         assert result["reasoning"] == "test"
+
+
+# =============================================================================
+# QueueAction Tests (merge_group, merge_instruction)
+# =============================================================================
+
+
+class TestQueueAction:
+    """Tests for QueueAction with merge fields."""
+
+    def test_supersede_without_merge_fields(self):
+        qa = QueueAction(action="supersede", draft_id="d1", reason="stale")
+        assert qa.merge_group is None
+        assert qa.merge_instruction is None
+
+    def test_merge_with_group_and_instruction(self):
+        qa = QueueAction(
+            action="merge",
+            draft_id="d1",
+            reason="consolidate",
+            merge_group="A",
+            merge_instruction="Combine into a developer experience narrative",
+        )
+        assert qa.action == "merge"
+        assert qa.merge_group == "A"
+        assert qa.merge_instruction == "Combine into a developer experience narrative"
+
+    def test_merge_group_without_instruction(self):
+        qa = QueueAction(
+            action="merge",
+            draft_id="d2",
+            reason="group B member",
+            merge_group="B",
+        )
+        assert qa.merge_group == "B"
+        assert qa.merge_instruction is None
+
+    def test_drop_ignores_merge_fields(self):
+        qa = QueueAction(action="drop", draft_id="d3", reason="outdated")
+        assert qa.merge_group is None
+
+    def test_tool_schema_includes_merge_fields(self):
+        schema = LogEvaluationInput.to_tool_schema()
+        qa_props = schema["input_schema"]["properties"]["queue_actions"]
+        item_props = qa_props["additionalProperties"]["items"]["properties"]
+        assert "merge_group" in item_props
+        assert "merge_instruction" in item_props
+        assert "group label" in item_props["merge_group"]["description"].lower()
+        assert "creative direction" in item_props["merge_instruction"]["description"].lower()

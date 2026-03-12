@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS projects (
     audience_introduced   INTEGER NOT NULL DEFAULT 0,
     paused                INTEGER NOT NULL DEFAULT 0,
     discovery_files       TEXT DEFAULT NULL,
+    prompt_docs           TEXT DEFAULT NULL,
     trigger_branch        TEXT DEFAULT NULL,
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -37,7 +38,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
     commit_message TEXT,
-    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported')),
+    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
     episode_type  TEXT CHECK (episode_type IN ('decision', 'before_after', 'demo_proof', 'milestone', 'postmortem', 'launch', 'synthesis')),
@@ -51,6 +52,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     consolidate_with TEXT,
     reference_posts TEXT DEFAULT NULL,
     branch        TEXT DEFAULT NULL,
+    trigger_source TEXT DEFAULT 'commit',
     processed     INTEGER NOT NULL DEFAULT 0,
     processed_at  TEXT,
     batch_id      TEXT,
@@ -66,6 +68,8 @@ CREATE INDEX IF NOT EXISTS idx_decisions_unprocessed ON decisions(project_id, cr
     WHERE decision = 'hold' AND processed = 0;
 CREATE INDEX IF NOT EXISTS idx_decisions_branch ON decisions(project_id, branch)
     WHERE branch IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_decisions_deferred ON decisions(project_id, created_at)
+    WHERE decision = 'deferred_eval' AND processed = 0;
 
 -- Drafts
 CREATE TABLE IF NOT EXISTS drafts (
@@ -187,6 +191,7 @@ CREATE TABLE IF NOT EXISTS usage_log (
     cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
     cost_cents            REAL NOT NULL DEFAULT 0.0,
     commit_hash           TEXT,
+    trigger_source        TEXT DEFAULT 'auto',
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -231,6 +236,17 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_lookup
     ON chat_messages(chat_id, created_at DESC);
+
+-- File Summaries (Per-file Discovery Summaries)
+CREATE TABLE IF NOT EXISTS file_summaries (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    file_path  TEXT NOT NULL,
+    summary    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, file_path)
+);
+CREATE INDEX IF NOT EXISTS idx_file_summaries_project ON file_summaries(project_id);
 
 -- Background Tasks (Long-running operations tracked for web UI)
 CREATE TABLE IF NOT EXISTS background_tasks (

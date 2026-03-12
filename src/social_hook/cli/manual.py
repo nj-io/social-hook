@@ -30,6 +30,7 @@ def evaluate(
         dry_run=dry_run,
         config_path=str(config_path) if config_path else None,
         verbose=verbose,
+        trigger_source="manual",
     )
     raise SystemExit(exit_code)
 

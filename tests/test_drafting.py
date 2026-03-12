@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
-from social_hook.drafting import DraftResult, draft_for_platforms
+from social_hook.drafting import (
+    DraftResult,
+    _draft_for_resolved_platforms,
+    draft_for_platforms,
+)
 from social_hook.filesystem import generate_id
 from social_hook.models import CommitInfo, Decision, Draft, Post, Project
 from social_hook.scheduling import ScheduleResult
@@ -1215,4 +1219,149 @@ class TestDraftReferencePostResolution:
         # Cross-platform: post_format should NOT be "quote" (LINK fallback in scheduler)
         assert draft.post_format is None
 
+        conn.close()
+
+
+# =============================================================================
+# Tests for _draft_for_resolved_platforms (two-layer split)
+# =============================================================================
+
+
+class TestDraftForResolvedPlatforms:
+    """_draft_for_resolved_platforms drafts for exactly the platforms passed in."""
+
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    def test_drafts_only_passed_platforms(
+        self,
+        mock_schedule,
+        mock_create,
+        tmp_path,
+    ):
+        """Only the platforms in the dict are drafted (no resolution or filtering)."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=True)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+
+        # Build a resolved platform config mock directly
+        resolved_linkedin = MagicMock()
+        resolved_linkedin.filter = "all"
+        resolved_linkedin.account_tier = "free"
+        resolved_linkedin.max_posts_per_day = 3
+        resolved_linkedin.min_gap_minutes = 30
+        resolved_linkedin.optimal_days = []
+        resolved_linkedin.optimal_hours = []
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Resolved platform test"
+        draft_result_mock.reasoning = "Test reasoning"
+        draft_result_mock.platform = "linkedin"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=True,
+            day_reason="weekday",
+            time_reason="optimal hour",
+            deferred=False,
+        )
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            # Pass only "linkedin" — even though config only has "x"
+            results = _draft_for_resolved_platforms(
+                {"linkedin": resolved_linkedin},
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-001",
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
+                commit=_make_commit(),
+                project_config=None,
+            )
+
+        assert len(results) == 1
+        assert results[0].draft.platform == "linkedin"
+        # Drafter was called exactly once (for linkedin only)
+        assert mock_drafter_instance.create_draft.call_count == 1
+        conn.close()
+
+
+class TestDraftForPlatformsPublicApiUnchanged:
+    """draft_for_platforms public API still works after the two-layer split."""
+
+    @patch("social_hook.drafting.resolve_platform")
+    @patch("social_hook.drafting.passes_content_filter", return_value=True)
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    def test_public_api_delegates_to_resolved(
+        self,
+        mock_schedule,
+        mock_create,
+        mock_filter,
+        mock_resolve,
+        tmp_path,
+    ):
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=True)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+
+        resolved = MagicMock()
+        resolved.filter = "all"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        mock_resolve.return_value = resolved
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Public API test"
+        draft_result_mock.reasoning = "reasoning"
+        draft_result_mock.platform = "x"
+        draft_result_mock.format_hint = "single"
+        draft_result_mock.media_type = None
+        draft_result_mock.media_spec = None
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=True,
+            day_reason="weekday",
+            time_reason="optimal hour",
+            deferred=False,
+        )
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id="decision-001",
+                evaluation=_make_evaluation(),
+                context=_make_context(project),
+                commit=_make_commit(),
+            )
+
+        assert len(results) == 1
+        assert results[0].draft.platform == "x"
         conn.close()

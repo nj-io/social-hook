@@ -5,6 +5,7 @@ import pytest
 from social_hook.config.yaml import (
     Config,
     MediaGenerationConfig,
+    RateLimitsConfig,
     SchedulingConfig,
     _deep_merge,
     load_config,
@@ -569,3 +570,67 @@ class TestSaveConfig:
                 config_path=config_path,
             )
             mock_install.assert_called_once()
+
+
+class TestRateLimitsConfig:
+    """Tests for rate_limits config section."""
+
+    def test_defaults(self):
+        """RateLimitsConfig has correct defaults."""
+        rl = RateLimitsConfig()
+        assert rl.max_evaluations_per_day == 15
+        assert rl.min_evaluation_gap_minutes == 10
+        assert rl.batch_throttled is False
+
+    def test_config_includes_rate_limits(self):
+        """Default Config includes rate_limits with defaults."""
+        config = Config()
+        assert isinstance(config.rate_limits, RateLimitsConfig)
+        assert config.rate_limits.max_evaluations_per_day == 15
+
+    def test_parse_rate_limits_from_yaml(self, temp_dir):
+        """Parse rate_limits section from YAML config."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+rate_limits:
+  max_evaluations_per_day: 25
+  min_evaluation_gap_minutes: 5
+  batch_throttled: true
+"""
+        )
+        config = load_config(config_path)
+        assert config.rate_limits.max_evaluations_per_day == 25
+        assert config.rate_limits.min_evaluation_gap_minutes == 5
+        assert config.rate_limits.batch_throttled is True
+
+    def test_rate_limits_missing_uses_defaults(self, temp_dir):
+        """Config without rate_limits section uses defaults."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+platforms:
+  x:
+    enabled: true
+    priority: primary
+    account_tier: free
+"""
+        )
+        config = load_config(config_path)
+        assert config.rate_limits.max_evaluations_per_day == 15
+        assert config.rate_limits.min_evaluation_gap_minutes == 10
+
+    def test_invalid_max_evaluations_raises(self):
+        """Invalid max_evaluations_per_day raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_evaluations_per_day"):
+            validate_config({"rate_limits": {"max_evaluations_per_day": 0}})
+
+    def test_invalid_max_evaluations_type_raises(self):
+        """Non-integer max_evaluations_per_day raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_evaluations_per_day"):
+            validate_config({"rate_limits": {"max_evaluations_per_day": "ten"}})
+
+    def test_invalid_min_gap_raises(self):
+        """Negative min_evaluation_gap_minutes raises ConfigError."""
+        with pytest.raises(ConfigError, match="min_evaluation_gap_minutes"):
+            validate_config({"rate_limits": {"min_evaluation_gap_minutes": -1}})

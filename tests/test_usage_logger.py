@@ -113,3 +113,40 @@ class TestLogUsage:
 
         summary = ops.get_usage_summary(temp_db)
         assert len(summary) == 1
+
+    def test_trigger_source_defaults_to_auto(self):
+        """Without trigger_source on db, usage log defaults to 'auto'."""
+        mock_db = MagicMock()
+        mock_db.insert_usage = MagicMock()
+        # No trigger_source attr set
+        del mock_db.trigger_source
+        usage = _make_usage()
+
+        log_usage(mock_db, "evaluate", "model/id", usage)
+
+        usage_log = mock_db.insert_usage.call_args[0][0]
+        assert usage_log.trigger_source == "auto"
+
+    def test_trigger_source_manual_flows_through(self):
+        """Manual trigger_source on db flows through to UsageLog."""
+        mock_db = MagicMock()
+        mock_db.insert_usage = MagicMock()
+        mock_db.trigger_source = "manual"
+        usage = _make_usage()
+
+        log_usage(mock_db, "evaluate", "model/id", usage)
+
+        usage_log = mock_db.insert_usage.call_args[0][0]
+        assert usage_log.trigger_source == "manual"
+
+    def test_trigger_source_commit_maps_to_auto(self):
+        """Commit trigger_source maps to 'auto' in UsageLog."""
+        mock_db = MagicMock()
+        mock_db.insert_usage = MagicMock()
+        mock_db.trigger_source = "commit"
+        usage = _make_usage()
+
+        log_usage(mock_db, "evaluate", "model/id", usage)
+
+        usage_log = mock_db.insert_usage.call_args[0][0]
+        assert usage_log.trigger_source == "auto"
