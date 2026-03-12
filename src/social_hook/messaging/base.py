@@ -3,13 +3,21 @@
 Mirrors the LLM layer pattern: ABC with normalized types,
 provider-specific implementations in separate modules.
 
+Template Method: send_message / edit_message / send_media handle
+text sanitization and format-error retry at the base level.
+Subclasses implement _do_send_message, _do_edit_message, _do_send_media
+and optionally override sanitize_text / _is_format_error.
+
 REUSABILITY: This file has zero project-specific imports.
-Only stdlib (abc, dataclasses, typing). Copy-paste safe.
+Only stdlib (abc, dataclasses, logging, typing). Copy-paste safe.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -90,20 +98,59 @@ class PlatformCapabilities:
 class MessagingAdapter(ABC):
     """Abstract base for messaging platform adapters.
 
-    Mirrors LLMClient pattern -- ABC with normalized types,
-    provider-specific implementations.
+    Template Method: send_message / edit_message / send_media sanitize
+    text and retry on format errors. Subclasses implement _do_* methods
+    and optionally override sanitize_text / _is_format_error.
     """
 
     platform: str  # "telegram", "slack", etc.
 
-    @abstractmethod
+    def sanitize_text(self, text: str, parse_mode: str) -> str:
+        """Sanitize text for this platform's parser. Override in subclasses."""
+        return text
+
+    def _is_format_error(self, result: SendResult) -> bool:
+        """Check if a send failure was caused by text formatting. Override in subclasses."""
+        return False
+
     def send_message(self, chat_id: str, message: OutboundMessage) -> SendResult:
-        """Send a message to a chat."""
-        ...
+        """Send a message with automatic sanitization and format-error retry."""
+        sanitized = OutboundMessage(
+            text=self.sanitize_text(message.text, message.parse_mode),
+            parse_mode=message.parse_mode,
+            buttons=message.buttons,
+        )
+        result = self._do_send_message(chat_id, sanitized)
+        if not result.success and self._is_format_error(result) and message.parse_mode != "plain":
+            logger.info("[%s] format error, retrying as plain text", self.platform)
+            plain = OutboundMessage(text=message.text, parse_mode="plain", buttons=message.buttons)
+            result = self._do_send_message(chat_id, plain)
+        return result
 
     @abstractmethod
+    def _do_send_message(self, chat_id: str, message: OutboundMessage) -> SendResult:
+        """Platform-specific send implementation. Called by send_message."""
+        ...
+
     def edit_message(self, chat_id: str, message_id: str, message: OutboundMessage) -> SendResult:
-        """Edit an existing message."""
+        """Edit a message with automatic sanitization and format-error retry."""
+        sanitized = OutboundMessage(
+            text=self.sanitize_text(message.text, message.parse_mode),
+            parse_mode=message.parse_mode,
+            buttons=message.buttons,
+        )
+        result = self._do_edit_message(chat_id, message_id, sanitized)
+        if not result.success and self._is_format_error(result) and message.parse_mode != "plain":
+            logger.info("[%s] format error on edit, retrying as plain text", self.platform)
+            plain = OutboundMessage(text=message.text, parse_mode="plain", buttons=message.buttons)
+            result = self._do_edit_message(chat_id, message_id, plain)
+        return result
+
+    @abstractmethod
+    def _do_edit_message(
+        self, chat_id: str, message_id: str, message: OutboundMessage
+    ) -> SendResult:
+        """Platform-specific edit implementation. Called by edit_message."""
         ...
 
     @abstractmethod
@@ -119,7 +166,18 @@ class MessagingAdapter(ABC):
     def send_media(
         self, chat_id: str, file_path: str, caption: str = "", parse_mode: str = "markdown"
     ) -> SendResult:
-        """Send a media file to a chat. Override in subclasses that support media."""
+        """Send media with automatic caption sanitization and format-error retry."""
+        sanitized_caption = self.sanitize_text(caption, parse_mode) if caption else caption
+        result = self._do_send_media(chat_id, file_path, sanitized_caption, parse_mode)
+        if not result.success and self._is_format_error(result) and parse_mode != "plain":
+            logger.info("[%s] format error on media caption, retrying as plain text", self.platform)
+            result = self._do_send_media(chat_id, file_path, caption, "plain")
+        return result
+
+    def _do_send_media(
+        self, chat_id: str, file_path: str, caption: str = "", parse_mode: str = "markdown"
+    ) -> SendResult:
+        """Platform-specific media send. Override in subclasses that support media."""
         return SendResult(success=False, error=f"{self.platform} does not support media uploads")
 
     def download_file(self, file_id: str, dest_dir: str) -> str | None:

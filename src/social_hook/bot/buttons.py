@@ -68,6 +68,34 @@ def _get_conn():
 def _send(adapter: MessagingAdapter, chat_id: str, text: str) -> bool:
     """Send a message via adapter."""
     result = adapter.send_message(chat_id, OutboundMessage(text=text))
+    if not result.success:
+        logger.warning("Failed to send to %s: %s", chat_id, result.error)
+    return result.success
+
+
+def _send_with_buttons(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    text: str,
+    buttons: list[ButtonRow],
+) -> bool:
+    """Send a message with inline buttons via adapter."""
+    result = adapter.send_message(chat_id, OutboundMessage(text=text, buttons=buttons))
+    if not result.success:
+        logger.warning("Failed to send buttons to %s: %s", chat_id, result.error)
+    return result.success
+
+
+def _send_media(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    file_path: str,
+    caption: str = "",
+) -> bool:
+    """Send a media file via adapter."""
+    result = adapter.send_media(chat_id, file_path, caption=caption)
+    if not result.success:
+        logger.warning("Failed to send media to %s: %s", chat_id, result.error)
     return result.success
 
 
@@ -437,13 +465,7 @@ def btn_schedule_submenu(
             ]
         ),
     ]
-    adapter.send_message(
-        chat_id,
-        OutboundMessage(
-            text=f"Schedule `{draft_id[:12]}`:",
-            buttons=buttons,
-        ),
-    )
+    _send_with_buttons(adapter, chat_id, f"Schedule `{draft_id[:12]}`:", buttons)
 
 
 def btn_schedule_custom(
@@ -492,13 +514,7 @@ def btn_edit_submenu(
             ]
         ),
     ]
-    adapter.send_message(
-        chat_id,
-        OutboundMessage(
-            text=f"Edit `{draft_id[:12]}`:",
-            buttons=buttons,
-        ),
-    )
+    _send_with_buttons(adapter, chat_id, f"Edit `{draft_id[:12]}`:", buttons)
 
 
 def btn_edit_media(
@@ -530,7 +546,8 @@ def btn_edit_media(
             caps = adapter.get_capabilities()
             if caps.supports_media:
                 for path in draft.media_paths:
-                    adapter.send_media(
+                    _send_media(
+                        adapter,
                         chat_id,
                         path,
                         caption=f"Current media for `{draft_id[:12]}`",
@@ -550,12 +567,11 @@ def btn_edit_media(
                     ]
                 ),
             ]
-            adapter.send_message(
+            _send_with_buttons(
+                adapter,
                 chat_id,
-                OutboundMessage(
-                    text=f"Media for `{draft_id[:12]}` ({draft.media_type or 'unknown'}):",
-                    buttons=buttons,
-                ),
+                f"Media for `{draft_id[:12]}` ({draft.media_type or 'unknown'}):",
+                buttons,
             )
         else:
             # No media — offer to add
@@ -567,12 +583,11 @@ def btn_edit_media(
                     ]
                 ),
             ]
-            adapter.send_message(
+            _send_with_buttons(
+                adapter,
                 chat_id,
-                OutboundMessage(
-                    text=f"No media on `{draft_id[:12]}`. Add some?",
-                    buttons=buttons,
-                ),
+                f"No media on `{draft_id[:12]}`. Add some?",
+                buttons,
             )
     finally:
         conn.close()
@@ -664,7 +679,8 @@ def btn_media_regen(
 
             caps = adapter.get_capabilities()
             if caps.supports_media:
-                adapter.send_media(
+                _send_media(
+                    adapter,
                     chat_id,
                     result.file_path,
                     caption=f"Regenerated media for `{draft_id[:12]}`",
@@ -755,7 +771,8 @@ def btn_media_retry(
 
             caps = adapter.get_capabilities()
             if caps.supports_media:
-                adapter.send_media(
+                _send_media(
+                    adapter,
                     chat_id,
                     result.file_path,
                     caption=f"Retried media for `{draft_id[:12]}`",
@@ -844,27 +861,21 @@ def btn_media_pick_tool(
             )
         )
 
-    adapter.send_message(
-        chat_id,
-        OutboundMessage(
-            text=f"Pick a media tool for `{draft_id[:12]}`:",
-            buttons=rows,
-        ),
-    )
+    _send_with_buttons(adapter, chat_id, f"Pick a media tool for `{draft_id[:12]}`:", rows)
 
 
 def btn_media_gen_spec(
     adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
-    payload: str,
+    draft_id: str,
     config: Any | None,
     **kwargs: Any,
 ) -> None:
     """User picked a tool — generate spec from draft content or prompt for manual entry."""
     _answer_callback(adapter, callback_id, "Generating spec...")
 
-    parts = payload.split("|", 1)
+    parts = draft_id.split("|", 1)
     if len(parts) != 2:
         _send(adapter, chat_id, "Invalid tool selection.")
         return
@@ -931,14 +942,13 @@ def btn_media_gen_spec(
                     ]
                 ),
             ]
-            adapter.send_message(
+            _send_with_buttons(
+                adapter,
                 chat_id,
-                OutboundMessage(
-                    text=f"Generated spec for `{draft_id[:12]}` ({tool_name}):\n"
-                    f"```json\n{spec_display}\n```\n"
-                    f"Confirm to generate, or reply with edited JSON.",
-                    buttons=buttons,
-                ),
+                f"Generated spec for `{draft_id[:12]}` ({tool_name}):\n"
+                f"```json\n{spec_display}\n```\n"
+                f"Confirm to generate, or reply with edited JSON.",
+                buttons,
             )
             # Register pending reply so user can edit the spec inline
             _pending_replies[chat_id] = PendingReply(
@@ -1045,7 +1055,8 @@ def btn_media_confirm_gen(
 
             caps = adapter.get_capabilities()
             if caps.supports_media:
-                adapter.send_media(
+                _send_media(
+                    adapter,
                     chat_id,
                     result.file_path,
                     caption=f"Generated media for `{draft_id[:12]}`",
@@ -1077,12 +1088,11 @@ def _offer_sibling_sync(adapter, chat_id, conn, draft_id):
                 ]
             ),
         ]
-        adapter.send_message(
+        _send_with_buttons(
+            adapter,
             chat_id,
-            OutboundMessage(
-                text=f"Sister drafts found ({platforms}). Sync media?",
-                buttons=buttons,
-            ),
+            f"Sister drafts found ({platforms}). Sync media?",
+            buttons,
         )
 
 
@@ -1240,13 +1250,7 @@ def btn_reject_submenu(
             ]
         ),
     ]
-    adapter.send_message(
-        chat_id,
-        OutboundMessage(
-            text=f"Reject `{draft_id[:12]}`:",
-            buttons=buttons,
-        ),
-    )
+    _send_with_buttons(adapter, chat_id, f"Reject `{draft_id[:12]}`:", buttons)
 
 
 def btn_reject_note(

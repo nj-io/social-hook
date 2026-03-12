@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import sqlite3
+import subprocess
 import threading
 import time
 import uuid as _uuid
@@ -937,6 +938,34 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
         fn=_blocking_generate_spec,
     )
     return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
+
+
+@app.post("/api/drafts/{draft_id}/resend-notification")
+async def api_resend_draft_notification(draft_id: str):
+    """Re-send a draft's review notification to all configured channels."""
+    from social_hook.bot.process import is_running
+    from social_hook.config.yaml import load_full_config
+    from social_hook.notifications import resend_draft_notification
+
+    if not is_running():
+        raise HTTPException(status_code=409, detail="Bot daemon is not running")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+    finally:
+        conn.close()
+
+    try:
+        config = load_full_config()
+        resend_draft_notification(config, draft_id)
+        return {"success": True, "message": "Notification resent"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from None
 
 
 @app.get("/api/projects")
@@ -2275,6 +2304,10 @@ async def api_installations_status():
         check_narrative_hook_installed,
     )
 
+    # Reap zombie if needed before checking
+    if _bot_proc is not None:
+        _bot_proc.poll()
+
     return {
         "commit_hook": check_hook_installed(),
         "narrative_hook": check_narrative_hook_installed(),
@@ -2326,23 +2359,55 @@ async def api_uninstall_component(component: str):
     return {"success": success, "message": message}
 
 
+_bot_proc: "subprocess.Popen | None" = None  # Single-worker: safe as module state
+
+
 @app.post("/api/installations/bot_daemon/start")
 async def api_start_bot_daemon():
+    import shutil
     import subprocess as sp
+    import sys
 
-    from social_hook.bot.process import is_running, stop_bot
+    from social_hook.bot.process import get_pid_file, is_running, stop_bot
+    from social_hook.filesystem import get_base_path
+
+    global _bot_proc
+    # Reap any previous zombie
+    if _bot_proc is not None:
+        _bot_proc.poll()
+        _bot_proc = None
 
     # Stop any existing daemon first — only one can poll a Telegram token.
     # This handles the case where a daemon was started from a different
     # worktree or the main branch and is now stale.
     if is_running():
-        stop_bot()
-        # Brief pause for the old process to release the polling connection
-        import time
-
-        time.sleep(0.5)
+        await asyncio.to_thread(stop_bot)
+        await asyncio.sleep(0.5)
     try:
-        sp.Popen([PROJECT_SLUG, "bot", "start", "--daemon"])
+        # Launch directly in foreground mode (no --daemon) with detached session.
+        # Avoids the double-Popen problem where --daemon spawns another child,
+        # leaving a gap where is_running() returns false.
+        binary = shutil.which(PROJECT_SLUG) or PROJECT_SLUG
+        log_path = get_base_path() / "logs" / "bot.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_fd = open(log_path, "a")  # noqa: SIM115
+
+        kwargs: dict = {"stdout": log_fd, "stderr": log_fd, "stdin": sp.DEVNULL}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = sp.DETACHED_PROCESS | sp.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+
+        proc = sp.Popen([binary, "bot", "start"], **kwargs)
+        log_fd.close()  # Child inherited the FD; parent doesn't need it
+        _bot_proc = proc
+
+        # Write PID eagerly so is_running() returns true immediately,
+        # preventing duplicate daemons from concurrent start requests.
+        pid_file = get_pid_file()
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(proc.pid))
+
         return {"success": True, "message": "Bot daemon starting"}
     except Exception as e:
         return {"success": False, "message": str(e)}
@@ -2352,9 +2417,14 @@ async def api_start_bot_daemon():
 async def api_stop_bot_daemon():
     from social_hook.bot.process import is_running, stop_bot
 
+    global _bot_proc
     if not is_running():
         return {"success": True, "message": "Bot daemon is not running"}
-    if stop_bot():
+    if await asyncio.to_thread(stop_bot):
+        # Reap after stopping
+        if _bot_proc is not None:
+            _bot_proc.poll()
+            _bot_proc = None
         return {"success": True, "message": "Bot daemon stopped"}
     return {"success": False, "message": "Failed to stop bot daemon"}
 
@@ -2372,6 +2442,10 @@ _CHANNEL_CREDENTIALS = {
 async def api_channels_status():
     """Return status of all known channels and daemon running state."""
     from social_hook.bot.process import is_running
+
+    # Reap zombie if needed before checking
+    if _bot_proc is not None:
+        _bot_proc.poll()
 
     config = _get_config()
     channels_status = {}

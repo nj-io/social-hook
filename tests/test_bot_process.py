@@ -1,7 +1,9 @@
 """Tests for bot process management (T24)."""
 
 import os
+import signal
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from social_hook.bot.process import (
     get_pid_file,
@@ -68,6 +70,21 @@ class TestIsPidAlive:
         # Use a very high PID that shouldn't exist
         assert is_pid_alive(99999999) is False
 
+    def test_zombie_detected_as_dead(self):
+        """Zombie process (state=Z) should be reported as not alive."""
+        mock_result = MagicMock()
+        mock_result.stdout = "Z"
+        with patch("social_hook.bot.process.subprocess.run", return_value=mock_result):
+            assert is_pid_alive(os.getpid()) is False
+
+    def test_ps_failure_falls_back_to_kill_result(self):
+        """If ps fails, trust the os.kill(0) result."""
+        with patch(
+            "social_hook.bot.process.subprocess.run",
+            side_effect=OSError("ps not found"),
+        ):
+            assert is_pid_alive(os.getpid()) is True
+
 
 class TestIsRunning:
     """Tests for is_running."""
@@ -106,6 +123,45 @@ class TestStopBot:
         pid_file.write_text("99999999")
         assert stop_bot(pid_file) is False
         # PID file should be cleaned up
+        assert not pid_file.exists()
+
+    def test_stop_sigkill_fallback(self, temp_dir):
+        """If process ignores SIGTERM, SIGKILL is sent after timeout."""
+        pid_file = temp_dir / "bot.pid"
+        pid_file.write_text("12345")
+
+        kill_signals = []
+
+        def mock_kill(pid, sig):
+            kill_signals.append(sig)
+
+        with (
+            patch("social_hook.bot.process.os.kill", side_effect=mock_kill),
+            patch("social_hook.bot.process.is_pid_alive", return_value=True),
+            patch("social_hook.bot.process.time.sleep"),
+        ):
+            result = stop_bot(pid_file)
+
+        assert result is True
+        assert kill_signals[0] == signal.SIGTERM
+        assert signal.SIGKILL in kill_signals
+        assert not pid_file.exists()
+
+    def test_stop_graceful_shutdown(self, temp_dir):
+        """Process exits after SIGTERM — no SIGKILL needed."""
+        pid_file = temp_dir / "bot.pid"
+        pid_file.write_text("12345")
+
+        alive_sequence = iter([True, False])
+
+        with (
+            patch("social_hook.bot.process.os.kill"),
+            patch("social_hook.bot.process.is_pid_alive", side_effect=alive_sequence),
+            patch("social_hook.bot.process.time.sleep"),
+        ):
+            result = stop_bot(pid_file)
+
+        assert result is True
         assert not pid_file.exists()
 
 

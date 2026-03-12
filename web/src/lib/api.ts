@@ -372,6 +372,14 @@ export async function generateMediaSpec(
   });
 }
 
+export async function resendDraftNotification(
+  draftId: string,
+): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/resend-notification`, {
+    method: "POST",
+  });
+}
+
 // Decisions
 export async function createDraftFromDecision(
   decisionId: string,

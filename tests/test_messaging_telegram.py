@@ -98,6 +98,7 @@ class TestSendMessage:
         """HTTP error returns SendResult with success=False."""
         mock_response = MagicMock()
         mock_response.status_code = 400
+        mock_response.json.side_effect = ValueError("No JSON")
         mock_response.text = "Bad Request"
 
         with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response):
@@ -106,6 +107,23 @@ class TestSendMessage:
         assert result.success is False
         assert result.error == "HTTP 400"
         assert result.raw == "Bad Request"
+
+    def test_send_failure_telegram_ok_false(self, adapter):
+        """HTTP 200 + {"ok": false} returns SendResult with success=False."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "ok": False,
+            "error_code": 400,
+            "description": "Bad Request: can't parse entities",
+        }
+
+        with patch("social_hook.messaging.telegram.requests.post", return_value=mock_response):
+            result = adapter.send_message("123", OutboundMessage(text="bad *markdown"))
+
+        assert result.success is False
+        assert "can't parse entities" in result.error
+        assert result.raw["ok"] is False
 
     def test_send_failure_exception(self, adapter):
         """Network exception returns SendResult with success=False."""
@@ -446,6 +464,81 @@ class TestSendMedia:
         assert "network down" in result.error
 
 
+class TestSanitizeText:
+    def test_escapes_underscores_outside_code(self, adapter):
+        """Underscores in plain text are escaped."""
+        result = adapter.sanitize_text("nano_banana_pro", "markdown")
+        assert result == "nano\\_banana\\_pro"
+
+    def test_preserves_code_spans(self, adapter):
+        """Text inside backticks is not escaped."""
+        result = adapter.sanitize_text("Media for `draft_abc` (nano_banana):", "markdown")
+        assert result == "Media for `draft_abc` (nano\\_banana):"
+
+    def test_already_escaped_underscores(self, adapter):
+        """Already-escaped underscores are not double-escaped."""
+        result = adapter.sanitize_text("already\\_escaped", "markdown")
+        assert result == "already\\_escaped"
+
+    def test_html_mode_unchanged(self, adapter):
+        """HTML mode text is returned as-is."""
+        result = adapter.sanitize_text("nano_banana_pro", "html")
+        assert result == "nano_banana_pro"
+
+    def test_no_underscores(self, adapter):
+        """Text without underscores is unchanged."""
+        result = adapter.sanitize_text("Hello world", "markdown")
+        assert result == "Hello world"
+
+    def test_multiple_code_spans(self, adapter):
+        """Multiple code spans are all preserved."""
+        result = adapter.sanitize_text("`a_b` then c_d then `e_f`", "markdown")
+        assert result == "`a_b` then c\\_d then `e_f`"
+
+
+class TestMarkdownRetryFallback:
+    def test_retries_without_parse_mode_on_entity_error(self, adapter):
+        """If Telegram rejects with parse entities error, retries without parse_mode."""
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {
+            "ok": False,
+            "description": "Bad Request: can't parse entities",
+        }
+        success_response = MagicMock()
+        success_response.status_code = 200
+        success_response.json.return_value = {"ok": True, "result": {"message_id": 1}}
+
+        with patch(
+            "social_hook.messaging.telegram.requests.post",
+            side_effect=[error_response, success_response],
+        ) as mock_post:
+            result = adapter.send_message("123", OutboundMessage(text="bad_text"))
+
+        assert result.success is True
+        # Second call should not have parse_mode
+        second_call_payload = mock_post.call_args_list[1][1]["json"]
+        assert "parse_mode" not in second_call_payload
+
+    def test_no_retry_for_non_parse_errors(self, adapter):
+        """Non-parse errors are not retried."""
+        error_response = MagicMock()
+        error_response.status_code = 403
+        error_response.json.return_value = {
+            "ok": False,
+            "description": "Forbidden: bot was blocked by the user",
+        }
+
+        with patch(
+            "social_hook.messaging.telegram.requests.post",
+            return_value=error_response,
+        ) as mock_post:
+            result = adapter.send_message("123", OutboundMessage(text="hello"))
+
+        assert result.success is False
+        assert mock_post.call_count == 1
+
+
 class TestMapParseMode:
     def test_markdown(self):
         assert TelegramAdapter._map_parse_mode("markdown") == "Markdown"
@@ -453,5 +546,8 @@ class TestMapParseMode:
     def test_html(self):
         assert TelegramAdapter._map_parse_mode("html") == "HTML"
 
-    def test_unknown_defaults_to_markdown(self):
-        assert TelegramAdapter._map_parse_mode("plain") == "Markdown"
+    def test_plain_returns_none(self):
+        assert TelegramAdapter._map_parse_mode("plain") is None
+
+    def test_unknown_returns_none(self):
+        assert TelegramAdapter._map_parse_mode("other") is None

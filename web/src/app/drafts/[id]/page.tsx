@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchDraft, generateMediaSpec } from "@/lib/api";
+import { fetchChannelsStatus, fetchDraft, generateMediaSpec, resendDraftNotification } from "@/lib/api";
 import type { Decision, Draft } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 import { DecisionBadge } from "@/components/decision-badge";
@@ -39,6 +39,24 @@ export default function DraftDetailPage() {
   }, [trackTask]);
 
   const isGeneratingSpec = draft ? isRunning(draft.id) : false;
+
+  const [daemonRunning, setDaemonRunning] = useState(false);
+  useEffect(() => {
+    fetchChannelsStatus().then((s) => setDaemonRunning(!!s.daemon_running)).catch(() => {});
+  }, []);
+
+  const [resending, setResending] = useState(false);
+  const handleResend = useCallback(async () => {
+    if (!draft) return;
+    setResending(true);
+    try {
+      await resendDraftNotification(draft.id);
+    } catch {
+      // Silent — user can retry
+    } finally {
+      setResending(false);
+    }
+  }, [draft]);
 
   useEffect(() => {
     async function load() {
@@ -83,6 +101,15 @@ export default function DraftDetailPage() {
         <h1 className="text-2xl font-bold">Draft Detail</h1>
         <StatusBadge status={draft.status} />
         <code className="text-xs text-muted-foreground">{draft.id}</code>
+        {daemonRunning && (
+          <button
+            onClick={handleResend}
+            disabled={resending}
+            className="ml-auto rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            {resending ? "Sending..." : "Resend Notification"}
+          </button>
+        )}
       </div>
 
       {/* Meta info */}

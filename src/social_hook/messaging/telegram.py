@@ -8,6 +8,7 @@ and requests (common dependency). No project-specific domain concepts.
 """
 
 import logging
+import re
 
 import requests
 
@@ -33,27 +34,57 @@ class TelegramAdapter(MessagingAdapter):
         self.token = token
         self._base_url = f"https://api.telegram.org/bot{token}"
 
-    def send_message(self, chat_id: str, message: OutboundMessage) -> SendResult:
+    def sanitize_text(self, text: str, parse_mode: str) -> str:
+        """Escape characters that break Telegram's Markdown parser.
+
+        Preserves intentional formatting (text inside backtick code spans)
+        while escaping stray underscores and other special chars in plain
+        text segments. Only applies to Markdown mode — HTML is returned
+        unchanged.
+        """
+        if parse_mode != "markdown":
+            return text
+        parts = re.split(r"(`[^`]*`)", text)
+        for i, part in enumerate(parts):
+            if part.startswith("`"):
+                continue
+            parts[i] = re.sub(r"(?<!\\)_", r"\\_", part)
+        return "".join(parts)
+
+    def _is_format_error(self, result: SendResult) -> bool:
+        """Check if Telegram rejected the message due to Markdown parse errors."""
+        if isinstance(result.raw, dict):
+            desc = result.raw.get("description", "")
+            return "parse entities" in desc if desc else False
+        return False
+
+    def _do_send_message(self, chat_id: str, message: OutboundMessage) -> SendResult:
         """Send a message to a Telegram chat."""
         payload: dict = {
             "chat_id": chat_id,
             "text": message.text,
-            "parse_mode": self._map_parse_mode(message.parse_mode),
         }
+        pm = self._map_parse_mode(message.parse_mode)
+        if pm:
+            payload["parse_mode"] = pm
         if message.buttons:
             payload["reply_markup"] = {
                 "inline_keyboard": self._buttons_to_telegram(message.buttons)
             }
         return self._post("sendMessage", payload)
 
-    def edit_message(self, chat_id: str, message_id: str, message: OutboundMessage) -> SendResult:
+    def _do_edit_message(
+        self, chat_id: str, message_id: str, message: OutboundMessage
+    ) -> SendResult:
         """Edit an existing Telegram message."""
         payload: dict = {
             "chat_id": chat_id,
             "message_id": message_id,
             "text": message.text,
-            "parse_mode": self._map_parse_mode(message.parse_mode),
         }
+        pm = self._map_parse_mode(message.parse_mode)
+        if pm:
+            payload["parse_mode"] = pm
         if message.buttons:
             payload["reply_markup"] = {
                 "inline_keyboard": self._buttons_to_telegram(message.buttons)
@@ -85,7 +116,7 @@ class TelegramAdapter(MessagingAdapter):
             supported_media_types=["png", "jpg", "jpeg", "gif"],
         )
 
-    def send_media(
+    def _do_send_media(
         self, chat_id: str, file_path: str, caption: str = "", parse_mode: str = "markdown"
     ) -> SendResult:
         """Send a media file via Telegram."""
@@ -104,17 +135,17 @@ class TelegramAdapter(MessagingAdapter):
 
         try:
             with open(file_path, "rb") as f:
-                data = {
-                    "chat_id": chat_id,
-                    "parse_mode": self._map_parse_mode(parse_mode),
-                }
+                data: dict = {"chat_id": chat_id}
+                pm = self._map_parse_mode(parse_mode)
+                if pm:
+                    data["parse_mode"] = pm
                 if caption:
-                    data["caption"] = caption
+                    data["caption"] = caption  # Already sanitized by base
                 response = requests.post(
                     f"{self._base_url}/{method}",
                     data=data,
                     files={file_key: f},
-                    timeout=30,  # File uploads are slower than JSON API calls
+                    timeout=30,
                 )
                 return self._parse_response(response)
         except requests.RequestException as e:
@@ -186,6 +217,10 @@ class TelegramAdapter(MessagingAdapter):
         """Parse a Telegram API response into SendResult."""
         if response.status_code == 200:
             data = response.json()
+            if not data.get("ok", True):
+                error_msg = data.get("description", "Unknown Telegram error")
+                logger.warning("Telegram API rejected request: %s", error_msg)
+                return SendResult(success=False, error=error_msg, raw=data)
             result = data.get("result", {})
             message_id = result.get("message_id") if isinstance(result, dict) else None
             return SendResult(
@@ -193,11 +228,17 @@ class TelegramAdapter(MessagingAdapter):
                 message_id=str(message_id) if message_id else None,
                 raw=data,
             )
-        return SendResult(
-            success=False,
-            error=f"HTTP {response.status_code}",
-            raw=response.text,
+        try:
+            data = response.json()
+            desc = data.get("description", "")
+        except Exception:
+            data = response.text
+            desc = ""
+        error_msg = (
+            f"HTTP {response.status_code}: {desc}" if desc else f"HTTP {response.status_code}"
         )
+        logger.warning("Telegram API error: %s", error_msg)
+        return SendResult(success=False, error=error_msg, raw=data)
 
     def _buttons_to_telegram(self, rows: list[ButtonRow]) -> list[list[dict]]:
         """Convert ButtonRow list to Telegram inline_keyboard format."""
@@ -213,9 +254,13 @@ class TelegramAdapter(MessagingAdapter):
         ]
 
     @staticmethod
-    def _map_parse_mode(mode: str) -> str:
-        """Map generic parse mode to Telegram-specific value."""
-        return {"markdown": "Markdown", "html": "HTML"}.get(mode, "Markdown")
+    def _map_parse_mode(mode: str) -> str | None:
+        """Map generic parse mode to Telegram-specific value.
+
+        Returns None for unrecognized modes (e.g. "plain"), signaling
+        that parse_mode should be omitted from the API payload.
+        """
+        return {"markdown": "Markdown", "html": "HTML"}.get(mode)
 
     @staticmethod
     def parse_callback(callback: dict) -> CallbackEvent:

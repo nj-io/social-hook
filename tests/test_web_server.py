@@ -860,6 +860,9 @@ class TestInstallationEndpoints:
         assert resp.status_code == 400
 
     def test_bot_daemon_start(self, client, tmp_env):
+        import social_hook.web.server as srv
+
+        srv._bot_proc = None
         with (
             patch("social_hook.bot.process.is_running", return_value=False),
             patch("subprocess.Popen"),
@@ -868,8 +871,12 @@ class TestInstallationEndpoints:
             assert resp.status_code == 200
             data = resp.json()
             assert data["success"] is True
+        srv._bot_proc = None
 
     def test_bot_daemon_stop(self, client, tmp_env):
+        import social_hook.web.server as srv
+
+        srv._bot_proc = None
         with (
             patch("social_hook.bot.process.is_running", return_value=True),
             patch("social_hook.bot.process.stop_bot", return_value=True),
@@ -878,6 +885,7 @@ class TestInstallationEndpoints:
             assert resp.status_code == 200
             data = resp.json()
             assert data["success"] is True
+        srv._bot_proc = None
 
     def test_journey_capture_toggle_installs_hook(self, client, tmp_env):
         """Toggling journey_capture.enabled to True installs narrative hook."""
@@ -920,10 +928,17 @@ class TestInstallationEndpoints:
 
     def test_bot_daemon_start_replaces_existing(self, client, tmp_env):
         """Starting bot when one is already running stops the old one first."""
+        import social_hook.web.server as srv
+
+        srv._bot_proc = None
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
         with (
             patch("social_hook.bot.process.is_running", return_value=True),
             patch("social_hook.bot.process.stop_bot", return_value=True) as mock_stop,
-            patch("time.sleep"),
+            patch("asyncio.sleep", return_value=None),
+            patch("shutil.which", return_value="/usr/bin/social-hook"),
+            patch("subprocess.Popen", return_value=mock_proc),
         ):
             resp = client.post("/api/installations/bot_daemon/start")
             assert resp.status_code == 200
@@ -931,6 +946,28 @@ class TestInstallationEndpoints:
             assert data["success"] is True
             assert "starting" in data["message"].lower()
             mock_stop.assert_called_once()
+        srv._bot_proc = None
+
+    def test_bot_daemon_start_writes_pid_eagerly(self, client, tmp_env):
+        """PID file is written immediately after Popen, not waiting for child."""
+        import social_hook.web.server as srv
+
+        srv._bot_proc = None
+        mock_proc = MagicMock()
+        mock_proc.pid = 99999
+        with (
+            patch("social_hook.bot.process.is_running", return_value=False),
+            patch("shutil.which", return_value="/usr/bin/social-hook"),
+            patch("subprocess.Popen", return_value=mock_proc),
+        ):
+            resp = client.post("/api/installations/bot_daemon/start")
+            assert resp.status_code == 200
+        # Verify PID was written
+        from social_hook.bot.process import get_pid_file
+
+        pid_file = get_pid_file()
+        assert pid_file.exists()
+        assert pid_file.read_text().strip() == "99999"
 
     def test_project_detail_includes_journey_capture(self, client, tmp_env):
         """Project detail response includes journey_capture_enabled."""

@@ -1,6 +1,7 @@
 """Multi-channel bot daemon."""
 
 import logging
+import os
 import signal
 import time
 from typing import Any
@@ -23,6 +24,13 @@ class BotDaemon:
         self.stop()
 
     def run(self, pid_file=None) -> None:
+        from social_hook.filesystem import get_db_path
+
+        logger.info(
+            "Bot daemon starting — db=%s, pythonpath=%s",
+            get_db_path(),
+            os.environ.get("PYTHONPATH", "unset"),
+        )
         self._running = True
         if pid_file:
             write_pid(pid_file)
