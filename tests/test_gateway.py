@@ -6,7 +6,7 @@ import pytest
 
 pytest_asyncio = pytest.importorskip("pytest_asyncio", reason="pytest-asyncio required")
 
-from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
+from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub  # noqa: E402
 
 
 class TestGatewayEnvelope:
