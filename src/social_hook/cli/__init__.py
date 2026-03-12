@@ -519,8 +519,8 @@ def discover(
         db=db_ctx,
         project_id=project.id,
         on_progress=lambda stage: (
-            typer.echo(f"[{stage}] {project.name}"),
-            ops.emit_data_event(conn, "pipeline", stage, project.id, project.id),
+            typer.echo(f"[{stage}] {project.name}"),  # type: ignore[func-returns-value]
+            ops.emit_data_event(conn, "pipeline", stage, project.id, project.id),  # type: ignore[func-returns-value]
         ),
     )
 

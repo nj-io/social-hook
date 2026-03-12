@@ -330,7 +330,7 @@ def run_trigger(
                 if verbose:
                     print(f"Summary refresh skipped: {e}", file=sys.stderr)
 
-    if verbose and getattr(context, "project_summary", None):
+    if verbose and context.project_summary:
         print(f"Using project summary ({len(context.project_summary)} chars)")
 
     if verbose:
