@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ChannelConfig, ChannelsStatusResponse } from "@/lib/types";
 import { fetchChannelsStatus, testChannel, startBotDaemon, stopBotDaemon, updateEnv } from "@/lib/api";
+import { ElapsedTime, Spinner } from "@/components/async-button";
 
 interface ChannelsSectionProps {
   channels: Record<string, ChannelConfig>;
@@ -16,6 +17,7 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
   const [loading, setLoading] = useState(true);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [testStartTime, setTestStartTime] = useState<string | null>(null);
   const [daemonAction, setDaemonAction] = useState(false);
   const [tokenValue, setTokenValue] = useState("");
   const [tokenSaving, setTokenSaving] = useState(false);
@@ -51,6 +53,7 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
 
   async function handleTest() {
     setTesting(true);
+    setTestStartTime(new Date().toISOString());
     setTestResult(null);
     try {
       const res = await testChannel("telegram");
@@ -63,6 +66,7 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
       setTestResult({ success: false, message: e instanceof Error ? e.message : "Test failed" });
     } finally {
       setTesting(false);
+      setTestStartTime(null);
       setTimeout(() => setTestResult(null), 5000);
     }
   }
@@ -230,7 +234,13 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
               disabled={testing}
               className="rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
             >
-              {testing ? "Testing..." : "Test Connection"}
+              {testing ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <Spinner className="h-3 w-3" />
+                  <span>Testing</span>
+                  {testStartTime && <ElapsedTime startTime={testStartTime} />}
+                </span>
+              ) : "Test Connection"}
             </button>
             {testResult && (
               <span
