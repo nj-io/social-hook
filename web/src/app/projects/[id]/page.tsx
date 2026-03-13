@@ -161,7 +161,7 @@ export default function ProjectDetailPage() {
       setTotalDecisions(dec.total ?? 0);
         setPosts(po.posts);
         setUsage(us);
-        setPlatformCount(plat.count);
+        setPlatformCount(plat.real_count);
         loadMemories(detail.repo_path);
         fetchDecisionBranches(id).then(({ branches }) => setDecisionBranches(branches)).catch(() => {});
       } catch (e) {

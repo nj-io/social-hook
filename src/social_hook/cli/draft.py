@@ -52,6 +52,12 @@ def approve(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
+        if draft.platform == "preview":
+            typer.echo(
+                "Preview drafts cannot be posted. Use 'social-hook draft promote "
+                "<id> --platform <name>' to create a platform-specific draft."
+            )
+            raise typer.Exit(1)
         if draft.status in TERMINAL_STATUSES:
             typer.echo(f"Cannot approve: draft status is '{draft.status}'")
             raise typer.Exit(1)
@@ -126,6 +132,12 @@ def schedule(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
+        if draft.platform == "preview":
+            typer.echo(
+                "Preview drafts cannot be posted. Use 'social-hook draft promote "
+                "<id> --platform <name>' to create a platform-specific draft."
+            )
+            raise typer.Exit(1)
         if draft.status not in ("draft", "approved", "scheduled", "deferred"):
             typer.echo(f"Cannot schedule: draft status is '{draft.status}'")
             raise typer.Exit(1)
@@ -348,6 +360,12 @@ def quick_approve(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
+        if draft.platform == "preview":
+            typer.echo(
+                "Preview drafts cannot be posted. Use 'social-hook draft promote "
+                "<id> --platform <name>' to create a platform-specific draft."
+            )
+            raise typer.Exit(1)
         if draft.status not in ("draft", "approved", "deferred"):
             typer.echo(f"Cannot quick-approve: draft status is '{draft.status}'")
             raise typer.Exit(1)
@@ -645,5 +663,214 @@ def show(
             typer.echo(f"\nChanges ({len(changes)}):")
             for c in changes:
                 typer.echo(f"  {c.changed_at} [{c.changed_by}] {c.field}")
+    finally:
+        conn.close()
+
+
+@app.command()
+def promote(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Preview draft ID to promote"),
+    platform: str = typer.Option(
+        ..., "--platform", "-p", help="Target platform (e.g., x, linkedin)"
+    ),
+    json: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Promote a preview draft to a real platform.
+
+    Creates a new draft for the target platform using the LLM drafter,
+    then marks the preview draft as superseded.
+
+    Example: social-hook draft promote draft-abc123 --platform x
+    """
+    from social_hook.compat import evaluation_from_decision
+    from social_hook.config.project import ProjectConfig, load_project_config
+    from social_hook.config.yaml import load_full_config
+    from social_hook.db import operations as ops
+    from social_hook.drafting import draft_for_platforms
+    from social_hook.errors import ConfigError
+    from social_hook.llm.dry_run import DryRunContext
+    from social_hook.llm.prompts import assemble_evaluator_context
+    from social_hook.models import CommitInfo
+
+    use_json = json or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if draft.platform != "preview":
+            typer.echo(f"Draft is not a preview draft (platform: {draft.platform}).")
+            raise typer.Exit(1)
+        if draft.status in TERMINAL_STATUSES:
+            typer.echo(f"Cannot promote: draft status is '{draft.status}'")
+            raise typer.Exit(1)
+
+        config_path = ctx.obj.get("config") if ctx.obj else None
+        config = load_full_config(str(config_path) if config_path else None)
+
+        pcfg = config.platforms.get(platform)
+        if not pcfg or not pcfg.enabled:
+            typer.echo(f"Platform '{platform}' is not enabled.")
+            raise typer.Exit(1)
+
+        decision = ops.get_decision(conn, draft.decision_id)
+        if not decision:
+            typer.echo(f"Decision not found: {draft.decision_id}")
+            raise typer.Exit(1)
+
+        project = ops.get_project(conn, decision.project_id)
+        if not project:
+            typer.echo(f"Project not found: {decision.project_id}")
+            raise typer.Exit(1)
+
+        try:
+            project_config = load_project_config(project.repo_path)
+        except ConfigError:
+            project_config = ProjectConfig(repo_path=project.repo_path)
+
+        from social_hook.trigger import parse_commit_info
+
+        try:
+            commit = parse_commit_info(decision.commit_hash, project.repo_path)
+        except Exception:
+            commit = CommitInfo(
+                hash=decision.commit_hash,
+                message=decision.commit_message or "",
+                diff="",
+                files_changed=[],
+            )
+
+        dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
+        db = DryRunContext(conn, dry_run=dry_run)
+
+        context = assemble_evaluator_context(
+            db,
+            project.id,
+            project_config,
+            commit_timestamp=getattr(commit, "timestamp", None),
+            parent_timestamp=getattr(commit, "parent_timestamp", None),
+        )
+
+        evaluation = evaluation_from_decision(decision, "draft")
+
+        results = draft_for_platforms(
+            config,
+            conn,
+            db,
+            project,
+            decision_id=decision.id,
+            evaluation=evaluation,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            target_platform_names=[platform],
+            skip_content_filter=True,
+        )
+
+        if not results:
+            typer.echo("No draft created.")
+            raise typer.Exit(1)
+
+        new_draft = results[0].draft
+        ops.supersede_draft(conn, draft_id, new_draft.id)
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+
+        if use_json:
+            typer.echo(
+                json_mod.dumps(
+                    {
+                        "old_draft_id": draft_id,
+                        "new_draft_id": new_draft.id,
+                        "platform": new_draft.platform,
+                        "status": "promoted",
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(f"Preview draft {draft_id} promoted to {platform}.")
+            typer.echo(f"New draft: {new_draft.id}")
+            typer.echo(f"Content: {new_draft.content[:200]}...")
+    finally:
+        conn.close()
+
+
+@app.command(name="post-now")
+def post_now(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to post immediately"),
+    json: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Post a draft immediately to its platform.
+
+    Approves and posts the draft in one step, bypassing the scheduler queue.
+    The draft must be in draft, approved, or deferred status.
+
+    Example: social-hook draft post-now draft-abc123
+    """
+    from social_hook.config.yaml import load_full_config
+    from social_hook.db import operations as ops
+    from social_hook.scheduler import _handle_post_failure, _post_draft, record_post_success
+
+    use_json = json or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+
+        if draft.platform == "preview":
+            typer.echo(
+                "Preview drafts cannot be posted. Use 'social-hook draft promote "
+                "<id> --platform <name>' to create a platform-specific draft."
+            )
+            raise typer.Exit(1)
+
+        if draft.status not in ("draft", "approved", "deferred"):
+            typer.echo(f"Cannot post: draft status is '{draft.status}'")
+            raise typer.Exit(1)
+
+        config_path = ctx.obj.get("config") if ctx.obj else None
+        config = load_full_config(str(config_path) if config_path else None)
+        dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
+
+        project = ops.get_project(conn, draft.project_id)
+        project_name = project.name if project else "Unknown"
+
+        # Mark as scheduled so the posting pipeline sees it correctly
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+        ops.update_draft(conn, draft_id, status="scheduled", scheduled_time=now)
+
+        if dry_run:
+            from social_hook.adapters.dry_run import dry_run_post_result
+
+            result = dry_run_post_result()
+        else:
+            result = _post_draft(conn, draft, config)
+
+        if result.success:
+            post = record_post_success(conn, draft, result, config, project_name, dry_run=dry_run)
+            if use_json:
+                typer.echo(
+                    json_mod.dumps(
+                        {
+                            "draft_id": draft_id,
+                            "post_id": post.id,
+                            "status": "posted",
+                            "external_url": result.external_url,
+                        },
+                        indent=2,
+                        default=str,
+                    )
+                )
+            else:
+                typer.echo(f"Draft {draft_id} posted successfully!")
+                if result.external_url:
+                    typer.echo(f"URL: {result.external_url}")
+        else:
+            _handle_post_failure(conn, draft, result.error or "Unknown error", config, dry_run)
+            typer.echo(f"Post failed: {result.error}")
+            raise typer.Exit(1)
     finally:
         conn.close()

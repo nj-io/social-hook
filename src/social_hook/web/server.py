@@ -968,6 +968,151 @@ async def api_resend_draft_notification(draft_id: str):
         raise HTTPException(status_code=500, detail=str(e)) from None
 
 
+@app.post("/api/drafts/{draft_id}/promote")
+async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Promote a preview draft to a real platform.
+
+    Creates a new draft for the target platform using the LLM drafter,
+    then marks the preview draft as superseded.
+
+    Body:
+        platform: Target platform name (e.g. "x", "linkedin")
+    """
+    platform = body.get("platform")
+    if not platform:
+        raise HTTPException(status_code=400, detail="Missing 'platform' in body")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.platform != "preview":
+            raise HTTPException(status_code=400, detail="Only preview drafts can be promoted")
+        if draft.status in ("posted", "rejected", "cancelled", "superseded"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot promote draft with status '{draft.status}'",
+            )
+
+        decision = ops.get_decision(conn, draft.decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="Decision not found")
+
+        project = ops.get_project(conn, decision.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    finally:
+        conn.close()
+
+    config = _get_config()
+
+    pcfg = config.platforms.get(platform)
+    if not pcfg or not pcfg.enabled:
+        raise HTTPException(status_code=400, detail=f"Platform '{platform}' is not enabled")
+
+    from social_hook.compat import evaluation_from_decision
+    from social_hook.config.project import ProjectConfig, load_project_config
+    from social_hook.models import CommitInfo
+
+    try:
+        project_config = load_project_config(project.repo_path)
+    except ConfigError:
+        project_config = ProjectConfig(repo_path=project.repo_path)
+
+    from social_hook.trigger import parse_commit_info
+
+    try:
+        commit = parse_commit_info(decision.commit_hash, project.repo_path)
+    except Exception:
+        commit = CommitInfo(
+            hash=decision.commit_hash,
+            message=decision.commit_message or "",
+            diff="",
+            files_changed=[],
+        )
+
+    evaluation = evaluation_from_decision(decision, "draft")
+
+    def _blocking_promote():
+        import sqlite3 as _sqlite3
+
+        from social_hook.drafting import draft_for_platforms
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.prompts import assemble_evaluator_context
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+        try:
+            context = assemble_evaluator_context(
+                db,
+                project.id,
+                project_config,
+                commit_timestamp=getattr(commit, "timestamp", None),
+                parent_timestamp=getattr(commit, "parent_timestamp", None),
+            )
+            db.emit_data_event("pipeline", "promoting", draft_id[:8], project.id)
+            results = draft_for_platforms(
+                config,
+                conn2,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+                target_platform_names=[platform],
+                skip_content_filter=True,
+            )
+            return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
+        finally:
+            conn2.close()
+
+    def _on_promote_done(result: dict) -> None:
+        conn2 = _get_conn()
+        try:
+            new_draft_ids = result.get("draft_ids", [])
+            if new_draft_ids:
+                ops.supersede_draft(conn2, draft_id, new_draft_ids[0])
+                ops.emit_data_event(conn2, "draft", "updated", draft_id, project.id)
+
+            from social_hook.drafting import DraftResult
+            from social_hook.scheduling import calculate_optimal_time
+
+            draft_results = []
+            for did in new_draft_ids:
+                d = ops.get_draft(conn2, did)
+                if d:
+                    sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_tweets=[]))
+            if draft_results:
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    commit_hash=commit.hash,
+                    commit_message=commit.message,
+                    draft_results=draft_results,
+                )
+        except Exception:
+            logger.debug("Promote notification failed", exc_info=True)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "promote_draft",
+        ref_id=draft_id,
+        project_id=project.id,
+        fn=_blocking_promote,
+        on_success=_on_promote_done,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
+
+
 @app.get("/api/projects")
 async def api_projects():
     """List all registered projects with lifecycle phase."""
@@ -1309,25 +1454,12 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
     except ConfigError:
         project_config = ProjectConfig(repo_path=project.repo_path)
 
+    from social_hook.compat import evaluation_from_decision
     from social_hook.trigger import parse_commit_info
 
     commit = parse_commit_info(decision.commit_hash, project.repo_path)
 
-    from types import SimpleNamespace
-
-    evaluation = SimpleNamespace(
-        decision="draft",
-        reasoning=decision.reasoning,
-        angle=decision.angle,
-        episode_type=decision.episode_type,
-        post_category=decision.post_category,
-        arc_id=decision.arc_id,
-        new_arc_theme=None,
-        media_tool=decision.media_tool,
-        reference_posts=None,
-        include_project_docs=True,
-        commit_summary=decision.commit_summary,
-    )
+    evaluation = evaluation_from_decision(decision, "draft")
 
     def _blocking_create_draft():
         import sqlite3 as _sqlite3
@@ -1524,7 +1656,8 @@ async def api_enabled_platforms():
     for name, pcfg in config.platforms.items():
         if pcfg.enabled:
             enabled[name] = {"priority": pcfg.priority, "type": pcfg.type}
-    return {"platforms": enabled, "count": len(enabled)}
+    real_count = sum(1 for n in enabled if n != "preview")
+    return {"platforms": enabled, "count": len(enabled), "real_count": real_count}
 
 
 @app.post("/api/decisions/consolidate")
@@ -1578,21 +1711,10 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         files_changed=[],
     )
 
-    from types import SimpleNamespace
+    from social_hook.compat import evaluation_from_decision
 
     anchor = decisions[-1]
-    evaluation = SimpleNamespace(
-        decision="draft",
-        reasoning=anchor.reasoning,
-        angle=anchor.angle,
-        episode_type=anchor.episode_type,
-        post_category=anchor.post_category,
-        arc_id=anchor.arc_id,
-        media_tool=anchor.media_tool,
-        reference_posts=anchor.reference_posts,
-        include_project_docs=True,
-        commit_summary=anchor.commit_summary,
-    )
+    evaluation = evaluation_from_decision(anchor, "draft")
 
     def _blocking_consolidate():
         import sqlite3 as _sqlite3

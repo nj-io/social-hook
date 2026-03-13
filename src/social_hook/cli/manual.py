@@ -80,8 +80,6 @@ def draft(
         commit_info = parse_commit_info(decision.commit_hash, project.repo_path)
 
         # Assemble context
-        from types import SimpleNamespace
-
         from social_hook.config.project import ProjectConfig, load_project_config
         from social_hook.errors import ConfigError
         from social_hook.llm.dry_run import DryRunContext
@@ -102,18 +100,9 @@ def draft(
         )
 
         # Build evaluation from stored decision, forcing draft for override
-        evaluation = SimpleNamespace(
-            decision="draft",
-            reasoning=decision.reasoning,
-            angle=decision.angle,
-            episode_type=decision.episode_type,
-            post_category=decision.post_category,
-            arc_id=decision.arc_id,
-            media_tool=decision.media_tool,
-            reference_posts=getattr(decision, "reference_posts", None),
-            include_project_docs=True,
-            commit_summary=decision.commit_summary,
-        )
+        from social_hook.compat import evaluation_from_decision
+
+        evaluation = evaluation_from_decision(decision, "draft")
 
         # Draft for platforms
         from social_hook.drafting import draft_for_platforms
@@ -202,8 +191,7 @@ def consolidate(
         )
 
         # Assemble context
-        from types import SimpleNamespace
-
+        from social_hook.compat import evaluation_from_decision
         from social_hook.config.project import ProjectConfig, load_project_config
         from social_hook.errors import ConfigError
         from social_hook.llm.dry_run import DryRunContext
@@ -223,18 +211,7 @@ def consolidate(
 
         # Use most recent decision as anchor
         anchor = decisions[-1]
-        evaluation = SimpleNamespace(
-            decision="draft",
-            reasoning=anchor.reasoning,
-            angle=anchor.angle,
-            episode_type=anchor.episode_type,
-            post_category=anchor.post_category,
-            arc_id=anchor.arc_id,
-            media_tool=anchor.media_tool,
-            reference_posts=getattr(anchor, "reference_posts", None),
-            include_project_docs=True,
-            commit_summary=anchor.commit_summary,
-        )
+        evaluation = evaluation_from_decision(anchor, "draft")
 
         # Draft for platforms
         from social_hook.drafting import draft_for_platforms
@@ -274,6 +251,7 @@ def post(
     """Manually post an approved draft."""
     from social_hook.config import load_full_config
     from social_hook.db import get_draft, init_database, update_draft
+    from social_hook.db import operations as ops
     from social_hook.filesystem import get_db_path
 
     config_path = ctx.obj.get("config") if ctx.obj else None
@@ -286,9 +264,16 @@ def post(
             typer.echo(f"Draft not found: {draft_id}")
             raise typer.Exit(1)
 
-        if draft_obj.status not in ("approved", "scheduled"):
+        if draft_obj.platform == "preview":
             typer.echo(
-                f"Draft status is '{draft_obj.status}'. Must be 'approved' or 'scheduled' to post."
+                "Preview drafts cannot be posted. Use 'social-hook draft promote "
+                "<id> --platform <name>' to create a platform-specific draft."
+            )
+            raise typer.Exit(1)
+
+        if draft_obj.status not in ("draft", "approved", "scheduled", "deferred"):
+            typer.echo(
+                f"Draft status is '{draft_obj.status}'. Must be 'draft', 'approved', 'scheduled', or 'deferred' to post."
             )
             raise typer.Exit(1)
 
@@ -302,15 +287,21 @@ def post(
             update_draft(conn, draft_id, status="posted")
             return
 
-        from social_hook.scheduler import _post_draft
+        from social_hook.scheduler import _handle_post_failure, _post_draft, record_post_success
+
+        project = ops.get_project(conn, draft_obj.project_id)
+        project_name = project.name if project else "Unknown"
 
         result = _post_draft(conn, draft_obj, config)
         if result.success:
-            update_draft(conn, draft_id, status="posted")
+            record_post_success(conn, draft_obj, result, config, project_name, dry_run=dry_run)
             typer.echo("\nPosted successfully!")
+            if result.external_url:
+                typer.echo(f"URL: {result.external_url}")
             if result.external_id:
                 typer.echo(f"External ID: {result.external_id}")
         else:
+            _handle_post_failure(conn, draft_obj, result.error or "Unknown error", config, dry_run)
             typer.echo(f"\nPost failed: {result.error}")
             raise typer.Exit(1)
     finally:

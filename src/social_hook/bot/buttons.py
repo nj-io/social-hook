@@ -169,6 +169,9 @@ def handle_callback(
         "reject_note": btn_reject_note,
         "cancel": btn_cancel,
         "review": btn_review,
+        "promote": btn_promote_submenu,
+        "promote_to": btn_promote_to,
+        "post_now": btn_post_now,
     }
 
     handler = handlers.get(action)
@@ -203,6 +206,15 @@ def btn_approve(
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        if draft.platform == "preview":
+            _send(
+                adapter,
+                chat_id,
+                "Preview drafts cannot be posted directly. "
+                "Use the Promote button to redraft for a real platform.",
+            )
+            return
 
         if draft.status not in ("draft", "approved", "deferred"):
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
@@ -248,6 +260,15 @@ def btn_schedule_optimal(
             return
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        if draft.platform == "preview":
+            _send(
+                adapter,
+                chat_id,
+                "Preview drafts cannot be scheduled. "
+                "Use the Promote button to redraft for a real platform.",
+            )
+            return
 
         result = calculate_optimal_time(
             conn,
@@ -407,6 +428,15 @@ def btn_quick_approve(
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
+        if draft.platform == "preview":
+            _send(
+                adapter,
+                chat_id,
+                "Preview drafts cannot be posted directly. "
+                "Use the Promote button to redraft for a real platform.",
+            )
+            return
+
         if draft.status not in ("draft", "approved", "deferred"):
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
@@ -478,6 +508,23 @@ def btn_schedule_custom(
 ) -> None:
     """Prompt user to reply with a custom time."""
     _answer_callback(adapter, callback_id)
+
+    conn = _get_conn()
+    try:
+        from social_hook.db import get_draft
+
+        draft = get_draft(conn, draft_id)
+        if draft and draft.platform == "preview":
+            _send(
+                adapter,
+                chat_id,
+                "Preview drafts cannot be scheduled. "
+                "Use the Promote button to redraft for a real platform.",
+            )
+            return
+    finally:
+        conn.close()
+
     _pending_replies[chat_id] = PendingReply(
         type="schedule_custom", draft_id=draft_id, timestamp=time.time()
     )
@@ -1323,3 +1370,264 @@ def btn_review(
     from social_hook.bot.commands import cmd_review
 
     cmd_review(adapter, chat_id, draft_id, config)
+
+
+def btn_promote_submenu(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    draft_id: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Show platform selection for promoting a preview draft."""
+    _answer_callback(adapter, callback_id)
+
+    conn = _get_conn()
+    try:
+        from social_hook.db import get_draft
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+        if draft.platform != "preview":
+            _send(adapter, chat_id, "Only preview drafts can be promoted.")
+            return
+        if draft.status in ("posted", "rejected", "cancelled", "superseded"):
+            _send(adapter, chat_id, f"Cannot promote: draft status is '{draft.status}'")
+            return
+    finally:
+        conn.close()
+
+    if not config:
+        _send(adapter, chat_id, "Config not available.")
+        return
+
+    real_platforms = [
+        name for name, pcfg in config.platforms.items() if pcfg.enabled and name != "preview"
+    ]
+
+    if not real_platforms:
+        _send(
+            adapter,
+            chat_id,
+            "No platforms are enabled yet. Enable a platform in Settings → Platforms first, "
+            "then come back to promote this draft.",
+        )
+        return
+
+    buttons = [
+        ButtonRow(
+            buttons=[
+                Button(label=f"→ {p}", action="promote_to", payload=f"{draft_id}:{p}")
+                for p in real_platforms
+            ]
+        )
+    ]
+    _send_with_buttons(adapter, chat_id, f"Promote `{draft_id[:12]}` to:", buttons)
+
+
+def btn_promote_to(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Execute promote: redraft a preview draft for a specific platform."""
+    _answer_callback(adapter, callback_id, "Promoting...")
+
+    # Parse compound payload: "draft_id:platform"
+    parts = payload.split(":", 1)
+    if len(parts) != 2:
+        _send(adapter, chat_id, "Invalid promote payload.")
+        return
+    draft_id, platform = parts
+
+    conn = _get_conn()
+    try:
+        from social_hook.db import get_draft
+        from social_hook.db import operations as ops
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+        if draft.platform != "preview":
+            _send(adapter, chat_id, "Only preview drafts can be promoted.")
+            return
+        if draft.status in ("posted", "rejected", "cancelled", "superseded"):
+            _send(adapter, chat_id, f"Cannot promote: draft status is '{draft.status}'")
+            return
+
+        if not config:
+            _send(adapter, chat_id, "Config not available.")
+            return
+
+        pcfg = config.platforms.get(platform)
+        if not pcfg or not pcfg.enabled:
+            _send(adapter, chat_id, f"Platform '{platform}' is not enabled.")
+            return
+
+        decision = ops.get_decision(conn, draft.decision_id)
+        if not decision:
+            _send(adapter, chat_id, "Decision not found.")
+            return
+
+        project = ops.get_project(conn, decision.project_id)
+        if not project:
+            _send(adapter, chat_id, "Project not found.")
+            return
+
+        from social_hook.compat import evaluation_from_decision
+        from social_hook.config.project import ProjectConfig, load_project_config
+        from social_hook.drafting import draft_for_platforms
+        from social_hook.errors import ConfigError
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.prompts import assemble_evaluator_context
+        from social_hook.models import CommitInfo
+
+        try:
+            project_config = load_project_config(project.repo_path)
+        except ConfigError:
+            project_config = ProjectConfig(repo_path=project.repo_path)
+
+        from social_hook.trigger import parse_commit_info
+
+        try:
+            commit = parse_commit_info(decision.commit_hash, project.repo_path)
+        except Exception:
+            commit = CommitInfo(
+                hash=decision.commit_hash,
+                message=decision.commit_message or "",
+                diff="",
+                files_changed=[],
+            )
+
+        db = DryRunContext(conn, dry_run=False)
+        context = assemble_evaluator_context(
+            db,
+            project.id,
+            project_config,
+            commit_timestamp=getattr(commit, "timestamp", None),
+            parent_timestamp=getattr(commit, "parent_timestamp", None),
+        )
+
+        evaluation = evaluation_from_decision(decision, "draft")
+
+        results = draft_for_platforms(
+            config,
+            conn,
+            db,
+            project,
+            decision_id=decision.id,
+            evaluation=evaluation,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            target_platform_names=[platform],
+            skip_content_filter=True,
+        )
+
+        if not results:
+            _send(adapter, chat_id, "No draft created during promote.")
+            return
+
+        new_draft = results[0].draft
+        ops.supersede_draft(conn, draft_id, new_draft.id)
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+
+        # Send review with buttons for the new draft
+        from social_hook.bot.notifications import get_review_buttons_normalized
+
+        buttons = get_review_buttons_normalized(new_draft.id, platform=new_draft.platform)
+        _send_with_buttons(
+            adapter,
+            chat_id,
+            f"Preview draft promoted to {platform}.\n\n"
+            f"New draft: `{new_draft.id[:12]}`\n\n"
+            f"```\n{new_draft.content[:500]}\n```",
+            buttons,
+        )
+    except Exception as e:
+        logger.exception("Error promoting draft")
+        _send(adapter, chat_id, f"Error promoting draft: {e}")
+    finally:
+        conn.close()
+
+
+def btn_post_now(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    draft_id: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Post a draft immediately to its platform."""
+    _answer_callback(adapter, callback_id, "Posting...")
+
+    conn = _get_conn()
+    try:
+        from social_hook.bot.commands import set_chat_draft_context
+        from social_hook.db import get_draft
+        from social_hook.db import operations as ops
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        if draft.platform == "preview":
+            _send(
+                adapter,
+                chat_id,
+                "Preview drafts cannot be posted directly. "
+                "Use the Promote button to redraft for a real platform.",
+            )
+            return
+
+        if draft.status not in ("draft", "approved", "deferred"):
+            _send(adapter, chat_id, f"Cannot post draft with status: {draft.status}")
+            return
+
+        if not config:
+            _send(adapter, chat_id, "Config not available.")
+            return
+
+        project = ops.get_project(conn, draft.project_id)
+        project_name = project.name if project else "Unknown"
+
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+        ops.update_draft(conn, draft_id, status="scheduled", scheduled_time=now)
+
+        from social_hook.scheduler import _handle_post_failure, _post_draft, record_post_success
+
+        result = _post_draft(conn, draft, config)
+
+        if result.success:
+            record_post_success(conn, draft, result, config, project_name)
+            _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "posted")
+            url_info = f"\nURL: {result.external_url}" if result.external_url else ""
+            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` posted successfully!{url_info}")
+            from social_hook.notifications import broadcast_notification
+
+            broadcast_notification(
+                config,
+                OutboundMessage(text=f"Draft `{draft_id[:12]}` posted ({draft.platform})"),
+                exclude_chat=chat_id,
+            )
+        else:
+            _handle_post_failure(conn, draft, result.error or "Unknown error", config, False)
+            _send(adapter, chat_id, f"Post failed: {result.error}")
+    except Exception as e:
+        logger.exception("Error posting draft")
+        _send(adapter, chat_id, f"Error posting draft: {e}")
+    finally:
+        conn.close()

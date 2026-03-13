@@ -488,6 +488,15 @@ def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
+        if draft.platform == "preview":
+            _send(
+                adapter,
+                chat_id,
+                "Preview drafts cannot be scheduled. "
+                "Use the Promote button to redraft for a real platform.",
+            )
+            return
+
         try:
             datetime.fromisoformat(text.strip())
         except ValueError:
@@ -804,7 +813,7 @@ def _save_angle(adapter, chat_id, draft_id, text):
             if result.refined_media_spec:
                 parts.append("Media spec updated. Run `media-regen` to regenerate media.")
             msg = "\n".join(parts)
-            buttons = get_review_buttons_normalized(draft.id)
+            buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
             adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
         else:
             _send(adapter, chat_id, f"Expert could not refine draft: {result.reasoning}")
@@ -1021,7 +1030,7 @@ def _handle_expert_escalation(
                         f"Media spec updated: {json_mod.dumps(result.refined_media_spec)[:200]}"
                     )
                 msg = f"Draft `{draft.id[:12]}` updated by Expert.\n\n" + "\n".join(parts)
-                buttons = get_review_buttons_normalized(draft.id)
+                buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
                 adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
                 return msg
             finally:
@@ -1309,7 +1318,7 @@ def cmd_review(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
             angle=decision.angle if decision else None,
             evaluator_reasoning=decision.reasoning if decision else None,
         )
-        buttons = get_review_buttons_normalized(draft.id)
+        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
         adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
     finally:
         conn.close()

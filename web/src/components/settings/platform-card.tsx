@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { PlatformConfig, SchedulingOverride } from "@/lib/types";
 import { updateEnv } from "@/lib/api";
+import { platformLabel } from "@/lib/platform";
 
 const FILTERS = ["all", "notable", "significant"];
 const FREQUENCIES = ["high", "moderate", "low", "minimal"];
@@ -12,14 +13,6 @@ const TIERS: Record<string, string[]> = {
   x: ["free", "basic", "premium", "pro"],
   linkedin: ["free", "premium"],
 };
-
-function platformDisplayName(name: string): string {
-  const names: Record<string, string> = {
-    x: "X (Twitter)",
-    linkedin: "LinkedIn",
-  };
-  return names[name] ?? name;
-}
 
 const PLATFORM_ENV_KEYS: Record<string, { key: string; label: string }[]> = {
   x: [
@@ -97,7 +90,7 @@ export function PlatformCard({ name, config, onChange, onRemove, env, onEnvRefre
         {/* Name + info */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-medium">{platformDisplayName(name)}</span>
+            <span className="font-medium">{platformLabel(name)}</span>
             {config.type === "custom" && (
               <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">custom</span>
             )}

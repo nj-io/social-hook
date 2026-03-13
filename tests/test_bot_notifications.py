@@ -227,6 +227,13 @@ class TestGetReviewButtonsNormalized:
         b2 = get_review_buttons_normalized("draft_2")
         assert b1[0].buttons[0].payload != b2[0].buttons[0].payload
 
+    def test_preview_buttons(self):
+        buttons = get_review_buttons_normalized("draft_abc", platform="preview")
+        labels = [btn.label for row in buttons for btn in row.buttons]
+        assert labels == ["Edit", "Reject", "Promote"]
+        actions = [btn.action for row in buttons for btn in row.buttons]
+        assert actions == ["edit", "reject", "promote"]
+
 
 class TestPublicAPISurface:
     """Tests for module public API surface."""

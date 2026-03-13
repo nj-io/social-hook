@@ -408,8 +408,20 @@ export async function retriggerDecision(
   });
 }
 
+// Promote
+export async function promoteDraft(
+  draftId: string,
+  platform: string,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/promote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ platform }),
+  });
+}
+
 // Platforms
-export async function fetchEnabledPlatforms(): Promise<{ platforms: Record<string, { priority: string; type: string }>; count: number }> {
+export async function fetchEnabledPlatforms(): Promise<{ platforms: Record<string, { priority: string; type: string }>; count: number; real_count: number }> {
   return apiFetch("/api/platforms/enabled");
 }
 
