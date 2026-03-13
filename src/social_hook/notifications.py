@@ -142,7 +142,9 @@ def notify_draft_review(
             is_intro=getattr(draft, "is_intro", False),
         )
         buttons = get_review_buttons_normalized(
-            draft.id, is_intro=getattr(draft, "is_intro", False)
+            draft.id,
+            platform=draft.platform,
+            is_intro=getattr(draft, "is_intro", False),
         )
         msg = OutboundMessage(text=msg_text, buttons=buttons)
         broadcast_notification(
@@ -203,7 +205,9 @@ def resend_draft_notification(
             is_intro=getattr(draft, "is_intro", False),
         )
         buttons = get_review_buttons_normalized(
-            draft.id, is_intro=getattr(draft, "is_intro", False)
+            draft.id,
+            platform=draft.platform,
+            is_intro=getattr(draft, "is_intro", False),
         )
         msg = OutboundMessage(text=msg_text, buttons=buttons)
         broadcast_notification(

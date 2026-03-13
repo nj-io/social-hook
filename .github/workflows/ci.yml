@@ -17,6 +17,14 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
+      - name: Check for duplicate migration numbers
+        run: |
+          cd src/social_hook/db/migrations
+          dupes=$(ls *.sql 2>/dev/null | sed 's/_.*//' | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "::error::Duplicate migration numbers: $dupes"
+            exit 1
+          fi
 
   typecheck:
     runs-on: ubuntu-latest

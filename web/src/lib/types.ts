@@ -191,7 +191,7 @@ export interface Decision {
   reasoning: string;
   angle: string;
   episode_type: string;
-  episode_tags: string[];
+  episode_tags: string | string[];
   post_category: string;
   arc_id?: string;
   media_tool?: string;
@@ -322,4 +322,13 @@ export interface ProjectDetail extends Project {
   post_count: number;
   narrative_count: number;
   journey_capture_enabled?: boolean;
+}
+
+/** Parse episode_tags which may arrive as a JSON string or an array. */
+export function parseTags(tags: string | string[] | undefined | null): string[] {
+  if (Array.isArray(tags)) return tags;
+  if (typeof tags === "string") {
+    try { return JSON.parse(tags); } catch { return []; }
+  }
+  return [];
 }

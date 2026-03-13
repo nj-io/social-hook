@@ -98,13 +98,34 @@ def quickstart(
     db_path = get_db_path()
     conn = init_database(db_path)
 
-    # 7. Register project (or find existing)
+    # 7. Register project (or find existing — check path and origin)
     from social_hook.db.operations import get_project_by_path, register_project
 
     project = get_project_by_path(conn, repo_path)
     if project is None:
+        # Also check by origin (handles worktrees pointing to same repo)
+        origin_result = subprocess.run(
+            ["git", "-C", repo_path, "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+        )
+        if origin_result.returncode == 0:
+            origin_url = origin_result.stdout.strip()
+            row = conn.execute(
+                "SELECT id, name FROM projects WHERE repo_origin = ?", (origin_url,)
+            ).fetchone()
+            if row:
+                from social_hook.db.operations import get_project
+
+                project = get_project(conn, row[0])
+                if not is_json:
+                    typer.echo(
+                        f"Found existing project by origin: {project.name} ({project.id[:8]})"
+                    )
+
+    if project is None:
         try:
-            project, origin = register_project(conn, repo_path, name=project_name)
+            project, _origin = register_project(conn, repo_path, name=project_name)
             if not is_json:
                 typer.echo(f"Registered project: {project.name} ({project.id[:8]})")
         except ValueError as e:

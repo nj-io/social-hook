@@ -1,14 +1,8 @@
 import Link from "next/link";
 import type { Draft } from "@/lib/types";
+import { parseTags } from "@/lib/types";
+import { platformLabel } from "@/lib/platform";
 import { Badge } from "./ui/badge";
-
-function platformLabel(platform: string): string {
-  const labels: Record<string, string> = {
-    x: "X (Twitter)",
-    linkedin: "LinkedIn",
-  };
-  return labels[platform] ?? platform;
-}
 
 export function DraftCard({ draft }: { draft: Draft }) {
   const preview = draft.content.length > 140
@@ -35,12 +29,12 @@ export function DraftCard({ draft }: { draft: Draft }) {
             <div className="mt-1.5 flex flex-wrap gap-1">
               {draft.decision.episode_type && <Badge value={draft.decision.episode_type} variant="category" />}
               {draft.decision.post_category && <Badge value={draft.decision.post_category} variant="category" />}
-              {draft.decision.episode_tags?.slice(0, 3).map((tag) => (
+              {parseTags(draft.decision.episode_tags).slice(0, 3).map((tag) => (
                 <Badge key={tag} value={tag} variant="default" />
               ))}
-              {(draft.decision.episode_tags?.length ?? 0) > 3 && (
+              {parseTags(draft.decision.episode_tags).length > 3 && (
                 <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs text-muted-foreground">
-                  +{draft.decision.episode_tags!.length - 3} more
+                  +{parseTags(draft.decision.episode_tags).length - 3} more
                 </span>
               )}
             </div>

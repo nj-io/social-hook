@@ -101,17 +101,32 @@ def format_draft_review(
     return "\n".join(lines)
 
 
-def get_review_buttons_normalized(draft_id: str, is_intro: bool = False) -> list:
+def get_review_buttons_normalized(
+    draft_id: str, platform: str = "", is_intro: bool = False
+) -> list:
     """Get review buttons as normalized ButtonRow list.
 
     Args:
         draft_id: Draft ID for callback data
+        platform: Platform name — when "preview", shows Promote instead of
+            approve/schedule/post-now buttons.
         is_intro: Whether this draft is an introduction post
 
     Returns:
         List of ButtonRow instances
     """
     from social_hook.messaging.base import Button, ButtonRow
+
+    if platform == "preview":
+        return [
+            ButtonRow(
+                buttons=[
+                    Button(label="Edit", action="edit", payload=draft_id),
+                    Button(label="Reject", action="reject", payload=draft_id),
+                    Button(label="Promote", action="promote", payload=draft_id),
+                ]
+            ),
+        ]
 
     return [
         ButtonRow(

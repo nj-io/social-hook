@@ -333,11 +333,11 @@ def import_commits(
             typer.echo("No project found. Provide a project ID or run from a registered repo.")
             raise typer.Exit(1)
 
-        if not json_output:
-            branch_desc = f" (branch: {branch})" if branch else " (all branches)"
-            typer.echo(f"Importing commits for '{project.name}'{branch_desc}...")
+        from social_hook.cli._spinner import spinner
 
-        result = import_project_commits(conn, project.id, project.repo_path, branch)
+        branch_desc = f" (branch: {branch})" if branch else " (all branches)"
+        with spinner(f"Importing commits for '{project.name}'{branch_desc}..."):
+            result = import_project_commits(conn, project.id, project.repo_path, branch)
         emit_data_event(conn, "decision", "created", project.id, project.id)
 
         if json_output:

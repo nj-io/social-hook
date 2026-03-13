@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchDrafts, fetchEnabledPlatforms, fetchProjects } from "@/lib/api";
 import type { Draft, Project } from "@/lib/types";
+import { parseTags } from "@/lib/types";
 import { RateLimitCard } from "@/components/rate-limit-card";
 import { Badge } from "@/components/ui/badge";
 import { WizardModal } from "@/components/wizard/wizard-modal";
@@ -32,7 +33,7 @@ export default function DashboardPage() {
   // Fetch platform count separately (not on reload — only on mount)
   useEffect(() => {
     fetchEnabledPlatforms()
-      .then((res) => setPlatformCount(res.count))
+      .then((res) => setPlatformCount(res.real_count))
       .catch(() => setPlatformCount(null));
   }, []);
 
@@ -203,12 +204,12 @@ export default function DashboardPage() {
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {draft.decision.episode_type && <Badge value={draft.decision.episode_type} variant="category" />}
                     {draft.decision.post_category && <Badge value={draft.decision.post_category} variant="category" />}
-                    {draft.decision.episode_tags?.slice(0, 3).map((tag) => (
+                    {parseTags(draft.decision.episode_tags).slice(0, 3).map((tag) => (
                       <Badge key={tag} value={tag} variant="default" />
                     ))}
-                    {(draft.decision.episode_tags?.length ?? 0) > 3 && (
+                    {parseTags(draft.decision.episode_tags).length > 3 && (
                       <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs text-muted-foreground">
-                        +{draft.decision.episode_tags!.length - 3} more
+                        +{parseTags(draft.decision.episode_tags).length - 3} more
                       </span>
                     )}
                   </div>

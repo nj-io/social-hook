@@ -18,6 +18,33 @@ from social_hook.trigger import parse_commit_info, run_trigger
 logger = logging.getLogger(__name__)
 
 
+def record_post_success(conn, draft, result, config, project_name: str, dry_run: bool = False):
+    """Record a successful post: update draft, create Post record, emit events, notify."""
+    ops.update_draft(conn, draft.id, status="posted")
+    ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
+    post = Post(
+        id=generate_id("post"),
+        draft_id=draft.id,
+        project_id=draft.project_id,
+        platform=draft.platform,
+        external_id=result.external_id,
+        external_url=result.external_url,
+        content=draft.content,
+    )
+    ops.insert_post(conn, post)
+    ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
+    send_notification(
+        config,
+        f"*Posted successfully*\n\n"
+        f"Project: {project_name}\n"
+        f"Platform: {draft.platform}\n"
+        f"URL: {result.external_url or 'N/A'}\n\n"
+        f"```\n{draft.content[:300]}\n```",
+        dry_run=dry_run,
+    )
+    return post
+
+
 # =============================================================================
 # Lock file management
 # =============================================================================
@@ -475,29 +502,8 @@ def scheduler_tick(
                         result = _post_draft(conn, draft, config)
 
                     if result.success:
-                        # Record success
-                        ops.update_draft(conn, draft.id, status="posted")
-                        ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
-                        post = Post(
-                            id=generate_id("post"),
-                            draft_id=draft.id,
-                            project_id=draft.project_id,
-                            platform=draft.platform,
-                            external_id=result.external_id,
-                            external_url=result.external_url,
-                            content=draft.content,
-                        )
-                        ops.insert_post(conn, post)
-                        ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
-
-                        send_notification(
-                            config,
-                            f"*Posted successfully*\n\n"
-                            f"Project: {project.name}\n"
-                            f"Platform: {draft.platform}\n"
-                            f"URL: {result.external_url or 'N/A'}\n\n"
-                            f"```\n{draft.content[:300]}\n```",
-                            dry_run=dry_run,
+                        record_post_success(
+                            conn, draft, result, config, project.name, dry_run=dry_run
                         )
                     else:
                         _handle_post_failure(
@@ -533,6 +539,12 @@ def _post_draft(conn, draft, config):
     """
     from social_hook.adapters.models import PostResult
     from social_hook.adapters.platform.factory import create_adapter
+
+    if draft.platform == "preview":
+        return PostResult(
+            success=False,
+            error="Preview drafts cannot be posted. Promote to a real platform first.",
+        )
 
     # Create adapter via factory
     try:
