@@ -369,10 +369,20 @@ class TestRunWizard:
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
+    @patch("social_hook.setup.wizard._confirm", return_value=False)
+    @patch("social_hook.setup.wizard._setup_audience")
+    @patch("social_hook.setup.wizard._setup_connection")
+    @patch("social_hook.setup.wizard._setup_identity")
+    @patch("social_hook.setup.wizard._setup_strategy", return_value=None)
     @patch("social_hook.filesystem.init_filesystem")
     def test_full_wizard(
         self,
         mock_init,
+        mock_strategy,
+        mock_identity,
+        mock_connection,
+        mock_audience,
+        mock_confirm,
         mock_save,
         mock_api_keys,
         mock_voice,
@@ -393,11 +403,13 @@ class TestRunWizard:
         result = run_wizard()
         assert result is True
         mock_init.assert_called_once()
+        mock_strategy.assert_called_once()
+        mock_identity.assert_called_once()
+        mock_connection.assert_called_once()
+        mock_audience.assert_called_once()
         mock_voice.assert_called_once()
         mock_models.assert_called_once()
-        mock_image.assert_called_once()
         mock_platforms.assert_called_once()
-        mock_web.assert_called_once()
         mock_load.assert_called_once()
 
     @patch("social_hook.filesystem.init_filesystem")
@@ -447,7 +459,7 @@ class TestRunWizard:
     def test_only_media(self, mock_init, mock_save, mock_media, mock_load, mock_sys):
         mock_sys.stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
-        result = run_wizard(only="media")
+        result = run_wizard(only="image")
         assert result is True
         mock_media.assert_called_once()
 
@@ -485,10 +497,20 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
+    @patch("social_hook.setup.wizard._confirm", return_value=False)
+    @patch("social_hook.setup.wizard._setup_audience")
+    @patch("social_hook.setup.wizard._setup_connection")
+    @patch("social_hook.setup.wizard._setup_identity")
+    @patch("social_hook.setup.wizard._setup_strategy", return_value=None)
     @patch("social_hook.filesystem.init_filesystem")
     def test_warns_when_missing_keys(
         self,
         mock_init,
+        mock_strategy,
+        mock_identity,
+        mock_connection,
+        mock_audience,
+        mock_confirm,
         mock_save,
         mock_api_keys,
         mock_voice,
@@ -535,10 +557,20 @@ class TestWizardWarnings:
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
+    @patch("social_hook.setup.wizard._confirm", return_value=False)
+    @patch("social_hook.setup.wizard._setup_audience")
+    @patch("social_hook.setup.wizard._setup_connection")
+    @patch("social_hook.setup.wizard._setup_identity")
+    @patch("social_hook.setup.wizard._setup_strategy", return_value=None)
     @patch("social_hook.filesystem.init_filesystem")
     def test_no_warnings_when_existing_keys(
         self,
         mock_init,
+        mock_strategy,
+        mock_identity,
+        mock_connection,
+        mock_audience,
+        mock_confirm,
         mock_save,
         mock_api_keys,
         mock_voice,
@@ -616,8 +648,13 @@ class TestWelcomePanel:
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
+    @patch("social_hook.setup.wizard._confirm", return_value=False)
+    @patch("social_hook.setup.wizard._setup_audience")
+    @patch("social_hook.setup.wizard._setup_connection")
+    @patch("social_hook.setup.wizard._setup_identity")
+    @patch("social_hook.setup.wizard._setup_strategy", return_value=None)
     @patch("social_hook.filesystem.init_filesystem")
-    def test_welcome_panel_renders(self, mock_init, mock_save, *mocks):
+    def test_welcome_panel_renders(self, mock_init, mock_strategy, *mocks):
         # Last arg in mocks is mock_sys (class-level patch)
         mocks[-1].stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
@@ -635,8 +672,13 @@ class TestWelcomePanel:
     @patch("social_hook.setup.wizard._setup_voice_style")
     @patch("social_hook.setup.wizard._setup_api_keys")
     @patch("social_hook.setup.wizard._save_env")
+    @patch("social_hook.setup.wizard._confirm", return_value=False)
+    @patch("social_hook.setup.wizard._setup_audience")
+    @patch("social_hook.setup.wizard._setup_connection")
+    @patch("social_hook.setup.wizard._setup_identity")
+    @patch("social_hook.setup.wizard._setup_strategy", return_value=None)
     @patch("social_hook.filesystem.init_filesystem")
-    def test_welcome_fallback_on_import_error(self, mock_init, mock_save, *mocks):
+    def test_welcome_fallback_on_import_error(self, mock_init, mock_strategy, *mocks):
         mocks[-1].stdout.isatty.return_value = False
         mock_init.return_value = Path("/tmp/test")
         with patch.dict("sys.modules", {"rich.console": None, "rich.panel": None}):
@@ -742,7 +784,7 @@ class TestModelSelection:
         mock_select.return_value = "Quick setup — use recommended defaults (Recommended)"
 
         yaml_config = {}
-        with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
+        with patch("social_hook.setup.wizard.discover_providers") as mock_discover:
             mock_discover.return_value = [
                 {"id": "claude-cli", "status": "detected", "detail": "Uses subscription ($0)"},
                 {
@@ -765,7 +807,7 @@ class TestModelSelection:
         mock_select.return_value = "Quick setup — use recommended defaults (Recommended)"
 
         yaml_config = {}
-        with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
+        with patch("social_hook.setup.wizard.discover_providers") as mock_discover:
             mock_discover.return_value = [
                 {
                     "id": "anthropic",
@@ -788,7 +830,7 @@ class TestModelSelection:
 
         progress = WizardProgress()
         yaml_config = {}
-        with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
+        with patch("social_hook.setup.wizard.discover_providers") as mock_discover:
             mock_discover.return_value = [
                 {
                     "id": "anthropic",
@@ -811,7 +853,7 @@ class TestModelSelection:
         mock_select.return_value = "Quick setup — use recommended defaults (Recommended)"
 
         yaml_config = {}
-        with patch("social_hook.setup.wizard._discover_providers") as mock_discover:
+        with patch("social_hook.setup.wizard.discover_providers") as mock_discover:
             mock_discover.return_value = [
                 {
                     "id": "anthropic",
@@ -1665,30 +1707,30 @@ class TestLoadExisting:
 
 class TestDiscoverProviders:
     def test_detects_anthropic_key(self):
-        from social_hook.setup.wizard import _discover_providers
+        from social_hook.setup.wizard import discover_providers
 
-        providers = _discover_providers({"ANTHROPIC_API_KEY": "sk-test"})
+        providers = discover_providers({"ANTHROPIC_API_KEY": "sk-test"})
         anthropic = next(p for p in providers if p["id"] == "anthropic")
         assert anthropic["status"] == "configured"
 
     def test_unconfigured_without_key(self):
-        from social_hook.setup.wizard import _discover_providers
+        from social_hook.setup.wizard import discover_providers
 
-        providers = _discover_providers({})
+        providers = discover_providers({})
         anthropic = next(p for p in providers if p["id"] == "anthropic")
         assert anthropic["status"] == "unconfigured"
 
     def test_detects_openrouter_key(self):
-        from social_hook.setup.wizard import _discover_providers
+        from social_hook.setup.wizard import discover_providers
 
-        providers = _discover_providers({"OPENROUTER_API_KEY": "or-test"})
+        providers = discover_providers({"OPENROUTER_API_KEY": "or-test"})
         openrouter = next(p for p in providers if p["id"] == "openrouter")
         assert openrouter["status"] == "configured"
 
     def test_detects_openai_key(self):
-        from social_hook.setup.wizard import _discover_providers
+        from social_hook.setup.wizard import discover_providers
 
-        providers = _discover_providers({"OPENAI_API_KEY": "sk-openai-test"})
+        providers = discover_providers({"OPENAI_API_KEY": "sk-openai-test"})
         openai = next(p for p in providers if p["id"] == "openai")
         assert openai["status"] == "configured"
 
