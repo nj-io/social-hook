@@ -7,6 +7,7 @@ import type { Draft, Project } from "@/lib/types";
 import { RateLimitCard } from "@/components/rate-limit-card";
 import { Badge } from "@/components/ui/badge";
 import { WizardModal } from "@/components/wizard/wizard-modal";
+import { QuickstartModal } from "@/components/quickstart-modal";
 import { useDataEvents } from "@/lib/use-data-events";
 
 export default function DashboardPage() {
@@ -16,6 +17,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showWizard, setShowWizard] = useState(false);
+  const [showQuickstart, setShowQuickstart] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -111,6 +113,12 @@ export default function DashboardPage() {
               >
                 Start Setup
               </button>
+              <button
+                onClick={() => setShowQuickstart(true)}
+                className="rounded-md border border-border px-6 py-2.5 text-sm font-medium hover:bg-muted transition-colors"
+              >
+                Quick Preview
+              </button>
             </div>
           </div>
         ) : (
@@ -183,12 +191,28 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-muted-foreground">{draft.platform}</span>
                     <Badge value={draft.status} variant="status" />
+                    {draft.is_intro && <Badge value="INTRO" variant="system" />}
+                    {draft.platform === "preview" && <Badge value="Preview" variant="system" />}
                   </div>
                   <span className="text-xs text-muted-foreground">
                     {new Date(draft.created_at).toLocaleDateString()}
                   </span>
                 </div>
                 <p className="mt-1 truncate text-sm">{draft.content}</p>
+                {draft.decision && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {draft.decision.episode_type && <Badge value={draft.decision.episode_type} variant="category" />}
+                    {draft.decision.post_category && <Badge value={draft.decision.post_category} variant="category" />}
+                    {draft.decision.episode_tags?.slice(0, 3).map((tag) => (
+                      <Badge key={tag} value={tag} variant="default" />
+                    ))}
+                    {(draft.decision.episode_tags?.length ?? 0) > 3 && (
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs text-muted-foreground">
+                        +{draft.decision.episode_tags!.length - 3} more
+                      </span>
+                    )}
+                  </div>
+                )}
               </Link>
             ))}
           </div>
@@ -203,6 +227,14 @@ export default function DashboardPage() {
           setShowWizard(false);
           reload();
         }}
+      />
+
+      {/* Quickstart modal */}
+      <QuickstartModal
+        open={showQuickstart}
+        onClose={() => setShowQuickstart(false)}
+        onComplete={reload}
+        onOpenFullWizard={() => setShowWizard(true)}
       />
     </div>
   );
