@@ -207,9 +207,8 @@ def logs(
     component: str | None = typer.Argument(
         None, help=f"Component to tail ({', '.join(VALID_LOG_COMPONENTS)}, or omit for all)"
     ),
-    level: str = typer.Option("info", "--level", "-l", help="Filter by log level"),
 ):
-    """Tail log files. Optionally filter by component or level."""
+    """Tail log files. Optionally filter by component."""
     from social_hook.filesystem import get_base_path
 
     logs_dir = get_base_path() / "logs"

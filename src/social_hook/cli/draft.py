@@ -522,7 +522,7 @@ def media_edit(
 def list_cmd(
     ctx: typer.Context,
     status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project ID"),
+    project: str | None = typer.Option(None, "--project", "-i", help="Filter by project ID"),
     decision: str | None = typer.Option(None, "--decision", "-d", help="Filter by decision ID"),
     commit: str | None = typer.Option(None, "--commit", "-c", help="Filter by commit hash"),
     pending: bool = typer.Option(

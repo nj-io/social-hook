@@ -215,8 +215,8 @@ def help_cmd(
 def init():
     """Initialize social-hook (create directories and database).
 
-    DEV ONLY: This is a temporary command for testing. Use 'social-hook setup'
-    when it's available (WS4).
+    Creates ~/.social-hook/ with config templates and an empty database.
+    For guided setup with platform credentials, use 'social-hook setup' instead.
     """
     from social_hook.db import init_database
     from social_hook.filesystem import get_db_path, init_filesystem
