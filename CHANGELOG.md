@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.7.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.6.0...social-hook-v0.7.0) (2026-03-13)
+
+
+### Features
+
+* ⚡ pipeline rate limits and merge queue execution ([#33](https://github.com/nj-io/social-hook/issues/33)) ([4380d10](https://github.com/nj-io/social-hook/commit/4380d101ec1b92c79c295b4c883212cf879f630d))
+* add CLI spinner with elapsed counter for slow operations ([405f6d2](https://github.com/nj-io/social-hook/commit/405f6d22e7648babc10f4afc806b0df41ea71d0e))
+* add favicon and social preview assets ([5c52940](https://github.com/nj-io/social-hook/commit/5c529409a904eb405aeea183b0c7af8e3fe1d280))
+* add landing page site ([d24266e](https://github.com/nj-io/social-hook/commit/d24266e3b7664b87a39221b6b00497fe9d908171))
+* landing page for GitHub Pages ([39494a2](https://github.com/nj-io/social-hook/commit/39494a2d6190ab29c968c27eeac60831deab1841))
+* landing page for GitHub Pages ([#34](https://github.com/nj-io/social-hook/issues/34)) ([b4a84aa](https://github.com/nj-io/social-hook/commit/b4a84aab2f724f575133182f7f7eeb72150a1c55))
+* landing page mobile cascade, favicon, and social preview ([949c8c8](https://github.com/nj-io/social-hook/commit/949c8c80d3b59d64174f2cf52512cf56df84f5cc))
+* mobile-responsive cascade animation with vertical pyramid layout ([2c6e7c5](https://github.com/nj-io/social-hook/commit/2c6e7c506466d186a3d7e095f94a56defab80f4c))
+* preview platform overhaul, promote flow, and post now ([cbb22de](https://github.com/nj-io/social-hook/commit/cbb22de3bf31d0e15df6eb4c1f58f9fe92285dce))
+* preview platform overhaul, promote flow, post now, and CLI spinners ([b32db14](https://github.com/nj-io/social-hook/commit/b32db14c358900ebb1072a3914fc65ed8a6cef80))
+* reversible draft actions, button restoration, and lifecycle toasts ([c6eb3cd](https://github.com/nj-io/social-hook/commit/c6eb3cd8d0077924cf518c8d899b2bb1a6942cc0))
+* reversible draft actions, button restoration, and lifecycle toasts ([d4471a2](https://github.com/nj-io/social-hook/commit/d4471a2a6587e82019581c5ec41366e18848b0be))
+
+
+### Bug Fixes
+
+* landing page copy updates and animation fixes ([03e0562](https://github.com/nj-io/social-hook/commit/03e05625c6485fa186c2d15b3fd106da7e24c342))
+* type annotate button handlers dict to fix mypy dict-item errors ([269693b](https://github.com/nj-io/social-hook/commit/269693b4a9ad9f190ff58233d4a093291df24089))
+
 ## [0.6.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.5.0...social-hook-v0.6.0) (2026-03-12)
 
 
