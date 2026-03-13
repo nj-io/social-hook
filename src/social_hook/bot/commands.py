@@ -40,9 +40,9 @@ def get_chat_draft_context(chat_id: str) -> tuple[str, str] | None:
     return (draft_id, project_id)
 
 
-def _send(adapter: MessagingAdapter, chat_id: str, text: str) -> bool:
+def _send(adapter: MessagingAdapter, chat_id: str, text: str, buttons=None) -> bool:
     """Send a plain message via adapter."""
-    result = adapter.send_message(chat_id, OutboundMessage(text=text))
+    result = adapter.send_message(chat_id, OutboundMessage(text=text, buttons=buttons or []))
     return result.success
 
 
@@ -52,6 +52,37 @@ def _get_conn():
     from social_hook.filesystem import get_db_path
 
     return init_database(get_db_path())
+
+
+def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
+    """Re-split content into draft_tweets if the draft has an existing thread.
+
+    Called after content edits to keep draft_tweets in sync. If the draft
+    has no existing tweets, this is a no-op. Uses _parse_thread_tweets()
+    which is platform-agnostic (string parsing only, no LLM call).
+    """
+    from social_hook.db import operations as ops
+    from social_hook.drafting import _parse_thread_tweets
+    from social_hook.filesystem import generate_id
+    from social_hook.models import DraftTweet
+
+    existing = ops.get_draft_tweets(conn, draft_id)
+    if not existing:
+        return
+
+    # Re-parse with thread_min=1 so any split result replaces the old tweets,
+    # even if the new content has fewer parts than the original thread.
+    parts = _parse_thread_tweets(new_content, thread_min=1)
+    new_tweets = [
+        DraftTweet(
+            id=generate_id("tweet"),
+            draft_id=draft_id,
+            position=i,
+            content=part,
+        )
+        for i, part in enumerate(parts)
+    ]
+    ops.replace_draft_tweets(conn, draft_id, new_tweets)
 
 
 def _build_system_snapshot(conn, project_id: str | None, config, arcs=None) -> str:
@@ -699,6 +730,7 @@ def _apply_expert_result(
     if result.refined_content:
         old_content = draft.content
         update_draft(conn, draft.id, content=result.refined_content)
+        _resync_thread_tweets(conn, draft.id, result.refined_content)
         insert_draft_change(
             conn,
             DraftChange(
@@ -732,7 +764,7 @@ def _apply_expert_result(
             try:
                 from social_hook.drafting import _generate_media
 
-                media_paths, _, _ = _generate_media(
+                media_paths, _, _, _ = _generate_media(
                     config,
                     draft.media_type,
                     result.refined_media_spec,
@@ -807,10 +839,20 @@ def _save_angle(adapter, chat_id, draft_id, text):
             buttons = get_review_buttons_normalized(draft.id)
             adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
         else:
-            _send(adapter, chat_id, f"Expert could not refine draft: {result.reasoning}")
+            _send(
+                adapter,
+                chat_id,
+                f"Expert could not refine draft: {result.reasoning}",
+                buttons=get_review_buttons_normalized(draft_id),
+            )
     except Exception as e:
         logger.exception("Error in angle redraft")
-        _send(adapter, chat_id, f"Error redrafting: {e}")
+        _send(
+            adapter,
+            chat_id,
+            f"Error redrafting: {e}",
+            buttons=get_review_buttons_normalized(draft_id),
+        )
     finally:
         conn.close()
 
@@ -845,6 +887,7 @@ def _save_edit(
 
         old_content = draft.content
         update_draft(conn, draft_id, content=new_content)
+        _resync_thread_tweets(conn, draft_id, new_content)
 
         change = DraftChange(
             id=generate_id("change"),
@@ -863,6 +906,7 @@ def _save_edit(
             adapter,
             chat_id,
             f"Draft `{draft_id[:12]}` updated.\n\n```\n{new_content}\n```",
+            buttons=get_review_buttons_normalized(draft_id),
         )
     finally:
         conn.close()
@@ -1036,7 +1080,8 @@ def _handle_expert_escalation(
     except Exception as e:
         logger.exception("Error in expert escalation")
         msg = f"Error: {e}"
-        _send(adapter, chat_id, msg)
+        buttons = get_review_buttons_normalized(draft.id) if draft else None
+        _send(adapter, chat_id, msg, buttons=buttons)
         return msg
 
 

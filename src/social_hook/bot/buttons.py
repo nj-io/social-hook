@@ -168,6 +168,9 @@ def handle_callback(
         "reject_now": btn_reject,
         "reject_note": btn_reject_note,
         "cancel": btn_cancel,
+        "unapprove": btn_unapprove,
+        "unschedule": btn_unschedule,
+        "reopen": btn_reopen,
         "review": btn_review,
     }
 
@@ -1303,6 +1306,144 @@ def btn_cancel(
             broadcast_notification(
                 config,
                 OutboundMessage(text=f"Draft `{draft_id[:12]}` cancelled ({draft.platform})"),
+                exclude_chat=chat_id,
+            )
+    finally:
+        conn.close()
+
+
+def btn_unapprove(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    draft_id: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Handle unapprove button press — revert approved draft back to draft."""
+    _answer_callback(adapter, callback_id, "Reverting approval...")
+
+    conn = _get_conn()
+    try:
+        from social_hook.bot.commands import set_chat_draft_context
+        from social_hook.db import get_draft, update_draft
+        from social_hook.db import operations as ops
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        if draft.status != "approved":
+            _send(adapter, chat_id, f"Cannot unapprove: status is '{draft.status}'")
+            return
+
+        update_draft(conn, draft_id, status="draft")
+        ops.emit_data_event(conn, "draft", "unapproved", draft_id, draft.project_id)
+        _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "unapproved")
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` approval reverted — back to draft.")
+        if config:
+            from social_hook.notifications import broadcast_notification
+
+            broadcast_notification(
+                config,
+                OutboundMessage(
+                    text=f"Draft `{draft_id[:12]}` approval reverted ({draft.platform})"
+                ),
+                exclude_chat=chat_id,
+            )
+    finally:
+        conn.close()
+
+
+def btn_unschedule(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    draft_id: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Handle unschedule button press — revert scheduled draft back to draft."""
+    _answer_callback(adapter, callback_id, "Unscheduling...")
+
+    conn = _get_conn()
+    try:
+        from social_hook.bot.commands import set_chat_draft_context
+        from social_hook.db import get_draft, update_draft
+        from social_hook.db import operations as ops
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        if draft.status != "scheduled":
+            _send(adapter, chat_id, f"Cannot unschedule: status is '{draft.status}'")
+            return
+
+        update_draft(conn, draft_id, status="draft", scheduled_time="")
+        ops.emit_data_event(conn, "draft", "unscheduled", draft_id, draft.project_id)
+        _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "unscheduled")
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` unscheduled — back to draft.")
+        if config:
+            from social_hook.notifications import broadcast_notification
+
+            broadcast_notification(
+                config,
+                OutboundMessage(text=f"Draft `{draft_id[:12]}` unscheduled ({draft.platform})"),
+                exclude_chat=chat_id,
+            )
+    finally:
+        conn.close()
+
+
+def btn_reopen(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    draft_id: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Handle reopen button press — reopen cancelled/rejected draft back to draft."""
+    _answer_callback(adapter, callback_id, "Reopening...")
+
+    conn = _get_conn()
+    try:
+        from social_hook.bot.commands import set_chat_draft_context
+        from social_hook.db import get_draft, update_draft
+        from social_hook.db import operations as ops
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        if draft.status not in ("cancelled", "rejected"):
+            _send(adapter, chat_id, f"Cannot reopen: status is '{draft.status}'")
+            return
+
+        if getattr(draft, "is_intro", False):
+            _send(adapter, chat_id, "Intro drafts cannot be reopened — create a new draft instead.")
+            return
+
+        update_draft(conn, draft_id, status="draft", last_error="")
+        ops.emit_data_event(conn, "draft", "reopened", draft_id, draft.project_id)
+        _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "reopened")
+        _send(adapter, chat_id, f"Draft `{draft_id[:12]}` reopened.")
+        if config:
+            from social_hook.notifications import broadcast_notification
+
+            broadcast_notification(
+                config,
+                OutboundMessage(text=f"Draft `{draft_id[:12]}` reopened ({draft.platform})"),
                 exclude_chat=chat_id,
             )
     finally:
