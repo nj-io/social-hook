@@ -38,6 +38,9 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+extra:
+  homepage: https://nj-io.github.io/social-hook/
+
 plugins:
   - search
 
