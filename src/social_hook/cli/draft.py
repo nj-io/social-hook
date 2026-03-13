@@ -394,15 +394,18 @@ def redraft(
 
         summary = ops.get_project_summary(conn, draft.project_id)
 
+        from social_hook.cli._spinner import spinner
+
         expert = Expert(client)
-        result = expert.handle(
-            draft=draft,
-            user_message=angle,
-            escalation_reason="angle_change",
-            project_summary=summary,
-            project_id=draft.project_id,
-            db=conn,
-        )
+        with spinner("Redrafting with new angle..."):
+            result = expert.handle(
+                draft=draft,
+                user_message=angle,
+                escalation_reason="angle_change",
+                project_summary=summary,
+                project_id=draft.project_id,
+                db=conn,
+            )
 
         if result.refined_content or result.refined_media_spec:
             if result.refined_content:
@@ -533,8 +536,11 @@ def media_regen(
             typer.echo(f"Media adapter '{draft.media_type}' not available.")
             raise typer.Exit(1)
 
+        from social_hook.cli._spinner import spinner
+
         output_dir = str(get_base_path() / "media-cache" / draft_id)
-        result = media_adapter.generate(spec=draft.media_spec, output_dir=output_dir)
+        with spinner("Generating media..."):
+            result = media_adapter.generate(spec=draft.media_spec, output_dir=output_dir)
 
         if result.success and result.file_path:
             old_paths = draft.media_paths
@@ -856,19 +862,22 @@ def promote(
 
         evaluation = evaluation_from_decision(decision, "draft")
 
-        results = draft_for_platforms(
-            config,
-            conn,
-            db,
-            project,
-            decision_id=decision.id,
-            evaluation=evaluation,
-            context=context,
-            commit=commit,
-            project_config=project_config,
-            target_platform_names=[platform],
-            skip_content_filter=True,
-        )
+        from social_hook.cli._spinner import spinner
+
+        with spinner(f"Redrafting for {platform}..."):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+                target_platform_names=[platform],
+                skip_content_filter=True,
+            )
 
         if not results:
             typer.echo("No draft created.")
@@ -893,7 +902,7 @@ def promote(
         else:
             typer.echo(f"Preview draft {draft_id} promoted to {platform}.")
             typer.echo(f"New draft: {new_draft.id}")
-            typer.echo(f"Content: {new_draft.content[:200]}...")
+            typer.echo(f"Content: {new_draft.content}")
     finally:
         conn.close()
 
@@ -945,12 +954,15 @@ def post_now(
         now = datetime.now(timezone.utc).isoformat()
         ops.update_draft(conn, draft_id, status="scheduled", scheduled_time=now)
 
+        from social_hook.cli._spinner import spinner
+
         if dry_run:
             from social_hook.adapters.dry_run import dry_run_post_result
 
             result = dry_run_post_result()
         else:
-            result = _post_draft(conn, draft, config)
+            with spinner(f"Posting to {draft.platform}..."):
+                result = _post_draft(conn, draft, config)
 
         if result.success:
             post = record_post_success(conn, draft, result, config, project_name, dry_run=dry_run)

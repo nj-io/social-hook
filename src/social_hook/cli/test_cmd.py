@@ -63,19 +63,21 @@ def test_commits(
     verbose = ctx.obj.get("verbose", False) if ctx.obj else False
     repo = str(Path(repo).resolve())
 
+    from social_hook.cli._spinner import spinner
+
     results = []
     for c in commits:
-        typer.echo(f"Testing {c[:8]}...")
-        exit_code = run_trigger(
-            commit_hash=c,
-            repo_path=repo,
-            dry_run=True,
-            config_path=str(config_path) if config_path else None,
-            verbose=verbose,
-            show_prompt=show_prompt,
-        )
+        with spinner(f"Testing {c[:8]}..."):
+            exit_code = run_trigger(
+                commit_hash=c,
+                repo_path=repo,
+                dry_run=True,
+                config_path=str(config_path) if config_path else None,
+                verbose=verbose,
+                show_prompt=show_prompt,
+            )
         results.append({"commit": c, "exit_code": exit_code})
-        typer.echo(f"  Exit code: {exit_code}")
+        typer.echo(f"  {c[:8]}: exit code {exit_code}")
 
     if output:
         output.write_text(json_mod.dumps(results, indent=2))

@@ -24,14 +24,17 @@ def evaluate(
 
         repo = os.getcwd()
 
-    exit_code = run_trigger(
-        commit_hash=commit,
-        repo_path=repo,
-        dry_run=dry_run,
-        config_path=str(config_path) if config_path else None,
-        verbose=verbose,
-        trigger_source="manual",
-    )
+    from social_hook.cli._spinner import spinner
+
+    with spinner("Evaluating commit..."):
+        exit_code = run_trigger(
+            commit_hash=commit,
+            repo_path=repo,
+            dry_run=dry_run,
+            config_path=str(config_path) if config_path else None,
+            verbose=verbose,
+            trigger_source="manual",
+        )
     raise SystemExit(exit_code)
 
 
@@ -106,24 +109,26 @@ def draft(
         evaluation = evaluation_from_decision(decision, "draft")
 
         # Draft for platforms
+        from social_hook.cli._spinner import spinner
         from social_hook.drafting import draft_for_platforms
 
         target_platform_names = [platform] if platform else None
-        results = draft_for_platforms(
-            config,
-            conn,
-            db,
-            project,
-            decision_id=decision.id,
-            evaluation=evaluation,
-            context=context,
-            commit=commit_info,
-            project_config=project_config,
-            target_platform_names=target_platform_names,
-            dry_run=dry_run,
-            verbose=verbose,
-            skip_content_filter=True,
-        )
+        with spinner("Creating draft..."):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit_info,
+                project_config=project_config,
+                target_platform_names=target_platform_names,
+                dry_run=dry_run,
+                verbose=verbose,
+                skip_content_filter=True,
+            )
 
         if not results:
             typer.echo("\nNo drafts created (platforms may have been filtered or deferred).")
@@ -215,22 +220,24 @@ def consolidate(
         evaluation = evaluation_from_decision(anchor, "draft")
 
         # Draft for platforms
+        from social_hook.cli._spinner import spinner
         from social_hook.drafting import draft_for_platforms
 
-        results = draft_for_platforms(
-            config,
-            conn,
-            db,
-            project,
-            decision_id=anchor.id,
-            evaluation=evaluation,
-            context=context,
-            commit=commit,
-            project_config=project_config,
-            dry_run=dry_run,
-            verbose=verbose,
-            skip_content_filter=True,
-        )
+        with spinner("Consolidating and drafting..."):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id=anchor.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+                dry_run=dry_run,
+                verbose=verbose,
+                skip_content_filter=True,
+            )
 
         if not results:
             typer.echo("\nNo drafts created (platforms may have been filtered or deferred).")
@@ -288,12 +295,14 @@ def post(
             update_draft(conn, draft_id, status="posted")
             return
 
+        from social_hook.cli._spinner import spinner
         from social_hook.scheduler import _handle_post_failure, _post_draft, record_post_success
 
         project = ops.get_project(conn, draft_obj.project_id)
         project_name = project.name if project else "Unknown"
 
-        result = _post_draft(conn, draft_obj, config)
+        with spinner(f"Posting to {draft_obj.platform}..."):
+            result = _post_draft(conn, draft_obj, config)
         if result.success:
             record_post_success(conn, draft_obj, result, config, project_name, dry_run=dry_run)
             typer.echo("\nPosted successfully!")
