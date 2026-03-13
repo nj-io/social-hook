@@ -238,7 +238,11 @@ def _run_background_task(
     Args:
         task_type: Task category (e.g. "create_draft", "consolidate").
         ref_id: Reference key the frontend uses to find this task
-            (e.g. decision_id).
+            (e.g. decision_id).  Must be unique across concurrently
+            running tasks — ``useBackgroundTasks`` deduplicates by
+            ref_id and will silently drop collisions.  Prefix with
+            task_type when multiple task types target the same entity
+            (e.g. ``f"summary:{project_id}"`` vs bare ``project_id``).
         project_id: Project this task belongs to.
         fn: Zero-arg callable that returns a JSON-serialisable result dict.
         on_success: Optional callback receiving ``fn``'s return value,
@@ -1485,7 +1489,7 @@ async def api_summary_draft(project_id: str):
 
     task_id = _run_background_task(
         "summary_draft",
-        ref_id=project_id,
+        ref_id=f"summary:{project_id}",
         project_id=pid,
         fn=_blocking_summary_draft,
         on_success=_on_summary_drafted,
@@ -2916,6 +2920,7 @@ async def api_browse_directory(path: str = Query(default="~")):
     return {
         "current": str(resolved),
         "parent": str(resolved.parent) if resolved != home else str(home),
+        "is_git": (resolved / ".git").exists(),
         "directories": dirs,
     }
 

@@ -492,6 +492,7 @@ export async function clearMemories(projectPath: string): Promise<{ status: stri
 export async function browseDirectory(path?: string): Promise<{
   current: string;
   parent: string;
+  is_git: boolean;
   directories: { name: string; path: string; is_git: boolean }[];
 }> {
   const params = path ? `?path=${encodeURIComponent(path)}` : "";

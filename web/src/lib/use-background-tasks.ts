@@ -12,6 +12,10 @@ import { fetchTasks, type BackgroundTask } from "@/lib/api";
  *
  * Returns a map of ref_id -> BackgroundTask for running/recently-completed tasks,
  * plus a helper to start tracking a newly-created task.
+ *
+ * IMPORTANT: Tasks are keyed and deduplicated by ref_id. If two different task
+ * types share the same ref_id and run concurrently, only one will be tracked.
+ * Prefix ref_id with the task type when this is possible (e.g. "summary:proj_123").
  */
 export function useBackgroundTasks(
   projectId: string,

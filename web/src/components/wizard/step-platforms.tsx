@@ -14,23 +14,35 @@ const BUILT_IN_PLATFORMS = [
 ];
 
 export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
-  const previewOnly = platforms.some((p) => p.name === "preview" && p.enabled)
-    && !platforms.some((p) => p.name !== "preview" && p.enabled);
+  const hasRealPlatform = platforms.some((p) => p.name !== "preview" && p.enabled);
+  const hasPreview = platforms.some((p) => p.name === "preview" && p.enabled);
 
   function togglePlatform(name: string) {
-    const next = platforms.map((p) =>
-      p.name === name ? { ...p, enabled: !p.enabled } : p,
-    );
+    let next = platforms.map((p) => ({ ...p }));
+
+    // Ensure platform exists in the list
     if (!next.find((p) => p.name === name)) {
-      next.push({
-        name,
-        enabled: true,
-        priority: "primary",
-        accountTier: "",
-        introduce: true,
-        identity: "",
-      });
+      next.push({ name, enabled: false, priority: "primary", accountTier: "", introduce: true, identity: "" });
     }
+
+    const target = next.find((p) => p.name === name)!;
+    const enabling = !target.enabled;
+
+    if (enabling) {
+      // Mutual exclusivity: enabling preview disables real platforms, and vice versa
+      if (name === "preview") {
+        next = next.map((p) => p.name === "preview" ? { ...p, enabled: true } : { ...p, enabled: false });
+      } else {
+        next = next.map((p) =>
+          p.name === name ? { ...p, enabled: true }
+            : p.name === "preview" ? { ...p, enabled: false }
+              : p,
+        );
+      }
+    } else {
+      next = next.map((p) => p.name === name ? { ...p, enabled: false } : p);
+    }
+
     onChange(next);
   }
 
@@ -43,7 +55,7 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
       <div>
         <h3 className="text-lg font-semibold">Platforms</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Select which platforms to generate content for. Start with Preview to test without posting.
+          Select which platforms to generate content for. Preview and publishing platforms are separate modes.
         </p>
       </div>
 
@@ -52,7 +64,7 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
           const platform = platforms.find((p) => p.name === bp.name);
           const enabled = platform?.enabled ?? false;
           const isRealPlatform = bp.name !== "preview";
-          const greyed = isRealPlatform && previewOnly;
+          const greyed = (isRealPlatform && hasPreview) || (!isRealPlatform && hasRealPlatform);
 
           return (
             <div
@@ -61,7 +73,7 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
                 enabled
                   ? "border-accent bg-accent/5"
                   : greyed
-                    ? "border-border opacity-50"
+                    ? "border-border opacity-40"
                     : "border-border"
               }`}
             >
@@ -78,17 +90,19 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
 
               {enabled && platform && (
                 <div className="mt-3 space-y-2">
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Priority</label>
-                    <select
-                      value={platform.priority}
-                      onChange={(e) => updatePlatform(bp.name, { priority: e.target.value as "primary" | "secondary" })}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
-                    >
-                      <option value="primary">Primary</option>
-                      <option value="secondary">Secondary</option>
-                    </select>
-                  </div>
+                  {bp.name !== "preview" && (
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">Priority</label>
+                      <select
+                        value={platform.priority}
+                        onChange={(e) => updatePlatform(bp.name, { priority: e.target.value as "primary" | "secondary" })}
+                        className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+                      >
+                        <option value="primary">Primary</option>
+                        <option value="secondary">Secondary</option>
+                      </select>
+                    </div>
+                  )}
 
                   {bp.tiers.length > 0 && (
                     <div>
@@ -123,10 +137,9 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
         })}
       </div>
 
-      {previewOnly && (
+      {hasPreview && (
         <p className="text-xs text-muted-foreground">
-          Preview mode generates drafts you can review without posting. Enable X or LinkedIn above when you&apos;re ready to publish.
-          You can add platforms later in Settings.
+          Preview mode generates drafts you can review without publishing. You can switch to real platforms later in Settings.
         </p>
       )}
     </div>

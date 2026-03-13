@@ -165,6 +165,22 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
   }
 
   function handleNext() {
+    // Default to preview if no platforms selected
+    if (activeStep === "Platforms" && !data.platforms.some((p) => p.enabled)) {
+      const next = data.platforms.map((p) => ({ ...p }));
+      const preview = next.find((p) => p.name === "preview");
+      if (preview) {
+        preview.enabled = true;
+      } else {
+        next.push({ name: "preview", enabled: true, priority: "secondary", accountTier: "", introduce: false, identity: "" });
+      }
+      // Disable all real platforms
+      for (const p of next) {
+        if (p.name !== "preview") p.enabled = false;
+      }
+      updateData({ platforms: next });
+    }
+
     markStepComplete(currentStep);
     if (currentStep < STEP_LABELS.length - 1) {
       setCurrentStep(currentStep + 1);
@@ -282,7 +298,7 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
   const isSummaryStep = activeStep === "Summary";
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Stepper — fixed top */}
       <div className="shrink-0 border-b border-border pb-4">
         <WizardStepper
@@ -424,7 +440,11 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
           ) : (
             <button
               onClick={handleNext}
-              disabled={activeStep === "Strategy" && !data.strategyId}
+              disabled={
+                (activeStep === "Strategy" && !data.strategyId) ||
+                (activeStep === "Identity" && data.identities.some((i) => !i.name)) ||
+                (activeStep === "Project" && !data.repoPath)
+              }
               className="rounded-md bg-accent px-6 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
             >
               Continue

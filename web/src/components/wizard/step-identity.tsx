@@ -55,14 +55,21 @@ export function StepIdentity({ identities, onChange, exampleIntroHook }: StepIde
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs font-medium">Name (key)</label>
+              <label className="mb-1 block text-xs font-medium">
+                Name (key) <span className="text-destructive">*</span>
+              </label>
               <input
                 type="text"
                 value={entry.name}
                 onChange={(e) => updateEntry(i, { name: e.target.value.toLowerCase().replace(/\s+/g, "-") })}
                 placeholder="neil, acme, etc."
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+                className={`w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent ${
+                  !entry.name ? "border-destructive/50" : "border-border"
+                }`}
               />
+              {!entry.name && (
+                <p className="mt-1 text-xs text-destructive/70">Required — used as config key</p>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium">Display label</label>

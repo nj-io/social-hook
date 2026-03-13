@@ -81,7 +81,7 @@ export default function DashboardPage() {
 
       {platformCount === 0 && (
         <div className="rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300">
-          No platforms are enabled — drafts won&apos;t be generated from commits.
+          No platforms are enabled. Drafts will still be generated, but you won&apos;t be able to post.
           Enable a platform in{" "}
           <Link href="/settings?section=platforms" className="font-medium underline hover:no-underline">
             Settings &rarr; Platforms

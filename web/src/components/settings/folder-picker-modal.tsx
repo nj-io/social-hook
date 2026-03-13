@@ -13,6 +13,7 @@ interface FolderPickerModalProps {
 export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModalProps) {
   const [currentPath, setCurrentPath] = useState("");
   const [parentPath, setParentPath] = useState("");
+  const [currentIsGit, setCurrentIsGit] = useState(false);
   const [directories, setDirectories] = useState<{ name: string; path: string; is_git: boolean }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -24,6 +25,7 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
       const res = await browseDirectory(path);
       setCurrentPath(res.current);
       setParentPath(res.parent);
+      setCurrentIsGit(res.is_git);
       setDirectories(res.directories);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to browse directory");
@@ -42,7 +44,7 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
 
   return (
     <Modal open={open} onClose={onClose} maxWidth="max-w-lg">
-      <h3 className="mb-4 text-lg font-semibold">Select Folder</h3>
+      <h3 className="mb-4 text-lg font-semibold">Select Repository</h3>
 
       <div className="mb-3 flex items-center gap-2">
         <button
@@ -53,6 +55,11 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
           Up
         </button>
         <span className="truncate text-sm text-muted-foreground">{currentPath}</span>
+        {currentIsGit && (
+          <span className="ml-auto shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+            git
+          </span>
+        )}
       </div>
 
       {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
@@ -64,40 +71,63 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
           <p className="p-4 text-center text-sm text-muted-foreground">No subdirectories</p>
         ) : (
           directories.map((d) => (
-            <button
+            <div
               key={d.path}
-              onClick={() => browse(d.path)}
-              className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left text-sm transition-colors last:border-b-0 hover:bg-muted"
+              className="flex w-full items-center gap-2 border-b border-border px-3 py-2 text-sm last:border-b-0"
             >
-              <span className="shrink-0">{d.is_git ? "G" : "D"}</span>
-              <span className="truncate">{d.name}</span>
+              <button
+                onClick={() => browse(d.path)}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-accent"
+              >
+                <span className="shrink-0">{d.is_git ? "G" : "D"}</span>
+                <span className="truncate">{d.name}</span>
+              </button>
               {d.is_git && (
-                <span className="ml-auto shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                  git
-                </span>
+                <>
+                  <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                    git
+                  </span>
+                  <button
+                    onClick={() => {
+                      onSelect(d.path);
+                      onClose();
+                    }}
+                    className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground transition-colors hover:bg-accent/80"
+                  >
+                    Select
+                  </button>
+                </>
               )}
-            </button>
+            </div>
           ))
         )}
       </div>
 
-      <div className="mt-4 flex justify-end gap-2">
-        <button
-          onClick={onClose}
-          className="rounded-md border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={() => {
-            onSelect(currentPath);
-            onClose();
-          }}
-          disabled={!currentPath}
-          className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
-        >
-          Select
-        </button>
+      <div className="mt-4 flex items-center justify-between">
+        <div>
+          {!currentIsGit && currentPath && (
+            <p className="text-xs text-muted-foreground">Not a git repository</p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              onSelect(currentPath);
+              onClose();
+            }}
+            disabled={!currentPath || !currentIsGit}
+            title={!currentIsGit ? "Not a git repository" : undefined}
+            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
+          >
+            Select
+          </button>
+        </div>
       </div>
     </Modal>
   );

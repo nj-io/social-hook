@@ -74,7 +74,7 @@ export function WizardModal({ open, onClose, onComplete, prefilledProject }: Wiz
   }
 
   return (
-    <Modal open={true} onClose={handleClose} maxWidth="max-w-2xl" minHeight="min-h-[600px]">
+    <Modal open={true} onClose={handleClose} maxWidth="max-w-2xl" minHeight="h-[600px]">
       <WizardContainer onComplete={onComplete} onClose={handleClose} prefilledProject={prefilledProject} />
     </Modal>
   );

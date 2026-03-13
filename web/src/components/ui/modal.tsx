@@ -35,7 +35,7 @@ export function Modal({ open, onClose, children, maxWidth = "max-w-md", minHeigh
       onClick={onClose}
     >
       <div
-        className={`flex w-full ${maxWidth} flex-col rounded-lg border border-border bg-background p-6 ${minHeight ?? ""} max-h-[90vh]`}
+        className={`flex w-full ${maxWidth} flex-col rounded-lg border border-border bg-background p-6 ${minHeight ?? ""} max-h-[85vh] overflow-hidden`}
         onClick={(e) => e.stopPropagation()}
       >
         {children}
