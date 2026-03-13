@@ -70,6 +70,12 @@ def db_env(tmp_path):
             ),
         )
 
+    # Insert preview draft for preview guard tests
+    conn.execute(
+        "INSERT INTO drafts (id, project_id, decision_id, platform, status, content, media_paths) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("draft_preview", "proj_test1", "dec_test1", "preview", "draft", "Preview content", "[]"),
+    )
+
     conn.commit()
     conn.close()
 
@@ -410,7 +416,7 @@ class TestDraftList:
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert isinstance(data, list)
-            assert len(data) == 9  # All 9 statuses
+            assert len(data) == 10  # All 9 statuses + preview draft
 
 
 class TestDraftShow:
@@ -627,3 +633,89 @@ class TestDeferredStatusAccepted:
             result = runner.invoke(app, ["draft", "quick-approve", "draft_deferred"])
             assert result.exit_code == 0
             assert "approved and scheduled" in result.output
+
+
+class TestDraftPreviewGuards:
+    def test_approve_preview_blocked(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "approve", "draft_preview"])
+            assert result.exit_code == 1
+            assert "promote" in result.output.lower()
+
+    def test_schedule_preview_blocked(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(
+                app, ["draft", "schedule", "draft_preview", "--time", "2026-03-15T14:00:00"]
+            )
+            assert result.exit_code == 1
+            assert "promote" in result.output.lower()
+
+    def test_quick_approve_preview_blocked(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "quick-approve", "draft_preview"])
+            assert result.exit_code == 1
+            assert "promote" in result.output.lower()
+
+    def test_edit_preview_allowed(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(
+                app, ["draft", "edit", "draft_preview", "--content", "Updated preview"]
+            )
+            assert result.exit_code == 0
+
+    def test_reject_preview_allowed(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "reject", "draft_preview"])
+            assert result.exit_code == 0
+
+
+class TestDraftPromote:
+    def test_promote_non_preview_rejected(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "promote", "draft_draft", "--platform", "x"])
+            assert result.exit_code == 1
+            assert "not a preview" in result.output.lower()
+
+    def test_promote_terminal_status_rejected(self, db_env):
+        # Set preview draft to superseded
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.execute("UPDATE drafts SET status = 'superseded' WHERE id = 'draft_preview'")
+        conn.commit()
+        conn.close()
+
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "promote", "draft_preview", "--platform", "x"])
+            assert result.exit_code == 1
+            assert "Cannot promote" in result.output
+
+    def test_promote_platform_not_enabled_rejected(self, db_env):
+        # Reset preview draft status
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.execute("UPDATE drafts SET status = 'draft' WHERE id = 'draft_preview'")
+        conn.commit()
+        conn.close()
+
+        mock_config = MagicMock()
+        mock_config.platforms = {}
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config", return_value=mock_config),
+        ):
+            result = runner.invoke(app, ["draft", "promote", "draft_preview", "--platform", "x"])
+            assert result.exit_code == 1
+            assert "not enabled" in result.output.lower()
+
+
+class TestDraftPostNow:
+    def test_post_now_preview_blocked(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "post-now", "draft_preview"])
+            assert result.exit_code == 1
+            assert "promote" in result.output.lower()
+
+    def test_post_now_terminal_status_blocked(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "post-now", "draft_posted"])
+            assert result.exit_code == 1
+            assert "Cannot post" in result.output

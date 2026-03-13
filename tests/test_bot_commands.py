@@ -2378,3 +2378,628 @@ class TestSaveRejectionNote:
             text = mock_send.call_args[0][2]
             assert "rejected" in text.lower()
             assert "saved" not in text.lower()
+
+
+# =============================================================================
+# Button Handler Tests (buttons.py)
+# =============================================================================
+
+
+class TestBtnUnapprove:
+    """Tests for btn_unapprove button handler."""
+
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_unapprove_success(self, mock_conn, mock_adapter, temp_dir):
+        """Unapprove an approved draft -> status becomes draft."""
+        from social_hook.bot.buttons import btn_unapprove
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="approved",
+        )
+        insert_draft(conn, draft)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_unapprove(mock_adapter, "123", "cb_1", draft.id, None)
+            mock_emit.assert_called_once_with(conn, "draft", "unapproved", draft.id, project.id)
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.status == "draft"
+        conn2.close()
+
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_unapprove_wrong_status(self, mock_conn, mock_adapter, temp_dir):
+        """Cannot unapprove a draft that is not approved."""
+        from social_hook.bot.buttons import btn_unapprove
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_unapprove(mock_adapter, "123", "cb_1", draft.id, None)
+            mock_emit.assert_not_called()
+
+        # Verify error message was sent
+        mock_adapter.send_message.assert_called()
+        msg = mock_adapter.send_message.call_args[0][1]
+        assert "Cannot unapprove" in msg.text
+
+
+class TestBtnUnschedule:
+    """Tests for btn_unschedule button handler."""
+
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_unschedule_success(self, mock_conn, mock_adapter, temp_dir):
+        """Unschedule a scheduled draft -> status becomes draft."""
+        from social_hook.bot.buttons import btn_unschedule
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="scheduled",
+        )
+        insert_draft(conn, draft)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_unschedule(mock_adapter, "123", "cb_1", draft.id, None)
+            mock_emit.assert_called_once_with(conn, "draft", "unscheduled", draft.id, project.id)
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.status == "draft"
+        conn2.close()
+
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_unschedule_wrong_status(self, mock_conn, mock_adapter, temp_dir):
+        """Cannot unschedule a draft that is not scheduled."""
+        from social_hook.bot.buttons import btn_unschedule
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_unschedule(mock_adapter, "123", "cb_1", draft.id, None)
+            mock_emit.assert_not_called()
+
+        mock_adapter.send_message.assert_called()
+        msg = mock_adapter.send_message.call_args[0][1]
+        assert "Cannot unschedule" in msg.text
+
+
+class TestBtnReopen:
+    """Tests for btn_reopen button handler."""
+
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_reopen_cancelled(self, mock_conn, mock_adapter, temp_dir):
+        """Reopen a cancelled draft -> status becomes draft."""
+        from social_hook.bot.buttons import btn_reopen
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="cancelled",
+        )
+        insert_draft(conn, draft)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_reopen(mock_adapter, "123", "cb_1", draft.id, None)
+            mock_emit.assert_called_once_with(conn, "draft", "reopened", draft.id, project.id)
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.status == "draft"
+        conn2.close()
+
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_reopen_rejected(self, mock_conn, mock_adapter, temp_dir):
+        """Reopen a rejected draft -> status becomes draft, last_error cleared."""
+        from social_hook.bot.buttons import btn_reopen
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="rejected",
+            last_error="old rejection reason",
+        )
+        insert_draft(conn, draft)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_reopen(mock_adapter, "123", "cb_1", draft.id, None)
+            mock_emit.assert_called_once_with(conn, "draft", "reopened", draft.id, project.id)
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.status == "draft"
+        assert updated.last_error == ""
+        conn2.close()
+
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_reopen_wrong_status(self, mock_conn, mock_adapter, temp_dir):
+        """Cannot reopen a draft that is not cancelled or rejected."""
+        from social_hook.bot.buttons import btn_reopen
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_reopen(mock_adapter, "123", "cb_1", draft.id, None)
+            mock_emit.assert_not_called()
+
+        mock_adapter.send_message.assert_called()
+        msg = mock_adapter.send_message.call_args[0][1]
+        assert "Cannot reopen" in msg.text
+
+    @patch("social_hook.bot.buttons._get_conn")
+    def test_reopen_intro_blocked(self, mock_conn, mock_adapter, temp_dir):
+        """Intro drafts cannot be reopened."""
+        from social_hook.bot.buttons import btn_reopen
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test",
+            status="cancelled",
+            is_intro=True,
+        )
+        insert_draft(conn, draft)
+
+        with patch("social_hook.db.operations.emit_data_event") as mock_emit:
+            btn_reopen(mock_adapter, "123", "cb_1", draft.id, None)
+            mock_emit.assert_not_called()
+
+        mock_adapter.send_message.assert_called()
+        msg = mock_adapter.send_message.call_args[0][1]
+        assert "Intro drafts cannot be reopened" in msg.text
+
+
+class TestApplyExpertResultUnpack:
+    """Test that _apply_expert_result handles 4-tuple from _generate_media."""
+
+    @patch("social_hook.bot.commands._get_conn")
+    def test_no_value_error_on_4_tuple(self, mock_conn, mock_adapter, temp_dir):
+        """_generate_media returns 4 values; _apply_expert_result should not crash."""
+        from social_hook.bot.commands import _apply_expert_result
+        from social_hook.db import get_draft, insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Original",
+            status="draft",
+            media_type="test",
+        )
+        insert_draft(conn, draft)
+
+        draft_obj = get_draft(conn, draft.id)
+
+        result = MagicMock()
+        result.refined_content = None
+        result.refined_media_spec = {"some": "spec"}
+
+        config = MagicMock()
+
+        with patch(
+            "social_hook.drafting._generate_media",
+            return_value=(["path.png"], "image", {"key": "val"}, None),
+        ):
+            # Should not raise ValueError: not enough values to unpack
+            applied = _apply_expert_result(conn, draft_obj, result, config=config)
+            assert applied is True
+
+        conn2 = get_connection(db_path)
+        updated = get_draft(conn2, draft.id)
+        assert updated.media_spec == {"some": "spec"}
+        conn2.close()
+
+
+class TestButtonRestoration:
+    """Tests that buttons are restored on failure/completion paths."""
+
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_edit_includes_buttons(self, mock_conn, mock_adapter, temp_dir):
+        """_save_edit sends response with buttons attached."""
+        from social_hook.bot.commands import _save_edit
+        from social_hook.db import insert_decision
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Old content",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        _save_edit(mock_adapter, "123", draft.id, "New content")
+
+        mock_adapter.send_message.assert_called()
+        msg = mock_adapter.send_message.call_args[0][1]
+        assert len(msg.buttons) > 0
+
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_angle_failure_includes_buttons(self, mock_conn, mock_adapter, temp_dir):
+        """_save_angle failure path sends response with buttons attached."""
+        from social_hook.llm.schemas import ExpertAction, ExpertResponseInput
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+        _, draft = _make_test_draft(conn, temp_dir)
+
+        mock_result = ExpertResponseInput(
+            action=ExpertAction.refine_draft,
+            reasoning="Could not refine",
+            refined_content=None,
+            refined_media_spec=None,
+        )
+
+        with (
+            patch("social_hook.config.yaml.load_full_config") as mock_config,
+            patch("social_hook.llm.factory.create_client"),
+            patch("social_hook.llm.expert.Expert") as MockExpert,
+        ):
+            mock_config.return_value = MagicMock()
+            MockExpert.return_value.handle.return_value = mock_result
+
+            _save_angle(mock_adapter, "123", draft.id, "try something")
+
+        mock_adapter.send_message.assert_called()
+        msg = mock_adapter.send_message.call_args[0][1]
+        assert len(msg.buttons) > 0
+
+
+class TestResyncThreadTweets:
+    """Tests that draft_tweets are re-split when content is edited on a threaded draft."""
+
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_edit_resyncs_tweets(self, mock_conn, mock_adapter, temp_dir):
+        """_save_edit re-splits draft_tweets when editing a threaded draft."""
+        from social_hook.bot.commands import _save_edit
+        from social_hook.db import insert_decision
+        from social_hook.db.operations import get_draft_tweets, insert_draft_tweet
+        from social_hook.models import Decision, DraftTweet
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="1/ Old tweet one\n\n2/ Old tweet two\n\n3/ Old tweet three\n\n4/ Old tweet four",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        # Insert original thread tweets
+        for i, text in enumerate(
+            ["Old tweet one", "Old tweet two", "Old tweet three", "Old tweet four"]
+        ):
+            insert_draft_tweet(
+                conn,
+                DraftTweet(
+                    id=generate_id("tweet"),
+                    draft_id=draft.id,
+                    position=i,
+                    content=text,
+                ),
+            )
+
+        assert len(get_draft_tweets(conn, draft.id)) == 4
+
+        new_content = "1/ New first tweet\n\n2/ New second tweet\n\n3/ New third tweet\n\n4/ New fourth tweet\n\n5/ Bonus fifth tweet"
+        _save_edit(mock_adapter, "123", draft.id, new_content)
+
+        conn2 = get_connection(db_path)
+        tweets = get_draft_tweets(conn2, draft.id)
+        assert len(tweets) == 5
+        assert tweets[0].content == "New first tweet"
+        assert tweets[4].content == "Bonus fifth tweet"
+        conn2.close()
+
+    @patch("social_hook.bot.commands._get_conn")
+    def test_save_edit_no_tweets_is_noop(self, mock_conn, mock_adapter, temp_dir):
+        """_save_edit on a non-threaded draft does not create draft_tweets."""
+        from social_hook.bot.commands import _save_edit
+        from social_hook.db import insert_decision
+        from social_hook.db.operations import get_draft_tweets
+        from social_hook.models import Decision
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Single post content",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        _save_edit(mock_adapter, "123", draft.id, "Updated single post")
+
+        conn2 = get_connection(db_path)
+        tweets = get_draft_tweets(conn2, draft.id)
+        assert len(tweets) == 0
+        conn2.close()
+
+    def test_replace_draft_tweets(self, temp_dir):
+        """replace_draft_tweets deletes old tweets and inserts new ones."""
+        from social_hook.db import insert_decision
+        from social_hook.db.operations import (
+            get_draft_tweets,
+            insert_draft_tweet,
+            replace_draft_tweets,
+        )
+        from social_hook.models import Decision, DraftTweet
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+
+        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="old",
+            status="draft",
+        )
+        insert_draft(conn, draft)
+
+        # Insert 3 original tweets
+        for i in range(3):
+            insert_draft_tweet(
+                conn,
+                DraftTweet(
+                    id=generate_id("tweet"),
+                    draft_id=draft.id,
+                    position=i,
+                    content=f"old {i}",
+                ),
+            )
+        assert len(get_draft_tweets(conn, draft.id)) == 3
+
+        # Replace with 2 new tweets
+        new_tweets = [
+            DraftTweet(id=generate_id("tweet"), draft_id=draft.id, position=0, content="new A"),
+            DraftTweet(id=generate_id("tweet"), draft_id=draft.id, position=1, content="new B"),
+        ]
+        replace_draft_tweets(conn, draft.id, new_tweets)
+
+        tweets = get_draft_tweets(conn, draft.id)
+        assert len(tweets) == 2
+        assert tweets[0].content == "new A"
+        assert tweets[1].content == "new B"

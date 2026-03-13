@@ -1,18 +1,21 @@
 "use client";
 
-import { useState } from "react";
-import { sendCallback, sendMessage } from "@/lib/api";
+import { useState, useRef, useEffect } from "react";
+import { sendCallback, sendMessage, promoteDraft } from "@/lib/api";
 import type { Draft } from "@/lib/types";
+import { platformLabel } from "@/lib/platform";
 
 interface DraftActionPanelProps {
   draft: Draft;
   onUpdate: () => void;
+  enabledPlatforms?: Record<string, { priority: string; type: string }>;
+  onRefreshPlatforms?: () => void;
 }
 
-type Submenu = "schedule" | "edit" | "reject" | null;
+type Submenu = "schedule" | "edit" | "reject" | "promote" | null;
 type TextPrompt = "edit_text" | "edit_angle" | "reject_note" | "schedule_custom" | null;
 
-export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
+export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshPlatforms }: DraftActionPanelProps) {
   const [actionPending, setActionPending] = useState("");
   const [submenu, setSubmenu] = useState<Submenu>(null);
   const [textPrompt, setTextPrompt] = useState<TextPrompt>(null);
@@ -33,6 +36,19 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
       if (!keepSubmenuActions.has(action)) {
         setSubmenu(null);
       }
+    }
+  }
+
+  async function handlePromote(platform: string) {
+    setActionPending("promote");
+    try {
+      await promoteDraft(draft.id, platform);
+      onUpdate();
+    } catch {
+      onUpdate();
+    } finally {
+      setActionPending("");
+      setSubmenu(null);
     }
   }
 
@@ -69,6 +85,14 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
   }
 
   const isDisabled = !!actionPending;
+
+  const submenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (submenu && submenuRef.current) {
+      submenuRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [submenu]);
 
   // Text prompt overlay
   if (textPrompt) {
@@ -121,34 +145,62 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
   // Status-gated action buttons
   const status = draft.status;
 
-  if (status === "draft") {
+  if (status === "draft" || status === "deferred") {
+    const isPreview = draft.platform === "preview";
+    const realPlatforms = enabledPlatforms
+      ? Object.keys(enabledPlatforms).filter((n) => n !== "preview")
+      : [];
+
     return (
       <div className="space-y-3">
+        {/* Preview info banner */}
+        {isPreview && (
+          <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+            Preview drafts cannot be published directly. Use Promote to create a platform-specific draft.
+          </div>
+        )}
+
         {/* Primary actions row */}
         <div className="flex flex-wrap gap-2">
-          <ActionButton
-            label="Quick Approve"
-            action="quick_approve"
-            pending={actionPending}
-            disabled={isDisabled}
-            onClick={handleAction}
-            variant="success"
-          />
-          <ActionButton
-            label="Approve"
-            action="approve"
-            pending={actionPending}
-            disabled={isDisabled}
-            onClick={handleAction}
-            variant="success-outline"
-          />
-          <SubmenuToggle
-            label="Schedule"
-            active={submenu === "schedule"}
-            disabled={isDisabled}
-            onClick={() => setSubmenu(submenu === "schedule" ? null : "schedule")}
-            variant="primary"
-          />
+          {!isPreview && (
+            <>
+              <ActionButton
+                label="Quick Approve"
+                action="quick_approve"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="success"
+              />
+              <ActionButton
+                label="Approve"
+                action="approve"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="success-outline"
+              />
+              <SubmenuToggle
+                label="Schedule"
+                active={submenu === "schedule"}
+                disabled={isDisabled}
+                onClick={() => setSubmenu(submenu === "schedule" ? null : "schedule")}
+                variant="primary"
+              />
+            </>
+          )}
+          {isPreview && (
+            <SubmenuToggle
+              label="Promote"
+              active={submenu === "promote"}
+              disabled={isDisabled}
+              onClick={() => {
+                if (submenu !== "promote") onRefreshPlatforms?.();
+                setSubmenu(submenu === "promote" ? null : "promote");
+              }}
+              variant="primary"
+            />
+          )}
           <SubmenuToggle
             label="Edit"
             active={submenu === "edit"}
@@ -167,80 +219,114 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
 
         {/* Schedule submenu */}
         {submenu === "schedule" && (
-          <SubmenuRow>
-            <ActionButton
-              label="Optimal time"
-              action="schedule_optimal"
-              pending={actionPending}
-              disabled={isDisabled}
-              onClick={handleAction}
-              variant="primary-outline"
-            />
-            <button
-              onClick={() => openTextPrompt("schedule_custom")}
-              disabled={isDisabled}
-              className="rounded-md border border-blue-300 px-3 py-1.5 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20"
-            >
-              Custom time...
-            </button>
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              <ActionButton
+                label="Optimal time"
+                action="schedule_optimal"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="primary-outline"
+              />
+              <button
+                onClick={() => openTextPrompt("schedule_custom")}
+                disabled={isDisabled}
+                className="rounded-md border border-blue-300 px-3 py-1.5 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20"
+              >
+                Custom time...
+              </button>
+            </SubmenuRow>
+          </div>
+        )}
+
+        {/* Promote submenu */}
+        {submenu === "promote" && (
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              {realPlatforms.length > 0 ? (
+                realPlatforms.map((p) => (
+                  <ActionButton
+                    key={p}
+                    label={`Redraft for ${platformLabel(p)}`}
+                    action="promote"
+                    pending={actionPending}
+                    disabled={isDisabled}
+                    onClick={() => handlePromote(p)}
+                    variant="primary-outline"
+                  />
+                ))
+              ) : (
+                <span className="text-sm text-muted-foreground">
+                  No platforms enabled.{" "}
+                  <a href="/settings?section=platforms" className="text-accent hover:underline">
+                    Configure platforms
+                  </a>
+                </span>
+              )}
+            </SubmenuRow>
+          </div>
         )}
 
         {/* Edit submenu */}
         {submenu === "edit" && (
-          <SubmenuRow>
-            <button
-              onClick={() => openTextPrompt("edit_text")}
-              disabled={isDisabled}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              Change text...
-            </button>
-            <button
-              onClick={() => openTextPrompt("edit_angle")}
-              disabled={isDisabled}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              Change angle...
-            </button>
-            <ActionButton
-              label="Regenerate media"
-              action="media_regen"
-              pending={actionPending}
-              disabled={isDisabled || draft.media_spec === draft.media_spec_used}
-              onClick={handleAction}
-              variant="neutral-outline"
-            />
-            <ActionButton
-              label="Remove media"
-              action="media_remove"
-              pending={actionPending}
-              disabled={isDisabled}
-              onClick={handleAction}
-              variant="neutral-outline"
-            />
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              <button
+                onClick={() => openTextPrompt("edit_text")}
+                disabled={isDisabled}
+                className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Change text...
+              </button>
+              <button
+                onClick={() => openTextPrompt("edit_angle")}
+                disabled={isDisabled}
+                className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Change angle...
+              </button>
+              <ActionButton
+                label="Regenerate media"
+                action="media_regen"
+                pending={actionPending}
+                disabled={isDisabled || draft.media_spec === draft.media_spec_used}
+                onClick={handleAction}
+                variant="neutral-outline"
+              />
+              <ActionButton
+                label="Remove media"
+                action="media_remove"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="neutral-outline"
+              />
+            </SubmenuRow>
+          </div>
         )}
 
         {/* Reject submenu */}
         {submenu === "reject" && (
-          <SubmenuRow>
-            <ActionButton
-              label="Just reject"
-              action="reject_now"
-              pending={actionPending}
-              disabled={isDisabled}
-              onClick={handleAction}
-              variant="danger-outline"
-            />
-            <button
-              onClick={() => openTextPrompt("reject_note")}
-              disabled={isDisabled}
-              className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
-            >
-              Reject with note...
-            </button>
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              <ActionButton
+                label="Just reject"
+                action="reject_now"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="danger-outline"
+              />
+              <button
+                onClick={() => openTextPrompt("reject_note")}
+                disabled={isDisabled}
+                className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+              >
+                Reject with note...
+              </button>
+            </SubmenuRow>
+          </div>
         )}
       </div>
     );
@@ -249,6 +335,14 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
   if (status === "approved") {
     return (
       <div className="flex flex-wrap gap-2">
+        <ActionButton
+          label="Post Now"
+          action="post_now"
+          pending={actionPending}
+          disabled={isDisabled}
+          onClick={handleAction}
+          variant="success"
+        />
         <ActionButton
           label="Schedule optimal"
           action="schedule_optimal"
@@ -265,8 +359,8 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
           Schedule custom...
         </button>
         <ActionButton
-          label="Cancel"
-          action="cancel"
+          label="Undo"
+          action="unapprove"
           pending={actionPending}
           disabled={isDisabled}
           onClick={handleAction}
@@ -280,12 +374,12 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
     return (
       <div className="flex flex-wrap gap-2">
         <ActionButton
-          label="Cancel"
-          action="cancel"
+          label="Unschedule"
+          action="unschedule"
           pending={actionPending}
           disabled={isDisabled}
           onClick={handleAction}
-          variant="danger-outline"
+          variant="neutral-outline"
         />
       </div>
     );
@@ -319,7 +413,23 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
     );
   }
 
-  // No actions for posted, rejected, cancelled, superseded
+  // cancelled / rejected — offer reopen (not for intro drafts, backend rejects those)
+  if ((status === "cancelled" || status === "rejected") && !draft.is_intro) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <ActionButton
+          label="Reopen"
+          action="reopen"
+          pending={actionPending}
+          disabled={isDisabled}
+          onClick={handleAction}
+          variant="neutral-outline"
+        />
+      </div>
+    );
+  }
+
+  // No actions for posted, superseded
   return null;
 }
 

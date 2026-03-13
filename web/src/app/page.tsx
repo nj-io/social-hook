@@ -28,7 +28,7 @@ export default function DashboardPage() {
   // Fetch platform count separately (not on reload — only on mount)
   useEffect(() => {
     fetchEnabledPlatforms()
-      .then((res) => setPlatformCount(res.count))
+      .then((res) => setPlatformCount(res.real_count))
       .catch(() => setPlatformCount(null));
   }, []);
 
