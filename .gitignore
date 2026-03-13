@@ -39,7 +39,12 @@ logs/
 CLAUDE.md
 TODO.md
 archive/
-docs/
+
+# MkDocs build output
+site/
+
+# Landing page source (deployed separately)
+site-src/
 
 # Claude Code internals
 .claude/

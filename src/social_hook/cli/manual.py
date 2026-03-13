@@ -10,9 +10,13 @@ def evaluate(
     ctx: typer.Context,
     commit: str = typer.Argument(..., help="Commit hash to evaluate"),
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
-    project_id: str | None = typer.Option(None, "--project", "-p", help="Project ID"),
 ):
-    """Manually evaluate a commit (without triggering draft creation)."""
+    """Manually evaluate a commit through the full pipeline.
+
+    Runs the same evaluation and drafting pipeline as the automatic hook trigger.
+
+    Example: social-hook manual evaluate abc1234 --repo /path/to/repo
+    """
     from social_hook.trigger import run_trigger
 
     dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
@@ -258,7 +262,7 @@ def post(
 ):
     """Manually post an approved draft."""
     from social_hook.config import load_full_config
-    from social_hook.db import get_draft, init_database, update_draft
+    from social_hook.db import get_draft, init_database
     from social_hook.db import operations as ops
     from social_hook.filesystem import get_db_path
 
@@ -292,7 +296,6 @@ def post(
 
         if dry_run:
             typer.echo("\n[dry-run] Would post this draft.")
-            update_draft(conn, draft_id, status="posted")
             return
 
         from social_hook.cli._spinner import spinner

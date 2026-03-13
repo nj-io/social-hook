@@ -1,4 +1,13 @@
-# Social Hook
+<p align="center">
+  <img src="assets/social-preview.png" alt="Social Hook — The marketing engine built for devs" width="700">
+</p>
+
+<h1 align="center">Social Hook</h1>
+
+[![CI](https://github.com/nj-io/social-hook/actions/workflows/ci.yml/badge.svg)](https://github.com/nj-io/social-hook/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/social-hook)](https://pypi.org/project/social-hook/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Automated social media content from development activity.
 
@@ -83,7 +92,7 @@ python scripts/e2e_test.py --save-snapshots --provider claude-cli    # Save DB a
 python scripts/e2e_test.py --only draft --snapshot after-pipeline    # Load saved state, skip A+B
 ```
 
-See [E2E_TESTING.md](docs/E2E_TESTING.md) for full documentation.
+See `scripts/e2e_test.py --help` for all options.
 
 ## Web Dashboard
 
@@ -114,22 +123,9 @@ Social Hook supports multiple LLM providers via a `provider/model-id` format:
 - `openrouter/anthropic/claude-sonnet-4.5` — OpenRouter
 - `ollama/llama3.3` — Local Ollama
 
-## Development
-
-```bash
-git clone https://github.com/nj-io/social-hook.git
-cd social-hook
-pip install -e ".[dev]"
-pre-commit install
-pre-commit install --hook-type commit-msg
-python -m pytest tests/ -q
-```
-
 ## Contributing
 
-- Use [conventional commits](https://www.conventionalcommits.org/): `feat: ✨ description`, `fix: 🐛 description`, etc.
-- All PRs require passing CI (lint, typecheck, tests across Python 3.10-3.12)
-- Run `ruff check src/ tests/` and `mypy src/social_hook/` before pushing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, running checks, and PR guidelines.
 
 ## Versioning
 
