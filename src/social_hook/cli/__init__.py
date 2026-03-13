@@ -859,7 +859,9 @@ from social_hook.cli.snapshot import app as snapshot_app
 app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
 
 from social_hook.cli.events import events as events_cmd
+from social_hook.cli.quickstart import quickstart as quickstart_cmd
 from social_hook.cli.rate_limits import rate_limits as rate_limits_cmd
 
 app.command("events")(events_cmd)
 app.command("rate-limits")(rate_limits_cmd)
+app.command("quickstart")(quickstart_cmd)
