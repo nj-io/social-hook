@@ -117,6 +117,53 @@ Example: social-hook draft media-remove draft-abc123
 
 ---
 
+### `social-hook draft post-now`
+
+Post a draft immediately to its platform.
+
+Approves and posts the draft in one step, bypassing the scheduler queue.
+The draft must be in draft, approved, or deferred status.
+
+Example: social-hook draft post-now draft-abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to post immediately |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | boolean | false | Output as JSON |
+
+---
+
+### `social-hook draft promote`
+
+Promote a preview draft to a real platform.
+
+Creates a new draft for the target platform using the LLM drafter,
+then marks the preview draft as superseded.
+
+Example: social-hook draft promote draft-abc123 --platform x
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Preview draft ID to promote |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--platform`, `-p` | string |  | Target platform (e.g., x, linkedin) |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
 ### `social-hook draft quick-approve`
 
 Approve and schedule at optimal time in one step.
@@ -169,6 +216,20 @@ Example: social-hook draft reject draft-abc123 --reason "too technical for the a
 
 ---
 
+### `social-hook draft reopen`
+
+Reopen a cancelled or rejected draft.
+
+Example: social-hook draft reopen draft-abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to reopen |
+
+---
+
 ### `social-hook draft retry`
 
 Retry a failed draft.
@@ -217,5 +278,33 @@ Example: social-hook draft show draft-abc123
 |------|------|---------|-------------|
 | `--open` | boolean | false | Open media files in default viewer |
 | `--json` | boolean | false | Output as JSON |
+
+---
+
+### `social-hook draft unapprove`
+
+Revert approval on a draft.
+
+Example: social-hook draft unapprove draft-abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to unapprove |
+
+---
+
+### `social-hook draft unschedule`
+
+Revert scheduling on a draft.
+
+Example: social-hook draft unschedule draft-abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to unschedule |
 
 ---

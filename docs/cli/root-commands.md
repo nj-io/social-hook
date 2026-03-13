@@ -60,6 +60,42 @@ For guided setup with platform credentials, use 'social-hook setup' instead.
 
 ---
 
+### `social-hook quickstart`
+
+Run the quickstart flow.
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `path` | no | Repository path (default: current directory) |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--key` | string |  | Anthropic API key (skips prompt) |
+| `--evaluate-last` | integer | 0 | Evaluate last N commits for additional drafts (max 5) |
+| `--yes`, `-y` | boolean | false | Skip all confirmation prompts |
+| `--json` | boolean | false | JSON output |
+
+---
+
+### `social-hook rate-limits`
+
+Show current rate limit status (daily cap, gap timer, queue, cost).
+
+Example: social-hook rate-limits
+Example: social-hook --json rate-limits
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | boolean | false | Output as JSON |
+
+---
+
 ### `social-hook scheduler-tick`
 
 Run one scheduler tick: post all due drafts.
@@ -76,6 +112,7 @@ Configure social-hook.
 |------|------|---------|-------------|
 | `--validate` | boolean | false | Validate existing configuration only |
 | `--only` | string |  | Configure only a specific component (models, apikeys, voice, telegram, platforms, x, linkedin, image, scheduling, journey, web) |
+| `--advanced`, `--no-advanced` | boolean |  | Include advanced sections (models, media, scheduling, etc.) |
 
 ---
 

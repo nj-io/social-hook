@@ -17,8 +17,10 @@ social-hook setup                  # Full wizard
 social-hook setup --only apikeys   # Just API keys
 social-hook setup --only platforms # Just platforms
 social-hook config show            # View current config
+social-hook config show --content  # View content-config.yaml
 social-hook config get models.evaluator
 social-hook config set scheduling.timezone America/Los_Angeles
+social-hook config set context.max_discovery_tokens 80000 --content  # Edit content config
 ```
 
 ---

@@ -112,6 +112,17 @@ ignore = ["E501", "B008"]  # E501: line length handled by formatter; B008: typer
 "src/social_hook/llm/prompts.py" = ["E402"]
 "src/social_hook/db/operations.py" = ["E402"]
 
+[tool.coverage.run]
+source = ["social_hook"]
+omit = ["*/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]
+
 [tool.mypy]
 python_version = "3.10"
 warn_return_any = true

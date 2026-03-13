@@ -20,37 +20,39 @@ cd social-hook
 pip install -e ".[dev]"
 ```
 
-## Initial setup
+## Quickstart
 
-After installation, run the interactive setup wizard:
+The fastest way to get going — registers your project, discovers its structure, and generates your first draft in one command:
+
+```bash
+cd /path/to/your/repo
+social-hook quickstart
+```
+
+This will:
+
+1. Prompt for your Anthropic API key (if not already configured)
+2. Register the repo as a project
+3. Install the git post-commit hook
+4. Run project discovery (AI reads your codebase to understand what it does)
+5. Generate an introductory draft
+
+Pass `--evaluate-last 3` to also evaluate your 3 most recent commits for additional drafts.
+
+## Guided setup
+
+For more control over configuration, use the setup wizard:
 
 ```bash
 social-hook setup
 ```
 
-This will walk you through:
+This walks you through:
 
 1. **API keys** — Configure your LLM provider (Anthropic, OpenAI, etc.)
 2. **Platforms** — Enable X, LinkedIn, Telegram, and/or Slack
 3. **Voice** — Set up your social-context.md with voice and style preferences
 4. **Scheduling** — Configure posting windows and cadence
-
-Or for a minimal start:
-
-```bash
-social-hook init
-```
-
-This creates the `~/.social-hook/` directory with default config templates.
-
-## Register a project
-
-```bash
-cd /path/to/your/repo
-social-hook project register
-```
-
-This installs a git post-commit hook and registers the project for evaluation.
 
 ## Verify
 
