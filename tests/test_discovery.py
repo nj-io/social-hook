@@ -371,7 +371,7 @@ class TestDiscoverySkippedWhenSummaryExists:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=False,
+            platform_introduced={"x": False},
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],
@@ -403,7 +403,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=False,
+            platform_introduced={"x": False},
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],
@@ -447,7 +447,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=False,
+            platform_introduced={"x": False},
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],
@@ -488,7 +488,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=True,  # Already introduced
+            platform_introduced={"x": True},  # Already introduced
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],
@@ -507,7 +507,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             commit=commit,
         )
 
-        # audience_introduced=True with include_project_docs=True,
+        # platform_introduced={"x": True} with include_project_docs=True,
         # should use prompt_docs fallback if no discovery files priority
         assert "Project Documentation (Discovery)" not in result
 

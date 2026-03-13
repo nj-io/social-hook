@@ -7,6 +7,8 @@ import typer
 from social_hook.constants import PROJECT_SLUG
 
 app = typer.Typer()
+intro_app = typer.Typer(help="Manage per-platform introduction status.")
+app.add_typer(intro_app, name="intro")
 
 
 @app.command()
@@ -450,3 +452,284 @@ def uninstall_hook_cmd(
 
     if not success:
         raise typer.Exit(1)
+
+
+@app.command("evaluate-recent")
+def evaluate_recent(
+    ctx: typer.Context,
+    last: int = typer.Option(
+        5,
+        "--last",
+        "-n",
+        help="Number of recent un-evaluated commits to evaluate (max 5)",
+    ),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: current directory)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Evaluate recent un-evaluated commits through the full pipeline.
+
+    Finds commits with 'imported' or 'deferred_eval' decisions and runs each
+    through the evaluator + drafter pipeline. Makes LLM calls. Writes decisions
+    and drafts to the database. Max 5 commits per invocation.
+
+    Examples:
+        social-hook project evaluate-recent
+        social-hook project evaluate-recent --last 3
+        social-hook project evaluate-recent -p /path/to/repo --json
+    """
+    import json as json_mod
+
+    from social_hook.cli.utils import resolve_project
+
+    is_json = json_output or (ctx.obj or {}).get("json", False)
+    dry_run = (ctx.obj or {}).get("dry_run", False)
+    verbose = (ctx.obj or {}).get("verbose", False)
+
+    last = min(max(last, 1), 5)
+    repo_path = resolve_project(project_path)
+    config_path_opt = (ctx.obj or {}).get("config")
+
+    from social_hook.db.connection import init_database
+    from social_hook.filesystem import get_db_path
+
+    conn = init_database(get_db_path())
+    try:
+        from social_hook.db.operations import get_project_by_path
+
+        project = get_project_by_path(conn, repo_path)
+        if project is None:
+            msg = f"No project registered at {repo_path}"
+            if is_json:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg, err=True)
+            raise typer.Exit(1)
+
+        # Find unevaluated commits
+        rows = conn.execute(
+            """
+            SELECT commit_hash FROM decisions
+            WHERE project_id = ? AND decision IN ('imported', 'deferred_eval')
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (project.id, last),
+        ).fetchall()
+
+        hashes = [row["commit_hash"] for row in rows]
+        if not hashes:
+            if is_json:
+                typer.echo(json_mod.dumps({"evaluated": 0, "results": []}))
+            else:
+                typer.echo("No unevaluated commits found.")
+            return
+
+        if not is_json:
+            typer.echo(f"Evaluating {len(hashes)} commit(s)...")
+
+        from social_hook.trigger import run_trigger
+
+        results = []
+        for commit_hash in hashes:
+            try:
+                exit_code = run_trigger(
+                    commit_hash=commit_hash,
+                    repo_path=repo_path,
+                    dry_run=dry_run,
+                    config_path=str(config_path_opt) if config_path_opt else None,
+                    verbose=verbose,
+                    trigger_source="manual",
+                )
+                results.append(
+                    {
+                        "commit_hash": commit_hash,
+                        "exit_code": exit_code,
+                        "status": "ok" if exit_code == 0 else "error",
+                    }
+                )
+            except Exception as e:
+                results.append(
+                    {
+                        "commit_hash": commit_hash,
+                        "exit_code": 2,
+                        "status": "error",
+                        "error": str(e),
+                    }
+                )
+
+        if is_json:
+            typer.echo(
+                json_mod.dumps(
+                    {
+                        "evaluated": len(results),
+                        "results": results,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            ok_count = sum(1 for r in results if r["status"] == "ok")
+            typer.echo(f"Evaluated {ok_count}/{len(results)} commits successfully.")
+    finally:
+        conn.close()
+
+
+def _resolve_project_for_intro(project_path: str | None) -> tuple:
+    """Resolve project from path or cwd. Returns (conn, project)."""
+    import subprocess as sp
+
+    from social_hook.db import (
+        get_all_projects,
+        get_project,
+        get_project_by_origin,
+        get_project_by_path,
+        init_database,
+    )
+    from social_hook.filesystem import get_db_path
+
+    conn = init_database(get_db_path())
+    project = None
+
+    if project_path:
+        project = get_project(conn, project_path)
+        if not project:
+            for p in get_all_projects(conn):
+                if p.id.startswith(project_path):
+                    project = p
+                    break
+
+    if not project:
+        cwd = str(Path.cwd().resolve())
+        project = get_project_by_path(conn, cwd)
+        if not project:
+            origin_result = sp.run(
+                ["git", "-C", cwd, "remote", "get-url", "origin"],
+                capture_output=True,
+                text=True,
+            )
+            if origin_result.returncode == 0:
+                matches = get_project_by_origin(conn, origin_result.stdout.strip())
+                if matches:
+                    project = matches[0]
+
+    if not project:
+        conn.close()
+        typer.echo("No project found. Provide a project ID or run from a registered repo.")
+        raise typer.Exit(1)
+
+    return conn, project
+
+
+@intro_app.callback(invoke_without_command=True)
+def intro_status(
+    ctx: typer.Context,
+    project: str | None = typer.Option(None, "--project", "-p", help="Project ID or path"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Show per-platform introduction status.
+
+    Examples:
+        social-hook project intro
+        social-hook project intro --json
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    import json as json_mod
+
+    from social_hook.db.operations import get_all_platform_introduced
+
+    conn, proj = _resolve_project_for_intro(project)
+    try:
+        introduced = get_all_platform_introduced(conn, proj.id)
+
+        if json_output:
+            rows = conn.execute(
+                "SELECT platform, introduced, introduced_at FROM platform_introduced WHERE project_id = ?",
+                (proj.id,),
+            ).fetchall()
+            platforms_data = {}
+            for row in rows:
+                platforms_data[row[0]] = {
+                    "introduced": bool(row[1]),
+                    "introduced_at": row[2],
+                }
+            typer.echo(
+                json_mod.dumps({"project": proj.name, "platforms": platforms_data}, indent=2)
+            )
+        else:
+            typer.echo(f"Introduction status for '{proj.name}':")
+            if not introduced:
+                typer.echo("  No platforms tracked yet.")
+            else:
+                for plat, is_intro in sorted(introduced.items()):
+                    status = "Introduced" if is_intro else "Not introduced"
+                    typer.echo(f"  {plat:15s}  {status}")
+    finally:
+        conn.close()
+
+
+@intro_app.command("reset")
+def intro_reset(
+    platform: str | None = typer.Option(None, "--platform", help="Reset a specific platform"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project ID or path"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Reset introduction status (next draft will be an intro post).
+
+    Examples:
+        social-hook project intro reset
+        social-hook project intro reset --platform x
+        social-hook project intro reset --yes
+    """
+    import json as json_mod
+
+    from social_hook.db.operations import emit_data_event, reset_platform_introduced
+
+    conn, proj = _resolve_project_for_intro(project)
+    try:
+        target = platform or "all platforms"
+        if not yes and not typer.confirm(f"Reset introduction for {target} on '{proj.name}'?"):
+            typer.echo("Cancelled.")
+            return
+
+        count = reset_platform_introduced(conn, proj.id, platform)
+        emit_data_event(conn, "project", "updated", proj.id, proj.id)
+
+        if json_output:
+            typer.echo(json_mod.dumps({"reset": count, "platform": platform or "all"}))
+        else:
+            typer.echo(f"Reset {count} platform(s) for '{proj.name}'.")
+    finally:
+        conn.close()
+
+
+@intro_app.command("set")
+def intro_set(
+    platform: str = typer.Option(..., "--platform", help="Platform to mark as introduced"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project ID or path"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Mark a platform as introduced (skip intro post).
+
+    Examples:
+        social-hook project intro set --platform x
+    """
+    import json as json_mod
+
+    from social_hook.db.operations import emit_data_event, set_platform_introduced
+
+    conn, proj = _resolve_project_for_intro(project)
+    try:
+        set_platform_introduced(conn, proj.id, platform, True)
+        emit_data_event(conn, "project", "updated", proj.id, proj.id)
+
+        if json_output:
+            typer.echo(json_mod.dumps({"platform": platform, "introduced": True}))
+        else:
+            typer.echo(f"Marked '{platform}' as introduced for '{proj.name}'.")
+    finally:
+        conn.close()

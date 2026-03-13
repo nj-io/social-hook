@@ -1953,6 +1953,14 @@ async def api_media(file_path: str):
 # ---------------------------------------------------------------------------
 
 
+@app.get("/api/wizard/templates")
+async def api_get_wizard_templates():
+    """Return content strategy templates for the setup wizard."""
+    from social_hook.setup.templates import templates_to_dicts
+
+    return {"templates": templates_to_dicts()}
+
+
 @app.get("/api/settings/config")
 async def api_get_config():
     """Return current config as JSON."""
@@ -2760,5 +2768,66 @@ async def api_delete_project(project_id: str):
         ops.delete_project(conn, project_id)
         ops.emit_data_event(conn, "project", "deleted", project_id, project_id)
         return {"status": "deleted", "project_id": project_id}
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Platform Introduced (per-platform introduction tracking)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/introduced")
+async def api_project_introduced(project_id: str):
+    """Get per-platform introduction status for a project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        rows = conn.execute(
+            "SELECT platform, introduced, introduced_at FROM platform_introduced WHERE project_id = ?",
+            (project_id,),
+        ).fetchall()
+        platforms = {}
+        for row in rows:
+            platforms[row[0]] = {
+                "introduced": bool(row[1]),
+                "introduced_at": row[2],
+            }
+        return {"platforms": platforms}
+    finally:
+        conn.close()
+
+
+class IntroducedResetBody(BaseModel):
+    platform: str | None = None
+
+
+@app.post("/api/projects/{project_id}/introduced/reset")
+async def api_project_introduced_reset(project_id: str, body: IntroducedResetBody):
+    """Reset introduction status for a platform or all platforms."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        count = ops.reset_platform_introduced(conn, project_id, body.platform)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"reset": count, "platform": body.platform or "all"}
+    finally:
+        conn.close()
+
+
+class IntroducedSetBody(BaseModel):
+    platform: str
+    value: bool = True
+
+
+@app.post("/api/projects/{project_id}/introduced/set")
+async def api_project_introduced_set(project_id: str, body: IntroducedSetBody):
+    """Set introduction status for a specific platform."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        ops.set_platform_introduced(conn, project_id, body.platform, body.value)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"platform": body.platform, "introduced": body.value}
     finally:
         conn.close()

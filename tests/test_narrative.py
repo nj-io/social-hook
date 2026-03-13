@@ -28,7 +28,6 @@ from social_hook.narrative.lifecycle import (
     detect_lifecycle_phase,
     get_audience_introduced,
     record_strategy_moment,
-    set_audience_introduced,
 )
 from social_hook.narrative.memories import add_memory, parse_memories_file
 
@@ -291,25 +290,57 @@ class TestStrategyTriggers:
 
 
 class TestAudienceIntroduced:
-    """T18: Onboarding flag management."""
+    """T18: Onboarding flag management — per-platform."""
 
     def test_default_false(self, temp_db):
         _setup_project(temp_db)
         assert get_audience_introduced(temp_db, "proj_test1") is False
 
-    def test_set_true(self, temp_db):
-        _setup_project(temp_db)
-        set_audience_introduced(temp_db, "proj_test1", True)
-        assert get_audience_introduced(temp_db, "proj_test1") is True
+    def test_set_true_per_platform(self, temp_db):
+        from social_hook.db.operations import get_platform_introduced, set_platform_introduced
 
-    def test_set_back_to_false(self, temp_db):
         _setup_project(temp_db)
-        set_audience_introduced(temp_db, "proj_test1", True)
-        set_audience_introduced(temp_db, "proj_test1", False)
-        assert get_audience_introduced(temp_db, "proj_test1") is False
+        set_platform_introduced(temp_db, "proj_test1", "x", True)
+        assert get_platform_introduced(temp_db, "proj_test1", "x") is True
+
+    def test_set_back_to_false_per_platform(self, temp_db):
+        from social_hook.db.operations import (
+            get_platform_introduced,
+            reset_platform_introduced,
+            set_platform_introduced,
+        )
+
+        _setup_project(temp_db)
+        set_platform_introduced(temp_db, "proj_test1", "x", True)
+        reset_platform_introduced(temp_db, "proj_test1", "x")
+        assert get_platform_introduced(temp_db, "proj_test1", "x") is False
 
     def test_nonexistent_project(self, temp_db):
         assert get_audience_introduced(temp_db, "nonexistent") is False
+
+    def test_all_platform_introduced(self, temp_db):
+        from social_hook.db.operations import get_all_platform_introduced, set_platform_introduced
+
+        _setup_project(temp_db)
+        set_platform_introduced(temp_db, "proj_test1", "x", True)
+        set_platform_introduced(temp_db, "proj_test1", "linkedin", False)
+        result = get_all_platform_introduced(temp_db, "proj_test1")
+        assert result == {"x": True, "linkedin": False}
+
+    def test_compat_audience_introduced_true_when_all(self, temp_db):
+        from social_hook.db.operations import set_platform_introduced
+
+        _setup_project(temp_db)
+        set_platform_introduced(temp_db, "proj_test1", "x", True)
+        assert get_audience_introduced(temp_db, "proj_test1") is True
+
+    def test_compat_audience_introduced_false_when_mixed(self, temp_db):
+        from social_hook.db.operations import set_platform_introduced
+
+        _setup_project(temp_db)
+        set_platform_introduced(temp_db, "proj_test1", "x", True)
+        set_platform_introduced(temp_db, "proj_test1", "linkedin", False)
+        assert get_audience_introduced(temp_db, "proj_test1") is False
 
 
 # =============================================================================

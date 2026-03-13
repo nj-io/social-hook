@@ -32,7 +32,8 @@ def _make_drafter_mocks():
 
     project_context = MagicMock()
     project_context.recent_posts = []
-    project_context.audience_introduced = True
+    project_context.platform_introduced = {"x": True}
+    project_context.all_introduced = True
     project_context.project.id = "p1"
     project_context.project.repo_path = None
     project_context.social_context = None
