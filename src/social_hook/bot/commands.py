@@ -1080,8 +1080,12 @@ def _handle_expert_escalation(
     except Exception as e:
         logger.exception("Error in expert escalation")
         msg = f"Error: {e}"
-        buttons = get_review_buttons_normalized(draft.id) if draft else None
-        _send(adapter, chat_id, msg, buttons=buttons)
+        _send(
+            adapter,
+            chat_id,
+            msg,
+            buttons=get_review_buttons_normalized(draft.id) if draft else None,
+        )
         return msg
 
 
