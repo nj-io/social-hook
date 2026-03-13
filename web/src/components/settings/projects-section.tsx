@@ -15,6 +15,7 @@ import {
   uninstallGitHook,
   updateProjectTriggerBranch,
 } from "@/lib/api";
+import { Modal } from "@/components/ui/modal";
 import { FolderPickerModal } from "./folder-picker-modal";
 
 export function ProjectsSection() {
@@ -413,34 +414,27 @@ export function ProjectsSection() {
       )}
 
       {/* Delete confirmation dialog */}
-      {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setConfirmDelete(null)}>
-          <div
-            className="w-full max-w-sm rounded-lg border border-border bg-background p-6"
-            onClick={(e) => e.stopPropagation()}
+      <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="max-w-sm">
+        <h3 className="text-lg font-semibold">Remove Project</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This will unregister the project, remove the git hook, and delete all associated data (decisions, drafts, posts). This cannot be undone.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={() => setConfirmDelete(null)}
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
           >
-            <h3 className="text-lg font-semibold">Remove Project</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              This will unregister the project, remove the git hook, and delete all associated data (decisions, drafts, posts). This cannot be undone.
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-md border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDelete(confirmDelete)}
-                disabled={deleting}
-                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
-              >
-                {deleting ? "Removing..." : "Remove"}
-              </button>
-            </div>
-          </div>
+            Cancel
+          </button>
+          <button
+            onClick={() => confirmDelete && handleDelete(confirmDelete)}
+            disabled={deleting}
+            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+          >
+            {deleting ? "Removing..." : "Remove"}
+          </button>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

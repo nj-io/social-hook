@@ -396,6 +396,25 @@ def redraft(
 
         from social_hook.cli._spinner import spinner
 
+        # Load social context and identity for voice consistency
+        social_context = None
+        identity = None
+        project = ops.get_project(conn, draft.project_id)
+        if project and project.repo_path:
+            try:
+                from social_hook.config.project import load_project_config
+
+                pc = load_project_config(project.repo_path)
+                social_context = pc.social_context
+            except Exception:
+                pass
+        try:
+            from social_hook.config.yaml import resolve_identity
+
+            identity = resolve_identity(config, draft.platform)
+        except Exception:
+            pass
+
         expert = Expert(client)
         with spinner("Redrafting with new angle..."):
             result = expert.handle(
@@ -405,6 +424,8 @@ def redraft(
                 project_summary=summary,
                 project_id=draft.project_id,
                 db=conn,
+                social_context=social_context,
+                identity=identity,
             )
 
         if result.refined_content or result.refined_media_spec:
@@ -688,16 +709,35 @@ def list_cmd(
             return
 
         typer.echo(
-            f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Fmt':<8} {'Media':<7} {'Content'}"
+            f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Fmt':<8} {'Media':<7} {'Tags':<20} {'Content'}"
         )
-        typer.echo("-" * 87)
+        typer.echo("-" * 107)
         for d in drafts:
-            content_preview = d.content[:40].replace("\n", " ") if d.content else ""
-            intro = " [INTRO]" if getattr(d, "is_intro", False) else ""
+            content_preview = d.content[:35].replace("\n", " ") if d.content else ""
+            intro = "[INTRO]" if getattr(d, "is_intro", False) else ""
             fmt = d.post_format or "single"
             media = d.media_type[:5] if d.media_type else "-"
+
+            # Build tags from linked decision
+            tags = []
+            if intro:
+                tags.append(intro)
+            try:
+                dec = ops.get_decision(conn, d.decision_id)
+                if dec:
+                    if dec.episode_type:
+                        tags.append(f"[{dec.episode_type}]")
+                    if dec.post_category:
+                        tags.append(f"[{dec.post_category}]")
+                    if dec.episode_tags:
+                        for t in dec.episode_tags:
+                            tags.append(f"[{t}]")
+            except Exception:
+                pass
+            tag_str = " ".join(tags)[:18] if tags else "-"
+
             typer.echo(
-                f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {fmt:<8} {media:<7} {content_preview}{intro}"
+                f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {fmt:<8} {media:<7} {tag_str:<20} {content_preview}"
             )
     finally:
         conn.close()

@@ -3,7 +3,6 @@
 import logging
 import subprocess
 import sys
-from typing import Any
 
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
@@ -548,38 +547,19 @@ def run_trigger(
         db.emit_data_event("pipeline", "drafting", commit_hash[:8], project.id)
         eval_compat = make_eval_compat(evaluation, decision.decision)
 
-        # Duplicate intro check
-        draft_results: list[Any] | None = None
-        if not context.audience_introduced:
-            existing_intro = ops.get_intro_draft(conn, project.id)
-            if existing_intro:
-                if verbose:
-                    print("Intro draft already exists, skipping new draft creation")
-                draft_results = []
-
-        if draft_results is None:
-            draft_results = draft_for_platforms(
-                config,
-                conn,
-                db,
-                project,
-                decision_id=decision.id,
-                evaluation=eval_compat,
-                context=context,
-                commit=commit,
-                project_config=project_config,
-                dry_run=dry_run,
-                verbose=verbose,
-            )
-
-        # Audience introduced lifecycle
-        if draft_results and not context.audience_introduced:
-            for r in draft_results:
-                if not dry_run:
-                    ops.update_draft(conn, r.draft.id, is_intro=True)
-                r.draft.is_intro = True
-            if not dry_run:
-                ops.set_audience_introduced(conn, project.id, True)
+        draft_results = draft_for_platforms(
+            config,
+            conn,
+            db,
+            project,
+            decision_id=decision.id,
+            evaluation=eval_compat,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
 
         # Increment arc post count if drafts were created for an arc
         if draft_results and decision.arc_id:
@@ -820,6 +800,114 @@ def _execute_merge_groups(
                     logger.error("Merge group %s/%s failed: %s", group_key, platform, e)
                     if verbose:
                         print(f"Merge group {group_key}/{platform} failed: {e}")
+
+
+def run_summary_trigger(
+    config,
+    conn,
+    db,
+    project,
+    summary: str,
+    repo_path: str,
+    verbose: bool = False,
+) -> dict | None:
+    """Generate an introductory first draft from project summary.
+
+    Creates a Decision with trigger_source="manual" and decision="draft",
+    then calls the drafter directly. No evaluator call needed.
+
+    Returns draft info dict or None on failure.
+    """
+    from social_hook.compat import make_eval_compat
+    from social_hook.config.project import load_project_config
+    from social_hook.drafting import draft_for_platforms
+
+    project_config = load_project_config(repo_path)
+
+    # Create a manual decision (no commit)
+    decision = Decision(
+        id=generate_id("decision"),
+        project_id=project.id,
+        commit_hash="summary",
+        decision="draft",
+        reasoning="Summary-based introductory draft",
+        commit_message="Project introduction",
+        angle="Introduce the project and what it does",
+        trigger_source="manual",
+    )
+    db.insert_decision(decision)
+    db.emit_data_event("decision", "created", decision.id, project.id)
+
+    # Assemble context (no commit timestamps)
+    context = assemble_evaluator_context(db, project.id, project_config)
+
+    # Build a minimal evaluation-compatible object for the drafter
+    from social_hook.llm.schemas import (
+        CommitAnalysis,
+        EpisodeTypeSchema,
+        LogEvaluationInput,
+        PostCategorySchema,
+        TargetAction,
+        TargetDecisionInput,
+    )
+
+    evaluation = LogEvaluationInput(
+        commit_analysis=CommitAnalysis(
+            summary=summary[:500],
+            episode_tags=["introduction"],
+        ),
+        targets={
+            "default": TargetDecisionInput(
+                action=TargetAction.draft,
+                reason="Summary-based introduction",
+                angle="Introduce the project and what it does",
+                episode_type=EpisodeTypeSchema.synthesis,
+                post_category=PostCategorySchema.opportunistic,
+            ),
+        },
+    )
+    eval_compat = make_eval_compat(evaluation, "draft")
+
+    # Draft
+    db.emit_data_event("pipeline", "drafting", "summary", project.id)
+
+    commit = CommitInfo(
+        hash="summary",
+        message="Project introduction",
+        diff=summary[:1000],
+        files_changed=[],
+    )
+
+    try:
+        draft_results = draft_for_platforms(
+            config=config,
+            conn=conn,
+            db=db,
+            project=project,
+            decision_id=decision.id,
+            evaluation=eval_compat,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            verbose=verbose,
+        )
+    except Exception as e:
+        logger.error("Summary draft failed: %s", e)
+        if verbose:
+            print(f"Summary draft failed: {e}", file=sys.stderr)
+        return None
+
+    if not draft_results:
+        return None
+
+    # Return first draft info
+    first = draft_results[0]
+    return {
+        "decision_id": decision.id,
+        "draft_id": first.draft.id,
+        "platform": first.draft.platform,
+        "content": first.draft.content,
+    }
 
 
 # Backward-compatible re-exports — tests import these from trigger.py

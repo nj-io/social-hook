@@ -3,12 +3,15 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
+
+if TYPE_CHECKING:
+    from social_hook.config.yaml import IdentityConfig
 
 
 @dataclass
@@ -101,6 +104,9 @@ class ProjectConfig:
         default_factory=lambda: deepcopy(DEFAULT_MEDIA_GUIDANCE)
     )
     summary: SummaryConfig = field(default_factory=SummaryConfig)
+
+    # Resolved identity for this project (populated by load_project_config)
+    identity: "IdentityConfig | None" = None
 
 
 def load_project_config(

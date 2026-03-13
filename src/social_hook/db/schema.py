@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260313060258
+SCHEMA_VERSION = 20260313070000
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -22,7 +22,6 @@ CREATE TABLE IF NOT EXISTS projects (
     repo_origin           TEXT,
     summary               TEXT,
     summary_updated_at    TEXT,
-    audience_introduced   INTEGER NOT NULL DEFAULT 0,
     paused                INTEGER NOT NULL DEFAULT 0,
     discovery_files       TEXT DEFAULT NULL,
     prompt_docs           TEXT DEFAULT NULL,
@@ -31,6 +30,15 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_origin ON projects(repo_origin);
+
+-- Per-platform introduction tracking
+CREATE TABLE IF NOT EXISTS platform_introduced (
+    project_id          TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    platform            TEXT NOT NULL,
+    introduced          INTEGER NOT NULL DEFAULT 0,
+    introduced_at       TEXT,
+    PRIMARY KEY (project_id, platform)
+);
 
 -- Decisions
 CREATE TABLE IF NOT EXISTS decisions (
