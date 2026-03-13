@@ -39,7 +39,9 @@ logs/
 CLAUDE.md
 TODO.md
 archive/
-docs/
+
+# MkDocs build output
+site/
 
 # Claude Code internals
 .claude/

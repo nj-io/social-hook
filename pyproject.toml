@@ -74,6 +74,10 @@ dev = [
     "types-PyYAML>=6.0",
     "types-requests>=2.28",
 ]
+docs = [
+    "mkdocs-material>=9.0",
+    "pymdown-extensions>=10.0",
+]
 
 [project.scripts]
 social-hook = "social_hook.cli:app"
