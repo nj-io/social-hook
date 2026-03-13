@@ -24,6 +24,10 @@ class DraftResult:
     draft: Draft
     schedule: ScheduleResult
     thread_tweets: list[str]
+    episode_type: str | None = None
+    post_category: str | None = None
+    angle: str | None = None
+    episode_tags: list[str] | None = None
 
 
 def draft_for_platforms(
@@ -244,6 +248,18 @@ def _draft_for_resolved_platforms(
     # 5. Draft for each target platform
     results = []
     for pname, rpcfg in platforms.items():
+        # Per-platform introduction check
+        platform_is_introduced = context.platform_introduced.get(pname, False)
+
+        # Resolve identity for this platform
+        from social_hook.config.yaml import resolve_identity
+        from social_hook.db import operations as _id_ops
+
+        resolved_identity = resolve_identity(config, pname)
+        target_post_count = len([p for p in context.recent_posts if p.platform == pname])
+        is_first_post = not platform_is_introduced
+        first_post_date = _id_ops.get_first_post_date(conn, project.id, pname)
+
         try:
             draft_result = drafter.create_draft(
                 evaluation,
@@ -257,6 +273,11 @@ def _draft_for_resolved_platforms(
                 media_config=config.media_generation,
                 media_guidance=project_config.media_guidance if project_config else None,
                 referenced_posts=referenced_posts,
+                platform_introduced=platform_is_introduced,
+                identity=resolved_identity,
+                target_post_count=target_post_count,
+                is_first_post=is_first_post,
+                first_post_date=first_post_date,
             )
 
             # Override platform: LLM may return any string for unconstrained field
@@ -302,6 +323,10 @@ def _draft_for_resolved_platforms(
                     platform=pname,
                     media_config=config.media_generation,
                     media_guidance=project_config.media_guidance if project_config else None,
+                    identity=resolved_identity,
+                    target_post_count=target_post_count,
+                    is_first_post=is_first_post,
+                    first_post_date=first_post_date,
                 )
                 thread_tweets = _parse_thread_tweets(
                     thread_result.content,
@@ -364,7 +389,20 @@ def _draft_for_resolved_platforms(
                     if ref_post.platform == pname:
                         draft.post_format = "quote"
 
+            # Mark as intro if platform not yet introduced
+            if not platform_is_introduced and not dry_run:
+                draft.is_intro = True
+
             db.insert_draft(draft)
+
+            # After draft insertion, mark platform as introduced
+            if not platform_is_introduced and not dry_run:
+                from social_hook.db import operations as _intro_ops
+
+                _intro_ops.set_platform_introduced(conn, project.id, pname, True)
+                context.platform_introduced[pname] = True
+                db.emit_data_event("project", "updated", project.id, project.id)
+
             db.emit_data_event(
                 "draft",
                 "created",
@@ -394,11 +432,25 @@ def _draft_for_resolved_platforms(
                 )
                 continue
 
+            # Extract metadata from evaluation for notification pass-through
+            _ep_type = getattr(evaluation, "episode_type", None)
+            if _ep_type is not None and hasattr(_ep_type, "value"):
+                _ep_type = _ep_type.value
+            _post_cat = getattr(evaluation, "post_category", None)
+            if _post_cat is not None and hasattr(_post_cat, "value"):
+                _post_cat = _post_cat.value
+            _angle = getattr(evaluation, "angle", None)
+            _ep_tags = getattr(evaluation, "episode_tags", None)
+
             results.append(
                 DraftResult(
                     draft=draft,
                     schedule=schedule,
                     thread_tweets=thread_tweets,
+                    episode_type=_ep_type,
+                    post_category=_post_cat,
+                    angle=_angle,
+                    episode_tags=_ep_tags,
                 )
             )
 

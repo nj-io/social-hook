@@ -63,7 +63,7 @@ export interface ConsolidationConfig {
 }
 
 export interface IdentityConfig {
-  type: "myself" | "company" | "project" | "character";
+  type: "myself" | "team" | "company" | "project" | "custom";
   label: string;
   description?: string;
   intro_hook?: string;
