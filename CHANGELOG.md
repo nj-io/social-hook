@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.9.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.8.0...social-hook-v0.9.0) (2026-03-13)
+
+
+### Features
+
+* OSS publish prep — docs site, CLI fixes, community files ([62a4343](https://github.com/nj-io/social-hook/commit/62a43436699504b7224e4e68d68624c5814fb608))
+* update docs for new CLI commands, add coverage badge ([514dae3](https://github.com/nj-io/social-hook/commit/514dae3be612269ab6443977938e67dc021f112d))
+
+
+### Bug Fixes
+
+* add forgiving --json flag to rate-limits command ([25266cd](https://github.com/nj-io/social-hook/commit/25266cdce6ae111e2058b04ad66d130ef89e2674))
+* add forgiving --json flag to rate-limits command ([836b3e4](https://github.com/nj-io/social-hook/commit/836b3e486b250afd2ba5292e4a6bbd29008e34aa))
+* make docs logo link back to main site homepage ([ad9048c](https://github.com/nj-io/social-hook/commit/ad9048cba00d8faea32c6e4b1e856dd5ba17f5cd))
+
+
+### Documentation
+
+* add Contributor Covenant v2.1 Code of Conduct ([c65f478](https://github.com/nj-io/social-hook/commit/c65f478f4ca177883fda6a1c6b036ec87290eeab))
+* overhaul README to reflect current product state ([6315e76](https://github.com/nj-io/social-hook/commit/6315e76ed18b257482d3d4ca41d5c46ea51729a6))
+
 ## [0.8.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.7.0...social-hook-v0.8.0) (2026-03-13)
 
 
