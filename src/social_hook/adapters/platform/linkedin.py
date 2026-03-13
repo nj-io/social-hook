@@ -6,7 +6,13 @@ from urllib.parse import urlencode
 import requests
 
 from social_hook.adapters.dry_run import dry_run_post_result
-from social_hook.adapters.models import PostReference, PostResult, ReferenceType, ThreadResult
+from social_hook.adapters.models import (
+    PostCapability,
+    PostReference,
+    PostResult,
+    ReferenceType,
+    ThreadResult,
+)
 from social_hook.adapters.platform.base import PlatformAdapter
 from social_hook.adapters.rate_limit import RateLimitState, handle_rate_limit
 from social_hook.errors import ErrorType, classify_error
@@ -257,6 +263,17 @@ class LinkedInAdapter(PlatformAdapter):
     def supports_reference_type(self, ref_type: ReferenceType) -> bool:
         """LinkedIn supports QUOTE (reshare) and LINK, but not REPLY."""
         return ref_type in (ReferenceType.QUOTE, ReferenceType.LINK)
+
+    def capabilities(self) -> list[PostCapability]:
+        from social_hook.adapters.models import RESHARE, SINGLE_POST
+
+        return [SINGLE_POST, RESHARE]
+
+    def supports_threads(self) -> bool:
+        return False
+
+    def supports_media(self) -> bool:
+        return False
 
     def delete(self, external_id: str) -> bool:
         """Delete a post by ID.

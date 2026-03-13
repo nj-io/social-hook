@@ -6,7 +6,7 @@ Source: WS3_ASSUMPTIONS.md A5-A6 (OAuth, endpoint)
 
 from unittest.mock import MagicMock, patch
 
-from social_hook.adapters.models import PostReference, ReferenceType
+from social_hook.adapters.models import RESHARE, SINGLE_POST, PostReference, ReferenceType
 from social_hook.adapters.platform.linkedin import (
     LinkedInAdapter,
 )
@@ -393,3 +393,34 @@ class TestLinkedInSupportsReferenceType:
     def test_does_not_support_reply(self):
         adapter = LinkedInAdapter("token")
         assert adapter.supports_reference_type(ReferenceType.REPLY) is False
+
+
+# =============================================================================
+# LinkedInAdapter - Capability Registry
+# =============================================================================
+
+
+class TestLinkedInAdapterCapabilities:
+    """LinkedInAdapter capability registry methods."""
+
+    def test_capabilities_contains_expected(self):
+        """LinkedInAdapter.capabilities() returns SINGLE_POST, RESHARE."""
+        adapter = LinkedInAdapter("fake_token")
+        caps = adapter.capabilities()
+        assert SINGLE_POST in caps
+        assert RESHARE in caps
+
+    def test_capabilities_returns_list(self):
+        """LinkedInAdapter.capabilities() returns a list."""
+        adapter = LinkedInAdapter("fake_token")
+        assert isinstance(adapter.capabilities(), list)
+
+    def test_supports_threads(self):
+        """LinkedInAdapter.supports_threads() returns False."""
+        adapter = LinkedInAdapter("fake_token")
+        assert adapter.supports_threads() is False
+
+    def test_supports_media(self):
+        """LinkedInAdapter.supports_media() returns False."""
+        adapter = LinkedInAdapter("fake_token")
+        assert adapter.supports_media() is False

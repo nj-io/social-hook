@@ -142,6 +142,14 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
             onClick={handleAction}
             variant="success-outline"
           />
+          <ActionButton
+            label="Post Now"
+            action="post_now"
+            pending={actionPending}
+            disabled={isDisabled}
+            onClick={handleAction}
+            variant="primary"
+          />
           <SubmenuToggle
             label="Schedule"
             active={submenu === "schedule"}
@@ -250,12 +258,20 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
     return (
       <div className="flex flex-wrap gap-2">
         <ActionButton
+          label="Post Now"
+          action="post_now"
+          pending={actionPending}
+          disabled={isDisabled}
+          onClick={handleAction}
+          variant="primary"
+        />
+        <ActionButton
           label="Schedule optimal"
           action="schedule_optimal"
           pending={actionPending}
           disabled={isDisabled}
           onClick={handleAction}
-          variant="primary"
+          variant="primary-outline"
         />
         <button
           onClick={() => openTextPrompt("schedule_custom")}
@@ -271,6 +287,29 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
           disabled={isDisabled}
           onClick={handleAction}
           variant="neutral-outline"
+        />
+      </div>
+    );
+  }
+
+  if (status === "deferred") {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <ActionButton
+          label="Post Now"
+          action="post_now"
+          pending={actionPending}
+          disabled={isDisabled}
+          onClick={handleAction}
+          variant="primary"
+        />
+        <ActionButton
+          label="Approve"
+          action="approve"
+          pending={actionPending}
+          disabled={isDisabled}
+          onClick={handleAction}
+          variant="success-outline"
         />
       </div>
     );

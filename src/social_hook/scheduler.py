@@ -407,6 +407,7 @@ def scheduler_tick(
     dry_run: bool = False,
     config_path: str | None = None,
     lock_path: Path | None = None,
+    draft_id: str | None = None,
 ) -> int:
     """Run one scheduler tick: post all due drafts.
 
@@ -414,10 +415,17 @@ def scheduler_tick(
         dry_run: If True, simulate posting
         config_path: Optional config file override
         lock_path: Optional lock file path override (for testing)
+        draft_id: If set, post only this draft (post-now mode).
+            Uses a per-draft lock, skips promote/drain, and fetches the
+            draft directly instead of querying due drafts.
 
     Returns:
         Number of drafts processed (posted or failed)
     """
+    # Per-draft lock when draft_id is provided
+    if draft_id and lock_path is None:
+        lock_path = get_base_path() / f"post_now_{draft_id}.lock"
+
     # Acquire lock
     if not acquire_lock(lock_path):
         logger.info("Scheduler tick skipped: lock held by another process")
@@ -434,6 +442,11 @@ def scheduler_tick(
         conn = init_database(db_path)
 
         try:
+            # --- Post-now mode: single draft, no promote/drain ---
+            if draft_id:
+                return _tick_single_draft(conn, config, draft_id, dry_run)
+
+            # --- Normal mode ---
             # Promote deferred drafts before checking for due drafts
             promote_deferred_drafts(conn, config, dry_run=dry_run)
 
@@ -518,6 +531,76 @@ def scheduler_tick(
 
     finally:
         release_lock(effective_lock)
+
+
+def _tick_single_draft(conn, config, draft_id, dry_run):
+    """Post a single draft by ID (post-now mode).
+
+    Skips promote_deferred_drafts and _drain_deferred_evaluations.
+    Only processes the specified draft if its status is 'scheduled'.
+
+    Returns:
+        Number of drafts processed (0 or 1).
+    """
+    draft = ops.get_draft(conn, draft_id)
+    if not draft:
+        logger.error(f"Post-now: draft {draft_id} not found")
+        return 0
+
+    if draft.status != "scheduled":
+        logger.info(f"Post-now: draft {draft_id} status is {draft.status}, expected scheduled")
+        return 0
+
+    project = ops.get_project(conn, draft.project_id)
+    if not project:
+        logger.error(f"Post-now: project not found for draft {draft_id}")
+        return 0
+
+    if project.paused:
+        logger.info(f"Post-now: skipping draft {draft_id}, project {project.name} is paused")
+        return 0
+
+    try:
+        if dry_run:
+            from social_hook.adapters.dry_run import dry_run_post_result
+
+            result = dry_run_post_result()
+        else:
+            result = _post_draft(conn, draft, config)
+
+        if result.success:
+            ops.update_draft(conn, draft.id, status="posted")
+            ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
+            post = Post(
+                id=generate_id("post"),
+                draft_id=draft.id,
+                project_id=draft.project_id,
+                platform=draft.platform,
+                external_id=result.external_id,
+                external_url=result.external_url,
+                content=draft.content,
+            )
+            ops.insert_post(conn, post)
+            ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
+
+            send_notification(
+                config,
+                f"*Posted successfully*\n\n"
+                f"Project: {project.name}\n"
+                f"Platform: {draft.platform}\n"
+                f"URL: {result.external_url or 'N/A'}\n\n"
+                f"```\n{draft.content[:300]}\n```",
+                dry_run=dry_run,
+            )
+        else:
+            _handle_post_failure(conn, draft, result.error or "Unknown error", config, dry_run)
+
+        return 1
+
+    except Exception as e:
+        logger.error(f"Post-now: error processing draft {draft_id}: {e}")
+        _handle_post_failure(conn, draft, str(e), config, dry_run)
+        return 1
 
 
 def _post_draft(conn, draft, config):

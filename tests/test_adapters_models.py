@@ -7,7 +7,18 @@ import pytest
 
 from social_hook.adapters.media.base import MediaAdapter
 from social_hook.adapters.models import (
+    GIF,
+    MULTI_IMAGE,
+    QUOTE,
+    REPLY,
+    RESHARE,
+    SINGLE_IMAGE,
+    SINGLE_POST,
+    THREAD,
+    VIDEO,
+    MediaMode,
     MediaResult,
+    PostCapability,
     PostReference,
     PostResult,
     ReferenceType,
@@ -356,3 +367,76 @@ class TestPlatformAdapterLinkFallback:
         assert adapter.supports_reference_type(ReferenceType.LINK) is True
         assert adapter.supports_reference_type(ReferenceType.REPLY) is False
         assert adapter.supports_reference_type(ReferenceType.QUOTE) is False
+
+
+# =============================================================================
+# MediaMode and PostCapability frozen dataclasses
+# =============================================================================
+
+
+class TestMediaMode:
+    """MediaMode frozen dataclass tests."""
+
+    def test_media_mode_is_frozen(self):
+        """MediaMode instances cannot be mutated."""
+        mode = MediaMode("test", ("png",), 1024)
+        with pytest.raises(AttributeError):
+            mode.name = "changed"
+
+    def test_media_mode_equality(self):
+        """Two MediaMode instances with same values are equal."""
+        a = MediaMode("single_image", ("png", "jpg"), 100)
+        b = MediaMode("single_image", ("png", "jpg"), 100)
+        assert a == b
+
+    def test_single_image_constant(self):
+        """SINGLE_IMAGE constant is defined with expected values."""
+        assert SINGLE_IMAGE.name == "single_image"
+        assert SINGLE_IMAGE.formats == ("png", "jpg", "webp")
+        assert SINGLE_IMAGE.max_size == 5_242_880
+
+
+class TestPostCapability:
+    """PostCapability frozen dataclass tests."""
+
+    def test_post_capability_is_frozen(self):
+        """PostCapability instances cannot be mutated."""
+        cap = PostCapability("test", ())
+        with pytest.raises(AttributeError):
+            cap.name = "changed"
+
+    def test_post_capability_equality(self):
+        """Two PostCapability instances with same values are equal."""
+        a = PostCapability("single_post", (SINGLE_IMAGE,))
+        b = PostCapability("single_post", (SINGLE_IMAGE,))
+        assert a == b
+
+    def test_single_image_identity(self):
+        """SINGLE_IMAGE module constant is the same object."""
+        assert SINGLE_IMAGE is SINGLE_IMAGE
+
+    def test_module_constants_defined(self):
+        """All module-level media mode and capability constants are defined."""
+        # Media modes
+        assert SINGLE_IMAGE is not None
+        assert MULTI_IMAGE is not None
+        assert GIF is not None
+        assert VIDEO is not None
+        # Capabilities
+        assert SINGLE_POST is not None
+        assert THREAD is not None
+        assert QUOTE is not None
+        assert REPLY is not None
+        assert RESHARE is not None
+
+    def test_single_post_media_modes(self):
+        """SINGLE_POST includes SINGLE_IMAGE, MULTI_IMAGE, GIF."""
+        assert SINGLE_POST.media_modes == (SINGLE_IMAGE, MULTI_IMAGE, GIF)
+
+    def test_thread_media_modes(self):
+        """THREAD includes SINGLE_IMAGE, GIF."""
+        assert THREAD.media_modes == (SINGLE_IMAGE, GIF)
+
+    def test_reshare_no_media(self):
+        """RESHARE has no media modes."""
+        assert RESHARE.media_modes == ()

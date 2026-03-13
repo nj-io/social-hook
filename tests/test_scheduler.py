@@ -585,6 +585,82 @@ class TestPromoteDeferredDrafts:
         conn.close()
 
 
+class TestSchedulerTickDraftId:
+    """Tests for scheduler_tick with draft_id parameter (post-now mode)."""
+
+    @patch("social_hook.scheduler.init_database")
+    @patch("social_hook.scheduler.load_full_config")
+    @patch("social_hook.scheduler.get_db_path")
+    @patch("social_hook.scheduler.get_base_path")
+    def test_draft_id_uses_separate_lock(
+        self, mock_base, mock_db_path, mock_config, mock_init_db, temp_dir
+    ):
+        """scheduler_tick with draft_id should use a per-draft lock path."""
+        mock_base.return_value = Path(temp_dir)
+        mock_db_path.return_value = temp_dir / "test.db"
+
+        draft = MagicMock()
+        draft.id = "draft_123"
+        draft.status = "scheduled"
+        draft.platform = "x"
+        draft.content = "test"
+        draft.project_id = "proj_1"
+        draft.decision_id = None
+        draft.media_paths = None
+        draft.retry_count = 0
+
+        conn = MagicMock()
+        mock_init_db.return_value = conn
+        mock_config.return_value = MagicMock(env={}, channels={})
+
+        with (
+            patch("social_hook.scheduler.ops.get_draft", return_value=draft),
+            patch("social_hook.scheduler._post_draft") as mock_post,
+            patch("social_hook.scheduler.ops.update_draft"),
+            patch("social_hook.scheduler.ops.insert_post"),
+            patch("social_hook.scheduler.ops.emit_data_event"),
+            patch("social_hook.scheduler.ops.get_project") as mock_proj,
+            patch("social_hook.scheduler.send_notification"),
+        ):
+            mock_post.return_value = MagicMock(
+                success=True, external_id="ext_1", external_url="https://x.com/test/1"
+            )
+            mock_proj.return_value = MagicMock(name="test", paused=False)
+            result = scheduler_tick(draft_id="draft_123")
+
+        assert result == 1
+
+    @patch("social_hook.scheduler.init_database")
+    @patch("social_hook.scheduler.load_full_config")
+    @patch("social_hook.scheduler.get_db_path")
+    @patch("social_hook.scheduler.get_base_path")
+    def test_draft_id_skips_promote_and_drain(
+        self, mock_base, mock_db_path, mock_config, mock_init_db, temp_dir
+    ):
+        """scheduler_tick with draft_id should NOT call promote_deferred_drafts or drain."""
+        mock_base.return_value = Path(temp_dir)
+        mock_db_path.return_value = temp_dir / "test.db"
+
+        draft = MagicMock()
+        draft.id = "draft_123"
+        draft.status = "not_scheduled"  # Wrong status — should return 0
+
+        conn = MagicMock()
+        mock_init_db.return_value = conn
+        mock_config.return_value = MagicMock(env={}, channels={})
+
+        with (
+            patch("social_hook.scheduler.ops.get_draft", return_value=draft),
+            patch("social_hook.scheduler.promote_deferred_drafts") as mock_promote,
+            patch("social_hook.scheduler._drain_deferred_evaluations") as mock_drain,
+        ):
+            result = scheduler_tick(draft_id="draft_123")
+
+        mock_promote.assert_not_called()
+        mock_drain.assert_not_called()
+        assert result == 0
+
+
 class TestPostDraftReferencePosting:
     """Tests for _post_draft reference posting via abstract adapter interface."""
 

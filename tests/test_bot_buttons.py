@@ -1,4 +1,4 @@
-"""Tests for status guards, media_retry, and button handlers in bot/buttons.py."""
+"""Tests for status guards, media_retry, btn_post_now, and button handlers in bot/buttons.py."""
 
 from dataclasses import dataclass, field
 from unittest.mock import MagicMock, patch
@@ -12,6 +12,7 @@ from social_hook.bot.buttons import (
     btn_media_regen,
     btn_media_remove,
     btn_media_retry,
+    btn_post_now,
 )
 from social_hook.messaging.base import PlatformCapabilities, SendResult
 
@@ -254,3 +255,68 @@ class TestGuardAllowsDraftDeferred:
 
         for call in mock_send.call_args_list:
             assert "Cannot edit media" not in str(call)
+
+
+# ---------------------------------------------------------------------------
+# btn_post_now tests
+# ---------------------------------------------------------------------------
+
+
+class TestBtnPostNow:
+    @patch("social_hook.bot.buttons._get_conn")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._send")
+    def test_post_now_preview_blocked(self, mock_send, mock_answer, mock_conn):
+        """Post Now should reject preview drafts."""
+        draft = MagicMock()
+        draft.id = "draft_123"
+        draft.status = "draft"
+        draft.platform = "preview"
+        draft.project_id = "proj_1"
+
+        conn = MagicMock()
+        mock_conn.return_value = conn
+
+        with (
+            patch("social_hook.db.get_draft", return_value=draft),
+            patch("social_hook.bot.commands.set_chat_draft_context"),
+        ):
+            btn_post_now(MagicMock(), "chat1", "cb1", "draft_123", None)
+
+        mock_send.assert_called_once()
+        assert "preview" in mock_send.call_args[0][2].lower()
+
+    @patch("social_hook.bot.buttons._get_conn")
+    @patch("social_hook.bot.buttons._answer_callback")
+    @patch("social_hook.bot.buttons._send")
+    def test_post_now_wrong_status(self, mock_send, mock_answer, mock_conn):
+        """Post Now should reject terminal status drafts."""
+        draft = MagicMock()
+        draft.id = "draft_123"
+        draft.status = "posted"
+        draft.platform = "x"
+        draft.project_id = "proj_1"
+
+        conn = MagicMock()
+        mock_conn.return_value = conn
+
+        with (
+            patch("social_hook.db.get_draft", return_value=draft),
+            patch("social_hook.bot.commands.set_chat_draft_context"),
+        ):
+            btn_post_now(MagicMock(), "chat1", "cb1", "draft_123", None)
+
+        mock_send.assert_called_once()
+        assert (
+            "cannot" in mock_send.call_args[0][2].lower()
+            or "status" in mock_send.call_args[0][2].lower()
+        )
+
+    def test_post_now_in_dispatch_map(self):
+        """post_now should be in the button dispatch map."""
+        import inspect
+
+        from social_hook.bot.buttons import handle_callback
+
+        source = inspect.getsource(handle_callback)
+        assert '"post_now"' in source or "'post_now'" in source

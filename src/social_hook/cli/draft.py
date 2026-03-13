@@ -335,6 +335,114 @@ def redraft(
         conn.close()
 
 
+@app.command("post-now")
+def post_now(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to post immediately"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Post a draft immediately to its platform.
+
+    Requires platform credentials in ~/.social-hook/.env.
+
+    Example: social-hook draft post-now draft_abc123
+    """
+    from social_hook.db import operations as ops
+
+    # Merge with global --json flag
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+    dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+
+        if draft.status in TERMINAL_STATUSES:
+            msg = f"Cannot post: draft status is '{draft.status}'"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if draft.platform == "preview":
+            msg = "Cannot post preview drafts"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if dry_run:
+            if json_output:
+                typer.echo(
+                    json_mod.dumps(
+                        {"status": "dry_run", "draft_id": draft_id, "platform": draft.platform}
+                    )
+                )
+            else:
+                typer.echo(f"Dry run: would post draft {draft_id} to {draft.platform}")
+            return
+
+        if not yes:
+            confirm = typer.confirm(f"Post draft {draft_id} to {draft.platform} now?")
+            if not confirm:
+                raise typer.Exit(0)
+
+        from datetime import datetime as dt_cls
+        from datetime import timezone
+
+        now_str = dt_cls.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        ops.update_draft(conn, draft_id, status="scheduled", scheduled_time=now_str)
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+    finally:
+        conn.close()
+
+    from social_hook.scheduler import scheduler_tick
+
+    scheduler_tick(draft_id=draft_id, dry_run=False)
+
+    conn = _get_conn()
+    try:
+        draft_after = ops.get_draft(conn, draft_id)
+        if draft_after and draft_after.status == "posted":
+            post = conn.execute(
+                "SELECT external_id, external_url FROM posts WHERE draft_id = ? ORDER BY created_at DESC LIMIT 1",
+                (draft_id,),
+            ).fetchone()
+
+            if json_output:
+                typer.echo(
+                    json_mod.dumps(
+                        {
+                            "status": "posted",
+                            "draft_id": draft_id,
+                            "platform": draft_after.platform,
+                            "external_id": post[0] if post else None,
+                            "external_url": post[1] if post else None,
+                        }
+                    )
+                )
+            else:
+                typer.echo(f"Posted draft {draft_id} to {draft_after.platform}.")
+                if post and post[1]:
+                    typer.echo(f"URL: {post[1]}")
+        else:
+            status = draft_after.status if draft_after else "unknown"
+            error = draft_after.last_error if draft_after else None
+            msg = f"Post failed: draft status is '{status}'"
+            if error:
+                msg += f" ({error})"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(2)
+    finally:
+        conn.close()
+
+
 @app.command("quick-approve")
 def quick_approve(
     ctx: typer.Context,
