@@ -145,7 +145,7 @@ def handle_callback(
         _answer_callback(adapter, callback_id, "Invalid callback")
         return
 
-    handlers = {
+    handlers: dict[str, Any] = {
         "approve": btn_approve,
         "quick_approve": btn_quick_approve,
         "schedule": btn_schedule_submenu,
