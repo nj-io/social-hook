@@ -1,0 +1,12 @@
+# Normalize line endings
+* text=auto
+
+# Better diff hunk headers for Python
+*.py diff=python
+
+# Prevent web dashboard from skewing repo language stats
+web/** linguist-vendored
+
+# Auto-generated files
+web/package-lock.json linguist-generated
+.release-please-manifest.json linguist-generated
