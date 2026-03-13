@@ -15,6 +15,7 @@ export interface PlatformConfig {
   max_length?: number;
   filter?: string;
   frequency?: string;
+  identity?: string;
   scheduling?: SchedulingOverride;
 }
 
@@ -61,6 +62,20 @@ export interface ConsolidationConfig {
   time_window_max_drafts: number;
 }
 
+export interface IdentityConfig {
+  type: "myself" | "company" | "project" | "character";
+  label: string;
+  description?: string;
+  intro_hook?: string;
+}
+
+export interface ContentStrategyConfig {
+  audience: string;
+  voice: string;
+  post_when?: string;
+  avoid?: string;
+}
+
 export interface Config {
   models: ModelsConfig;
   platforms: Record<string, PlatformConfig>;
@@ -70,6 +85,33 @@ export interface Config {
   consolidation?: ConsolidationConfig;
   channels?: Record<string, ChannelConfig>;
   rate_limits?: RateLimitsConfig;
+  identities?: Record<string, IdentityConfig>;
+  default_identity?: string;
+  content_strategies?: Record<string, ContentStrategyConfig>;
+  content_strategy?: string;
+}
+
+export interface StrategyTemplate {
+  id: string;
+  name: string;
+  description: string;
+  defaults: {
+    identity: string;
+    voiceTone: string;
+    audience: string;
+    technicalLevel: string;
+    platformFilter: string;
+    platformFrequency: string;
+    postWhen: string;
+    avoid: string;
+    exampleIntroHook: string;
+  };
+}
+
+export interface PlatformIntroduced {
+  platform: string;
+  introduced: boolean;
+  first_post_date?: string;
 }
 
 export interface DraftTweet {

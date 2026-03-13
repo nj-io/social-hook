@@ -5,7 +5,8 @@ import Link from "next/link";
 import { fetchDrafts, fetchEnabledPlatforms, fetchProjects } from "@/lib/api";
 import type { Draft, Project } from "@/lib/types";
 import { RateLimitCard } from "@/components/rate-limit-card";
-import { StatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
+import { WizardModal } from "@/components/wizard/wizard-modal";
 import { useDataEvents } from "@/lib/use-data-events";
 
 export default function DashboardPage() {
@@ -14,6 +15,7 @@ export default function DashboardPage() {
   const [platformCount, setPlatformCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showWizard, setShowWizard] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -97,7 +99,20 @@ export default function DashboardPage() {
       <div>
         <h2 className="mb-3 text-lg font-semibold">Projects</h2>
         {projects.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No projects registered yet. Push a commit to a tracked project to get started.</p>
+          <div className="rounded-lg border-2 border-dashed border-accent/30 p-8 text-center">
+            <h3 className="text-lg font-semibold">Get started in 3 minutes</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Set up your voice, connect platforms, and register your first project.
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-3">
+              <button
+                onClick={() => setShowWizard(true)}
+                className="rounded-md bg-accent px-6 py-2.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 transition-colors"
+              >
+                Start Setup
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => {
@@ -126,7 +141,7 @@ export default function DashboardPage() {
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(projectStatusCounts).map(([status, count]) => (
                       <div key={status} className="flex items-center gap-1">
-                        <StatusBadge status={status} />
+                        <Badge value={status} variant="status" />
                         <span className="text-xs text-muted-foreground">{count}</span>
                       </div>
                     ))}
@@ -150,7 +165,12 @@ export default function DashboardPage() {
           </Link>
         </div>
         {drafts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No drafts yet.</p>
+          <div className="rounded-lg border border-border p-6 text-center">
+            <p className="text-sm text-muted-foreground">No drafts yet.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Make a commit to a registered project, or import existing commits from a project page.
+            </p>
+          </div>
         ) : (
           <div className="space-y-2">
             {drafts.slice(0, 5).map((draft) => (
@@ -162,7 +182,7 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-muted-foreground">{draft.platform}</span>
-                    <StatusBadge status={draft.status} />
+                    <Badge value={draft.status} variant="status" />
                   </div>
                   <span className="text-xs text-muted-foreground">
                     {new Date(draft.created_at).toLocaleDateString()}
@@ -174,6 +194,16 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Wizard modal */}
+      <WizardModal
+        open={showWizard}
+        onClose={() => setShowWizard(false)}
+        onComplete={() => {
+          setShowWizard(false);
+          reload();
+        }}
+      />
     </div>
   );
 }

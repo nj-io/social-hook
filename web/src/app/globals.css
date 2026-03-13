@@ -57,3 +57,15 @@ body {
 .animate-in.slide-in-from-right {
   animation: slide-in-from-right 0.2s ease-out;
 }
+
+@keyframes wizard-dissolve {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-wizard-dissolve { animation: wizard-dissolve 0.3s ease-out; }
+
+@keyframes wizard-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-wizard-backdrop { animation: wizard-backdrop-in 0.2s ease-out; }
