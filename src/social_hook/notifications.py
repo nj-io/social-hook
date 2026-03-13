@@ -136,7 +136,7 @@ def notify_draft_review(
             tweet_count=tweet_count,
             media_info=media_info,
         )
-        buttons = get_review_buttons_normalized(draft.id)
+        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
         msg = OutboundMessage(text=msg_text, buttons=buttons)
         broadcast_notification(
             config,
@@ -193,7 +193,7 @@ def resend_draft_notification(
             episode_type=decision.episode_type if decision else None,
             post_category=decision.post_category if decision else None,
         )
-        buttons = get_review_buttons_normalized(draft.id)
+        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
         msg = OutboundMessage(text=msg_text, buttons=buttons)
         broadcast_notification(
             config,

@@ -232,13 +232,16 @@ def trigger(
     verbose = ctx.obj.get("verbose", False)
     config_path = ctx.obj.get("config")
 
-    exit_code = run_trigger(
-        commit_hash=commit,
-        repo_path=repo,
-        dry_run=dry_run,
-        config_path=str(config_path) if config_path else None,
-        verbose=verbose,
-    )
+    from social_hook.cli._spinner import spinner
+
+    with spinner("Evaluating commit..."):
+        exit_code = run_trigger(
+            commit_hash=commit,
+            repo_path=repo,
+            dry_run=dry_run,
+            config_path=str(config_path) if config_path else None,
+            verbose=verbose,
+        )
     raise SystemExit(exit_code)
 
 
