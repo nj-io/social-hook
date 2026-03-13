@@ -735,9 +735,7 @@ def run(harness, runner):
             assert not draft.media_paths, (
                 f"media_paths should be empty on failure: {draft.media_paths}"
             )
-            assert draft.media_spec is not None, (
-                "media_spec should be preserved for retry"
-            )
+            assert draft.media_spec is not None, "media_spec should be preserved for retry"
             assert draft.last_error and "Simulated API failure" in draft.last_error, (
                 f"last_error should contain failure message: {draft.last_error}"
             )
@@ -763,9 +761,7 @@ def run(harness, runner):
         harness.update_config({"media_generation": {"enabled": False}})
         return detail
 
-    runner.run_scenario(
-        "B17", "Pipeline media error propagation", b17, llm_call=True, isolate=True
-    )
+    runner.run_scenario("B17", "Pipeline media error propagation", b17, llm_call=True, isolate=True)
 
     # B18: Drafter + real nano_banana_pro (seeded decision, real LLM + real Gemini)
     def b18():
@@ -786,17 +782,19 @@ def run(harness, runner):
         assert api_key, "GEMINI_API_KEY not configured — required for B18"
 
         # Ensure media generation is enabled for nano_banana_pro
-        harness.update_config({
-            "media_generation": {
-                "enabled": True,
-                "tools": {
-                    "mermaid": False,
-                    "nano_banana_pro": True,
-                    "playwright": False,
-                    "ray_so": False,
-                },
+        harness.update_config(
+            {
+                "media_generation": {
+                    "enabled": True,
+                    "tools": {
+                        "mermaid": False,
+                        "nano_banana_pro": True,
+                        "playwright": False,
+                        "ray_so": False,
+                    },
+                }
             }
-        })
+        )
         config = harness.load_config()
 
         # Build real CommitInfo from repo history
@@ -867,9 +865,7 @@ def run(harness, runner):
             f"Expected media_type=nano_banana_pro, got {draft.media_type}"
         )
         assert draft.media_spec is not None, "media_spec is None"
-        assert "prompt" in draft.media_spec, (
-            f"media_spec missing 'prompt' key: {draft.media_spec}"
-        )
+        assert "prompt" in draft.media_spec, f"media_spec missing 'prompt' key: {draft.media_spec}"
         assert draft.media_spec["prompt"], "media_spec prompt is empty"
         assert draft.media_paths, f"media_paths is empty: {draft.media_paths}"
 

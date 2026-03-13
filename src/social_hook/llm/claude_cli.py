@@ -1,5 +1,6 @@
 """Claude CLI provider client using claude -p subprocess."""
 
+import contextlib
 import json
 import os
 import pwd
@@ -127,7 +128,9 @@ class ClaudeCliClient(LLMClient):
         )
         effective_system = (system or "") + json_instruction
 
-        # 4. Build command — no --json-schema (avoids multi-turn loop)
+        # 4. Write system prompt to a temp file and pass via --system-prompt-file.
+        #    This avoids the OS ARG_MAX limit (~128-256KB) which large evaluator
+        #    prompts can exceed (commit diffs + project context + schema).
         #    Prompt is piped via stdin (not as a -p argument) to avoid
         #    the CLI's arg parser misinterpreting content that starts
         #    with dashes (e.g. "--- README.md ---") as flags.
@@ -135,6 +138,14 @@ class ClaudeCliClient(LLMClient):
         #    which truncates long string values in the JSON envelope.
         #    With stream-json, text arrives in small content_block_delta
         #    events that won't hit the truncation limit.
+        prompt_fd, prompt_path = tempfile.mkstemp(suffix=".md", prefix="claude_system_")
+        try:
+            os.write(prompt_fd, effective_system.encode("utf-8"))
+            os.close(prompt_fd)
+        except Exception:
+            os.close(prompt_fd)
+            os.unlink(prompt_path)
+            raise
         cmd = [
             "claude",
             "-p",
@@ -147,8 +158,8 @@ class ClaudeCliClient(LLMClient):
             "--no-session-persistence",
             "--setting-sources",
             "local",
-            "--system-prompt",
-            effective_system,
+            "--system-prompt-file",
+            prompt_path,
         ]
 
         # 5. Run subprocess with clean env for CLI auth
@@ -172,32 +183,37 @@ class ClaudeCliClient(LLMClient):
             )
 
         try:
-            # Run in a new session so CLI doesn't share the terminal
-            # (prevents notification sounds) and from temp dir so it
-            # doesn't scan the project codebase.
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env,
-                cwd=tempfile.gettempdir(),
-                start_new_session=True,
-            )
             try:
-                stdout, stderr = proc.communicate(input=user_msg, timeout=300)
-            except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
-                proc.kill()
-                proc.wait()
-                if isinstance(exc, KeyboardInterrupt):
-                    raise
-                raise MalformedResponseError("Claude CLI timed out (300s)") from None
-            result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
-        except FileNotFoundError:
-            raise ConfigError(
-                "Claude CLI not found. Install Claude Code or use a different provider."
-            ) from None
+                # Run in a new session so CLI doesn't share the terminal
+                # (prevents notification sounds) and from temp dir so it
+                # doesn't scan the project codebase.
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    cwd=tempfile.gettempdir(),
+                    start_new_session=True,
+                )
+                try:
+                    stdout, stderr = proc.communicate(input=user_msg, timeout=300)
+                except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
+                    proc.kill()
+                    proc.wait()
+                    if isinstance(exc, KeyboardInterrupt):
+                        raise
+                    raise MalformedResponseError("Claude CLI timed out (300s)") from None
+                result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+            except FileNotFoundError:
+                raise ConfigError(
+                    "Claude CLI not found. Install Claude Code or use a different provider."
+                ) from None
+        finally:
+            # Always clean up the temp file, regardless of success or failure
+            with contextlib.suppress(OSError):
+                os.unlink(prompt_path)
 
         if self.verbose:
             print(
@@ -275,6 +291,18 @@ class ClaudeCliClient(LLMClient):
             )
             output_preview = json.dumps(structured_output)[:300]
             print(f"       [claude-cli] Output: {output_preview}", file=sys.stderr, flush=True)
+            if "queue_actions" in structured_output:
+                print(
+                    f"       [claude-cli] queue_actions: {json.dumps(structured_output['queue_actions'])}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            elif tool_name == "log_evaluation":
+                print(
+                    "       [claude-cli] queue_actions: NOT PRESENT in response",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
         # 7. Build normalized response
         tool_call = NormalizedToolCall(name=tool_name, input=structured_output)

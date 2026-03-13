@@ -344,6 +344,6 @@ class TestDecisionCommitSummary:
             commit_summary="New feature",
         )
         row = d.to_row()
-        # 18-element tuple; commit_summary is at index 14
-        assert len(row) == 18
+        # 19-element tuple; commit_summary is at index 14
+        assert len(row) == 19
         assert row[14] == "New feature"

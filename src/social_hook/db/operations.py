@@ -392,7 +392,9 @@ def update_discovery_files(
     return cursor.rowcount > 0
 
 
-def upsert_file_summaries(conn: sqlite3.Connection, project_id: str, file_summaries: list[dict[str, str]]) -> None:
+def upsert_file_summaries(
+    conn: sqlite3.Connection, project_id: str, file_summaries: list[dict[str, str]]
+) -> None:
     """Replace all file summaries for a project. Deletes existing summaries first
     to remove stale entries from previous discovery runs, then inserts new ones."""
     conn.execute("DELETE FROM file_summaries WHERE project_id = ?", (project_id,))
@@ -437,8 +439,8 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
         INSERT INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            reference_posts, branch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch, trigger_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )
@@ -513,7 +515,7 @@ def get_recent_decisions_for_llm(
     rows = conn.execute(
         """
         SELECT * FROM decisions
-        WHERE project_id = ? AND decision != 'imported'
+        WHERE project_id = ? AND decision NOT IN ('imported', 'deferred_eval')
         ORDER BY created_at DESC
         LIMIT ?
         """,
@@ -545,8 +547,8 @@ def insert_decisions_batch(
         INSERT OR IGNORE INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            reference_posts, branch, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch, trigger_source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [d.to_row() + (created_at,) for d, created_at in decisions],
     )
@@ -984,6 +986,24 @@ def update_draft_tweet(
     return cursor.rowcount > 0
 
 
+def replace_draft_tweets(conn: sqlite3.Connection, draft_id: str, tweets: list[DraftTweet]) -> None:
+    """Delete existing tweets for a draft and insert replacements.
+
+    Used when content is edited on a threaded draft to keep draft_tweets
+    in sync with the updated content.
+    """
+    conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_id,))
+    for tweet in tweets:
+        conn.execute(
+            """
+            INSERT INTO draft_tweets (id, draft_id, position, content, media_paths, external_id, posted_at, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            tweet.to_row(),
+        )
+    conn.commit()
+
+
 # =============================================================================
 # Draft Changes
 # =============================================================================
@@ -1016,6 +1036,70 @@ def get_draft_changes(conn: sqlite3.Connection, draft_id: str) -> list[DraftChan
         (draft_id,),
     ).fetchall()
     return [DraftChange.from_dict(dict(row)) for row in rows]
+
+
+def get_sister_drafts(
+    conn: sqlite3.Connection, draft_id: str, *, include_self: bool = False
+) -> list[Draft]:
+    """Get all drafts sharing the same decision_id (sister/cross-post drafts).
+
+    Args:
+        draft_id: The source draft ID
+        include_self: If True, include the source draft in results
+
+    Returns:
+        List of sister Draft objects
+    """
+    draft = get_draft(conn, draft_id)
+    if not draft:
+        return []
+
+    if include_self:
+        rows = conn.execute(
+            "SELECT * FROM drafts WHERE decision_id = ? ORDER BY platform",
+            (draft.decision_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM drafts WHERE decision_id = ? AND id != ? ORDER BY platform",
+            (draft.decision_id, draft_id),
+        ).fetchall()
+
+    return [Draft.from_dict(dict(row)) for row in rows]
+
+
+def sync_media_to_drafts(
+    conn: sqlite3.Connection,
+    source_draft_id: str,
+    target_draft_ids: list[str],
+) -> int:
+    """Copy media_type, media_spec, media_spec_used, and media_paths from source to targets.
+
+    Args:
+        source_draft_id: Draft to copy media from
+        target_draft_ids: Draft IDs to sync to
+
+    Returns:
+        Number of drafts updated
+    """
+    source = get_draft(conn, source_draft_id)
+    if not source:
+        return 0
+
+    count = 0
+    for target_id in target_draft_ids:
+        updated = update_draft(
+            conn,
+            target_id,
+            media_type=source.media_type or "",
+            media_spec=source.media_spec,
+            media_spec_used=source.media_spec_used,
+            media_paths=source.media_paths,
+        )
+        if updated:
+            count += 1
+
+    return count
 
 
 # =============================================================================
@@ -1428,8 +1512,8 @@ def insert_usage(conn: sqlite3.Connection, usage: UsageLog) -> str:
     """
     conn.execute(
         """
-        INSERT INTO usage_log (id, project_id, operation_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_cents, commit_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO usage_log (id, project_id, operation_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_cents, commit_hash, trigger_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         usage.to_row(),
     )
@@ -1483,6 +1567,57 @@ def get_recent_usage(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
         (limit,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_today_auto_evaluation_count(conn: sqlite3.Connection) -> int:
+    """Count auto-triggered evaluations today (UTC).
+
+    Used by rate limiter to enforce max_evaluations_per_day.
+    """
+    row = conn.execute(
+        """
+        SELECT COUNT(*) FROM usage_log
+        WHERE operation_type = 'evaluate'
+          AND trigger_source = 'auto'
+          AND created_at >= date('now')
+        """
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def get_last_auto_evaluation_time(conn: sqlite3.Connection) -> str | None:
+    """Get the most recent auto-triggered evaluation timestamp.
+
+    Used by rate limiter to enforce min_evaluation_gap_minutes.
+    Returns ISO timestamp string or None if no auto evaluations exist.
+    """
+    row = conn.execute(
+        """
+        SELECT MAX(created_at) FROM usage_log
+        WHERE operation_type = 'evaluate'
+          AND trigger_source = 'auto'
+        """
+    ).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def get_deferred_eval_decisions(conn: sqlite3.Connection, project_id: str) -> list[Decision]:
+    """Get unprocessed deferred_eval decisions for a project.
+
+    Returns decisions ordered by created_at ascending (oldest first)
+    for drain processing.
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM decisions
+        WHERE project_id = ?
+          AND decision = 'deferred_eval'
+          AND processed = 0
+        ORDER BY created_at ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [Decision.from_dict(dict(row)) for row in rows]
 
 
 # =============================================================================
@@ -1763,9 +1898,10 @@ def execute_queue_action(
     """Execute an evaluator queue action on a draft.
 
     supersede -> update status to 'superseded'
+    merge -> update status to 'superseded' (content merged into new draft)
     drop -> update status to 'cancelled' with reason
     """
-    if action_type == "supersede":
+    if action_type in ("supersede", "merge"):
         update_draft(conn, draft_id, status="superseded")
     elif action_type == "drop":
         update_draft(conn, draft_id, status="cancelled", last_error=reason)

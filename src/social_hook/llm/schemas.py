@@ -111,6 +111,8 @@ class QueueAction(BaseModel):
     action: Literal["supersede", "merge", "drop"]
     draft_id: str
     reason: str
+    merge_group: str | None = None
+    merge_instruction: str | None = None
 
 
 class LogEvaluationInput(BaseModel):
@@ -226,6 +228,14 @@ class LogEvaluationInput(BaseModel):
                                     "reason": {
                                         "type": "string",
                                         "description": "Why this action is being taken",
+                                    },
+                                    "merge_group": {
+                                        "type": "string",
+                                        "description": "Group label for merge actions. Drafts sharing the same merge_group are combined into one replacement draft. Required for merge actions.",
+                                    },
+                                    "merge_instruction": {
+                                        "type": "string",
+                                        "description": "Creative direction for the drafter on HOW to consolidate the drafts in this merge group. Describe the narrative strategy, which elements to keep, and what angle the replacement should take. Only needed on the first action in the group.",
                                     },
                                 },
                                 "required": ["action", "draft_id", "reason"],

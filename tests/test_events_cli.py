@@ -1,6 +1,7 @@
 """Tests for the `social-hook events` CLI command."""
 
 import json
+from unittest.mock import MagicMock
 
 from typer.testing import CliRunner
 
@@ -8,6 +9,19 @@ from social_hook.cli import app
 from social_hook.db import emit_data_event
 
 runner = CliRunner()
+
+
+def _patch_db(monkeypatch, temp_db):
+    """Monkeypatch DB access so the events command uses temp_db."""
+    monkeypatch.setattr("social_hook.filesystem.get_db_path", lambda: "fake")
+    monkeypatch.setattr("social_hook.db.connection.init_database", lambda p: temp_db)
+
+    # ResilientConnection creates its own connection to the db_path.
+    # Replace it with a mock that returns temp_db directly.
+    rc_mock = MagicMock()
+    rc_mock.conn = temp_db
+    rc_mock.check.return_value = temp_db
+    monkeypatch.setattr("social_hook.db.connection.ResilientConnection", lambda p: rc_mock)
 
 
 class TestEventsCli:
@@ -25,8 +39,7 @@ class TestEventsCli:
             extra={"content": "Hello world", "platform": "x"},
         )
 
-        monkeypatch.setattr("social_hook.filesystem.get_db_path", lambda: "fake")
-        monkeypatch.setattr("social_hook.db.connection.init_database", lambda p: temp_db)
+        _patch_db(monkeypatch, temp_db)
 
         result = runner.invoke(app, ["events", "--since", "0", "--no-follow"])
         assert result.exit_code == 0
@@ -43,8 +56,7 @@ class TestEventsCli:
             extra={"content": "Test content", "platform": "linkedin"},
         )
 
-        monkeypatch.setattr("social_hook.filesystem.get_db_path", lambda: "fake")
-        monkeypatch.setattr("social_hook.db.connection.init_database", lambda p: temp_db)
+        _patch_db(monkeypatch, temp_db)
 
         result = runner.invoke(app, ["--json", "events", "--since", "0", "--no-follow"])
         assert result.exit_code == 0
@@ -66,8 +78,7 @@ class TestEventsCli:
             extra={"content": "hi", "platform": "x"},
         )
 
-        monkeypatch.setattr("social_hook.filesystem.get_db_path", lambda: "fake")
-        monkeypatch.setattr("social_hook.db.connection.init_database", lambda p: temp_db)
+        _patch_db(monkeypatch, temp_db)
 
         result = runner.invoke(
             app, ["--json", "events", "--since", "0", "--no-follow", "--entity", "draft"]
@@ -82,8 +93,7 @@ class TestEventsCli:
         """--since -1 (default) starts from current position, showing no old events."""
         emit_data_event(temp_db, "pipeline", "evaluating", "old", "p-1")
 
-        monkeypatch.setattr("social_hook.filesystem.get_db_path", lambda: "fake")
-        monkeypatch.setattr("social_hook.db.connection.init_database", lambda p: temp_db)
+        _patch_db(monkeypatch, temp_db)
 
         result = runner.invoke(app, ["--json", "events", "--no-follow"])
         assert result.exit_code == 0

@@ -27,6 +27,7 @@ import { DecisionBadge } from "@/components/decision-badge";
 import { SimpleMarkdown } from "@/components/simple-markdown";
 import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
+import { RateLimitCard } from "@/components/rate-limit-card";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
 
@@ -157,7 +158,7 @@ export default function ProjectDetailPage() {
       setTotalDecisions(dec.total ?? 0);
         setPosts(po.posts);
         setUsage(us);
-        setPlatformCount(plat.count);
+        setPlatformCount(plat.real_count);
         loadMemories(detail.repo_path);
         fetchDecisionBranches(id).then(({ branches }) => setDecisionBranches(branches)).catch(() => {});
       } catch (e) {
@@ -412,7 +413,10 @@ export default function ProjectDetailPage() {
           </Link>
         </div>
 
-        {/* Journey Capture status */}
+        {/* Rate Limits + Journey Capture status */}
+        <div className="mt-4">
+          <RateLimitCard />
+        </div>
         <div className="mt-2">
           {project.journey_capture_enabled ? (
             <p className="text-xs text-green-600 dark:text-green-400">Journey Capture: On</p>

@@ -44,8 +44,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
     replacement_count = 0
 
     try:
-        from types import SimpleNamespace
-
+        from social_hook.compat import evaluation_from_decision
         from social_hook.config.project import load_project_config
         from social_hook.config.yaml import load_full_config
         from social_hook.drafting import draft_for_platforms
@@ -61,19 +60,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
                 continue
 
             # Build minimal eval compat from decision fields
-            eval_compat = SimpleNamespace(
-                decision=decision.decision,
-                reasoning=decision.reasoning,
-                angle=decision.angle,
-                episode_type=decision.episode_type,
-                post_category=decision.post_category,
-                arc_id=decision.arc_id,
-                new_arc_theme=None,
-                media_tool=decision.media_tool,
-                reference_posts=None,
-                commit_summary=decision.commit_summary,
-                include_project_docs=True,
-            )
+            eval_compat = evaluation_from_decision(decision)
 
             commit = CommitInfo(
                 hash=decision.commit_hash,

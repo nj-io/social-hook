@@ -17,6 +17,7 @@ from social_hook.db.operations import (
     get_audience_introduced,
     get_decision,
     get_deferred_drafts,
+    get_deferred_eval_decisions,
     get_distinct_branches,
     get_draft,
     get_draft_changes,
@@ -24,9 +25,9 @@ from social_hook.db.operations import (
     get_drafts_filtered,
     get_drafts_in_time_window,
     get_due_drafts,
-    get_file_summaries,
     get_held_decisions,
     get_intro_draft,
+    get_last_auto_evaluation_time,
     get_lifecycle,
     get_milestone_summaries,
     get_most_recent_posted_for_arc,
@@ -46,6 +47,7 @@ from social_hook.db.operations import (
     get_recent_usage,
     get_schema_version,
     get_summary_freshness,
+    get_today_auto_evaluation_count,
     get_usage_summary,
     increment_narrative_debt,
     insert_arc,
@@ -70,13 +72,10 @@ from social_hook.db.operations import (
     supersede_draft,
     update_arc,
     update_decision,
-    update_discovery_files,
     update_draft,
     update_draft_tweet,
     update_lifecycle,
     update_project_summary,
-    update_prompt_docs,
-    upsert_file_summaries,
 )
 from social_hook.db.schema import SCHEMA_VERSION, apply_migrations, create_schema
 
@@ -108,6 +107,7 @@ __all__ = [
     "get_recent_decisions_for_llm",
     "get_distinct_branches",
     "get_held_decisions",
+    "get_deferred_eval_decisions",
     "mark_decisions_processed",
     "update_decision",
     "insert_draft",
@@ -150,6 +150,8 @@ __all__ = [
     "insert_usage",
     "get_usage_summary",
     "get_recent_usage",
+    "get_today_auto_evaluation_count",
+    "get_last_auto_evaluation_time",
     # Project Summary
     "update_project_summary",
     "get_project_summary",
@@ -165,9 +167,4 @@ __all__ = [
     "emit_data_event",
     # Evaluator Rework
     "execute_queue_action",
-    # Discovery
-    "update_discovery_files",
-    "upsert_file_summaries",
-    "get_file_summaries",
-    "update_prompt_docs",
 ]

@@ -31,6 +31,7 @@ class DecisionType(Enum):
     HOLD = "hold"
     SKIP = "skip"
     IMPORTED = "imported"
+    DEFERRED_EVAL = "deferred_eval"
 
 
 class EpisodeType(Enum):
@@ -204,6 +205,7 @@ class Decision:
     processed_at: datetime | None = None
     batch_id: str | None = None
     branch: str | None = None
+    trigger_source: str = "commit"
     created_at: datetime | None = None
 
     def __post_init__(self):
@@ -253,6 +255,7 @@ class Decision:
             "processed_at": _to_iso(self.processed_at),
             "batch_id": self.batch_id,
             "branch": self.branch,
+            "trigger_source": self.trigger_source,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -302,11 +305,12 @@ class Decision:
             processed_at=_from_iso(d.get("processed_at")),
             batch_id=d.get("batch_id"),
             branch=d.get("branch"),
+            trigger_source=d.get("trigger_source", "commit"),
             created_at=_from_iso(d.get("created_at")),
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (18 columns)."""
+        """Return tuple for INSERT (19 columns)."""
         import json
 
         return (
@@ -328,6 +332,7 @@ class Decision:
             json.dumps(self.consolidate_with) if self.consolidate_with is not None else None,
             json.dumps(self.reference_posts) if self.reference_posts is not None else None,
             self.branch,
+            self.trigger_source,
         )
 
 
@@ -784,6 +789,7 @@ class UsageLog:
     cost_cents: float = 0.0
     project_id: str | None = None
     commit_hash: str | None = None
+    trigger_source: str = "auto"
     created_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -798,6 +804,7 @@ class UsageLog:
             "cache_creation_tokens": self.cache_creation_tokens,
             "cost_cents": self.cost_cents,
             "commit_hash": self.commit_hash,
+            "trigger_source": self.trigger_source,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -814,6 +821,7 @@ class UsageLog:
             cache_creation_tokens=d.get("cache_creation_tokens", 0),
             cost_cents=d.get("cost_cents", 0.0),
             commit_hash=d.get("commit_hash"),
+            trigger_source=d.get("trigger_source", "auto"),
             created_at=_from_iso(d.get("created_at")),
         )
 
@@ -830,6 +838,7 @@ class UsageLog:
             self.cache_creation_tokens,
             self.cost_cents,
             self.commit_hash,
+            self.trigger_source,
         )
 
 

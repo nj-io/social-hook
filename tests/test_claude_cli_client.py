@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -71,6 +72,27 @@ def _make_mock_popen(returncode=0, stdout=None, stderr=""):
     return mock_proc
 
 
+def _capture_system_prompt(mock_popen, mock_proc):
+    """Set up a Popen side_effect that captures the system prompt file content.
+
+    The temp file is deleted in complete()'s finally block, so we must read it
+    during the Popen call (while the file still exists).
+
+    Returns a dict with a 'content' key that will be populated after complete() runs.
+    """
+    captured = {"content": None, "path": None}
+
+    def side_effect(cmd, **kwargs):
+        idx = cmd.index("--system-prompt-file")
+        path = cmd[idx + 1]
+        captured["path"] = path
+        captured["content"] = Path(path).read_text(encoding="utf-8")
+        return mock_proc
+
+    mock_popen.side_effect = side_effect
+    return captured
+
+
 class TestExtractJson:
     def test_raw_json(self):
         result = _extract_json('{"decision": "post_worthy"}')
@@ -121,11 +143,11 @@ class TestClaudeCliClientInit:
 class TestCommandConstruction:
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_basic_command(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
+        mock_proc = _make_mock_popen()
+        _capture_system_prompt(mock_popen, mock_proc)
         client = ClaudeCliClient(model="sonnet")
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
         assert cmd[0] == "claude"
         assert cmd[1] == "-p"
@@ -139,23 +161,22 @@ class TestCommandConstruction:
         assert "--no-session-persistence" in cmd
         # Must NOT use --json-schema (causes multi-turn validation loops)
         assert "--json-schema" not in cmd
+        # Must use --system-prompt-file, not --system-prompt (avoids ARG_MAX)
+        assert "--system-prompt-file" in cmd
+        assert "--system-prompt" not in cmd
         # Verify prompt sent via stdin
-        mock_popen.return_value.communicate.assert_called_once()
-        call_kwargs = mock_popen.return_value.communicate.call_args
+        mock_proc.communicate.assert_called_once()
+        call_kwargs = mock_proc.communicate.call_args
         assert call_kwargs[1]["input"] == "Evaluate this commit"
-        # Must always include --system-prompt with JSON instructions
-        assert "--system-prompt" in cmd
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_system_prompt_includes_json_instructions(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
+        mock_proc = _make_mock_popen()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL], system="Be concise")
 
-        cmd = mock_popen.call_args[0][0]
-        assert "--system-prompt" in cmd
-        idx = cmd.index("--system-prompt")
-        system_prompt = cmd[idx + 1]
+        system_prompt = captured["content"]
         # Original system prompt is preserved
         assert "Be concise" in system_prompt
         # JSON instructions are appended
@@ -164,27 +185,23 @@ class TestCommandConstruction:
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_system_prompt_has_json_instructions_when_no_system(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
+        mock_proc = _make_mock_popen()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        cmd = mock_popen.call_args[0][0]
-        # --system-prompt is always present (for JSON instructions)
-        assert "--system-prompt" in cmd
-        idx = cmd.index("--system-prompt")
-        system_prompt = cmd[idx + 1]
+        system_prompt = captured["content"]
         assert "Required Output Format" in system_prompt
 
     @patch("social_hook.llm.claude_cli.subprocess.Popen")
     def test_schema_embedded_in_system_prompt(self, mock_popen):
-        mock_popen.return_value = _make_mock_popen()
+        mock_proc = _make_mock_popen()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
         client = ClaudeCliClient()
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
-        cmd = mock_popen.call_args[0][0]
-        idx = cmd.index("--system-prompt")
-        system_prompt = cmd[idx + 1]
-        # The full schema should be embedded in the system prompt
+        system_prompt = captured["content"]
+        # The full schema should be embedded in the system prompt file
         assert '"type": "object"' in system_prompt
         assert '"decision"' in system_prompt
         assert '"required"' in system_prompt
@@ -218,6 +235,70 @@ class TestCommandConstruction:
         client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
 
         assert mock_popen.call_args[1]["start_new_session"] is True
+
+
+class TestSystemPromptFileCleanup:
+    """Verify the temp file is cleaned up on all exit paths."""
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_file_cleaned_up_on_success(self, mock_popen):
+        mock_proc = _make_mock_popen()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
+        client = ClaudeCliClient()
+        client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert captured["path"] is not None
+        assert not Path(captured["path"]).exists(), "Temp file should be deleted after success"
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_file_cleaned_up_on_nonzero_exit(self, mock_popen):
+        mock_proc = _make_mock_popen(returncode=1, stderr="Some error")
+        captured = _capture_system_prompt(mock_popen, mock_proc)
+        client = ClaudeCliClient()
+
+        with pytest.raises(MalformedResponseError):
+            client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert captured["path"] is not None
+        assert not Path(captured["path"]).exists(), "Temp file should be deleted after error"
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_file_cleaned_up_on_timeout(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = subprocess.TimeoutExpired("claude", 300)
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = MagicMock()
+        captured = _capture_system_prompt(mock_popen, mock_proc)
+        client = ClaudeCliClient()
+
+        with pytest.raises(MalformedResponseError, match="timed out"):
+            client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert captured["path"] is not None
+        assert not Path(captured["path"]).exists(), "Temp file should be deleted after timeout"
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen", side_effect=FileNotFoundError)
+    def test_file_cleaned_up_when_cli_not_found(self, mock_popen):
+        """Temp file is created before Popen — must be cleaned up even if CLI is missing."""
+        client = ClaudeCliClient()
+
+        # Track the temp file via os.write mock
+        written_paths = []
+        original_mkstemp = __import__("tempfile").mkstemp
+
+        def tracking_mkstemp(**kwargs):
+            fd, path = original_mkstemp(**kwargs)
+            written_paths.append(path)
+            return fd, path
+
+        with (
+            patch("social_hook.llm.claude_cli.tempfile.mkstemp", side_effect=tracking_mkstemp),
+            pytest.raises(ConfigError, match="Claude CLI not found"),
+        ):
+            client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert len(written_paths) == 1
+        assert not Path(written_paths[0]).exists(), "Temp file should be deleted when CLI not found"
 
 
 class TestResponseParsing:

@@ -1,7 +1,6 @@
 """Shared notification helper for sending messages to all configured channels."""
 
 import logging
-from dataclasses import replace
 
 from social_hook.config.yaml import Config
 from social_hook.messaging.base import OutboundMessage
@@ -16,6 +15,7 @@ def broadcast_notification(
     media: list[str] | None = None,
     dry_run: bool = False,
     chat_context: tuple[str, str] | None = None,
+    exclude_chat: str | None = None,
 ) -> None:
     """Send a notification to all configured channels (Web + Telegram).
 
@@ -26,6 +26,8 @@ def broadcast_notification(
         dry_run: If True, skip all sends.
         chat_context: Optional (draft_id, project_id) tuple for setting
             chat draft context on Telegram.
+        exclude_chat: Optional chat_id to skip (avoids double-notifying the
+            originator). For web origins, starts with "web:".
     """
     if dry_run:
         return
@@ -33,8 +35,10 @@ def broadcast_notification(
     channels = getattr(config, "channels", None) or {}
 
     # --- Web dashboard (enabled by default via DEFAULT_CONFIG) ---
+    # Skip web broadcast if originator is a web tab (data events handle refresh)
     web_ch = channels.get("web")
-    if not web_ch or web_ch.enabled:
+    skip_web = exclude_chat is not None and exclude_chat.startswith("web:")
+    if (not web_ch or web_ch.enabled) and not skip_web:
         try:
             from social_hook.filesystem import get_db_path
             from social_hook.messaging.web import WebAdapter
@@ -67,16 +71,10 @@ def broadcast_notification(
 
             tg_adapter = TelegramAdapter(token=token)
 
-            # Strip buttons if daemon not running (no callback handler)
-            tg_msg = message
-            if message.buttons:
-                from social_hook.bot.process import is_running
-
-                if not is_running():
-                    tg_msg = replace(message, buttons=[])
-
             for chat_id in chat_ids:
-                result = tg_adapter.send_message(chat_id, tg_msg)
+                if chat_id == exclude_chat:
+                    continue
+                result = tg_adapter.send_message(chat_id, message)
                 if not result.success:
                     logger.warning(f"Telegram notification to {chat_id} failed: {result.error}")
 
@@ -85,6 +83,8 @@ def broadcast_notification(
                 if caps.supports_media:
                     for media_path in media:
                         for chat_id in chat_ids:
+                            if chat_id == exclude_chat:
+                                continue
                             tg_adapter.send_media(chat_id, media_path, caption="Media attachment")
 
             if chat_context:
@@ -92,6 +92,8 @@ def broadcast_notification(
 
                 draft_id, project_id = chat_context
                 for chat_id in chat_ids:
+                    if chat_id == exclude_chat:
+                        continue
                     set_chat_draft_context(chat_id, draft_id, project_id)
         except Exception as e:
             logger.warning(f"Telegram notification failed: {e}")
@@ -134,7 +136,7 @@ def notify_draft_review(
             tweet_count=tweet_count,
             media_info=media_info,
         )
-        buttons = get_review_buttons_normalized(draft.id)
+        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
         msg = OutboundMessage(text=msg_text, buttons=buttons)
         broadcast_notification(
             config,
@@ -142,6 +144,65 @@ def notify_draft_review(
             media=draft.media_paths or None,
             chat_context=(draft.id, project_id),
         )
+
+
+def resend_draft_notification(
+    config: Config,
+    draft_id: str,
+) -> None:
+    """Re-broadcast an existing draft's review notification to all channels.
+
+    Looks up the draft and its decision from the DB, formats the review
+    message, and sends it via broadcast_notification — same as the original
+    notification but without needing a DraftResult object.
+    """
+    from social_hook.bot.notifications import format_draft_review, get_review_buttons_normalized
+    from social_hook.db import operations as ops
+    from social_hook.db.connection import init_database
+    from social_hook.filesystem import get_db_path
+
+    conn = init_database(get_db_path())
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise ValueError(f"Draft {draft_id} not found")
+
+        project = ops.get_project(conn, draft.project_id)
+        project_name = project.name if project else "Unknown"
+
+        decision = ops.get_decision(conn, draft.decision_id)
+        commit_hash = decision.commit_hash[:8] if decision else "unknown"
+        commit_message = decision.commit_message or "" if decision else ""
+
+        media_info = (
+            f"{draft.media_type} ({len(draft.media_paths)} file)" if draft.media_paths else None
+        )
+
+        msg_text = format_draft_review(
+            project_name=project_name,
+            commit_hash=commit_hash,
+            commit_message=commit_message,
+            platform=draft.platform,
+            content=draft.content,
+            suggested_time=draft.suggested_time.strftime("%Y-%m-%d %H:%M UTC")
+            if draft.suggested_time
+            else None,
+            draft_id=draft.id,
+            media_info=media_info,
+            angle=decision.angle if decision else None,
+            episode_type=decision.episode_type if decision else None,
+            post_category=decision.post_category if decision else None,
+        )
+        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
+        msg = OutboundMessage(text=msg_text, buttons=buttons)
+        broadcast_notification(
+            config,
+            msg,
+            media=draft.media_paths or None,
+            chat_context=(draft.id, draft.project_id),
+        )
+    finally:
+        conn.close()
 
 
 def send_notification(

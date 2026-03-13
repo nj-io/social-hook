@@ -18,6 +18,8 @@ class ContextConfig:
     recent_decisions: int = 30
     recent_posts: int = 15
     max_tokens: int = 150000
+    include_readme: bool = True
+    include_claude_md: bool = True
     max_doc_tokens: int = 10000
     max_discovery_tokens: int = 60000
     max_file_size: int = 256000
@@ -195,6 +197,8 @@ def _parse_context_config(data: dict) -> ContextConfig:
         recent_decisions=data.get("recent_decisions", 30),
         recent_posts=data.get("recent_posts", 15),
         max_tokens=data.get("max_tokens", 150000),
+        include_readme=data.get("include_readme", True),
+        include_claude_md=data.get("include_claude_md", True),
         max_doc_tokens=data.get("max_doc_tokens", 10000),
         max_discovery_tokens=data.get("max_discovery_tokens", 60000),
         max_file_size=data.get("max_file_size", 256000),

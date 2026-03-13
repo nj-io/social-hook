@@ -144,6 +144,23 @@ class RaySoAdapter(MediaAdapter):
 
         return result
 
+    @classmethod
+    def spec_schema(cls) -> dict:
+        """Return spec schema for code screenshots."""
+        return {
+            "required": {"code": "Code snippet string"},
+            "optional": {
+                "language": "auto|python|javascript|...",
+                "theme": "candy|breeze|midnight|...",
+                "padding": "16|32|64|128",
+                "title": "Filename for title bar",
+            },
+        }
+
+    def preview_text(self, spec: dict) -> str:
+        """Return human-readable preview of the code spec."""
+        return spec.get("code") or "No code specified"
+
     def supports(self, media_type: str) -> bool:
         """Check if adapter handles this media type.
 

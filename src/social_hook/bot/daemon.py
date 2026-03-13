@@ -1,6 +1,7 @@
 """Multi-channel bot daemon."""
 
 import logging
+import os
 import signal
 import time
 from typing import Any
@@ -23,6 +24,13 @@ class BotDaemon:
         self.stop()
 
     def run(self, pid_file=None) -> None:
+        from social_hook.filesystem import get_db_path
+
+        logger.info(
+            "Bot daemon starting — db=%s, pythonpath=%s",
+            get_db_path(),
+            os.environ.get("PYTHONPATH", "unset"),
+        )
         self._running = True
         if pid_file:
             write_pid(pid_file)
@@ -81,6 +89,27 @@ def _create_telegram_runner(
         handle_callback(event, adapter, config)
 
     def on_message(message: dict) -> None:
+        # Handle photo uploads for media_upload pending replies
+        photo = message.get("photo")
+        if photo and not message.get("text"):
+            from social_hook.bot.buttons import get_pending_reply
+            from social_hook.filesystem import get_base_path
+
+            chat_id = str(message.get("chat", {}).get("id", ""))
+            pending = get_pending_reply(chat_id)
+            if pending and pending.type == "media_upload":
+                # Download the largest photo variant
+                file_id = photo[-1]["file_id"]
+                dest_dir = str(get_base_path() / "media-cache" / "uploads" / pending.draft_id)
+                local_path = adapter.download_file(file_id, dest_dir)
+                if local_path:
+                    # Inject the file path as the message text
+                    message = dict(message)
+                    message["text"] = local_path
+                else:
+                    message = dict(message)
+                    message["text"] = ""
+
         msg = TelegramAdapter.parse_message(message)
         handle_message(msg, adapter, config)
 

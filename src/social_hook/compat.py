@@ -3,6 +3,32 @@
 from types import SimpleNamespace
 
 
+def evaluation_from_decision(decision, override_decision: str | None = None) -> SimpleNamespace:
+    """Build a flat evaluation namespace from a DB decision row.
+
+    Used by manual draft, create-draft endpoint, consolidation, intro lifecycle,
+    and promote — anywhere we re-enter the drafting pipeline from an existing decision.
+
+    Args:
+        decision: DB decision row (or any object with the expected attributes).
+        override_decision: Override the decision field. Defaults to None, which
+            preserves the original decision.decision value.
+    """
+    return SimpleNamespace(
+        decision=override_decision if override_decision is not None else decision.decision,
+        reasoning=decision.reasoning,
+        angle=decision.angle,
+        episode_type=decision.episode_type,
+        post_category=decision.post_category,
+        arc_id=getattr(decision, "arc_id", None),
+        new_arc_theme=None,
+        media_tool=getattr(decision, "media_tool", None),
+        reference_posts=getattr(decision, "reference_posts", None),
+        include_project_docs=True,
+        commit_summary=getattr(decision, "commit_summary", None),
+    )
+
+
 def make_eval_compat(
     evaluation, decision_str: str, target_name: str = "default"
 ) -> SimpleNamespace:

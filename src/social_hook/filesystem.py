@@ -238,3 +238,74 @@ def get_narratives_path() -> Path:
         Path to ~/.social-hook/narratives/
     """
     return get_base_path() / "narratives"
+
+
+def cleanup_orphaned_media(conn, dry_run: bool = False) -> list[str]:
+    """Remove media-cache directories not referenced by any draft.
+
+    Scans media-cache/ for subdirectories and media-cache/uploads/ for
+    per-draft upload directories.  Compares against all media_paths stored
+    in the drafts table and deletes unreferenced directories.
+
+    Args:
+        conn: SQLite connection (read-only usage).
+        dry_run: If True, report but don't delete.
+
+    Returns:
+        List of directory paths removed (or that would be removed).
+    """
+    import json
+    import shutil
+
+    media_root = get_base_path() / "media-cache"
+    if not media_root.exists():
+        return []
+
+    # Collect all referenced paths from drafts
+    rows = conn.execute("SELECT media_paths FROM drafts WHERE media_paths IS NOT NULL").fetchall()
+    referenced: set[str] = set()
+    for row in rows:
+        raw = row[0] if row[0] else "[]"
+        try:
+            paths = json.loads(raw) if isinstance(raw, str) else raw
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for p in paths:
+            # Normalize to absolute and add all parent dirs under media-cache
+            pp = Path(p).resolve()
+            referenced.add(str(pp))
+            # Also mark the parent directory as referenced
+            if pp.parent != media_root.resolve():
+                referenced.add(str(pp.parent))
+
+    removed: list[str] = []
+
+    # Scan top-level directories in media-cache (excluding 'uploads')
+    for child in sorted(media_root.iterdir()):
+        if not child.is_dir():
+            continue
+        if child.name == "uploads":
+            # Scan uploads subdirectories separately
+            for upload_dir in sorted(child.iterdir()):
+                if not upload_dir.is_dir():
+                    continue
+                resolved = str(upload_dir.resolve())
+                if resolved not in referenced and not _dir_has_referenced_file(
+                    upload_dir, referenced
+                ):
+                    removed.append(str(upload_dir))
+                    if not dry_run:
+                        shutil.rmtree(upload_dir)
+        else:
+            resolved = str(child.resolve())
+            if resolved not in referenced and not _dir_has_referenced_file(child, referenced):
+                removed.append(str(child))
+                if not dry_run:
+                    shutil.rmtree(child)
+
+    return removed
+
+
+def _dir_has_referenced_file(directory: Path, referenced: set[str]) -> bool:
+    """Check if any file under directory is in the referenced set."""
+    return any(f.is_file() and str(f.resolve()) in referenced for f in directory.rglob("*"))

@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 20260313060258
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
     commit_message TEXT,
-    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported')),
+    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
     episode_type  TEXT CHECK (episode_type IN ('decision', 'before_after', 'demo_proof', 'milestone', 'postmortem', 'launch', 'synthesis')),
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     consolidate_with TEXT,
     reference_posts TEXT DEFAULT NULL,
     branch        TEXT DEFAULT NULL,
+    trigger_source TEXT DEFAULT 'commit',
     processed     INTEGER NOT NULL DEFAULT 0,
     processed_at  TEXT,
     batch_id      TEXT,
@@ -67,6 +68,8 @@ CREATE INDEX IF NOT EXISTS idx_decisions_unprocessed ON decisions(project_id, cr
     WHERE decision = 'hold' AND processed = 0;
 CREATE INDEX IF NOT EXISTS idx_decisions_branch ON decisions(project_id, branch)
     WHERE branch IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_decisions_deferred ON decisions(project_id, created_at)
+    WHERE decision = 'deferred_eval' AND processed = 0;
 
 -- Drafts
 CREATE TABLE IF NOT EXISTS drafts (
@@ -188,6 +191,7 @@ CREATE TABLE IF NOT EXISTS usage_log (
     cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
     cost_cents            REAL NOT NULL DEFAULT 0.0,
     commit_hash           TEXT,
+    trigger_source        TEXT DEFAULT 'auto',
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -316,6 +320,60 @@ def _apply_pragma_migration(conn: sqlite3.Connection, sql: str) -> None:
         conn.execute(pragma)
 
 
+# Mapping from old sequential versions to their timestamp equivalents.
+_SEQ_TO_TIMESTAMP: dict[int, tuple[int, str]] = {
+    3: (20260209131940, "20260209131940_add_paused"),
+    4: (20260210092556, "20260210092556_add_usage_commit_hash"),
+    5: (20260220040116, "20260220040116_add_media_fields"),
+    6: (20260221002005, "20260221002005_add_web_events"),
+    7: (20260221030802, "20260221030802_add_commit_message"),
+    8: (20260225034301, "20260225034301_add_chat_messages"),
+    9: (20260226010320, "20260226010320_add_consolidation_fields"),
+    10: (20260226135811, "20260226135811_add_web_events_session_id"),
+    11: (20260226135812, "20260226135812_add_discovery_files"),
+    12: (20260227023135, "20260227023135_add_trigger_branch"),
+    13: (20260305052203, "20260305052203_evaluator_rework"),
+    14: (20260305102638, "20260305102638_add_media_spec_used"),
+    15: (20260306065100, "20260306065100_add_background_tasks"),
+    16: (20260308160115, "20260308160115_add_deferred_status"),
+    17: (20260310125911, "20260310125911_add_decision_reference_posts"),
+    18: (20260312132055, "20260312132055_add_file_summaries"),
+    19: (20260313060258, "20260313060258_rate_limits_and_merge"),
+}
+
+# 016_add_decision_branch_and_imported shares seq 16 with deferred_status.
+# Both were applied when seq 16 was current, so both need timestamp entries.
+_SEQ_16_EXTRA = (20260308160114, "20260308160114_add_decision_branch_and_imported")
+
+
+def _bridge_to_timestamp_versions(conn: sqlite3.Connection, current_seq: int) -> None:
+    """One-time bridge from sequential (3-19) to timestamp version numbers."""
+    for seq_ver in range(3, current_seq + 1):
+        if seq_ver not in _SEQ_TO_TIMESTAMP:
+            continue
+        ts_ver, desc = _SEQ_TO_TIMESTAMP[seq_ver]
+        exists = conn.execute(
+            "SELECT 1 FROM schema_version WHERE version = ?", (ts_ver,)
+        ).fetchone()
+        if not exists:
+            conn.execute(
+                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                (ts_ver, desc),
+            )
+        # Insert the extra 016 migration too
+        if seq_ver == 16:
+            ts_extra, desc_extra = _SEQ_16_EXTRA
+            exists_extra = conn.execute(
+                "SELECT 1 FROM schema_version WHERE version = ?", (ts_extra,)
+            ).fetchone()
+            if not exists_extra:
+                conn.execute(
+                    "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                    (ts_extra, desc_extra),
+                )
+    conn.commit()
+
+
 def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path) -> None:
     """Apply pending migrations from the migrations directory.
 
@@ -337,6 +395,13 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path) -> No
 
     # Get current version
     current = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
+
+    # Bridge: migrate from sequential (3-19) to timestamp versioning.
+    # If max version is sequential (<1000), map old versions to their
+    # timestamp equivalents so renamed migrations aren't re-applied.
+    if 0 < current < 1000:
+        _bridge_to_timestamp_versions(conn, current)
+        current = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
 
     # Apply pending migrations
     for migration_file in sorted(migrations_dir.glob("*.sql")):

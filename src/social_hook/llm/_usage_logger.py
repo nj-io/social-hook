@@ -25,6 +25,10 @@ def log_usage(
     if cost_cents == 0.0:
         cost_cents = getattr(usage, "cost_cents", 0.0)
 
+    # Map trigger_source for usage tracking
+    trigger_source_raw = getattr(db, "trigger_source", "auto")
+    usage_trigger = "manual" if trigger_source_raw == "manual" else "auto"
+
     usage_log = UsageLog(
         id=generate_id("usage"),
         project_id=project_id,
@@ -36,6 +40,7 @@ def log_usage(
         cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
         cost_cents=cost_cents,
         commit_hash=commit_hash,
+        trigger_source=usage_trigger,
     )
     if hasattr(db, "insert_usage"):
         db.insert_usage(usage_log)

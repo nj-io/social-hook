@@ -251,11 +251,11 @@ def assemble_evaluator_prompt(
             sections.append("### Pending Drafts")
             for d in to_show:
                 intro = " [INTRO]" if getattr(d, "is_intro", False) else ""
-                sections.append(f"- [{d.platform}:{d.status}]{intro}: {d.content}")
+                sections.append(f"- [id={d.id}][{d.platform}:{d.status}]{intro}: {d.content}")
             if overflow > 0:
                 sections.append(f"  (+{overflow} older drafts)")
         else:
-            summaries = ", ".join(f"{d.platform}:{d.status}" for d in to_show)
+            summaries = ", ".join(f"{d.id}:{d.platform}:{d.status}" for d in to_show)
             sections.append(f"- Pending drafts: [{summaries}]")
 
     if project_context.held_decisions:
@@ -302,6 +302,11 @@ def assemble_evaluator_prompt(
             )
             deferred_part = f", Deferred: {pss.deferred_drafts}" if pss.deferred_drafts else ""
             sections.append(f"- Pending drafts: {pss.pending_drafts}{deferred_part}")
+            if pss.pending_drafts > pss.slots_remaining_today:
+                sections.append(
+                    f"- NOTE: {pss.pending_drafts} pending drafts for ~{pss.slots_remaining_today} "
+                    f"slot(s) today. Review pending drafts for overlap — merge redundant ones."
+                )
 
     # Memories
     if project_context.memories:
@@ -350,9 +355,9 @@ def assemble_evaluator_prompt(
         changed_exact = set(commit.files_changed)
 
         relevant = [
-            fs for fs in project_context.file_summaries
-            if fs["path"] in changed_exact
-            or any(fs["path"].startswith(d) for d in changed_dirs)
+            fs
+            for fs in project_context.file_summaries
+            if fs["path"] in changed_exact or any(fs["path"].startswith(d) for d in changed_dirs)
         ]
         if relevant:
             sections.append("\n---\n## Relevant File Context")
@@ -373,6 +378,7 @@ def assemble_evaluator_prompt(
     # Project documentation — LLM-selected during discovery
     if project_context.project.repo_path and project_context.project.prompt_docs:
         import json as _json
+
         try:
             doc_paths = _json.loads(project_context.project.prompt_docs)
         except (ValueError, TypeError):
@@ -582,6 +588,7 @@ def assemble_drafter_prompt(
         # Fallback to prompt_docs when no discovery files loaded
         if not discovery_files_loaded and project_context.project.prompt_docs:
             import json as _json
+
             try:
                 doc_paths = _json.loads(project_context.project.prompt_docs)
             except (ValueError, TypeError):
@@ -931,7 +938,6 @@ def assemble_evaluator_context(
     recent_decisions = db.get_recent_decisions_for_llm(project_id, limit=config.recent_decisions)
     recent_posts = db.get_recent_posts_for_context(project_id, limit=config.recent_posts)
     project_summary = db.get_project_summary(project_id)
-    file_summaries = db.get_file_summaries(project_id)
     milestone_summaries = db.get_milestone_summaries(project_id)
 
     # Parse memories from project config
@@ -975,7 +981,6 @@ def assemble_evaluator_context(
         session_narratives=session_narratives,
         held_decisions=held_decisions,
         arc_posts=arc_posts,
-        file_summaries=file_summaries,
     )
 
 
@@ -1029,3 +1034,70 @@ def compact_by_truncation(context: str, max_tokens: int) -> str:
         history_lines.append("[...history truncated for context budget]")
 
     return "\n".join(pre_history + history_lines + post_history)
+
+
+# =============================================================================
+# Media Spec Generation
+# =============================================================================
+
+
+def assemble_spec_generation_prompt(
+    tool_name: str,
+    schema: dict,
+    draft_content: str,
+) -> str:
+    """Build a prompt asking the LLM to generate a media spec for a given tool.
+
+    Args:
+        tool_name: Media tool name (e.g. "mermaid", "ray_so")
+        schema: Tool spec schema from registry (has "required" and "optional" keys)
+        draft_content: The draft's text content to inspire the spec
+
+    Returns:
+        Complete prompt string for the LLM
+    """
+    # Build a natural-language field list instead of dumping raw schema JSON.
+    # The tool's input_schema already provides the structural schema, so the prompt
+    # adds semantic context rather than duplicating the schema in a different format.
+    fields = []
+    for field, desc in schema.get("required", {}).items():
+        fields.append(f"- {field} (required): {desc}")
+    for field, desc in schema.get("optional", {}).items():
+        fields.append(f"- {field} (optional): {desc}")
+    fields_text = "\n".join(fields)
+
+    return (
+        f"You are a media spec generator. Given a social media post and a media tool, "
+        f"produce a spec that would create a compelling visual for the post.\n\n"
+        f"## Tool: {tool_name}\n\n"
+        f"## Available Fields\n{fields_text}\n\n"
+        f"## Post Content\n{draft_content}\n\n"
+        f"## Instructions\n"
+        f"- Fill in all required fields with values appropriate for the post content.\n"
+        f"- Optionally include optional fields if they improve the result.\n"
+        f"- Be creative — the spec should produce a compelling visual that complements the post.\n"
+    )
+
+
+def build_spec_generation_tool(tool_name: str, schema: dict) -> dict:
+    """Convert a media spec_schema() dict to a tool definition for LLM calls.
+
+    The spec_schema format is {"required": {"field": "desc"}, "optional": {"field": "desc"}}.
+    This converts it to a standard tool definition with JSON Schema input_schema.
+    """
+    properties = {}
+    required = []
+    for field, desc in schema.get("required", {}).items():
+        properties[field] = {"type": "string", "description": desc}
+        required.append(field)
+    for field, desc in schema.get("optional", {}).items():
+        properties[field] = {"type": "string", "description": desc}
+    return {
+        "name": "generate_media_spec",
+        "description": f"Generate a {tool_name} media spec for the given social media post",
+        "input_schema": {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+        },
+    }

@@ -673,15 +673,11 @@ class TestFileSummariesDbOperations:
         temp_db.commit()
 
         # First upsert
-        upsert_file_summaries(
-            temp_db, "proj_1", [{"path": "old.py", "summary": "Old file"}]
-        )
+        upsert_file_summaries(temp_db, "proj_1", [{"path": "old.py", "summary": "Old file"}])
         assert len(get_file_summaries(temp_db, "proj_1")) == 1
 
         # Second upsert with different files
-        upsert_file_summaries(
-            temp_db, "proj_1", [{"path": "new.py", "summary": "New file"}]
-        )
+        upsert_file_summaries(temp_db, "proj_1", [{"path": "new.py", "summary": "New file"}])
         result = get_file_summaries(temp_db, "proj_1")
         assert len(result) == 1
         assert result[0]["path"] == "new.py"
@@ -713,12 +709,8 @@ class TestFileSummariesDbOperations:
         )
         temp_db.commit()
 
-        upsert_file_summaries(
-            temp_db, "proj_1", [{"path": "a.py", "summary": "File A"}]
-        )
-        upsert_file_summaries(
-            temp_db, "proj_2", [{"path": "b.py", "summary": "File B"}]
-        )
+        upsert_file_summaries(temp_db, "proj_1", [{"path": "a.py", "summary": "File A"}])
+        upsert_file_summaries(temp_db, "proj_2", [{"path": "b.py", "summary": "File B"}])
 
         result_1 = get_file_summaries(temp_db, "proj_1")
         result_2 = get_file_summaries(temp_db, "proj_2")
