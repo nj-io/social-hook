@@ -262,7 +262,7 @@ def post(
 ):
     """Manually post an approved draft."""
     from social_hook.config import load_full_config
-    from social_hook.db import get_draft, init_database, update_draft
+    from social_hook.db import get_draft, init_database
     from social_hook.db import operations as ops
     from social_hook.filesystem import get_db_path
 
