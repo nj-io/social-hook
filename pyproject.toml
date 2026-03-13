@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "social-hook"
-version = "0.7.0"
+version = "0.8.0"
 description = "Automated social media content from development activity"
 requires-python = ">=3.10"
 license = "MIT"
