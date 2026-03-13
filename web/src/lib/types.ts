@@ -69,6 +69,7 @@ export interface Config {
   journey_capture: JourneyCaptureConfig;
   consolidation?: ConsolidationConfig;
   channels?: Record<string, ChannelConfig>;
+  rate_limits?: RateLimitsConfig;
 }
 
 export interface DraftTweet {
@@ -237,6 +238,21 @@ export interface ChannelStatus {
 export interface ChannelsStatusResponse {
   channels: Record<string, ChannelStatus>;
   daemon_running: boolean;
+}
+
+export interface RateLimitStatus {
+  evaluations_today: number;
+  max_evaluations_per_day: number;
+  manual_evaluations_today: number;
+  next_available_in_seconds: number;
+  queued_triggers: number;
+  cost_today_cents: number;
+}
+
+export interface RateLimitsConfig {
+  max_evaluations_per_day: number;
+  min_evaluation_gap_minutes: number;
+  batch_throttled: boolean;
 }
 
 export interface DataChangeEvent {

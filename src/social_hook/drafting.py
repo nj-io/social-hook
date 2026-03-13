@@ -67,6 +67,35 @@ def draft_for_platforms(
         List of DraftResult for each successfully created draft.
         Empty list if no platforms resolve or all are filtered.
     """
+    resolved = _resolve_and_filter_platforms(
+        config, evaluation, target_platform_names, skip_content_filter, verbose
+    )
+    if not resolved:
+        return []
+    return _draft_for_resolved_platforms(
+        resolved,
+        config,
+        conn,
+        db,
+        project,
+        decision_id=decision_id,
+        evaluation=evaluation,
+        context=context,
+        commit=commit,
+        project_config=project_config,
+        dry_run=dry_run,
+        verbose=verbose,
+    )
+
+
+def _resolve_and_filter_platforms(
+    config, evaluation, target_platform_names, skip_content_filter, verbose
+):
+    """Resolve enabled platforms and apply content filter.
+
+    Returns:
+        Dict of platform_name -> ResolvedPlatformConfig, or empty dict if none pass.
+    """
     # 1. Resolve enabled platforms
     resolved_platforms = {}
     for pname, pcfg in config.platforms.items():
@@ -110,35 +139,57 @@ def draft_for_platforms(
         logger.info("No matching platforms. Skipping draft creation.")
         if verbose:
             print("No matching platforms. Skipping draft creation.")
-        return []
+        return {}
 
     # 2. Apply content filter per platform (skipped for manual overrides)
     ep_type = getattr(evaluation, "episode_type", None)
     if ep_type is not None and hasattr(ep_type, "value"):
         ep_type = ep_type.value
     if skip_content_filter:
-        target_platforms = dict(resolved_platforms)
-    else:
-        target_platforms = {}
-        for pname, rpcfg in resolved_platforms.items():
-            if passes_content_filter(rpcfg.filter, ep_type):
-                target_platforms[pname] = rpcfg
-            else:
-                logger.info(
-                    "Platform %s: filtered (filter=%s, episode_type=%s)",
-                    pname,
-                    rpcfg.filter,
-                    ep_type,
-                )
-                if verbose:
-                    print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
+        return dict(resolved_platforms)
 
-        if not target_platforms:
-            logger.info("All platforms filtered out (episode_type=%s). No drafts created.", ep_type)
+    target_platforms = {}
+    for pname, rpcfg in resolved_platforms.items():
+        if passes_content_filter(rpcfg.filter, ep_type):
+            target_platforms[pname] = rpcfg
+        else:
+            logger.info(
+                "Platform %s: filtered (filter=%s, episode_type=%s)",
+                pname,
+                rpcfg.filter,
+                ep_type,
+            )
             if verbose:
-                print("All platforms filtered this commit.")
-            return []
+                print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
 
+    if not target_platforms:
+        logger.info("All platforms filtered out (episode_type=%s). No drafts created.", ep_type)
+        if verbose:
+            print("All platforms filtered this commit.")
+        return {}
+
+    return target_platforms
+
+
+def _draft_for_resolved_platforms(
+    platforms,
+    config,
+    conn: sqlite3.Connection,
+    db,
+    project,
+    decision_id: str,
+    evaluation,
+    context,
+    commit,
+    project_config=None,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> list[DraftResult]:
+    """Core drafting loop: create drafter client, draft per platform, schedule, insert.
+
+    Called directly by merge execution (bypasses resolution + filter).
+    Called by draft_for_platforms() after resolution + filtering.
+    """
     # 3. Create drafter client
     from social_hook.errors import ConfigError
     from social_hook.llm.factory import create_client
@@ -192,7 +243,7 @@ def draft_for_platforms(
 
     # 5. Draft for each target platform
     results = []
-    for pname, rpcfg in target_platforms.items():
+    for pname, rpcfg in platforms.items():
         try:
             draft_result = drafter.create_draft(
                 evaluation,

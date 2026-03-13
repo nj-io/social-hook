@@ -7,6 +7,50 @@ from social_hook.db.schema import apply_migrations, create_schema
 from social_hook.errors import DatabaseError
 
 
+class ResilientConnection:
+    """SQLite connection wrapper that survives DB file replacement.
+
+    When a snapshot restore or manual copy replaces the DB file on disk,
+    existing connections can become corrupt (stale WAL state). This wrapper
+    detects the replacement via mtime change and reconnects transparently.
+
+    Usage:
+        rc = ResilientConnection(db_path)
+        # In a polling loop:
+        conn = rc.check()  # reconnects if needed, returns current conn
+        conn.execute(...)
+        # When done:
+        rc.close()
+    """
+
+    def __init__(self, db_path: str | Path) -> None:
+        self.db_path = Path(db_path)
+        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn.execute("PRAGMA busy_timeout = 5000")
+        self.conn.row_factory = sqlite3.Row
+        self._mtime = self._get_mtime()
+
+    def _get_mtime(self) -> float:
+        try:
+            return self.db_path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def check(self) -> sqlite3.Connection:
+        """Return the current connection, reconnecting if the DB file changed."""
+        current_mtime = self._get_mtime()
+        if current_mtime != self._mtime:
+            self.conn.close()
+            self.conn = sqlite3.connect(str(self.db_path))
+            self.conn.execute("PRAGMA busy_timeout = 5000")
+            self.conn.row_factory = sqlite3.Row
+            self._mtime = current_mtime
+        return self.conn
+
+    def close(self) -> None:
+        self.conn.close()
+
+
 def get_connection(db_path: str | Path) -> sqlite3.Connection:
     """Get a database connection with proper settings.
 

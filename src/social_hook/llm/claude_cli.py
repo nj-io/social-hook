@@ -1,5 +1,6 @@
 """Claude CLI provider client using claude -p subprocess."""
 
+import contextlib
 import json
 import os
 import pwd
@@ -51,6 +52,37 @@ def _extract_json(text: str) -> dict:
     raise MalformedResponseError(f"Could not extract JSON from CLI output: {text[:200]}")
 
 
+def _extract_assistant_text(raw: list | dict) -> str | None:
+    """Extract text from assistant message content blocks.
+
+    The CLI's --output-format json returns an array of event objects.
+    Assistant messages contain the full model output in content blocks.
+    We use this instead of the envelope's "result" field because the
+    result field is subject to stdout truncation (Claude Code CLI bug
+    #2904: truncates large JSON lines at fixed character boundaries).
+
+    Returns concatenated text from the last assistant message's text
+    blocks, or None if no text content is found.
+    """
+    if not isinstance(raw, list):
+        return None
+
+    # Walk backwards to find the last assistant message with text content
+    for el in reversed(raw):
+        if not isinstance(el, dict) or el.get("type") != "assistant":
+            continue
+        content = el.get("message", {}).get("content", [])
+        texts = [
+            block["text"]
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
+        ]
+        if texts:
+            return "\n".join(texts)
+
+    return None
+
+
 class ClaudeCliClient(LLMClient):
     """LLM client that uses the Claude Code CLI (claude -p) for completions."""
 
@@ -96,24 +128,38 @@ class ClaudeCliClient(LLMClient):
         )
         effective_system = (system or "") + json_instruction
 
-        # 4. Build command — no --json-schema (avoids multi-turn loop)
+        # 4. Write system prompt to a temp file and pass via --system-prompt-file.
+        #    This avoids the OS ARG_MAX limit (~128-256KB) which large evaluator
+        #    prompts can exceed (commit diffs + project context + schema).
         #    Prompt is piped via stdin (not as a -p argument) to avoid
         #    the CLI's arg parser misinterpreting content that starts
         #    with dashes (e.g. "--- README.md ---") as flags.
+        #    Uses stream-json (NDJSON) instead of json to avoid CLI bug #2904
+        #    which truncates long string values in the JSON envelope.
+        #    With stream-json, text arrives in small content_block_delta
+        #    events that won't hit the truncation limit.
+        prompt_fd, prompt_path = tempfile.mkstemp(suffix=".md", prefix="claude_system_")
+        try:
+            os.write(prompt_fd, effective_system.encode("utf-8"))
+            os.close(prompt_fd)
+        except Exception:
+            os.close(prompt_fd)
+            os.unlink(prompt_path)
+            raise
         cmd = [
             "claude",
             "-p",
             "--model",
             self.model,
             "--output-format",
-            "json",
+            "stream-json",
             "--tools",
             "",
             "--no-session-persistence",
             "--setting-sources",
             "local",
-            "--system-prompt",
-            effective_system,
+            "--system-prompt-file",
+            prompt_path,
         ]
 
         # 5. Run subprocess with clean env for CLI auth
@@ -137,32 +183,37 @@ class ClaudeCliClient(LLMClient):
             )
 
         try:
-            # Run in a new session so CLI doesn't share the terminal
-            # (prevents notification sounds) and from temp dir so it
-            # doesn't scan the project codebase.
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env,
-                cwd=tempfile.gettempdir(),
-                start_new_session=True,
-            )
             try:
-                stdout, stderr = proc.communicate(input=user_msg, timeout=300)
-            except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
-                proc.kill()
-                proc.wait()
-                if isinstance(exc, KeyboardInterrupt):
-                    raise
-                raise MalformedResponseError("Claude CLI timed out (300s)") from None
-            result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
-        except FileNotFoundError:
-            raise ConfigError(
-                "Claude CLI not found. Install Claude Code or use a different provider."
-            ) from None
+                # Run in a new session so CLI doesn't share the terminal
+                # (prevents notification sounds) and from temp dir so it
+                # doesn't scan the project codebase.
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    cwd=tempfile.gettempdir(),
+                    start_new_session=True,
+                )
+                try:
+                    stdout, stderr = proc.communicate(input=user_msg, timeout=300)
+                except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
+                    proc.kill()
+                    proc.wait()
+                    if isinstance(exc, KeyboardInterrupt):
+                        raise
+                    raise MalformedResponseError("Claude CLI timed out (300s)") from None
+                result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+            except FileNotFoundError:
+                raise ConfigError(
+                    "Claude CLI not found. Install Claude Code or use a different provider."
+                ) from None
+        finally:
+            # Always clean up the temp file, regardless of success or failure
+            with contextlib.suppress(OSError):
+                os.unlink(prompt_path)
 
         if self.verbose:
             print(
@@ -176,35 +227,42 @@ class ClaudeCliClient(LLMClient):
             detail = result.stderr or result.stdout[:500] if result.stdout else ""
             raise MalformedResponseError(f"Claude CLI error (exit {result.returncode}): {detail}")
 
-        # 6. Parse response envelope
-        #    --output-format json returns a JSON array of event objects.
-        #    We need the element with "type": "result".
-        try:
-            raw = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            raise MalformedResponseError(
-                f"Claude CLI returned invalid JSON: {result.stdout[:200]}"
-            ) from None
+        # 6. Parse NDJSON events from stream-json output.
+        #    Each line is a separate JSON object. Text content arrives as
+        #    small content_block_delta events that won't hit the CLI's
+        #    string truncation limit (bug #2904).
+        text_parts = []
+        envelope = {}
 
-        if isinstance(raw, list):
-            envelope = next(
-                (el for el in raw if isinstance(el, dict) and el.get("type") == "result"), None
-            )
-            if envelope is None:
-                raise MalformedResponseError(
-                    f"No result element in CLI JSON array ({len(raw)} elements)"
-                )
-        elif isinstance(raw, dict):
-            envelope = raw
-        else:
-            raise MalformedResponseError(
-                f"Claude CLI returned {type(raw).__name__}, expected array or object"
-            )
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
 
-        # Extract JSON from the model's text output (in "result" field)
-        result_text = envelope.get("result")
-        if result_text is None:
-            raise MalformedResponseError("No result in CLI response")
+            # Collect text from streaming delta events
+            # Format: {"type":"stream_event","event":{"type":"content_block_delta",
+            #          "delta":{"type":"text_delta","text":"chunk"}}}
+            if event.get("type") == "stream_event":
+                inner = event.get("event", {})
+                if inner.get("type") == "content_block_delta":
+                    delta = inner.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        text_parts.append(delta.get("text", ""))
+
+            # Capture the result envelope for usage data
+            elif event.get("type") == "result":
+                envelope = event
+
+        result_text = "".join(text_parts)
+        if not result_text:
+            # Fallback: try the result field (may be truncated — bug #2904)
+            result_text = envelope.get("result", "")
+        if not result_text:
+            raise MalformedResponseError("No text content in CLI response")
 
         structured_output = _extract_json(result_text)
 
@@ -233,6 +291,18 @@ class ClaudeCliClient(LLMClient):
             )
             output_preview = json.dumps(structured_output)[:300]
             print(f"       [claude-cli] Output: {output_preview}", file=sys.stderr, flush=True)
+            if "queue_actions" in structured_output:
+                print(
+                    f"       [claude-cli] queue_actions: {json.dumps(structured_output['queue_actions'])}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            elif tool_name == "log_evaluation":
+                print(
+                    "       [claude-cli] queue_actions: NOT PRESENT in response",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
         # 7. Build normalized response
         tool_call = NormalizedToolCall(name=tool_name, input=structured_output)

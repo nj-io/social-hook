@@ -34,6 +34,7 @@ SECTION_MAP = {
     "queue": "Q",
     "hooks": "R",
     "crosspost": "S",
+    "ratelimits": "T",
 }
 
 # Provider presets: maps --provider flag to model configs

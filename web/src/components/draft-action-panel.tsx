@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { sendCallback, sendMessage } from "@/lib/api";
 import type { Draft } from "@/lib/types";
-import { ElapsedTime, Spinner } from "@/components/async-button";
 
 interface DraftActionPanelProps {
   draft: Draft;
@@ -15,7 +14,6 @@ type TextPrompt = "edit_text" | "edit_angle" | "reject_note" | "schedule_custom"
 
 export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
   const [actionPending, setActionPending] = useState("");
-  const [actionStartTime, setActionStartTime] = useState<string | null>(null);
   const [submenu, setSubmenu] = useState<Submenu>(null);
   const [textPrompt, setTextPrompt] = useState<TextPrompt>(null);
   const [textInput, setTextInput] = useState("");
@@ -25,7 +23,6 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
 
   async function handleAction(action: string) {
     setActionPending(action);
-    setActionStartTime(new Date().toISOString());
     try {
       await sendCallback(action, draft.id);
       onUpdate();
@@ -33,7 +30,6 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
       onUpdate();
     } finally {
       setActionPending("");
-      setActionStartTime(null);
       if (!keepSubmenuActions.has(action)) {
         setSubmenu(null);
       }
@@ -44,7 +40,6 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
     if (!textPrompt || !textInput.trim()) return;
 
     setActionPending(textPrompt);
-    setActionStartTime(new Date().toISOString());
     try {
       // First trigger the callback to set up pending state on the server
       await sendCallback(textPrompt, draft.id);
@@ -55,7 +50,6 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
       onUpdate();
     } finally {
       setActionPending("");
-      setActionStartTime(null);
       setTextPrompt(null);
       setTextInput("");
       setSubmenu(null);
@@ -111,13 +105,7 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
             disabled={!textInput.trim() || isDisabled}
             className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
           >
-            {actionPending ? (
-              <span className="inline-flex items-center gap-1.5">
-                <Spinner className="h-3 w-3" />
-                <span>Submitting</span>
-                {actionStartTime && <ElapsedTime startTime={actionStartTime} />}
-              </span>
-            ) : "Submit"}
+            {actionPending ? "..." : "Submit"}
           </button>
           <button
             onClick={cancelTextPrompt}
@@ -145,8 +133,6 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
             disabled={isDisabled}
             onClick={handleAction}
             variant="success"
-            slow
-            startTime={actionStartTime}
           />
           <ActionButton
             label="Approve"
@@ -155,8 +141,6 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
             disabled={isDisabled}
             onClick={handleAction}
             variant="success-outline"
-            slow
-            startTime={actionStartTime}
           />
           <SubmenuToggle
             label="Schedule"
@@ -191,8 +175,6 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
               disabled={isDisabled}
               onClick={handleAction}
               variant="primary-outline"
-              slow
-              startTime={actionStartTime}
             />
             <button
               onClick={() => openTextPrompt("schedule_custom")}
@@ -228,8 +210,6 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
               disabled={isDisabled || draft.media_spec === draft.media_spec_used}
               onClick={handleAction}
               variant="neutral-outline"
-              slow
-              startTime={actionStartTime}
             />
             <ActionButton
               label="Remove media"
@@ -276,8 +256,6 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
           disabled={isDisabled}
           onClick={handleAction}
           variant="primary"
-          slow
-          startTime={actionStartTime}
         />
         <button
           onClick={() => openTextPrompt("schedule_custom")}
@@ -365,8 +343,6 @@ function ActionButton({
   disabled,
   onClick,
   variant,
-  slow,
-  startTime,
 }: {
   label: string;
   action: string;
@@ -374,26 +350,15 @@ function ActionButton({
   disabled: boolean;
   onClick: (action: string) => void;
   variant: string;
-  slow?: boolean;
-  startTime?: string | null;
 }) {
   const style = variantStyles[variant] ?? variantStyles.neutral;
-  const isPending = pending === action;
   return (
     <button
       onClick={() => onClick(action)}
       disabled={disabled}
       className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${style}`}
     >
-      {isPending ? (
-        slow ? (
-          <span className="inline-flex items-center gap-1.5">
-            <Spinner className="h-3 w-3" />
-            <span>{label}</span>
-            {startTime && <ElapsedTime startTime={startTime} />}
-          </span>
-        ) : "..."
-      ) : label}
+      {pending === action ? "..." : label}
     </button>
   );
 }

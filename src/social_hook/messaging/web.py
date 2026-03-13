@@ -144,7 +144,9 @@ class WebAdapter(MessagingAdapter):
 
     def _get_conn(self) -> sqlite3.Connection:
         """Get a SQLite connection."""
-        return sqlite3.connect(self._db_path)
+        conn = sqlite3.connect(self._db_path)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        return conn
 
     @staticmethod
     def _serialize_buttons(rows: list[ButtonRow]) -> list[list[dict]]:
