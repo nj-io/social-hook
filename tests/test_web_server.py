@@ -101,6 +101,7 @@ def tmp_env(tmp_path):
             media_tool TEXT,
             platforms TEXT DEFAULT '{}',
             commit_summary TEXT,
+            trigger_source TEXT DEFAULT 'commit',
             processed INTEGER NOT NULL DEFAULT 0,
             processed_at TEXT,
             batch_id TEXT,
@@ -152,6 +153,7 @@ def tmp_env(tmp_path):
             cache_creation_tokens INTEGER DEFAULT 0,
             cost_cents REAL DEFAULT 0.0,
             commit_hash TEXT,
+            trigger_source TEXT DEFAULT 'auto',
             created_at TEXT DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS schema_version (
@@ -2451,3 +2453,78 @@ class TestGenerateSpecEndpoint:
         conn.close()
         resp = client.post("/api/drafts/draft_1/generate-spec", json={"tool_name": "mermaid"})
         assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Rate Limits tests
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimitsEndpoint:
+    def test_rate_limits_status_empty(self, client, tmp_env):
+        """GET /api/rate-limits/status returns zeros with no data."""
+        resp = client.get("/api/rate-limits/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["evaluations_today"] == 0
+        assert data["max_evaluations_per_day"] == 15
+        assert data["manual_evaluations_today"] == 0
+        assert data["next_available_in_seconds"] == 0
+        assert data["queued_triggers"] == 0
+        assert data["cost_today_cents"] == 0.0
+
+    def test_rate_limits_status_with_data(self, client, tmp_env):
+        """GET /api/rate-limits/status returns correct counts from usage_log and decisions."""
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+
+        # Insert some auto evaluations today
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO usage_log (id, project_id, operation_type, model, cost_cents, trigger_source) "
+                "VALUES (?, 'p1', 'evaluate', 'test-model', 5.5, 'auto')",
+                (f"ul-auto-{i}",),
+            )
+        # Insert a manual evaluation
+        conn.execute(
+            "INSERT INTO usage_log (id, project_id, operation_type, model, cost_cents, trigger_source) "
+            "VALUES ('ul-manual-1', 'p1', 'evaluate', 'test-model', 3.0, 'manual')",
+        )
+        # Insert a deferred_eval decision
+        conn.execute(
+            "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning, processed) "
+            "VALUES ('d-def-1', 'p1', 'abc123', 'deferred_eval', 'rate limited', 0)",
+        )
+        conn.execute(
+            "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning, processed) "
+            "VALUES ('d-def-2', 'p1', 'abc456', 'deferred_eval', 'rate limited', 0)",
+        )
+        # Insert a processed deferred (should NOT count)
+        conn.execute(
+            "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning, processed) "
+            "VALUES ('d-def-3', 'p1', 'abc789', 'deferred_eval', 'rate limited', 1)",
+        )
+        conn.commit()
+        conn.close()
+
+        resp = client.get("/api/rate-limits/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["evaluations_today"] == 3
+        assert data["manual_evaluations_today"] == 1
+        assert data["queued_triggers"] == 2
+        assert data["cost_today_cents"] == 19.5  # 3 * 5.5 + 3.0
+
+    def test_rate_limits_status_shape(self, client, tmp_env):
+        """GET /api/rate-limits/status returns all expected fields."""
+        resp = client.get("/api/rate-limits/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        expected_keys = {
+            "evaluations_today",
+            "max_evaluations_per_day",
+            "manual_evaluations_today",
+            "next_available_in_seconds",
+            "queued_triggers",
+            "cost_today_cents",
+        }
+        assert set(data.keys()) == expected_keys

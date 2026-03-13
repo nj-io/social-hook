@@ -137,6 +137,7 @@ def retrigger(
         dry_run=dry_run,
         config_path=str(config_path) if config_path else None,
         verbose=verbose,
+        trigger_source="manual",
     )
 
     if json_output:

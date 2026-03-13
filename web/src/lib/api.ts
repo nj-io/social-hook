@@ -1,4 +1,4 @@
-import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
+import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, RateLimitStatus, UsageSummary, Arc, WebEvent } from "./types";
 import { getSessionId } from "./session";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -534,4 +534,9 @@ export async function registerProject(
 
 export async function deleteProject(projectId: string): Promise<{ status: string; project_id: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+}
+
+// Rate limits
+export async function fetchRateLimits(): Promise<RateLimitStatus> {
+  return apiFetch("/api/rate-limits/status");
 }

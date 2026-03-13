@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { sendCallback, sendMessage, promoteDraft } from "@/lib/api";
 import type { Draft } from "@/lib/types";
 import { platformLabel } from "@/lib/platform";
-import { ElapsedTime, Spinner } from "@/components/async-button";
 
 interface DraftActionPanelProps {
   draft: Draft;
@@ -18,7 +17,6 @@ type TextPrompt = "edit_text" | "edit_angle" | "reject_note" | "schedule_custom"
 
 export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshPlatforms }: DraftActionPanelProps) {
   const [actionPending, setActionPending] = useState("");
-  const [actionStartTime, setActionStartTime] = useState<string | null>(null);
   const [submenu, setSubmenu] = useState<Submenu>(null);
   const [textPrompt, setTextPrompt] = useState<TextPrompt>(null);
   const [textInput, setTextInput] = useState("");
@@ -28,7 +26,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
 
   async function handleAction(action: string) {
     setActionPending(action);
-    setActionStartTime(new Date().toISOString());
     try {
       await sendCallback(action, draft.id);
       onUpdate();
@@ -36,7 +33,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
       onUpdate();
     } finally {
       setActionPending("");
-      setActionStartTime(null);
       if (!keepSubmenuActions.has(action)) {
         setSubmenu(null);
       }
@@ -45,7 +41,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
 
   async function handlePromote(platform: string) {
     setActionPending("promote");
-    setActionStartTime(new Date().toISOString());
     try {
       await promoteDraft(draft.id, platform);
       onUpdate();
@@ -53,7 +48,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
       onUpdate();
     } finally {
       setActionPending("");
-      setActionStartTime(null);
       setSubmenu(null);
     }
   }
@@ -62,7 +56,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
     if (!textPrompt || !textInput.trim()) return;
 
     setActionPending(textPrompt);
-    setActionStartTime(new Date().toISOString());
     try {
       // First trigger the callback to set up pending state on the server
       await sendCallback(textPrompt, draft.id);
@@ -73,7 +66,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
       onUpdate();
     } finally {
       setActionPending("");
-      setActionStartTime(null);
       setTextPrompt(null);
       setTextInput("");
       setSubmenu(null);
@@ -93,6 +85,14 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
   }
 
   const isDisabled = !!actionPending;
+
+  const submenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (submenu && submenuRef.current) {
+      submenuRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [submenu]);
 
   // Text prompt overlay
   if (textPrompt) {
@@ -129,13 +129,7 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
             disabled={!textInput.trim() || isDisabled}
             className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
           >
-            {actionPending ? (
-              <span className="inline-flex items-center gap-1.5">
-                <Spinner className="h-3 w-3" />
-                <span>Submitting</span>
-                {actionStartTime && <ElapsedTime startTime={actionStartTime} />}
-              </span>
-            ) : "Submit"}
+            {actionPending ? "..." : "Submit"}
           </button>
           <button
             onClick={cancelTextPrompt}
@@ -177,8 +171,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
                 disabled={isDisabled}
                 onClick={handleAction}
                 variant="success"
-                slow
-                startTime={actionStartTime}
               />
               <ActionButton
                 label="Approve"
@@ -187,8 +179,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
                 disabled={isDisabled}
                 onClick={handleAction}
                 variant="success-outline"
-                slow
-                startTime={actionStartTime}
               />
               <SubmenuToggle
                 label="Schedule"
@@ -229,112 +219,114 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
 
         {/* Schedule submenu */}
         {submenu === "schedule" && (
-          <SubmenuRow>
-            <ActionButton
-              label="Optimal time"
-              action="schedule_optimal"
-              pending={actionPending}
-              disabled={isDisabled}
-              onClick={handleAction}
-              variant="primary-outline"
-              slow
-              startTime={actionStartTime}
-            />
-            <button
-              onClick={() => openTextPrompt("schedule_custom")}
-              disabled={isDisabled}
-              className="rounded-md border border-blue-300 px-3 py-1.5 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20"
-            >
-              Custom time...
-            </button>
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              <ActionButton
+                label="Optimal time"
+                action="schedule_optimal"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="primary-outline"
+              />
+              <button
+                onClick={() => openTextPrompt("schedule_custom")}
+                disabled={isDisabled}
+                className="rounded-md border border-blue-300 px-3 py-1.5 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20"
+              >
+                Custom time...
+              </button>
+            </SubmenuRow>
+          </div>
         )}
 
         {/* Promote submenu */}
         {submenu === "promote" && (
-          <SubmenuRow>
-            {realPlatforms.length > 0 ? (
-              realPlatforms.map((p) => (
-                <ActionButton
-                  key={p}
-                  label={`Redraft for ${platformLabel(p)}`}
-                  action="promote"
-                  pending={actionPending}
-                  disabled={isDisabled}
-                  onClick={() => handlePromote(p)}
-                  variant="primary-outline"
-                  slow
-                  startTime={actionStartTime}
-                />
-              ))
-            ) : (
-              <span className="text-sm text-muted-foreground">
-                No platforms enabled.{" "}
-                <a href="/settings?section=platforms" className="text-accent hover:underline">
-                  Configure platforms
-                </a>
-              </span>
-            )}
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              {realPlatforms.length > 0 ? (
+                realPlatforms.map((p) => (
+                  <ActionButton
+                    key={p}
+                    label={`Redraft for ${platformLabel(p)}`}
+                    action="promote"
+                    pending={actionPending}
+                    disabled={isDisabled}
+                    onClick={() => handlePromote(p)}
+                    variant="primary-outline"
+                  />
+                ))
+              ) : (
+                <span className="text-sm text-muted-foreground">
+                  No platforms enabled.{" "}
+                  <a href="/settings?section=platforms" className="text-accent hover:underline">
+                    Configure platforms
+                  </a>
+                </span>
+              )}
+            </SubmenuRow>
+          </div>
         )}
 
         {/* Edit submenu */}
         {submenu === "edit" && (
-          <SubmenuRow>
-            <button
-              onClick={() => openTextPrompt("edit_text")}
-              disabled={isDisabled}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              Change text...
-            </button>
-            <button
-              onClick={() => openTextPrompt("edit_angle")}
-              disabled={isDisabled}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              Change angle...
-            </button>
-            <ActionButton
-              label="Regenerate media"
-              action="media_regen"
-              pending={actionPending}
-              disabled={isDisabled || draft.media_spec === draft.media_spec_used}
-              onClick={handleAction}
-              variant="neutral-outline"
-              slow
-              startTime={actionStartTime}
-            />
-            <ActionButton
-              label="Remove media"
-              action="media_remove"
-              pending={actionPending}
-              disabled={isDisabled}
-              onClick={handleAction}
-              variant="neutral-outline"
-            />
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              <button
+                onClick={() => openTextPrompt("edit_text")}
+                disabled={isDisabled}
+                className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Change text...
+              </button>
+              <button
+                onClick={() => openTextPrompt("edit_angle")}
+                disabled={isDisabled}
+                className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Change angle...
+              </button>
+              <ActionButton
+                label="Regenerate media"
+                action="media_regen"
+                pending={actionPending}
+                disabled={isDisabled || draft.media_spec === draft.media_spec_used}
+                onClick={handleAction}
+                variant="neutral-outline"
+              />
+              <ActionButton
+                label="Remove media"
+                action="media_remove"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="neutral-outline"
+              />
+            </SubmenuRow>
+          </div>
         )}
 
         {/* Reject submenu */}
         {submenu === "reject" && (
-          <SubmenuRow>
-            <ActionButton
-              label="Just reject"
-              action="reject_now"
-              pending={actionPending}
-              disabled={isDisabled}
-              onClick={handleAction}
-              variant="danger-outline"
-            />
-            <button
-              onClick={() => openTextPrompt("reject_note")}
-              disabled={isDisabled}
-              className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
-            >
-              Reject with note...
-            </button>
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              <ActionButton
+                label="Just reject"
+                action="reject_now"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="danger-outline"
+              />
+              <button
+                onClick={() => openTextPrompt("reject_note")}
+                disabled={isDisabled}
+                className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+              >
+                Reject with note...
+              </button>
+            </SubmenuRow>
+          </div>
         )}
       </div>
     );
@@ -350,8 +342,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
           disabled={isDisabled}
           onClick={handleAction}
           variant="success"
-          slow
-          startTime={actionStartTime}
         />
         <ActionButton
           label="Schedule optimal"
@@ -360,8 +350,6 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
           disabled={isDisabled}
           onClick={handleAction}
           variant="primary"
-          slow
-          startTime={actionStartTime}
         />
         <button
           onClick={() => openTextPrompt("schedule_custom")}
@@ -371,8 +359,8 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
           Schedule custom...
         </button>
         <ActionButton
-          label="Cancel"
-          action="cancel"
+          label="Undo"
+          action="unapprove"
           pending={actionPending}
           disabled={isDisabled}
           onClick={handleAction}
@@ -386,12 +374,12 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
     return (
       <div className="flex flex-wrap gap-2">
         <ActionButton
-          label="Cancel"
-          action="cancel"
+          label="Unschedule"
+          action="unschedule"
           pending={actionPending}
           disabled={isDisabled}
           onClick={handleAction}
-          variant="danger-outline"
+          variant="neutral-outline"
         />
       </div>
     );
@@ -425,7 +413,23 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
     );
   }
 
-  // No actions for posted, rejected, cancelled, superseded
+  // cancelled / rejected — offer reopen (not for intro drafts, backend rejects those)
+  if ((status === "cancelled" || status === "rejected") && !draft.is_intro) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <ActionButton
+          label="Reopen"
+          action="reopen"
+          pending={actionPending}
+          disabled={isDisabled}
+          onClick={handleAction}
+          variant="neutral-outline"
+        />
+      </div>
+    );
+  }
+
+  // No actions for posted, superseded
   return null;
 }
 
@@ -449,8 +453,6 @@ function ActionButton({
   disabled,
   onClick,
   variant,
-  slow,
-  startTime,
 }: {
   label: string;
   action: string;
@@ -458,26 +460,15 @@ function ActionButton({
   disabled: boolean;
   onClick: (action: string) => void;
   variant: string;
-  slow?: boolean;
-  startTime?: string | null;
 }) {
   const style = variantStyles[variant] ?? variantStyles.neutral;
-  const isPending = pending === action;
   return (
     <button
       onClick={() => onClick(action)}
       disabled={disabled}
       className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${style}`}
     >
-      {isPending ? (
-        slow ? (
-          <span className="inline-flex items-center gap-1.5">
-            <Spinner className="h-3 w-3" />
-            <span>{label}</span>
-            {startTime && <ElapsedTime startTime={startTime} />}
-          </span>
-        ) : "..."
-      ) : label}
+      {pending === action ? "..." : label}
     </button>
   );
 }

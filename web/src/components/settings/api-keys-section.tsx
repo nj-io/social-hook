@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { updateEnv, validateApiKey } from "@/lib/api";
-import { ElapsedTime, Spinner } from "@/components/async-button";
 
 interface ApiKeysSectionProps {
   env: Record<string, string>;
@@ -14,7 +13,6 @@ interface ApiKeysSectionProps {
 export function ApiKeysSection({ env, knownKeys, keyGroups, onRefresh }: ApiKeysSectionProps) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [validating, setValidating] = useState<string | null>(null);
-  const [validateStartTime, setValidateStartTime] = useState<string | null>(null);
   const [validationResults, setValidationResults] = useState<Record<string, { valid: boolean; error?: string }>>({});
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -48,7 +46,6 @@ export function ApiKeysSection({ env, knownKeys, keyGroups, onRefresh }: ApiKeys
     const value = values[key];
     if (!value) return;
     setValidating(key);
-    setValidateStartTime(new Date().toISOString());
     try {
       const result = await validateApiKey(providerForKey(key), value);
       setValidationResults((prev) => ({ ...prev, [key]: result }));
@@ -56,7 +53,6 @@ export function ApiKeysSection({ env, knownKeys, keyGroups, onRefresh }: ApiKeys
       setValidationResults((prev) => ({ ...prev, [key]: { valid: false, error: "Validation failed" } }));
     } finally {
       setValidating(null);
-      setValidateStartTime(null);
     }
   }
 
@@ -88,13 +84,7 @@ export function ApiKeysSection({ env, knownKeys, keyGroups, onRefresh }: ApiKeys
             disabled={!editing || validating === key}
             className="rounded-md border border-border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
           >
-            {validating === key ? (
-              <span className="inline-flex items-center gap-1.5">
-                <Spinner className="h-3 w-3" />
-                <span>Validating</span>
-                {validateStartTime && <ElapsedTime startTime={validateStartTime} />}
-              </span>
-            ) : "Validate"}
+            {validating === key ? "..." : "Validate"}
           </button>
         </div>
         {result && (

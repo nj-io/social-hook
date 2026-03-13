@@ -38,13 +38,24 @@ For `hold` actions:
 - The commit will be saved for potential consolidation with future commits
 - Always provide a clear **reason** explaining what you're waiting for
 
-### queue_actions (optional)
-Actions to take on pending drafts, keyed by target name. Each action has:
+### queue_actions (REQUIRED when pending drafts are shown in Scheduling State)
+
+**You MUST review the pending draft queue every time it is shown to you.** You cannot predict when the next evaluation will happen. Curate the queue as if this is your only opportunity today.
+
+When pending drafts exceed available posting slots, you MUST use queue_actions to reduce the queue. The audience sees one post at a time — 5 drafts competing for 1 daily slot means 4 will never post. Merge the strongest angles into fewer, better drafts that fit the available capacity. Drop or supersede the rest.
+
+Actions to take on pending drafts, keyed by target name. Each pending draft is shown with its ID (e.g. `[id=draft_abc123][x:draft]`). Each action has:
 - **action**: `supersede` (replace with new draft), `merge` (combine into new draft), or `drop` (discard)
-- **draft_id**: ID of the pending draft to act on
+- **draft_id**: The `id` from the pending draft's `[id=...]` tag
+- **merge_group**: For merge actions — a label grouping drafts that should be combined into one replacement. Drafts sharing the same merge_group become a single new draft. Use distinct labels (e.g. "A", "B") for separate merge groups.
+- **merge_instruction**: For the first action in each merge group — creative direction telling the drafter HOW to consolidate. Describe the narrative strategy: which angles to keep, what to combine, and what the replacement should feel like. Be specific and editorial.
 - **reason**: Why this action is being taken
 
-Use queue actions when a new commit makes a pending draft obsolete or when content should be combined.
+**When to merge:** When the queue has more drafts than available posting capacity, or when multiple drafts would be stronger combined. Merge produces 1 replacement draft via a fresh drafter call using your creative direction.
+
+**When to supersede:** When the new commit makes a pending draft obsolete or factually wrong.
+
+**When to drop:** When a pending draft is stale, low-quality, or no longer relevant.
 
 ## Decision Criteria
 
@@ -73,7 +84,7 @@ A "Scheduling State" section shows per-platform posting capacity. Factor this in
 - **Queue saturated (0 slots remaining)**: Prefer `hold`. Only `draft` if highly time-sensitive.
 - **Deferred drafts queued**: Consider whether this commit adds enough value for another queued draft.
 - **Slots available**: Normal decision-making applies.
-- **Many pending drafts**: Use `queue_actions` to drop stale drafts or supersede outdated ones before adding more.
+- **More drafts than slots**: Use `queue_actions` to reduce the queue to fit capacity. Merge the strongest drafts together, drop low-impact or menial ones (typo fixes, minor refactors), supersede outdated ones. The queue should never have more drafts than can realistically be posted.
 
 When holding due to scheduling, note it in your reason. This is distinct from holding for consolidation — specify which in your reason.
 
@@ -131,6 +142,13 @@ Consider the current project state:
 - Vary episode types to keep the feed interesting
 - Don't post about the same topic repeatedly
 - **Always check Post History and Active Arcs for referencing opportunities.** If the current commit extends, deepens, or follows up on a previously published post, include that post's `id` in `reference_posts`. Common patterns: intro post → feature deep-dive, feature announcement → technical breakdown, bug report → postmortem. For arc posts, the previous arc posts are listed under Active Arcs with their IDs — reference the most relevant one.
+
+## Deferred Evaluations
+
+When batch_throttled mode is active, multiple deferred triggers may be combined into your current evaluation. In this case:
+- Address all combined triggers cohesively rather than individually
+- Deferred commits that are no longer relevant can be acknowledged briefly and skipped
+- Consider the combined scope when deciding on angle and episode type
 
 ## Summary Refresh
 
