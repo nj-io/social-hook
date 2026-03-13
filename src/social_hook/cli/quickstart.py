@@ -118,7 +118,7 @@ def quickstart(
                 from social_hook.db.operations import get_project
 
                 project = get_project(conn, row[0])
-                if not is_json:
+                if project and not is_json:
                     typer.echo(
                         f"Found existing project by origin: {project.name} ({project.id[:8]})"
                     )
