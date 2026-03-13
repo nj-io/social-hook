@@ -41,6 +41,8 @@ These options can be placed before any command.
 | [`events`](root-commands.md#social-hook-events) | Watch live pipeline events (commits, decisions, drafts). |
 | [`help`](root-commands.md#social-hook-help) | Show command help. Use --json for machine-readable output. |
 | [`init`](root-commands.md#social-hook-init) | Initialize social-hook (create directories and database). |
+| [`quickstart`](root-commands.md#social-hook-quickstart) | Run the quickstart flow. |
+| [`rate-limits`](root-commands.md#social-hook-rate-limits) | Show current rate limit status (daily cap, gap timer, queue, cost). |
 | [`scheduler-tick`](root-commands.md#social-hook-scheduler-tick) | Run one scheduler tick: post all due drafts. |
 | [`setup`](root-commands.md#social-hook-setup) | Configure social-hook. |
 | [`test`](root-commands.md#social-hook-test) | Test commit evaluation. |

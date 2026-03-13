@@ -21,10 +21,19 @@ Social Hook is a Claude Code hook that watches your commits, evaluates which one
 - **Web dashboard** — Visual pipeline monitoring and draft management
 - **Full CLI** — Everything is scriptable with `--json` output
 
+## Get started in 60 seconds
+
+```bash
+pip install social-hook
+cd /path/to/your/repo
+social-hook quickstart
+```
+
 ## Quick links
 
 - [Installation](getting-started/installation.md)
 - [Quick Start](getting-started/quickstart.md)
+- [Concepts](concepts/index.md)
 - [CLI Reference](cli/index.md)
 - [Configuration](configuration/config.md)
 - [GitHub Repository](https://github.com/nj-io/social-hook)
