@@ -1,0 +1,30 @@
+<svg viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="640" fill="#F5F6F8"/>
+
+  <!-- Subtle dot grid background -->
+  <defs>
+    <pattern id="dots" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="12" cy="12" r="0.8" fill="rgba(37, 99, 235, 0.08)"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="640" fill="url(#dots)"/>
+
+  <!-- Logo icon centered, scaled up -->
+  <g transform="translate(592, 160)">
+    <rect x="0" y="0" width="96" height="96" rx="0" stroke="#2563EB" stroke-width="4" fill="#fff"/>
+    <circle cx="24" cy="48" r="11" fill="#2563EB"/>
+    <line x1="35" y1="48" x2="61" y2="48" stroke="#2563EB" stroke-width="4"/>
+    <circle cx="72" cy="48" r="11" stroke="#2563EB" stroke-width="4" fill="#EFF6FF"/>
+  </g>
+
+  <!-- "Social Hook" text centered -->
+  <text x="640" y="340" font-family="'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif" font-size="80" font-weight="600" fill="#0F172A" letter-spacing="-1.5" text-anchor="middle">Social Hook</text>
+
+  <!-- Tagline -->
+  <text x="640" y="390" font-family="'Literata', Georgia, serif" font-size="26" fill="#64748B" text-anchor="middle">The marketing engine built for devs</text>
+
+  <!-- Wire accent line -->
+  <line x1="440" y1="440" x2="840" y2="440" stroke="#2563EB" stroke-width="1.5"/>
+  <circle cx="440" cy="440" r="3" fill="#2563EB"/>
+  <circle cx="840" cy="440" r="3" stroke="#2563EB" stroke-width="1.5" fill="#EFF6FF"/>
+</svg>
