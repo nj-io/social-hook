@@ -71,6 +71,12 @@ nav:
     - memory: cli/memory.md
     - project: cli/project.md
     - snapshot: cli/snapshot.md
+  - Concepts:
+    - Overview: concepts/index.md
+    - How the Pipeline Works: concepts/pipeline.md
+    - Narrative Arcs: concepts/narrative-arcs.md
+    - Voice Memory: concepts/voice-memory.md
+    - Media Generation: concepts/media-generation.md
   - Configuration:
     - config.yaml: configuration/config.md
     - content-config.yaml: configuration/content-config.md
