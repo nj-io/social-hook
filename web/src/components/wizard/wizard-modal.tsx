@@ -8,9 +8,10 @@ interface WizardModalProps {
   open: boolean;
   onClose: () => void;
   onComplete: () => void;
+  prefilledProject?: { repoPath: string; projectId: string } | null;
 }
 
-export function WizardModal({ open, onClose, onComplete }: WizardModalProps) {
+export function WizardModal({ open, onClose, onComplete, prefilledProject }: WizardModalProps) {
   const [confirmClose, setConfirmClose] = useState(false);
   const hasProgressRef = useRef(false);
 
@@ -74,7 +75,7 @@ export function WizardModal({ open, onClose, onComplete }: WizardModalProps) {
 
   return (
     <Modal open={true} onClose={handleClose} maxWidth="max-w-2xl" minHeight="min-h-[600px]">
-      <WizardContainer onComplete={onComplete} onClose={handleClose} />
+      <WizardContainer onComplete={onComplete} onClose={handleClose} prefilledProject={prefilledProject} />
     </Modal>
   );
 }

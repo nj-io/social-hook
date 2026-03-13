@@ -19,6 +19,7 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [showWizard, setShowWizard] = useState(false);
   const [showQuickstart, setShowQuickstart] = useState(false);
+  const [wizardProject, setWizardProject] = useState<{ repoPath: string; projectId: string } | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -223,11 +224,13 @@ export default function DashboardPage() {
       {/* Wizard modal */}
       <WizardModal
         open={showWizard}
-        onClose={() => setShowWizard(false)}
+        onClose={() => { setShowWizard(false); setWizardProject(null); }}
         onComplete={() => {
           setShowWizard(false);
+          setWizardProject(null);
           reload();
         }}
+        prefilledProject={wizardProject}
       />
 
       {/* Quickstart modal */}
@@ -235,7 +238,10 @@ export default function DashboardPage() {
         open={showQuickstart}
         onClose={() => setShowQuickstart(false)}
         onComplete={reload}
-        onOpenFullWizard={() => setShowWizard(true)}
+        onOpenFullWizard={(project) => {
+          if (project) setWizardProject(project);
+          setShowWizard(true);
+        }}
       />
     </div>
   );

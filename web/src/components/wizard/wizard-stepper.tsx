@@ -11,7 +11,7 @@ export function WizardStepper({ steps, currentStep, completedSteps, onStepClick 
   return (
     <>
       {/* Desktop: horizontal stepper */}
-      <div className="hidden sm:flex items-center gap-1">
+      <div className="hidden sm:flex items-center justify-center gap-1">
         {steps.map((label, i) => {
           const isActive = i === currentStep;
           const isCompleted = completedSteps.has(i);

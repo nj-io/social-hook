@@ -2209,6 +2209,17 @@ async def api_get_wizard_templates():
     return {"templates": templates_to_dicts()}
 
 
+@app.get("/api/wizard/detect-providers")
+async def api_detect_providers():
+    """Detect available LLM providers for the setup wizard."""
+    import os
+
+    from social_hook.setup.wizard import discover_providers
+
+    providers = await asyncio.to_thread(discover_providers, dict(os.environ))
+    return {"providers": providers}
+
+
 @app.get("/api/settings/config")
 async def api_get_config():
     """Return current config as JSON."""

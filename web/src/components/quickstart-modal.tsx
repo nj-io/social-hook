@@ -18,7 +18,7 @@ interface QuickstartModalProps {
   open: boolean;
   onClose: () => void;
   onComplete: () => void;
-  onOpenFullWizard: () => void;
+  onOpenFullWizard: (project?: { repoPath: string; projectId: string }) => void;
 }
 
 export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }: QuickstartModalProps) {
@@ -30,6 +30,7 @@ export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }:
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [registeredProject, setRegisteredProject] = useState<{ repoPath: string; projectId: string } | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -53,6 +54,7 @@ export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }:
       setError("");
       setDone(false);
       setSaving(false);
+      setRegisteredProject(null);
     }
   }, [open]);
 
@@ -109,6 +111,9 @@ export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }:
 
       // 3. Register project
       const projectRes = await registerProject(repoPath, undefined, true);
+      if (projectRes.project?.id) {
+        setRegisteredProject({ repoPath, projectId: projectRes.project.id });
+      }
 
       // 4. Import commits + generate summary draft
       if (projectRes.project?.id) {
@@ -147,7 +152,7 @@ export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }:
             <button
               onClick={() => {
                 onClose();
-                onOpenFullWizard();
+                onOpenFullWizard(registeredProject ?? undefined);
               }}
               className="font-medium text-accent hover:underline"
             >

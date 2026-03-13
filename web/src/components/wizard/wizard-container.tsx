@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { StrategyTemplate } from "@/lib/types";
 import {
   createSummaryDraft,
@@ -24,7 +24,7 @@ import { StepCredentials } from "./step-credentials";
 import { StepProject } from "./step-project";
 import { StepSummary } from "./step-summary";
 
-const STEP_LABELS = [
+const ALL_STEPS = [
   "Strategy",
   "Identity",
   "Platforms",
@@ -34,14 +34,16 @@ const STEP_LABELS = [
   "Credentials",
   "Project",
   "Summary",
-];
+] as const;
 
 interface WizardContainerProps {
   onComplete: () => void;
   onClose: () => void;
+  /** Pre-filled project info from quickstart — skips the Project step */
+  prefilledProject?: { repoPath: string; projectId: string } | null;
 }
 
-export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
+export function WizardContainer({ onComplete, onClose, prefilledProject }: WizardContainerProps) {
   const {
     data,
     updateData,
@@ -55,6 +57,35 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
   const [templates, setTemplates] = useState<StrategyTemplate[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [hasClaudeCli, setHasClaudeCli] = useState(false);
+
+  // Compute effective steps — skip Project if already known from quickstart
+  const STEP_LABELS = useMemo(() => {
+    if (prefilledProject) {
+      return ALL_STEPS.filter((s) => s !== "Project");
+    }
+    return [...ALL_STEPS];
+  }, [prefilledProject]);
+
+  // Pre-fill project data from quickstart
+  useEffect(() => {
+    if (prefilledProject && !data.repoPath) {
+      updateData({ repoPath: prefilledProject.repoPath });
+    }
+  }, [prefilledProject, data.repoPath, updateData]);
+
+  // Detect Claude CLI availability
+  useEffect(() => {
+    fetch("/api/wizard/detect-providers")
+      .then((r) => r.ok ? r.json() : null)
+      .then((res) => {
+        if (res?.providers) {
+          const cli = res.providers.find((p: { id: string; status: string }) => p.id === "claude-cli" && p.status === "detected");
+          if (cli) setHasClaudeCli(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch templates on mount
   useEffect(() => {
@@ -94,22 +125,22 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
   const selectedTemplate = templates.find((t) => t.id === data.strategyId);
   const isTemplateSelected = !!selectedTemplate && selectedTemplate.id !== "custom";
 
-  // Determine which steps are skippable
+  const activeStep = STEP_LABELS[currentStep];
+
+  // Determine which steps are skippable (by label, not index)
   const isSkippable = useCallback(
     (step: number): boolean => {
+      const label = STEP_LABELS[step];
       if (!isTemplateSelected) return false;
-      // Connection skippable if single identity
-      if (step === 3) {
+      if (label === "Connection") {
         const namedIdentities = data.identities.filter((i) => i.name);
         return namedIdentities.length <= 1;
       }
-      // Voice, Audience skippable when template pre-fills them
-      if (step === 4 || step === 5) return true;
-      // Credentials skippable if already configured
-      if (step === 6) return !!data.llmApiKey;
+      if (label === "Voice" || label === "Audience") return true;
+      if (label === "Credentials") return hasClaudeCli && !data.platforms.some((p) => p.enabled && p.name !== "preview");
       return false;
     },
-    [isTemplateSelected, data.identities, data.llmApiKey],
+    [isTemplateSelected, data.identities, data.platforms, hasClaudeCli, STEP_LABELS],
   );
 
   function applyTemplateDefaults(templateId: string) {
@@ -213,26 +244,28 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
         }
       }
 
-      // 4. Register project
-      if (data.repoPath) {
+      // 4. Register project (skip if prefilled from quickstart)
+      let projectId = prefilledProject?.projectId;
+      if (!projectId && data.repoPath) {
         const projectRes = await registerProject(
           data.repoPath,
           data.projectName || undefined,
           data.installGitHook,
         );
+        projectId = projectRes.project?.id;
+      }
 
-        // 5. Import commits + generate summary draft
-        if (projectRes.project?.id) {
-          try {
-            await importCommits(projectRes.project.id);
-          } catch {
-            // Non-fatal: import can happen later
-          }
-          try {
-            await createSummaryDraft(projectRes.project.id);
-          } catch {
-            // Non-fatal: draft generation may fail if no summary yet
-          }
+      // 5. Import commits + generate summary draft
+      if (projectId) {
+        try {
+          await importCommits(projectId);
+        } catch {
+          // Non-fatal: import can happen later
+        }
+        try {
+          await createSummaryDraft(projectId);
+        } catch {
+          // Non-fatal: draft generation may fail if no summary yet
         }
       }
 
@@ -246,12 +279,12 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
     }
   }
 
-  const isSummaryStep = currentStep === STEP_LABELS.length - 1;
+  const isSummaryStep = activeStep === "Summary";
 
   return (
     <div className="flex h-full flex-col">
-      {/* Stepper */}
-      <div className="mb-6 border-b border-border pb-4">
+      {/* Stepper — fixed top */}
+      <div className="shrink-0 border-b border-border pb-4">
         <WizardStepper
           steps={STEP_LABELS}
           currentStep={currentStep}
@@ -264,29 +297,29 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
         />
       </div>
 
-      {/* Step content */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {currentStep === 0 && (
+      {/* Step content — scrollable middle */}
+      <div className="min-h-0 flex-1 overflow-y-auto py-6">
+        {activeStep === "Strategy" && (
           <StepStrategy
             templates={templates}
             value={data.strategyId}
             onChange={(id) => applyTemplateDefaults(id)}
           />
         )}
-        {currentStep === 1 && (
+        {activeStep === "Identity" && (
           <StepIdentity
             identities={data.identities}
             onChange={(identities) => updateData({ identities })}
             exampleIntroHook={selectedTemplate?.defaults.exampleIntroHook ?? ""}
           />
         )}
-        {currentStep === 2 && (
+        {activeStep === "Platforms" && (
           <StepPlatforms
             platforms={data.platforms}
             onChange={(platforms) => updateData({ platforms })}
           />
         )}
-        {currentStep === 3 && (
+        {activeStep === "Connection" && (
           <StepConnection
             identities={data.identities}
             platforms={data.platforms}
@@ -295,7 +328,7 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
             onDefaultIdentityChange={(defaultIdentity) => updateData({ defaultIdentity })}
           />
         )}
-        {currentStep === 4 && (
+        {activeStep === "Voice" && (
           <StepVoice
             voiceTone={data.voiceTone}
             writingSamples={data.writingSamples}
@@ -308,7 +341,7 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
             templatePreFilled={isTemplateSelected}
           />
         )}
-        {currentStep === 5 && (
+        {activeStep === "Audience" && (
           <StepAudience
             audience={data.audience}
             technicalLevel={data.technicalLevel}
@@ -319,7 +352,7 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
             templatePreFilled={isTemplateSelected}
           />
         )}
-        {currentStep === 6 && (
+        {activeStep === "Credentials" && (
           <StepCredentials
             llmApiKey={data.llmApiKey}
             platformCredentials={data.platformCredentials}
@@ -327,9 +360,10 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
             onLlmApiKeyChange={(llmApiKey) => updateData({ llmApiKey })}
             onPlatformCredentialsChange={(platformCredentials) => updateData({ platformCredentials })}
             templatePreFilled={isTemplateSelected}
+            hasClaudeCli={hasClaudeCli}
           />
         )}
-        {currentStep === 7 && (
+        {activeStep === "Project" && (
           <StepProject
             repoPath={data.repoPath}
             projectName={data.projectName}
@@ -339,7 +373,7 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
             onInstallGitHookChange={(installGitHook) => updateData({ installGitHook })}
           />
         )}
-        {currentStep === 8 && (
+        {activeStep === "Summary" && (
           <StepSummary
             data={data}
             templates={templates}
@@ -350,8 +384,8 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
         )}
       </div>
 
-      {/* Navigation buttons */}
-      <div className="mt-6 flex items-center justify-between border-t border-border pt-4">
+      {/* Navigation buttons — fixed bottom */}
+      <div className="shrink-0 flex items-center justify-between border-t border-border pt-4">
         <div>
           {currentStep > 0 && (
             <button
@@ -390,7 +424,7 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
           ) : (
             <button
               onClick={handleNext}
-              disabled={currentStep === 0 && !data.strategyId}
+              disabled={activeStep === "Strategy" && !data.strategyId}
               className="rounded-md bg-accent px-6 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
             >
               Continue
