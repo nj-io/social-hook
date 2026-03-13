@@ -416,7 +416,7 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    handle_command(msg, adapter, config)
+    await asyncio.to_thread(handle_command, msg, adapter, config)
 
     events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
@@ -425,8 +425,6 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
 @app.post("/api/callback")
 async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
     """Execute a button callback via the web adapter."""
-    import asyncio
-
     from social_hook.bot.buttons import handle_callback
 
     adapter = _get_adapter(scope_id=x_session_id)
@@ -469,7 +467,7 @@ async def api_message(body: MessageRequest, x_session_id: str = Header("web")):
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    handle_message(msg, adapter, config)
+    await asyncio.to_thread(handle_message, msg, adapter, config)
 
     events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}

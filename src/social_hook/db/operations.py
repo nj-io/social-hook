@@ -986,6 +986,24 @@ def update_draft_tweet(
     return cursor.rowcount > 0
 
 
+def replace_draft_tweets(conn: sqlite3.Connection, draft_id: str, tweets: list[DraftTweet]) -> None:
+    """Delete existing tweets for a draft and insert replacements.
+
+    Used when content is edited on a threaded draft to keep draft_tweets
+    in sync with the updated content.
+    """
+    conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_id,))
+    for tweet in tweets:
+        conn.execute(
+            """
+            INSERT INTO draft_tweets (id, draft_id, position, content, media_paths, external_id, posted_at, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            tweet.to_row(),
+        )
+    conn.commit()
+
+
 # =============================================================================
 # Draft Changes
 # =============================================================================

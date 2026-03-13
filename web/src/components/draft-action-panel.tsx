@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { sendCallback, sendMessage } from "@/lib/api";
 import type { Draft } from "@/lib/types";
 
@@ -69,6 +69,14 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
   }
 
   const isDisabled = !!actionPending;
+
+  const submenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (submenu && submenuRef.current) {
+      submenuRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [submenu]);
 
   // Text prompt overlay
   if (textPrompt) {
@@ -167,80 +175,86 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
 
         {/* Schedule submenu */}
         {submenu === "schedule" && (
-          <SubmenuRow>
-            <ActionButton
-              label="Optimal time"
-              action="schedule_optimal"
-              pending={actionPending}
-              disabled={isDisabled}
-              onClick={handleAction}
-              variant="primary-outline"
-            />
-            <button
-              onClick={() => openTextPrompt("schedule_custom")}
-              disabled={isDisabled}
-              className="rounded-md border border-blue-300 px-3 py-1.5 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20"
-            >
-              Custom time...
-            </button>
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              <ActionButton
+                label="Optimal time"
+                action="schedule_optimal"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="primary-outline"
+              />
+              <button
+                onClick={() => openTextPrompt("schedule_custom")}
+                disabled={isDisabled}
+                className="rounded-md border border-blue-300 px-3 py-1.5 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20"
+              >
+                Custom time...
+              </button>
+            </SubmenuRow>
+          </div>
         )}
 
         {/* Edit submenu */}
         {submenu === "edit" && (
-          <SubmenuRow>
-            <button
-              onClick={() => openTextPrompt("edit_text")}
-              disabled={isDisabled}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              Change text...
-            </button>
-            <button
-              onClick={() => openTextPrompt("edit_angle")}
-              disabled={isDisabled}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              Change angle...
-            </button>
-            <ActionButton
-              label="Regenerate media"
-              action="media_regen"
-              pending={actionPending}
-              disabled={isDisabled || draft.media_spec === draft.media_spec_used}
-              onClick={handleAction}
-              variant="neutral-outline"
-            />
-            <ActionButton
-              label="Remove media"
-              action="media_remove"
-              pending={actionPending}
-              disabled={isDisabled}
-              onClick={handleAction}
-              variant="neutral-outline"
-            />
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              <button
+                onClick={() => openTextPrompt("edit_text")}
+                disabled={isDisabled}
+                className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Change text...
+              </button>
+              <button
+                onClick={() => openTextPrompt("edit_angle")}
+                disabled={isDisabled}
+                className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Change angle...
+              </button>
+              <ActionButton
+                label="Regenerate media"
+                action="media_regen"
+                pending={actionPending}
+                disabled={isDisabled || draft.media_spec === draft.media_spec_used}
+                onClick={handleAction}
+                variant="neutral-outline"
+              />
+              <ActionButton
+                label="Remove media"
+                action="media_remove"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="neutral-outline"
+              />
+            </SubmenuRow>
+          </div>
         )}
 
         {/* Reject submenu */}
         {submenu === "reject" && (
-          <SubmenuRow>
-            <ActionButton
-              label="Just reject"
-              action="reject_now"
-              pending={actionPending}
-              disabled={isDisabled}
-              onClick={handleAction}
-              variant="danger-outline"
-            />
-            <button
-              onClick={() => openTextPrompt("reject_note")}
-              disabled={isDisabled}
-              className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
-            >
-              Reject with note...
-            </button>
-          </SubmenuRow>
+          <div ref={submenuRef}>
+            <SubmenuRow>
+              <ActionButton
+                label="Just reject"
+                action="reject_now"
+                pending={actionPending}
+                disabled={isDisabled}
+                onClick={handleAction}
+                variant="danger-outline"
+              />
+              <button
+                onClick={() => openTextPrompt("reject_note")}
+                disabled={isDisabled}
+                className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+              >
+                Reject with note...
+              </button>
+            </SubmenuRow>
+          </div>
         )}
       </div>
     );
@@ -265,8 +279,8 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
           Schedule custom...
         </button>
         <ActionButton
-          label="Cancel"
-          action="cancel"
+          label="Undo"
+          action="unapprove"
           pending={actionPending}
           disabled={isDisabled}
           onClick={handleAction}
@@ -280,12 +294,12 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
     return (
       <div className="flex flex-wrap gap-2">
         <ActionButton
-          label="Cancel"
-          action="cancel"
+          label="Unschedule"
+          action="unschedule"
           pending={actionPending}
           disabled={isDisabled}
           onClick={handleAction}
-          variant="danger-outline"
+          variant="neutral-outline"
         />
       </div>
     );
@@ -319,7 +333,23 @@ export function DraftActionPanel({ draft, onUpdate }: DraftActionPanelProps) {
     );
   }
 
-  // No actions for posted, rejected, cancelled, superseded
+  // cancelled / rejected — offer reopen (not for intro drafts, backend rejects those)
+  if ((status === "cancelled" || status === "rejected") && !draft.is_intro) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <ActionButton
+          label="Reopen"
+          action="reopen"
+          pending={actionPending}
+          disabled={isDisabled}
+          onClick={handleAction}
+          variant="neutral-outline"
+        />
+      </div>
+    );
+  }
+
+  // No actions for posted, superseded
   return null;
 }
 

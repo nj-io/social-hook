@@ -41,6 +41,30 @@ def _get_draft_or_exit(conn, draft_id: str):
     return draft
 
 
+def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
+    """Re-split content into draft_tweets if the draft has an existing thread."""
+    from social_hook.db import operations as ops
+    from social_hook.drafting import _parse_thread_tweets
+    from social_hook.filesystem import generate_id
+    from social_hook.models import DraftTweet
+
+    existing = ops.get_draft_tweets(conn, draft_id)
+    if not existing:
+        return
+
+    parts = _parse_thread_tweets(new_content, thread_min=1)
+    new_tweets = [
+        DraftTweet(
+            id=generate_id("tweet"),
+            draft_id=draft_id,
+            position=i,
+            content=part,
+        )
+        for i, part in enumerate(parts)
+    ]
+    ops.replace_draft_tweets(conn, draft_id, new_tweets)
+
+
 @app.command()
 def approve(
     ctx: typer.Context,
@@ -185,6 +209,83 @@ def cancel(
 
 
 @app.command()
+def reopen(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to reopen"),
+):
+    """Reopen a cancelled or rejected draft.
+
+    Example: social-hook draft reopen draft-abc123
+    """
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if draft.status not in ("cancelled", "rejected"):
+            typer.echo(
+                f"Cannot reopen: draft status is '{draft.status}' (must be 'cancelled' or 'rejected')"
+            )
+            raise typer.Exit(1)
+        if getattr(draft, "is_intro", False):
+            typer.echo("Intro drafts cannot be reopened — create a new draft instead.")
+            raise typer.Exit(1)
+        ops.update_draft(conn, draft_id, status="draft", last_error="")
+        ops.emit_data_event(conn, "draft", "reopened", draft_id, draft.project_id)
+        typer.echo(f"Draft {draft_id} reopened.")
+    finally:
+        conn.close()
+
+
+@app.command()
+def unapprove(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to unapprove"),
+):
+    """Revert approval on a draft.
+
+    Example: social-hook draft unapprove draft-abc123
+    """
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if draft.status != "approved":
+            typer.echo(f"Cannot unapprove: draft status is '{draft.status}' (must be 'approved')")
+            raise typer.Exit(1)
+        ops.update_draft(conn, draft_id, status="draft")
+        ops.emit_data_event(conn, "draft", "unapproved", draft_id, draft.project_id)
+        typer.echo(f"Draft {draft_id} unapproved.")
+    finally:
+        conn.close()
+
+
+@app.command()
+def unschedule(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to unschedule"),
+):
+    """Revert scheduling on a draft.
+
+    Example: social-hook draft unschedule draft-abc123
+    """
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if draft.status != "scheduled":
+            typer.echo(f"Cannot unschedule: draft status is '{draft.status}' (must be 'scheduled')")
+            raise typer.Exit(1)
+        ops.update_draft(conn, draft_id, status="draft", scheduled_time="")
+        ops.emit_data_event(conn, "draft", "unscheduled", draft_id, draft.project_id)
+        typer.echo(f"Draft {draft_id} unscheduled.")
+    finally:
+        conn.close()
+
+
+@app.command()
 def retry(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to retry"),
@@ -227,6 +328,7 @@ def edit(
             raise typer.Exit(1)
         old_content = draft.content
         ops.update_draft(conn, draft_id, content=content)
+        _resync_thread_tweets(conn, draft_id, content)
         ops.insert_draft_change(
             conn,
             DraftChange(
@@ -294,6 +396,7 @@ def redraft(
             if result.refined_content:
                 old_content = draft.content
                 ops.update_draft(conn, draft_id, content=result.refined_content)
+                _resync_thread_tweets(conn, draft_id, result.refined_content)
                 ops.insert_draft_change(
                     conn,
                     DraftChange(
