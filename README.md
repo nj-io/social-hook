@@ -1,4 +1,8 @@
-# Social Hook
+<p align="center">
+  <img src="assets/social-preview.png" alt="Social Hook — The marketing engine built for devs" width="700">
+</p>
+
+<h1 align="center">Social Hook</h1>
 
 [![CI](https://github.com/nj-io/social-hook/actions/workflows/ci.yml/badge.svg)](https://github.com/nj-io/social-hook/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/social-hook)](https://pypi.org/project/social-hook/)

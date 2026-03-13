@@ -43,6 +43,9 @@ archive/
 # MkDocs build output
 site/
 
+# Landing page source (deployed separately)
+site-src/
+
 # Claude Code internals
 .claude/
 
