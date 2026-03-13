@@ -8,6 +8,7 @@ import typer
 
 def rate_limits(
     ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Show current rate limit status (daily cap, gap timer, queue, cost).
 
@@ -19,7 +20,7 @@ def rate_limits(
     from social_hook.db.connection import init_database
     from social_hook.filesystem import get_db_path
 
-    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+    json_mode = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
     config_path = ctx.obj.get("config") if ctx.obj else None
 
     config = load_full_config(

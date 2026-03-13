@@ -5,6 +5,7 @@
 <h1 align="center">Social Hook</h1>
 
 [![CI](https://github.com/nj-io/social-hook/actions/workflows/ci.yml/badge.svg)](https://github.com/nj-io/social-hook/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/nj-io/social-hook/graph/badge.svg)](https://codecov.io/gh/nj-io/social-hook)
 [![PyPI](https://img.shields.io/pypi/v/social-hook)](https://pypi.org/project/social-hook/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)

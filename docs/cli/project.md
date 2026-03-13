@@ -4,6 +4,29 @@ Project management.
 
 ---
 
+### `social-hook project evaluate-recent`
+
+Evaluate recent un-evaluated commits through the full pipeline.
+
+Finds commits with 'imported' or 'deferred_eval' decisions and runs each
+through the evaluator + drafter pipeline. Makes LLM calls. Writes decisions
+and drafts to the database. Max 5 commits per invocation.
+
+Examples:
+    social-hook project evaluate-recent
+    social-hook project evaluate-recent --last 3
+    social-hook project evaluate-recent -p /path/to/repo --json
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--last`, `-n` | integer | 5 | Number of recent un-evaluated commits to evaluate (max 5) |
+| `--project`, `-p` | string |  | Repository path (default: current directory) |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
 ### `social-hook project import-commits`
 
 Import historical git commits as imported decisions.
@@ -42,6 +65,19 @@ Example: social-hook project install-hook /path/to/repo
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `--json` | boolean | false | Output as JSON |
+
+---
+
+### `social-hook project intro`
+
+Manage per-platform introduction status.
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--project`, `-p` | string |  | Project ID or path |
 | `--json` | boolean | false | Output as JSON |
 
 ---
