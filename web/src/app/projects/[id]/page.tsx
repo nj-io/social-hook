@@ -948,37 +948,79 @@ export default function ProjectDetailPage() {
               {consolidateResult?.error && (
                 <span className="text-xs text-destructive">{consolidateResult.error}</span>
               )}
-              <button
-                onClick={() => setSelectedDecisions(new Set())}
-                className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
-              >
-                Clear
-              </button>
-              {selectedDecisions.size === 1 && (
-                <button
-                  onClick={() => { setActionError(null); setConfirmRetrigger(true); }}
-                  className="rounded-md border border-accent px-4 py-1.5 text-sm font-medium text-accent hover:bg-accent/10"
-                >
-                  Re-evaluate
-                </button>
-              )}
-              <button
-                onClick={() => { setActionError(null); setConfirmDelete(true); }}
-                className="rounded-md border border-destructive/50 px-4 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
-              >
-                Delete {selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}
-              </button>
-              {selectedDecisions.size >= 2 && (
-                <button
-                  onClick={handleConsolidate}
-                  disabled={isTaskRunning(CONSOLIDATE_REF)}
-                  className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
-                >
-                  {isTaskRunning(CONSOLIDATE_REF)
-                    ? "Consolidating..."
-                    : `Consolidate ${selectedDecisions.size} → Create Draft`}
-                </button>
-              )}
+              {(() => {
+                const selectedList = decisions.filter((d) => selectedDecisions.has(d.id));
+                const allImported = selectedList.length > 0 && selectedList.every((d) => d.decision === "imported");
+                const allEvaluated = selectedList.length > 0 && selectedList.every((d) => d.decision !== "imported");
+                const isMixed = !allImported && !allEvaluated;
+                return (
+                  <>
+                    <button
+                      onClick={() => setSelectedDecisions(new Set())}
+                      className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+                    >
+                      Clear
+                    </button>
+                    {selectedDecisions.size === 1 && allEvaluated && (
+                      <button
+                        onClick={() => { setActionError(null); setConfirmRetrigger(true); }}
+                        className="rounded-md border border-accent px-4 py-1.5 text-sm font-medium text-accent hover:bg-accent/10"
+                      >
+                        Re-evaluate
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setActionError(null); setConfirmDelete(true); }}
+                      className="rounded-md border border-destructive/50 px-4 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
+                    >
+                      Delete {selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}
+                    </button>
+                    {allImported && selectedDecisions.size >= 1 && (
+                      <button
+                        onClick={async () => {
+                          setActionLoading(true);
+                          setActionError(null);
+                          try {
+                            for (const did of Array.from(selectedDecisions)) {
+                              const res = await retriggerDecision(did);
+                              if (res.status !== "retriggered") {
+                                setActionError(`Evaluate failed for ${did.slice(0, 8)} (exit code ${res.exit_code})`);
+                                break;
+                              }
+                            }
+                            setSelectedDecisions(new Set());
+                            reload();
+                          } catch (err) {
+                            setActionError(err instanceof Error ? err.message : "Batch evaluate failed");
+                          } finally {
+                            setActionLoading(false);
+                          }
+                        }}
+                        disabled={actionLoading}
+                        className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        {actionLoading
+                          ? "Evaluating..."
+                          : `Batch evaluate (${selectedDecisions.size})`}
+                      </button>
+                    )}
+                    {allEvaluated && selectedDecisions.size >= 2 && (
+                      <button
+                        onClick={handleConsolidate}
+                        disabled={isTaskRunning(CONSOLIDATE_REF) || isMixed}
+                        className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                      >
+                        {isTaskRunning(CONSOLIDATE_REF)
+                          ? "Consolidating..."
+                          : `Consolidate ${selectedDecisions.size} → Create Draft`}
+                      </button>
+                    )}
+                    {isMixed && selectedDecisions.size >= 2 && (
+                      <span className="text-xs text-muted-foreground">Mixed selection — select only imported or only evaluated decisions</span>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
