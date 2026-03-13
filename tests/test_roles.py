@@ -111,7 +111,7 @@ def sample_context():
         lifecycle=Lifecycle(project_id="proj_test1", phase="build", confidence=0.8),
         active_arcs=[],
         narrative_debt=0,
-        audience_introduced=True,
+        platform_introduced={"x": True},
         pending_drafts=[],
         recent_decisions=[],
         recent_posts=[],

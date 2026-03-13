@@ -67,7 +67,7 @@ def sample_project_context():
             Arc(id="arc_1", project_id="proj_test1", theme="Building auth", post_count=2),
         ],
         narrative_debt=1,
-        audience_introduced=True,
+        platform_introduced={"x": True},
         pending_drafts=[],
         recent_decisions=[
             Decision(
@@ -134,6 +134,10 @@ class TestLoadPrompt:
                 "social_hook.llm.prompts.Path.home",
                 return_value=temp_dir,
             ),
+            patch(
+                "social_hook.llm.prompts._BUNDLED_PROMPTS_DIR",
+                temp_dir / "nonexistent",
+            ),
             pytest.raises(PromptNotFoundError, match="evaluator"),
         ):
             load_prompt("evaluator")
@@ -150,6 +154,29 @@ class TestLoadPrompt:
             content = load_prompt("evaluator")
             assert "Test Evaluator" in content
             assert "Test content." in content
+
+    def test_bundled_fallback(self, temp_dir):
+        """Bundled prompts are used when user prompts don't exist."""
+        with patch(
+            "social_hook.llm.prompts.Path.home",
+            return_value=temp_dir,
+        ):
+            # No user prompts exist, so bundled should be used
+            content = load_prompt("drafter")
+            assert "Drafter" in content
+
+    def test_user_prompt_overrides_bundled(self, temp_dir):
+        """User prompts take priority over bundled."""
+        prompts_dir = temp_dir / CONFIG_DIR_NAME / "prompts"
+        prompts_dir.mkdir(parents=True)
+        (prompts_dir / "drafter.md").write_text("# Custom Drafter")
+
+        with patch(
+            "social_hook.llm.prompts.Path.home",
+            return_value=temp_dir,
+        ):
+            content = load_prompt("drafter")
+            assert "Custom Drafter" in content
 
 
 # =============================================================================
