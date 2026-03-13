@@ -24,10 +24,24 @@ export function PipelineToasts() {
         } else if (data.action === "drafting") {
           addToast("Drafting content", { detail: data.entity_id });
         }
-      } else if (data.entity === "draft" && data.action === "created") {
+      } else if (data.entity === "draft") {
         const platform = data.platform ? ` (${data.platform})` : "";
         const preview = data.content ? data.content.slice(0, 80) : "";
-        addToast(`Draft created${platform}`, { detail: preview });
+        const toastMap: Record<string, { msg: string; variant?: "success" }> = {
+          created: { msg: "Draft created" },
+          edited: { msg: "Draft edited" },
+          approved: { msg: "Draft approved", variant: "success" },
+          scheduled: { msg: "Draft scheduled", variant: "success" },
+          cancelled: { msg: "Draft cancelled" },
+          rejected: { msg: "Draft rejected" },
+          unapproved: { msg: "Approval reverted" },
+          unscheduled: { msg: "Schedule reverted" },
+          reopened: { msg: "Draft reopened" },
+        };
+        const entry = toastMap[data.action];
+        if (entry) {
+          addToast(`${entry.msg}${platform}`, { detail: preview, variant: entry.variant });
+        }
       } else if (data.entity === "decision") {
         addToast(`Decision: ${data.action}`, { detail: data.entity_id });
       }

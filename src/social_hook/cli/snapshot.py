@@ -14,6 +14,26 @@ _NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 _MAX_NAME_LEN = 64
 
 
+def _try_api_restore(name: str, json_output: bool) -> bool:
+    """Try to restore via the running web server API. Returns True if successful."""
+    import urllib.error
+    import urllib.request
+
+    url = "http://127.0.0.1:8741/api/snapshot/restore"
+    data = json_mod.dumps({"name": name}).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=15)
+        result = json_mod.loads(resp.read())
+        if json_output:
+            typer.echo(json_mod.dumps(result, indent=2))
+        else:
+            typer.echo(f"Restored snapshot: {name}")
+        return True
+    except (urllib.error.URLError, OSError):
+        return False
+
+
 def _snapshots_dir():
     from social_hook.filesystem import get_base_path
 
@@ -118,6 +138,11 @@ def restore(
             typer.echo("Cancelled.")
             return
 
+    # Try restoring via API if the web server is running (avoids stale WAL/SHM)
+    if _try_api_restore(name, json_output):
+        return
+
+    # Fallback: direct file copy (no server running)
     db = get_db_path()
     backup = _snapshots_dir() / "_pre_restore.db"
     if db.exists():

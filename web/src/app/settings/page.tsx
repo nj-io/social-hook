@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { fetchConfig, fetchContentConfig, fetchContentConfigParsed, fetchEnv, fetchProjects, fetchSocialContext, updateConfig, updateContentConfig, updateContentConfigParsed, updateSocialContext } from "@/lib/api";
 import { useSectionNav } from "@/lib/use-section-nav";
-import type { ChannelConfig, Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, SchedulingConfig } from "@/lib/types";
+import type { ChannelConfig, Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, RateLimitsConfig, SchedulingConfig } from "@/lib/types";
 import { SettingsSidebar, sections } from "@/components/settings/settings-sidebar";
 import { ModelsSection } from "@/components/settings/models-section";
 import { ApiKeysSection } from "@/components/settings/api-keys-section";
@@ -12,6 +12,7 @@ import { SchedulingSection } from "@/components/settings/scheduling-section";
 import { TextEditorSection } from "@/components/settings/text-editor-section";
 import { MediaGenerationSection } from "@/components/settings/media-generation-section";
 import { ConsolidationSection } from "@/components/settings/consolidation-section";
+import { RateLimitsSection } from "@/components/settings/rate-limits-section";
 import { ProjectsSection } from "@/components/settings/projects-section";
 import { InstallationsSection } from "@/components/settings/installations-section";
 import { ChannelsSection } from "@/components/settings/channels-section";
@@ -154,6 +155,7 @@ function SettingsContent() {
   const mediaGen: MediaGenerationConfig = (config?.media_generation as MediaGenerationConfig) ?? { enabled: true, tools: {} };
   const journeyCapture: JourneyCaptureConfig = (config?.journey_capture as JourneyCaptureConfig) ?? { enabled: false };
   const consolidation: ConsolidationConfig = (config?.consolidation as ConsolidationConfig) ?? { enabled: false, mode: "notify_only", batch_size: 20 };
+  const rateLimits: RateLimitsConfig = (config?.rate_limits as RateLimitsConfig) ?? { max_evaluations_per_day: 15, min_evaluation_gap_minutes: 10, batch_throttled: false };
   const channels: Record<string, ChannelConfig> = (config?.channels as Record<string, ChannelConfig>) ?? {};
 
   return (
@@ -233,6 +235,13 @@ function SettingsContent() {
               onGuidanceSave={refreshContentConfig}
               env={envData?.env ?? {}}
               onEnvRefresh={loadAll}
+            />
+          </section>
+
+          <section id="rate-limits" className="pt-1">
+            <RateLimitsSection
+              rateLimits={rateLimits}
+              onChange={(r) => saveConfig({ rate_limits: r } as Partial<Config>)}
             />
           </section>
 

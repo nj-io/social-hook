@@ -130,16 +130,17 @@ def retrigger(
     verbose = ctx.obj.get("verbose", False) if ctx.obj else False
     dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
 
-    if not json_output:
-        typer.echo(f"Re-evaluating commit {commit_hash[:7]}...")
+    from social_hook.cli._spinner import spinner
 
-    exit_code = run_trigger(
-        commit_hash=commit_hash,
-        repo_path=repo_path,
-        dry_run=dry_run,
-        config_path=str(config_path) if config_path else None,
-        verbose=verbose,
-    )
+    with spinner(f"Re-evaluating commit {commit_hash[:7]}..."):
+        exit_code = run_trigger(
+            commit_hash=commit_hash,
+            repo_path=repo_path,
+            dry_run=dry_run,
+            config_path=str(config_path) if config_path else None,
+            verbose=verbose,
+            trigger_source="manual",
+        )
 
     if json_output:
         typer.echo(

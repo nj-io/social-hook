@@ -22,6 +22,17 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const client = new GatewayClient(
       (envelope: GatewayEnvelope) => {
+        // Auto-reload on DB restore (snapshot restore via API)
+        if (envelope.type === "event") {
+          const payload = envelope.payload as Record<string, unknown>;
+          if (payload.type === "data_change") {
+            const data = payload.data as Record<string, unknown> | undefined;
+            if (data?.entity === "system" && data?.action === "db_restored") {
+              window.location.reload();
+              return;
+            }
+          }
+        }
         for (const handler of listenersRef.current.values()) {
           try { handler(envelope); } catch { /* ignore listener errors */ }
         }

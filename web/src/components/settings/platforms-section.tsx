@@ -16,7 +16,11 @@ export function PlatformsSection({ platforms, onChange, env, onEnvRefresh }: Pla
   const [modalOpen, setModalOpen] = useState(false);
 
   function handlePlatformChange(name: string, config: PlatformConfig) {
-    onChange({ ...platforms, [name]: config });
+    const next = { ...platforms, [name]: config };
+    if (name !== "preview" && config.enabled && next["preview"]?.enabled) {
+      next["preview"] = { ...next["preview"], enabled: false };
+    }
+    onChange(next);
   }
 
   function handleRemove(name: string) {
@@ -54,6 +58,7 @@ export function PlatformsSection({ platforms, onChange, env, onEnvRefresh }: Pla
 
   const entries = Object.entries(platforms);
   const hasPreview = "preview" in platforms;
+  const hasRealPlatformEnabled = entries.some(([n, c]) => n !== "preview" && c.enabled);
 
   return (
     <div className="space-y-4">
@@ -83,7 +88,7 @@ export function PlatformsSection({ platforms, onChange, env, onEnvRefresh }: Pla
         >
           + Add Custom Platform
         </button>
-        {!hasPreview && (
+        {!hasPreview && !hasRealPlatformEnabled && (
           <button
             onClick={handleAddPreview}
             className="rounded-lg border-2 border-dashed border-blue-300 p-3 text-sm text-blue-600 transition-colors hover:border-blue-500 hover:text-blue-800 dark:border-blue-700 dark:text-blue-400 dark:hover:border-blue-500 dark:hover:text-blue-300"

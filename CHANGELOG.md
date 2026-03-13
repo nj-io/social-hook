@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.5.0...social-hook-v0.6.0) (2026-03-12)
+
+
+### Features
+
+* ✨ elapsed timer system + slow task banner ([#28](https://github.com/nj-io/social-hook/issues/28)) ([4b7d477](https://github.com/nj-io/social-hook/commit/4b7d47797f73e1134af0091a4bf56da911510a9c))
+* discovery improvements — per-file summaries, prompt docs, auto-refresh ([#25](https://github.com/nj-io/social-hook/issues/25)) ([e2fd6d7](https://github.com/nj-io/social-hook/commit/e2fd6d74925b52dc1f7732408fc26b07a205fe7d))
+* edit media overhaul + bot daemon reliability ([#29](https://github.com/nj-io/social-hook/issues/29)) ([cafad1e](https://github.com/nj-io/social-hook/commit/cafad1e40d80b71d67a11aa0de8bed37b3038807))
+* rate limits, config tiers, snapshot restore fix, and pipeline feedback ([4d4bab2](https://github.com/nj-io/social-hook/commit/4d4bab2a4de3326e2a2155f300d43ac080a160c8))
+
+
+### Bug Fixes
+
+* resolve lint and typecheck CI failures ([#27](https://github.com/nj-io/social-hook/issues/27)) ([4600f37](https://github.com/nj-io/social-hook/commit/4600f3717702f49b2b0c8748388f3c87068c56c4))
+
 ## [0.5.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.4.0...social-hook-v0.5.0) (2026-03-10)
 
 

@@ -44,6 +44,7 @@ _STALE_CHECK_INTERVAL_TICKS = 60  # every 60 bridge-loop ticks (60 × 0.5s = 30s
 # ---------------------------------------------------------------------------
 
 _hub = GatewayHub()
+_restore_lock = asyncio.Lock()
 
 
 @asynccontextmanager
@@ -138,6 +139,7 @@ def _get_adapter(scope_id: str | None = None):
 def _get_conn() -> sqlite3.Connection:
     """Get a SQLite connection to the main DB."""
     conn = sqlite3.connect(str(get_db_path()))
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -414,7 +416,7 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    handle_command(msg, adapter, config)
+    await asyncio.to_thread(handle_command, msg, adapter, config)
 
     events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
@@ -423,8 +425,6 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
 @app.post("/api/callback")
 async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
     """Execute a button callback via the web adapter."""
-    import asyncio
-
     from social_hook.bot.buttons import handle_callback
 
     adapter = _get_adapter(scope_id=x_session_id)
@@ -467,7 +467,7 @@ async def api_message(body: MessageRequest, x_session_id: str = Header("web")):
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    handle_message(msg, adapter, config)
+    await asyncio.to_thread(handle_message, msg, adapter, config)
 
     events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
@@ -623,9 +623,15 @@ async def _event_bridge_loop():
 
     Broadcast events (session_id IS NULL) go to all connections.
     Scoped events go only to the connection with a matching session_id.
+
+    Detects DB file replacement (e.g. snapshot restore) via ResilientConnection
+    and reconnects automatically.
     """
-    bridge_conn = sqlite3.connect(str(get_db_path()))
-    bridge_conn.row_factory = sqlite3.Row
+    from social_hook.db.connection import ResilientConnection
+
+    db_path = get_db_path()
+    rc = ResilientConnection(db_path)
+    bridge_conn = rc.conn
     try:
         row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
         last_id = row[0] if row else 0
@@ -633,6 +639,14 @@ async def _event_bridge_loop():
         while True:
             await asyncio.sleep(0.5)
             tick_count += 1
+            # Check for DB file replacement (snapshot restore)
+            prev_conn = bridge_conn
+            bridge_conn = rc.check()
+            if bridge_conn is not prev_conn:
+                row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
+                max_id = row[0] if row else 0
+                if max_id < last_id:
+                    last_id = max(0, max_id - 1)  # Re-read latest event after DB change
             if tick_count % _STALE_CHECK_INTERVAL_TICKS == 0:
                 _expire_hung_tasks(bridge_conn)
             if _hub.connection_count == 0:
@@ -664,7 +678,7 @@ async def _event_bridge_loop():
     except asyncio.CancelledError:
         pass
     finally:
-        bridge_conn.close()
+        rc.close()
 
 
 # ---------------------------------------------------------------------------
@@ -966,6 +980,151 @@ async def api_resend_draft_notification(draft_id: str):
         raise HTTPException(status_code=404, detail=str(e)) from None
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from None
+
+
+@app.post("/api/drafts/{draft_id}/promote")
+async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Promote a preview draft to a real platform.
+
+    Creates a new draft for the target platform using the LLM drafter,
+    then marks the preview draft as superseded.
+
+    Body:
+        platform: Target platform name (e.g. "x", "linkedin")
+    """
+    platform = body.get("platform")
+    if not platform:
+        raise HTTPException(status_code=400, detail="Missing 'platform' in body")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.platform != "preview":
+            raise HTTPException(status_code=400, detail="Only preview drafts can be promoted")
+        if draft.status in ("posted", "rejected", "cancelled", "superseded"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot promote draft with status '{draft.status}'",
+            )
+
+        decision = ops.get_decision(conn, draft.decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="Decision not found")
+
+        project = ops.get_project(conn, decision.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    finally:
+        conn.close()
+
+    config = _get_config()
+
+    pcfg = config.platforms.get(platform)
+    if not pcfg or not pcfg.enabled:
+        raise HTTPException(status_code=400, detail=f"Platform '{platform}' is not enabled")
+
+    from social_hook.compat import evaluation_from_decision
+    from social_hook.config.project import ProjectConfig, load_project_config
+    from social_hook.models import CommitInfo
+
+    try:
+        project_config = load_project_config(project.repo_path)
+    except ConfigError:
+        project_config = ProjectConfig(repo_path=project.repo_path)
+
+    from social_hook.trigger import parse_commit_info
+
+    try:
+        commit = parse_commit_info(decision.commit_hash, project.repo_path)
+    except Exception:
+        commit = CommitInfo(
+            hash=decision.commit_hash,
+            message=decision.commit_message or "",
+            diff="",
+            files_changed=[],
+        )
+
+    evaluation = evaluation_from_decision(decision, "draft")
+
+    def _blocking_promote():
+        import sqlite3 as _sqlite3
+
+        from social_hook.drafting import draft_for_platforms
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.prompts import assemble_evaluator_context
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+        try:
+            context = assemble_evaluator_context(
+                db,
+                project.id,
+                project_config,
+                commit_timestamp=getattr(commit, "timestamp", None),
+                parent_timestamp=getattr(commit, "parent_timestamp", None),
+            )
+            db.emit_data_event("pipeline", "promoting", draft_id[:8], project.id)
+            results = draft_for_platforms(
+                config,
+                conn2,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+                target_platform_names=[platform],
+                skip_content_filter=True,
+            )
+            return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
+        finally:
+            conn2.close()
+
+    def _on_promote_done(result: dict) -> None:
+        conn2 = _get_conn()
+        try:
+            new_draft_ids = result.get("draft_ids", [])
+            if new_draft_ids:
+                ops.supersede_draft(conn2, draft_id, new_draft_ids[0])
+                ops.emit_data_event(conn2, "draft", "updated", draft_id, project.id)
+
+            from social_hook.drafting import DraftResult
+            from social_hook.scheduling import calculate_optimal_time
+
+            draft_results = []
+            for did in new_draft_ids:
+                d = ops.get_draft(conn2, did)
+                if d:
+                    sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_tweets=[]))
+            if draft_results:
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    commit_hash=commit.hash,
+                    commit_message=commit.message,
+                    draft_results=draft_results,
+                )
+        except Exception:
+            logger.debug("Promote notification failed", exc_info=True)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "promote_draft",
+        ref_id=draft_id,
+        project_id=project.id,
+        fn=_blocking_promote,
+        on_success=_on_promote_done,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
 
 
 @app.get("/api/projects")
@@ -1309,25 +1468,12 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
     except ConfigError:
         project_config = ProjectConfig(repo_path=project.repo_path)
 
+    from social_hook.compat import evaluation_from_decision
     from social_hook.trigger import parse_commit_info
 
     commit = parse_commit_info(decision.commit_hash, project.repo_path)
 
-    from types import SimpleNamespace
-
-    evaluation = SimpleNamespace(
-        decision="draft",
-        reasoning=decision.reasoning,
-        angle=decision.angle,
-        episode_type=decision.episode_type,
-        post_category=decision.post_category,
-        arc_id=decision.arc_id,
-        new_arc_theme=None,
-        media_tool=decision.media_tool,
-        reference_posts=None,
-        include_project_docs=True,
-        commit_summary=decision.commit_summary,
-    )
+    evaluation = evaluation_from_decision(decision, "draft")
 
     def _blocking_create_draft():
         import sqlite3 as _sqlite3
@@ -1337,6 +1483,7 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
         from social_hook.llm.prompts import assemble_evaluator_context
 
         conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
         conn2.row_factory = _sqlite3.Row
         db = DryRunContext(conn2, dry_run=False)
         try:
@@ -1460,6 +1607,7 @@ async def api_retrigger_decision(decision_id: str):
         return run_trigger(
             commit_hash=commit_hash,
             repo_path=repo_path,
+            trigger_source="manual",
         )
 
     exit_code = await asyncio.to_thread(_blocking_retrigger)
@@ -1524,7 +1672,8 @@ async def api_enabled_platforms():
     for name, pcfg in config.platforms.items():
         if pcfg.enabled:
             enabled[name] = {"priority": pcfg.priority, "type": pcfg.type}
-    return {"platforms": enabled, "count": len(enabled)}
+    real_count = sum(1 for n in enabled if n != "preview")
+    return {"platforms": enabled, "count": len(enabled), "real_count": real_count}
 
 
 @app.post("/api/decisions/consolidate")
@@ -1578,21 +1727,10 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         files_changed=[],
     )
 
-    from types import SimpleNamespace
+    from social_hook.compat import evaluation_from_decision
 
     anchor = decisions[-1]
-    evaluation = SimpleNamespace(
-        decision="draft",
-        reasoning=anchor.reasoning,
-        angle=anchor.angle,
-        episode_type=anchor.episode_type,
-        post_category=anchor.post_category,
-        arc_id=anchor.arc_id,
-        media_tool=anchor.media_tool,
-        reference_posts=anchor.reference_posts,
-        include_project_docs=True,
-        commit_summary=anchor.commit_summary,
-    )
+    evaluation = evaluation_from_decision(anchor, "draft")
 
     def _blocking_consolidate():
         import sqlite3 as _sqlite3
@@ -1602,6 +1740,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         from social_hook.llm.prompts import assemble_evaluator_context
 
         conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
         conn2.row_factory = _sqlite3.Row
         db = DryRunContext(conn2, dry_run=False)
         try:
@@ -1668,6 +1807,95 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         status_code=202,
         content={"task_id": task_id, "status": "processing"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Rate Limits
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/snapshot/restore")
+async def api_snapshot_restore(body: dict[str, Any] = Body(default={})):
+    """Restore a snapshot while the server is running.
+
+    Uses SQLite's backup API to copy pages directly between connections,
+    avoiding file replacement and SHM corruption. Safe with concurrent
+    readers (bridge loop, background threads, other endpoints).
+    """
+    name = body.get("name")
+    if not name:
+        raise HTTPException(400, "Missing 'name' field")
+
+    if _restore_lock.locked():
+        raise HTTPException(409, "Another restore is already in progress")
+
+    snap_dir = get_db_path().parent / "snapshots"
+    src = snap_dir / f"{name}.db"
+    if not src.exists():
+        raise HTTPException(404, f"Snapshot not found: {name}")
+
+    db_path = get_db_path()
+    backup_path = snap_dir / "_pre_restore.db"
+
+    def _do_restore():
+        """Run the blocking backup operations in a thread."""
+        from social_hook.db.connection import get_connection, init_database
+
+        # 1. Pre-restore backup using backup API (consistent even with open connections)
+        if db_path.exists():
+            pre_src = sqlite3.connect(str(db_path))
+            pre_src.execute("PRAGMA busy_timeout = 5000")
+            pre_dst = sqlite3.connect(str(backup_path))
+            try:
+                pre_src.backup(pre_dst)
+            finally:
+                pre_src.close()
+                pre_dst.close()
+
+        # 2. Restore: copy snapshot pages into live DB
+        src_conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+        dst_conn = get_connection(db_path)  # WAL mode + busy_timeout
+        try:
+            dst_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            src_conn.backup(dst_conn)
+        finally:
+            src_conn.close()
+            dst_conn.close()
+
+        # 3. Apply migrations (snapshot may predate schema changes)
+        new_conn = init_database(db_path)
+        try:
+            new_conn.execute(
+                "INSERT INTO web_events (type, data) VALUES (?, ?)",
+                ("data_change", json.dumps({"entity": "system", "action": "db_restored"})),
+            )
+            new_conn.commit()
+            # 4. Checkpoint WAL to flush to main file — updates mtime so
+            #    bridge's ResilientConnection detects the change and resets last_id
+            new_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            new_conn.close()
+
+    async with _restore_lock:
+        try:
+            await asyncio.to_thread(_do_restore)
+        except Exception as e:
+            raise HTTPException(500, f"Restore failed: {e}") from e
+
+    return {"restored": True, "name": name, "backup": str(backup_path)}
+
+
+@app.get("/api/rate-limits/status")
+async def api_rate_limits_status():
+    """Return current rate limit state for the dashboard."""
+    from social_hook.rate_limits import get_rate_limit_status
+
+    config = _get_config()
+    conn = _get_conn()
+    try:
+        return get_rate_limit_status(conn, config.rate_limits)
+    finally:
+        conn.close()
 
 
 @app.get("/api/tasks")
@@ -2226,33 +2454,37 @@ async def api_regenerate_summary(project_id: str):
 
         client = create_client(evaluator_model, config)
 
-        # Load context settings from content-config.yaml
-        cc_path = get_db_path().parent / "content-config.yaml"
-        max_doc_tokens = 10000
-        project_docs: list[str] | None = None
-        if cc_path.exists():
-            try:
-                cc_raw = yaml.safe_load(cc_path.read_text()) or {}
-                ctx = cc_raw.get("context", {})
-                max_doc_tokens = ctx.get("max_doc_tokens", 10000)
-                project_docs = ctx.get("project_docs") or None
-            except yaml.YAMLError:
-                pass
+        from social_hook.config.project import load_project_config
 
-        summary, files = await asyncio.to_thread(
+        project_config = load_project_config(project.repo_path)
+        max_discovery_tokens = (
+            project_config.context.max_discovery_tokens if project_config else 60000
+        )
+        max_file_size = project_config.context.max_file_size if project_config else 256000
+        project_docs = project_config.context.project_docs if project_config else None
+
+        summary, files, file_summaries, prompt_docs = await asyncio.to_thread(
             discover_project,
             client,
             project.repo_path,
             project_docs=project_docs,
-            max_doc_tokens=max_doc_tokens,
+            max_discovery_tokens=max_discovery_tokens,
+            max_file_size=max_file_size,
             db=conn,
             project_id=project_id,
+            on_progress=lambda stage: ops.emit_data_event(
+                conn, "pipeline", stage, project_id, project_id
+            ),
         )
 
         if summary:
             ops.update_project_summary(conn, project_id, summary)
             if files:
                 ops.update_discovery_files(conn, project_id, files)
+            if file_summaries:
+                ops.upsert_file_summaries(conn, project_id, file_summaries)
+            if prompt_docs:
+                ops.update_prompt_docs(conn, project_id, prompt_docs)
             ops.emit_data_event(conn, "project", "updated", project_id, project_id)
 
         return {"summary": summary or ""}

@@ -53,7 +53,16 @@ def _traverse(data: dict, dotted_key: str):
 
 
 @app.command()
-def show():
+def show(
+    content: bool = typer.Option(
+        False,
+        "--content",
+        help="Show content-config.yaml instead of config.yaml. Example: social-hook config show --content",
+    ),
+    project_path: str = typer.Option(
+        None, "--project", "-p", help="Project path for project-specific config"
+    ),
+):
     """Show the full configuration as YAML."""
     from social_hook.filesystem import get_config_path
 
@@ -72,7 +81,15 @@ def show():
 
 
 @app.command("get")
-def get_key(key: str = typer.Argument(help="Dotted key path (e.g. platforms.x.account_tier)")):
+def get_key(
+    key: str = typer.Argument(help="Dotted key path (e.g. context.max_discovery_tokens)"),
+    content: bool = typer.Option(
+        False,
+        "--content",
+        help="Read from content-config.yaml. Example: social-hook config get context.max_discovery_tokens --content",
+    ),
+    project_path: str = typer.Option(None, "--project", "-p", help="Project path"),
+):
     """Get a single configuration value by dotted key path."""
     from social_hook.filesystem import get_config_path
 
@@ -101,8 +118,14 @@ def get_key(key: str = typer.Argument(help="Dotted key path (e.g. platforms.x.ac
 
 @app.command("set")
 def set_key(
-    key: str = typer.Argument(help="Dotted key path (e.g. platforms.x.account_tier)"),
-    value: str = typer.Argument(help="Value to set (scalars only; use web UI for lists/arrays)"),
+    key: str = typer.Argument(help="Dotted key path (e.g. context.max_discovery_tokens)"),
+    value: str = typer.Argument(help="Value to set (scalars only)"),
+    content: bool = typer.Option(
+        False,
+        "--content",
+        help="Write to content-config.yaml. Example: social-hook config set context.max_discovery_tokens 80000 --content",
+    ),
+    project_path: str = typer.Option(None, "--project", "-p", help="Project path"),
 ):
     """Set a configuration value by dotted key path.
 

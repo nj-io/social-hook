@@ -34,6 +34,8 @@ def _patch_paths(db_env):
     stack.enter_context(
         patch("social_hook.filesystem.get_base_path", return_value=Path(db_env["tmp_path"]))
     )
+    # Skip API restore attempt (would hit a running web server and short-circuit file logic)
+    stack.enter_context(patch("social_hook.cli.snapshot._try_api_restore", return_value=False))
     return stack
 
 

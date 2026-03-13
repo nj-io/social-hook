@@ -1,14 +1,7 @@
 import Link from "next/link";
 import type { Draft } from "@/lib/types";
+import { platformLabel } from "@/lib/platform";
 import { StatusBadge } from "./status-badge";
-
-function platformLabel(platform: string): string {
-  const labels: Record<string, string> = {
-    x: "X (Twitter)",
-    linkedin: "LinkedIn",
-  };
-  return labels[platform] ?? platform;
-}
 
 export function DraftCard({ draft }: { draft: Draft }) {
   const preview = draft.content.length > 140
