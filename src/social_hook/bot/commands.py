@@ -383,6 +383,8 @@ def handle_message(
             gk_narrative_debt = None
             gk_audience_introduced = None
             gk_linked_decision = None
+            gk_social_context = None
+            gk_platform_introduced = None
 
             if project_id:
                 from social_hook.db import operations as ops
@@ -403,6 +405,21 @@ def handle_message(
                     debt = ops.get_narrative_debt(_context_conn, project_id)
                     gk_narrative_debt = debt.debt_counter if debt else 0
                     gk_audience_introduced = ops.get_audience_introduced(_context_conn, project_id)
+                    gk_platform_introduced = ops.get_all_platform_introduced(
+                        _context_conn, project_id
+                    )
+
+                    # Load social context for voice awareness
+                    try:
+                        project = ops.get_project(_context_conn, project_id)
+                        if project and project.repo_path:
+                            from social_hook.config.project import load_project_config
+
+                            pc = load_project_config(project.repo_path)
+                            gk_social_context = pc.social_context
+                    except Exception:
+                        logger.debug("Failed to load social context", exc_info=True)
+
                     if draft_obj and hasattr(draft_obj, "decision_id") and draft_obj.decision_id:
                         gk_linked_decision = ops.get_decision(_context_conn, draft_obj.decision_id)
                 except Exception:
@@ -447,6 +464,8 @@ def handle_message(
                 narrative_debt=gk_narrative_debt,
                 audience_introduced=gk_audience_introduced,
                 linked_decision=gk_linked_decision,
+                social_context=gk_social_context,
+                platform_introduced=gk_platform_introduced,
             )
 
             response_text = None
@@ -1019,13 +1038,40 @@ def _handle_expert_escalation(
 
         expert = Expert(client)
 
+        # Resolve social context and identity for expert (non-fatal)
+        expert_social_context = None
+        expert_identity = None
+        expert_summary = None
+        if project_id:
+            try:
+                from social_hook.db import operations as _expert_ops
+
+                _expert_conn = _get_conn()
+                expert_summary = _expert_ops.get_project_summary(_expert_conn, project_id)
+                _expert_project = _expert_ops.get_project(_expert_conn, project_id)
+                if _expert_project and _expert_project.repo_path:
+                    from social_hook.config.project import load_project_config
+
+                    pc = load_project_config(_expert_project.repo_path)
+                    expert_social_context = pc.social_context
+                if draft and hasattr(draft, "platform"):
+                    from social_hook.config.yaml import load_full_config, resolve_identity
+
+                    full_config = load_full_config()
+                    expert_identity = resolve_identity(full_config, draft.platform)
+            except Exception:
+                logger.debug("Failed to resolve expert context", exc_info=True)
+
         result = expert.handle(
             draft=draft,
             user_message=user_message,
             escalation_reason=route.escalation_reason or "user request",
             escalation_context=route.escalation_context,
+            project_summary=expert_summary,
             project_id=project_id,
             db=db,
+            social_context=expert_social_context,
+            identity=expert_identity,
         )
 
         action = result.action.value if hasattr(result.action, "value") else str(result.action)

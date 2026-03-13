@@ -69,6 +69,9 @@ class OutputPlatformConfig:
     # Per-platform scheduling overrides (None = use global + frequency preset)
     scheduling: dict | None = None
 
+    # Reference to named identity definition
+    identity: str | None = None
+
 
 @dataclass
 class ResolvedPlatformConfig:

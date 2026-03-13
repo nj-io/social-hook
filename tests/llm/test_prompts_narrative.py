@@ -50,7 +50,7 @@ def sample_project_context():
             Arc(id="arc_1", project_id="proj_test1", theme="Building auth", post_count=2),
         ],
         narrative_debt=1,
-        audience_introduced=True,
+        platform_introduced={"x": True},
         pending_drafts=[],
         recent_decisions=[
             Decision(
@@ -436,7 +436,6 @@ class TestProjectContextNarrativeDefaults:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=False,
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],
@@ -453,7 +452,6 @@ class TestProjectContextNarrativeDefaults:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=False,
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],

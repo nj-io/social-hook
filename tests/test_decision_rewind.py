@@ -27,8 +27,8 @@ def db_env(tmp_path):
 
     # Project
     conn.execute(
-        "INSERT INTO projects (id, name, repo_path, audience_introduced) VALUES (?, ?, ?, ?)",
-        ("proj_test1", "test-project", str(tmp_path), 0),
+        "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+        ("proj_test1", "test-project", str(tmp_path)),
     )
     conn.commit()
     conn.close()
@@ -268,12 +268,11 @@ class TestRewindDecisionOps:
         assert d2["reference_post_id"] is None
         conn.close()
 
-    def test_rewind_resets_audience_introduced(self, db_env):
+    def test_rewind_resets_platform_introduced(self, db_env):
         from social_hook.db import operations as ops
 
         conn = _conn(db_env)
-        conn.execute("UPDATE projects SET audience_introduced = 1 WHERE id = 'proj_test1'")
-        conn.commit()
+        ops.set_platform_introduced(conn, "proj_test1", "x", True)
 
         _insert_decision(conn)
         _insert_draft(conn, "draft_001", is_intro=1)
@@ -281,18 +280,14 @@ class TestRewindDecisionOps:
         result = ops.rewind_decision(conn, "decision_001")
 
         assert result["audience_reset"] is True
-        proj = conn.execute(
-            "SELECT audience_introduced FROM projects WHERE id = 'proj_test1'"
-        ).fetchone()
-        assert proj["audience_introduced"] == 0
+        assert ops.get_platform_introduced(conn, "proj_test1", "x") is False
         conn.close()
 
-    def test_rewind_preserves_audience_when_other_intros(self, db_env):
+    def test_rewind_preserves_platform_when_other_intros(self, db_env):
         from social_hook.db import operations as ops
 
         conn = _conn(db_env)
-        conn.execute("UPDATE projects SET audience_introduced = 1 WHERE id = 'proj_test1'")
-        conn.commit()
+        ops.set_platform_introduced(conn, "proj_test1", "x", True)
 
         _insert_decision(conn, "decision_001", "aaa111")
         _insert_draft(conn, "draft_001", "decision_001", is_intro=1)
@@ -304,10 +299,7 @@ class TestRewindDecisionOps:
         result = ops.rewind_decision(conn, "decision_001")
 
         assert result["audience_reset"] is False
-        proj = conn.execute(
-            "SELECT audience_introduced FROM projects WHERE id = 'proj_test1'"
-        ).fetchone()
-        assert proj["audience_introduced"] == 1
+        assert ops.get_platform_introduced(conn, "proj_test1", "x") is True
         conn.close()
 
     def test_rewind_not_found(self, db_env):

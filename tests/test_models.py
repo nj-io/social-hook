@@ -108,14 +108,13 @@ class TestProjectModel:
             id="project_123",
             name="test-project",
             repo_path="/tmp/test",
-            audience_introduced=True,
             created_at=datetime(2026, 1, 15, 10, 30, 0),
         )
 
         d = project.to_dict()
         assert d["id"] == "project_123"
         assert d["name"] == "test-project"
-        assert d["audience_introduced"] is True
+        assert "audience_introduced" not in d
         assert d["created_at"] == "2026-01-15T10:30:00"
 
     def test_project_from_dict(self):
@@ -124,13 +123,11 @@ class TestProjectModel:
             "id": "project_123",
             "name": "test-project",
             "repo_path": "/tmp/test",
-            "audience_introduced": 1,
             "created_at": "2026-01-15T10:30:00",
         }
 
         project = Project.from_dict(d)
         assert project.id == "project_123"
-        assert project.audience_introduced is True
         assert project.created_at == datetime(2026, 1, 15, 10, 30, 0)
 
     def test_project_to_row(self):

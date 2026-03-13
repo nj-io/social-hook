@@ -167,6 +167,7 @@ def handle_callback(
         "reject": btn_reject_submenu,
         "reject_now": btn_reject,
         "reject_note": btn_reject_note,
+        "reject_skip_intro": btn_reject_skip_intro,
         "cancel": btn_cancel,
         "unapprove": btn_unapprove,
         "unschedule": btn_unschedule,
@@ -551,6 +552,18 @@ def btn_edit_submenu(
     _answer_callback(adapter, callback_id)
     _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "editing")
 
+    # Check if this is an intro draft to adjust label
+    angle_label = "Change angle"
+    conn = _get_conn()
+    try:
+        from social_hook.db import get_draft
+
+        draft = get_draft(conn, draft_id)
+        if draft and getattr(draft, "is_intro", False):
+            angle_label = "Change intro angle"
+    finally:
+        conn.close()
+
     buttons = [
         ButtonRow(
             buttons=[
@@ -560,7 +573,7 @@ def btn_edit_submenu(
         ),
         ButtonRow(
             buttons=[
-                Button(label="Change angle", action="edit_angle", payload=draft_id),
+                Button(label=angle_label, action="edit_angle", payload=draft_id),
             ]
         ),
     ]
@@ -1289,17 +1302,32 @@ def btn_reject_submenu(
     config: Any | None,
     **kwargs: Any,
 ) -> None:
-    """Show reject submenu with just reject/reject with note."""
+    """Show reject submenu with just reject/reject with note, plus skip-intro for intro drafts."""
     _answer_callback(adapter, callback_id)
 
-    buttons = [
-        ButtonRow(
-            buttons=[
-                Button(label="Just reject", action="reject_now", payload=draft_id),
-                Button(label="Reject with note", action="reject_note", payload=draft_id),
-            ]
-        ),
+    reject_buttons = [
+        Button(label="Just reject", action="reject_now", payload=draft_id),
+        Button(label="Reject with note", action="reject_note", payload=draft_id),
     ]
+
+    # Check if this is an intro draft — offer "Don't intro" option
+    conn = _get_conn()
+    try:
+        from social_hook.db import get_draft
+
+        draft = get_draft(conn, draft_id)
+        if draft and getattr(draft, "is_intro", False):
+            reject_buttons.append(
+                Button(
+                    label=f"Don't intro on {draft.platform}",
+                    action="reject_skip_intro",
+                    payload=draft_id,
+                )
+            )
+    finally:
+        conn.close()
+
+    buttons = [ButtonRow(buttons=reject_buttons)]
     _send_with_buttons(adapter, chat_id, f"Reject `{draft_id[:12]}`:", buttons)
 
 
@@ -1317,6 +1345,55 @@ def btn_reject_note(
         type="reject_note", draft_id=draft_id, timestamp=time.time()
     )
     _send(adapter, chat_id, f"Reply with rejection reason for `{draft_id[:12]}`")
+
+
+def btn_reject_skip_intro(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    draft_id: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Reject intro draft and mark platform as introduced (skip intro)."""
+    _answer_callback(adapter, callback_id, "Skipping intro...")
+
+    conn = _get_conn()
+    try:
+        from social_hook.bot.commands import set_chat_draft_context
+        from social_hook.db import get_draft, update_draft
+        from social_hook.db import operations as ops
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        update_draft(conn, draft_id, status="rejected")
+        ops.emit_data_event(conn, "draft", "rejected", draft_id, draft.project_id)
+        _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "rejected")
+
+        # Skip intro: mark platform as introduced, no cascade re-draft
+        from social_hook.intro_lifecycle import on_intro_rejected
+
+        on_intro_rejected(conn, draft, draft.project_id, verbose=False, skip_intro=True)
+
+        msg = f"Draft `{draft_id[:12]}` rejected. Intro skipped for {draft.platform}."
+        _send(adapter, chat_id, msg)
+        if config:
+            from social_hook.notifications import broadcast_notification
+
+            broadcast_notification(
+                config,
+                OutboundMessage(
+                    text=f"Draft `{draft_id[:12]}` rejected — intro skipped ({draft.platform})"
+                ),
+                exclude_chat=chat_id,
+            )
+    finally:
+        conn.close()
 
 
 def btn_cancel(

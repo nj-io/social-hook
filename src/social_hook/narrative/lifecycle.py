@@ -203,10 +203,16 @@ def record_strategy_moment(conn: sqlite3.Connection, project_id: str) -> bool:
 
 
 def get_audience_introduced(conn: sqlite3.Connection, project_id: str) -> bool:
-    """Check if the audience has been introduced for a project."""
+    """Check if the audience has been introduced for a project.
+
+    DEPRECATED: Use ops.get_all_platform_introduced() instead.
+    """
     return ops.get_audience_introduced(conn, project_id)
 
 
 def set_audience_introduced(conn: sqlite3.Connection, project_id: str, value: bool) -> bool:
-    """Set the audience_introduced flag for a project."""
+    """Set the audience_introduced flag for a project.
+
+    DEPRECATED: Use ops.set_platform_introduced() instead.
+    """
     return ops.set_audience_introduced(conn, project_id, value)

@@ -292,7 +292,7 @@ def rewind(
             if result["arc_decremented"]:
                 typer.echo(f"  Arc post count decremented for: {decision.arc_id}")
             if result["audience_reset"]:
-                typer.echo("  audience_introduced reset to false.")
+                typer.echo("  platform_introduced reset for affected platforms.")
             typer.echo(
                 "  Pre-rewind snapshot saved. Restore with: social-hook snapshot restore _pre_rewind"
             )

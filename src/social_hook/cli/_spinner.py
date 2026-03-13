@@ -24,7 +24,10 @@ class _ElapsedStatus:
 
 
 @contextmanager
-def spinner(message: str) -> Generator[None, None, None]:
+def spinner(message: str, quiet: bool = False) -> Generator[None, None, None]:
+    if quiet:
+        yield
+        return
     status_obj = _ElapsedStatus(message)
     with _console.status(status_obj) as s:
         # Poke the status every second so the elapsed counter updates

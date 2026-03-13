@@ -123,6 +123,7 @@ class TestDatabaseInitialization:
             "chat_messages",
             "background_tasks",
             "file_summaries",
+            "platform_introduced",
         }
 
         assert table_names == expected_tables

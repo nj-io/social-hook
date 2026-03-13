@@ -126,7 +126,6 @@ class Project:
     repo_origin: str | None = None
     summary: str | None = None
     summary_updated_at: datetime | None = None
-    audience_introduced: bool = False
     paused: bool = False
     discovery_files: str | None = None  # JSON-serialized list of file paths
     prompt_docs: str | None = None
@@ -141,7 +140,6 @@ class Project:
             "repo_origin": self.repo_origin,
             "summary": self.summary,
             "summary_updated_at": _to_iso(self.summary_updated_at),
-            "audience_introduced": self.audience_introduced,
             "paused": self.paused,
             "discovery_files": self.discovery_files,
             "prompt_docs": self.prompt_docs,
@@ -158,7 +156,6 @@ class Project:
             repo_origin=d.get("repo_origin"),
             summary=d.get("summary"),
             summary_updated_at=_from_iso(d.get("summary_updated_at")),
-            audience_introduced=bool(d.get("audience_introduced", False)),
             paused=bool(d.get("paused", False)),
             discovery_files=d.get("discovery_files"),
             prompt_docs=d.get("prompt_docs"),
@@ -167,7 +164,7 @@ class Project:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (id, name, repo_path, repo_origin, summary, summary_updated_at, audience_introduced, paused)."""
+        """Return tuple for INSERT (id, name, repo_path, repo_origin, summary, summary_updated_at, paused)."""
         return (
             self.id,
             self.name,
@@ -175,7 +172,6 @@ class Project:
             self.repo_origin,
             self.summary,
             _to_iso(self.summary_updated_at),
-            1 if self.audience_introduced else 0,
             1 if self.paused else 0,
         )
 
@@ -870,11 +866,11 @@ class ProjectContext:
     lifecycle: Optional["Lifecycle"]
     active_arcs: list["Arc"]
     narrative_debt: int
-    audience_introduced: bool
-    pending_drafts: list["Draft"]
-    recent_decisions: list["Decision"]
-    recent_posts: list["Post"]
-    project_summary: str | None
+    platform_introduced: dict[str, bool] = field(default_factory=dict)
+    pending_drafts: list["Draft"] = field(default_factory=list)
+    recent_decisions: list["Decision"] = field(default_factory=list)
+    recent_posts: list["Post"] = field(default_factory=list)
+    project_summary: str | None = None
     memories: list[dict] = field(default_factory=list)
     milestone_summaries: list[dict] = field(default_factory=list)
     context_notes: list[dict] = field(default_factory=list)
@@ -882,3 +878,11 @@ class ProjectContext:
     held_decisions: list["Decision"] = field(default_factory=list)
     arc_posts: dict[str, list["Post"]] = field(default_factory=dict)
     file_summaries: list[dict[str, str]] = field(default_factory=list)
+    identity: Any = None  # IdentityConfig | None — kept as Any to avoid circular import
+
+    @property
+    def all_introduced(self) -> bool:
+        """True if all tracked platforms have been introduced."""
+        if not self.platform_introduced:
+            return False
+        return all(self.platform_introduced.values())

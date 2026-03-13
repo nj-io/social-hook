@@ -121,12 +121,12 @@ def run(harness, runner):
 
         seeded_ids = {draft_1.id, draft_2.id, draft_3.id, draft_4.id, draft_5.id}
 
-        # Mark audience as introduced so evaluator focuses on queue curation,
+        # Mark all platforms as introduced so evaluator focuses on queue curation,
         # not intro logic (which overrides normal merge/supersede behavior)
-        harness.conn.execute(
-            "UPDATE projects SET audience_introduced = 1 WHERE id = ?",
-            (harness.project_id,),
-        )
+        from social_hook.db.operations import set_platform_introduced
+
+        for p in ["x", "linkedin", "preview"]:
+            set_platform_introduced(harness.conn, harness.project_id, p, True)
         harness.conn.commit()
 
         # Low capacity: 1 post/day forces merge pressure

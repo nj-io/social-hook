@@ -690,19 +690,29 @@ def verify(live: bool = False) -> bool:
     # =========================================================================
     # Step 15: Onboarding flags
     # =========================================================================
-    step("Onboarding flags")
-    from social_hook.narrative.lifecycle import get_audience_introduced, set_audience_introduced
+    step("Onboarding flags (per-platform introduced)")
+    from social_hook.db.operations import (
+        get_all_platform_introduced,
+        get_platform_introduced,
+        set_platform_introduced,
+    )
 
     check(
-        get_audience_introduced(conn, "proj_verify1") is False,
-        "Default: audience not introduced",
+        get_platform_introduced(conn, "proj_verify1", "x") is False,
+        "Default: platform not introduced",
         "Default should be False",
     )
-    set_audience_introduced(conn, "proj_verify1", True)
+    set_platform_introduced(conn, "proj_verify1", "x", True)
     check(
-        get_audience_introduced(conn, "proj_verify1") is True,
-        "Set audience_introduced=True",
+        get_platform_introduced(conn, "proj_verify1", "x") is True,
+        "Set platform_introduced(x)=True",
         "Failed to set True",
+    )
+    all_intro = get_all_platform_introduced(conn, "proj_verify1")
+    check(
+        all_intro.get("x") is True,
+        "get_all_platform_introduced includes x=True",
+        f"Expected x=True, got {all_intro}",
     )
 
     # =========================================================================
