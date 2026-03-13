@@ -45,19 +45,24 @@ def _scrub_headers(response):
 
 def _scrub_request_headers(request):
     """Remove sensitive headers from recorded requests."""
-    for header in SENSITIVE_HEADERS:
-        if header in request.headers:
-            request.headers[header] = "REDACTED"
-        if header.lower() in request.headers:
-            request.headers[header.lower()] = "REDACTED"
-    # Also scrub OAuth 1.0a Authorization headers
+    # Scrub OAuth/Bearer with format-preserving redaction first
     auth = request.headers.get("Authorization", "")
+    auth_handled = False
     if auth.startswith("OAuth "):
         request.headers["Authorization"] = (
             "OAuth oauth_consumer_key=REDACTED, oauth_token=REDACTED, oauth_signature=REDACTED"
         )
+        auth_handled = True
     elif auth.startswith("Bearer "):
         request.headers["Authorization"] = "Bearer REDACTED"
+        auth_handled = True
+    # Generic scrub for all sensitive headers (skip Authorization if already handled)
+    for header in SENSITIVE_HEADERS:
+        skip = auth_handled and header.lower() == "authorization"
+        if header in request.headers and not skip:
+            request.headers[header] = "REDACTED"
+        if header.lower() in request.headers and not skip:
+            request.headers[header.lower()] = "REDACTED"
     return request
 
 
