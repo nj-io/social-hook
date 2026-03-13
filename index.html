@@ -1166,6 +1166,7 @@ body {
   box-shadow: 2px 0 12px rgba(37, 99, 235, 0.08);
 }
 
+
 /* Junction card background illustrations */
 .junction-card {
   position: relative;
@@ -1275,6 +1276,34 @@ body {
   /* Hide horizontal pipeline on mobile, show collapsed */
   .pipeline-desktop { display: none !important; }
   .pipeline-mobile-collapsed { display: block !important; }
+
+  /* Mobile cascade — vertical orbit */
+  .content-cascade {
+    height: 560px;
+    perspective: 800px;
+    perspective-origin: 50% 10%;
+    overflow: hidden;
+  }
+  .cascade-origin {
+    left: 50%;
+    top: 24px;
+    transform: translateX(-50%);
+    flex-direction: row;
+    gap: 8px;
+  }
+  .cascade-origin-connector {
+    width: 12px;
+    height: 1px;
+    margin-left: 0;
+  }
+  .cascade-card {
+    left: 0 !important;
+    top: 0 !important;
+    max-width: 200px;
+  }
+  .radio-wave {
+    clip-path: polygon(0% 40%, 100% 40%, 100% 100%, 0% 100%);
+  }
 }
 
 @media (min-width: 769px) {
@@ -2278,8 +2307,8 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
 
     var cards = Array.prototype.slice.call(cascade.querySelectorAll('.cascade-card'));
 
-    // 12 orbit configs — closer to origin, larger amplitudes, more movement
-    var orbits = [
+    // Orbit configs — desktop spreads horizontally, mobile spreads vertically
+    var desktopOrbits = [
       // Near ring (close to commit, prominent)
       { bx: 100, by: -55,  bz: 40,  rx: 32, ry: 25, rz: 38, spd: 0.22, ph: 0,    bs: 1.00, bo: 0.95, mry: 8,  mrx: 4 },
       { bx: 175, by: 15,   bz: 30,  rx: 28, ry: 22, rz: 35, spd: 0.18, ph: 1.1,  bs: 0.98, bo: 0.92, mry: 7,  mrx: 5 },
@@ -2297,6 +2326,31 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
       { bx: 320, by: 40,   bz: -50, rx: 28, ry: 24, rz: 34, spd: 0.13, ph: 3.1,  bs: 0.84, bo: 0.55, mry: 6,  mrx: 3 }
     ];
 
+    // Mobile: pyramid shape — narrow at top, wide at bottom, using full screen width
+    // bx = offset from center (grows aggressively with depth)
+    var mobileOrbitsRaw = [
+      // Top of pyramid — tight, close to center
+      { bx: -5,  by: 120,  bz: 20,  rx: 6,  ry: 10, rz: 12, spd: 0.18, ph: 0,    bs: 0.92, bo: 0.95, mry: 3,  mrx: 1 },
+      { bx: 8,   by: 160,  bz: 16,  rx: 5,  ry: 8,  rz: 10, spd: 0.15, ph: 1.1,  bs: 0.90, bo: 0.92, mry: 2,  mrx: 1 },
+      // Middle — spreading out
+      { bx: -40, by: 210,  bz: 14,  rx: 10, ry: 12, rz: 14, spd: 0.20, ph: 2.4,  bs: 0.92, bo: 0.95, mry: 3,  mrx: 2 },
+      { bx: 35,  by: 250,  bz: 10,  rx: 9,  ry: 10, rz: 12, spd: 0.13, ph: 3.7,  bs: 0.88, bo: 0.90, mry: 2,  mrx: 2 },
+      { bx: -55, by: 295,  bz: -6,  rx: 10, ry: 12, rz: 14, spd: 0.17, ph: 0.6,  bs: 0.86, bo: 0.85, mry: 2,  mrx: 2 },
+      // Bottom — widest, near screen edges
+      { bx: 60,  by: 340,  bz: -3,  rx: 12, ry: 14, rz: 12, spd: 0.14, ph: 4.2,  bs: 0.84, bo: 0.80, mry: 3,  mrx: 3 },
+      { bx: -70, by: 385,  bz: -10, rx: 12, ry: 12, rz: 16, spd: 0.19, ph: 1.8,  bs: 0.82, bo: 0.76, mry: 3,  mrx: 3 },
+      { bx: 75,  by: 430,  bz: -8,  rx: 12, ry: 12, rz: 14, spd: 0.12, ph: 5.5,  bs: 0.80, bo: 0.72, mry: 3,  mrx: 3 },
+      // Ghost layer — following pyramid shape at depth
+      { bx: -8,  by: 145,  bz: -28, rx: 5,  ry: 8,  rz: 8,  spd: 0.16, ph: 2.9,  bs: 0.78, bo: 0.55, mry: 2,  mrx: 1 },
+      { bx: 45,  by: 270,  bz: -32, rx: 8,  ry: 8,  rz: 10, spd: 0.10, ph: 0.3,  bs: 0.75, bo: 0.45, mry: 2,  mrx: 2 },
+      { bx: -60, by: 365,  bz: -35, rx: 10, ry: 10, rz: 10, spd: 0.14, ph: 4.8,  bs: 0.72, bo: 0.40, mry: 2,  mrx: 2 },
+      { bx: 20,  by: 190,  bz: -30, rx: 6,  ry: 8,  rz: 10, spd: 0.11, ph: 3.1,  bs: 0.76, bo: 0.45, mry: 2,  mrx: 1 }
+    ];
+
+    // orbits, maxX assigned inside onEnter based on actual viewport width
+    var orbits = desktopOrbits;
+    var maxX = Infinity;
+
     var orbiting = false;
     var orbitStart = 0;
 
@@ -2304,7 +2358,7 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
     var hiddenIdx = -1;           // -1 = all visible (before cycling starts)
     var fadingOut = -1;           // card currently fading out
     var fadingIn = -1;            // card currently fading in
-    var cardOpacityOverride = {}; // per-card opacity multiplier (0..1)
+    var cardOpacityOverride = {}; // per-card opacity multiplier (0..1);
 
     // --- Orbit update (runs every frame) ---
     function updateOrbits() {
@@ -2322,7 +2376,7 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
         var ry = Math.sin(t * 0.8 + 0.2) * c.mry;
         var rx = Math.cos(t * 0.6 + 0.5) * c.mrx;
 
-        var x = c.bx + dx;
+        var x = Math.max(0, Math.min(c.bx + dx, maxX));
         var y = c.by + dy;
         var z = c.bz + dz;
 
@@ -2394,39 +2448,61 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
     }
 
     // --- Directional radio waves toward content ---
+    // isMobile is set inside onEnter so it reflects the viewport at trigger time
+    var isMobile = false;
+
     function startRadioWaves() {
       function emitWave() {
-        // Right edge, vertical center in cascade's coordinate space
-        // origin uses top:50% + translateY(-50%), so offsetTop IS the visual center Y
-        var cx = origin.offsetLeft + origin.offsetWidth;
-        var cy = origin.offsetTop;
         var wave = document.createElement('div');
         wave.className = 'radio-wave';
         cascade.appendChild(wave);
 
         var startSize = 10;
-        var endSize = 260;
+        var endSize = isMobile ? 200 : 260;
 
-        gsap.set(wave, {
-          left: cx - startSize * 0.4,
-          top: cy - startSize / 2,
-          width: startSize,
-          height: startSize,
-          opacity: 0.35
-        });
-
-        gsap.to(wave, {
-          width: endSize,
-          height: endSize,
-          left: cx - endSize * 0.4,
-          top: cy - endSize / 2,
-          opacity: 0,
-          duration: 3.5,
-          ease: 'power1.out',
-          onComplete: function() {
-            if (wave.parentNode) wave.parentNode.removeChild(wave);
-          }
-        });
+        if (isMobile) {
+          // Downward from bottom-center of origin
+          var cx = origin.offsetLeft + origin.offsetWidth / 2;
+          var cy = origin.offsetTop + origin.offsetHeight;
+          gsap.set(wave, {
+            left: cx - startSize / 2,
+            top: cy - startSize * 0.4,
+            width: startSize,
+            height: startSize,
+            opacity: 0.35
+          });
+          gsap.to(wave, {
+            width: endSize,
+            height: endSize,
+            left: cx - endSize / 2,
+            top: cy - endSize * 0.4,
+            opacity: 0,
+            duration: 3.5,
+            ease: 'power1.out',
+            onComplete: function() { if (wave.parentNode) wave.parentNode.removeChild(wave); }
+          });
+        } else {
+          // Rightward from right edge of origin
+          var cx = origin.offsetLeft + origin.offsetWidth;
+          var cy = origin.offsetTop;
+          gsap.set(wave, {
+            left: cx - startSize * 0.4,
+            top: cy - startSize / 2,
+            width: startSize,
+            height: startSize,
+            opacity: 0.35
+          });
+          gsap.to(wave, {
+            width: endSize,
+            height: endSize,
+            left: cx - endSize * 0.4,
+            top: cy - endSize / 2,
+            opacity: 0,
+            duration: 3.5,
+            ease: 'power1.out',
+            onComplete: function() { if (wave.parentNode) wave.parentNode.removeChild(wave); }
+          });
+        }
       }
 
       // One wave at a time, every 12s
@@ -2468,32 +2544,79 @@ document.querySelectorAll('.copy-btn').forEach(function(btn) {
       start: 'top 70%',
       once: true,
       onEnter: function() {
+        // Evaluate mobile at trigger time, not at page load
+        isMobile = window.innerWidth <= 768;
+        if (isMobile) {
+          var cascadeW = cascade.offsetWidth;
+          var centerX = cascadeW / 2 - 55;
+          orbits = mobileOrbitsRaw.map(function(o) {
+            var copy = {};
+            for (var k in o) copy[k] = o[k];
+            copy.bx = o.bx + centerX;
+            return copy;
+          });
+          maxX = cascadeW - 60;
+        } else {
+          orbits = desktopOrbits;
+          maxX = Infinity;
+        }
+
         gsap.to(origin, { opacity: 1, duration: 0.4, ease: 'power2.out' });
 
-        var entranceTL = gsap.timeline({
-          onComplete: function() {
-            startOrbiting();
-            startRadioWaves();
-            startContentAnimation();
-            startCardCycling();
-          }
-        });
-
-        cards.forEach(function(card, i) {
-          var o = orbits[i];
-          if (!o) return;
-          entranceTL.fromTo(card,
-            { x: 0, y: 0, z: 0, rotateY: 0, rotateX: 0, scale: 0.2, opacity: 0 },
-            {
-              x: o.bx, y: o.by, z: o.bz,
-              rotateY: 0, rotateX: 0,
-              scale: o.bs, opacity: o.bo,
-              duration: 1.0,
-              ease: 'power3.out'
-            },
-            0.06 * i
-          );
-        });
+        if (isMobile) {
+          // Mobile: cards spawn at bottom edge of origin, fan strictly downward
+          var spawnX = origin.offsetLeft + origin.offsetWidth / 2 - 55;
+          var spawnY = origin.offsetTop + origin.offsetHeight + 4;
+          var entranceTL = gsap.timeline({
+            onComplete: function() {
+              startOrbiting();
+              startRadioWaves();
+              startContentAnimation();
+              startCardCycling();
+            }
+          });
+          cards.forEach(function(card, i) {
+            var o = orbits[i];
+            if (!o) return;
+            // Start just below origin, travel mostly downward
+            entranceTL.fromTo(card,
+              { x: spawnX, y: spawnY, z: 0, rotateY: 0, rotateX: 0, scale: 0.15, opacity: 0 },
+              {
+                x: o.bx, y: o.by, z: o.bz,
+                rotateY: 0, rotateX: 0,
+                scale: o.bs, opacity: o.bo,
+                duration: 1.4,
+                ease: 'power2.out'
+              },
+              0.1 * i
+            );
+          });
+        } else {
+          // Desktop: 3D orbital entrance
+          var entranceTL = gsap.timeline({
+            onComplete: function() {
+              startOrbiting();
+              startRadioWaves();
+              startContentAnimation();
+              startCardCycling();
+            }
+          });
+          cards.forEach(function(card, i) {
+            var o = orbits[i];
+            if (!o) return;
+            entranceTL.fromTo(card,
+              { x: 0, y: 0, z: 0, rotateY: 0, rotateX: 0, scale: 0.2, opacity: 0 },
+              {
+                x: o.bx, y: o.by, z: o.bz,
+                rotateY: 0, rotateX: 0,
+                scale: o.bs, opacity: o.bo,
+                duration: 1.0,
+                ease: 'power3.out'
+              },
+              0.06 * i
+            );
+          });
+        }
       }
     });
 
