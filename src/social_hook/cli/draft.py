@@ -528,6 +528,7 @@ def list_cmd(
     pending: bool = typer.Option(
         False, "--pending", help="Show only actionable drafts (draft/approved/scheduled)"
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """List drafts with optional filters.
 
@@ -550,7 +551,7 @@ def list_cmd(
             drafts = [
                 d for d in drafts if d.status in ("draft", "approved", "scheduled", "deferred")
             ]
-        json_output = ctx.obj.get("json", False) if ctx.obj else False
+        json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         if json_output:
             typer.echo(json_mod.dumps([d.to_dict() for d in drafts], indent=2, default=str))
@@ -581,6 +582,7 @@ def show(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to show"),
     open_media: bool = typer.Option(False, "--open", help="Open media files in default viewer"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Show full detail for a draft including media spec and change history.
 
@@ -594,7 +596,7 @@ def show(
         changes = ops.get_draft_changes(conn, draft_id)
         tweets = ops.get_draft_tweets(conn, draft_id)
 
-        json_output = ctx.obj.get("json", False) if ctx.obj else False
+        json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         if json_output:
             data = draft.to_dict()

@@ -72,7 +72,12 @@ def help_cmd(
     import click
 
     click_app = typer.main.get_command(app)
-    command_parts = ctx.args  # e.g. ["draft", "approve"]
+    # Handle --json appearing after command path (forgiving flag placement)
+    if "--json" in ctx.args:
+        json_output = True
+        command_parts = [a for a in ctx.args if a != "--json"]
+    else:
+        command_parts = ctx.args  # e.g. ["draft", "approve"]
 
     def _cmd_to_dict(cmd, name=None):
         result = {}
@@ -80,6 +85,7 @@ def help_cmd(
             result["name"] = name
         if cmd.help:
             result["help"] = cmd.help.split("\n")[0]
+            result["description"] = cmd.help.strip()
 
         if hasattr(cmd, "commands") and cmd.commands:
             cmds = {}
@@ -128,6 +134,8 @@ def help_cmd(
 
     def _resolve_command(parts):
         """Walk the Click command tree following the given path parts."""
+        from difflib import get_close_matches
+
         current = click_app
         info_parts = [PROJECT_SLUG]
         for part in parts:
@@ -136,7 +144,16 @@ def help_cmd(
                 raise typer.Exit(1)
             sub = current.commands.get(part)
             if not sub:
-                typer.echo(f"Unknown command: {' '.join(parts)}")
+                available = sorted(current.commands.keys())
+                suggestions = get_close_matches(part, available, n=3, cutoff=0.5)
+                msg = f"Unknown command: {part}"
+                if suggestions:
+                    msg += "\n\nDid you mean?"
+                    for s in suggestions:
+                        msg += f"\n  {' '.join(info_parts)} {s}"
+                else:
+                    msg += f"\n\nAvailable: {', '.join(available)}"
+                typer.echo(msg)
                 raise typer.Exit(1)
             current = sub
             info_parts.append(part)

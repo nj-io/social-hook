@@ -384,6 +384,7 @@ def install_hook_cmd(
     path: Path | None = typer.Argument(
         None, help="Path to repository (default: current directory)"
     ),
+    json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Install git post-commit hook for a project.
     Example: social-hook project install-hook /path/to/repo"""
@@ -393,7 +394,7 @@ def install_hook_cmd(
         path = Path.cwd()
     path = path.resolve()
 
-    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+    json_mode = json_mode or (ctx.obj.get("json", False) if ctx.obj else False)
     success, msg = install_git_hook(str(path))
 
     if json_mode:
@@ -414,6 +415,7 @@ def uninstall_hook_cmd(
         None, help="Path to repository (default: current directory)"
     ),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+    json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Remove git post-commit hook from a project.
     Example: social-hook project uninstall-hook /path/to/repo"""
@@ -423,7 +425,7 @@ def uninstall_hook_cmd(
         path = Path.cwd()
     path = path.resolve()
 
-    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+    json_mode = json_mode or (ctx.obj.get("json", False) if ctx.obj else False)
 
     if not check_git_hook_installed(str(path)):
         msg = "Git hook is not installed"

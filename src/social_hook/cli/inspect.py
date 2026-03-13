@@ -13,6 +13,7 @@ def log(
     ctx: typer.Context,
     project_id: str | None = typer.Argument(None, help="Project ID (optional)"),
     limit: int = typer.Option(20, "--limit", "-n", help="Number of entries"),
+    json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """View decision log."""
     from social_hook.db import (
@@ -22,6 +23,7 @@ def log(
     )
     from social_hook.filesystem import get_db_path
 
+    json_mode = json_mode or (ctx.obj.get("json", False) if ctx.obj else False)
     conn = init_database(get_db_path())
     try:
         if project_id:
@@ -32,8 +34,6 @@ def log(
         if not decisions:
             typer.echo("No decisions found.")
             return
-
-        json_mode = ctx.obj.get("json", False) if ctx.obj else False
         if json_mode:
             import json
 
@@ -51,6 +51,7 @@ def log(
 def pending(
     ctx: typer.Context,
     project_id: str | None = typer.Argument(None, help="Project ID (optional)"),
+    json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """View pending drafts."""
     from social_hook.db import (
@@ -60,6 +61,7 @@ def pending(
     )
     from social_hook.filesystem import get_db_path
 
+    json_mode = json_mode or (ctx.obj.get("json", False) if ctx.obj else False)
     conn = init_database(get_db_path())
     try:
         if project_id:
@@ -70,8 +72,6 @@ def pending(
         if not drafts:
             typer.echo("No pending drafts.")
             return
-
-        json_mode = ctx.obj.get("json", False) if ctx.obj else False
         if json_mode:
             import json
 
@@ -90,11 +90,13 @@ def usage(
     recent: int | None = typer.Option(
         None, "--recent", "-r", help="Show last N individual operations"
     ),
+    json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """View token usage and costs."""
     from social_hook.db import get_recent_usage, get_usage_summary, init_database
     from social_hook.filesystem import get_db_path
 
+    json_mode = json_mode or (ctx.obj.get("json", False) if ctx.obj else False)
     conn = init_database(get_db_path())
     try:
         if recent is not None:
@@ -102,8 +104,6 @@ def usage(
             if not entries:
                 typer.echo("No usage data found.")
                 return
-
-            json_mode = ctx.obj.get("json", False) if ctx.obj else False
             if json_mode:
                 import json
 
@@ -132,7 +132,6 @@ def usage(
             typer.echo("No usage data found.")
             return
 
-        json_mode = ctx.obj.get("json", False) if ctx.obj else False
         if json_mode:
             import json
 
@@ -161,6 +160,7 @@ def usage(
 @app.command()
 def platforms(
     ctx: typer.Context,
+    json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """List configured platforms with enabled/disabled status."""
     from social_hook.config import load_full_config
@@ -168,7 +168,7 @@ def platforms(
     config_path = ctx.obj.get("config") if ctx.obj else None
     config = load_full_config(str(config_path) if config_path else None)
 
-    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+    json_mode = json_mode or (ctx.obj.get("json", False) if ctx.obj else False)
 
     platform_list = []
     for pname, pcfg in config.platforms.items():

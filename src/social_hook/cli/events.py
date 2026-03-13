@@ -25,6 +25,7 @@ def events(
         "-f",
         help="Follow new events in real time",
     ),
+    json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Watch live pipeline events (commits, decisions, drafts).
 
@@ -33,7 +34,7 @@ def events(
     from social_hook.db.connection import init_database
     from social_hook.filesystem import get_db_path
 
-    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+    json_mode = json_mode or (ctx.obj.get("json", False) if ctx.obj else False)
     db_path = get_db_path()
     conn = init_database(db_path)
 
