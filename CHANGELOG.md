@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.7.0...social-hook-v0.8.0) (2026-03-13)
+
+
+### Features
+
+* setup wizard overhaul — strategy-first onboarding + identity wiring ([bf9faec](https://github.com/nj-io/social-hook/commit/bf9faec5cf7a937c103205c1473cc27b32abea9e))
+
+
+### Bug Fixes
+
+* add None check for get_project return in quickstart ([8df6093](https://github.com/nj-io/social-hook/commit/8df60936b2787eda7b55c3f5a88fb3eb895db5b3))
+
 ## [0.7.0](https://github.com/nj-io/social-hook/compare/social-hook-v0.6.0...social-hook-v0.7.0) (2026-03-13)
 
 
