@@ -1,0 +1,154 @@
+# social-hook project
+
+Project management.
+
+---
+
+### `social-hook project import-commits`
+
+Import historical git commits as imported decisions.
+
+Imports all past commits so the dashboard shows the full project timeline.
+Imported commits are NOT evaluated — use retrigger to evaluate them later.
+
+Examples:
+    social-hook project import-commits
+    social-hook project import-commits --branch main
+    social-hook project import-commits --id project_abc123
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--branch`, `-b` | string |  | Import only this branch |
+| `--id`, `-i` | string |  | Project ID |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
+### `social-hook project install-hook`
+
+Install git post-commit hook for a project.
+
+Example: social-hook project install-hook /path/to/repo
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `path` | no | Path to repository (default: current directory) |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | boolean | false | Output as JSON |
+
+---
+
+### `social-hook project list`
+
+List all registered projects.
+
+---
+
+### `social-hook project pause`
+
+Pause a project (skip commit evaluation).
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `project_id` | no | Project ID (default: detect from current directory) |
+
+---
+
+### `social-hook project register`
+
+Register a project for social-hook.
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `path` | no | Path to repository (default: current directory) |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--name`, `-n` | string |  | Project name |
+| `--git-hook`, `--no-git-hook` | boolean | true | Install git post-commit hook |
+
+---
+
+### `social-hook project set-branch`
+
+Set which branch triggers the pipeline for a project.
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `branch` | no | Branch name to filter on |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--id`, `-i` | string |  | Project ID |
+| `--all` | boolean | false | Clear filter (trigger on all branches) |
+
+---
+
+### `social-hook project uninstall-hook`
+
+Remove git post-commit hook from a project.
+
+Example: social-hook project uninstall-hook /path/to/repo
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `path` | no | Path to repository (default: current directory) |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--force`, `-f` | boolean | false | Skip confirmation |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
+### `social-hook project unpause`
+
+Unpause a project (resume commit evaluation).
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `project_id` | no | Project ID (default: detect from current directory) |
+
+---
+
+### `social-hook project unregister`
+
+Unregister a project.
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `project_id` | yes | Project ID to unregister |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--force`, `-f` | boolean | false | Skip confirmation |
+
+---

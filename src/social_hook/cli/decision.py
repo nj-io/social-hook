@@ -27,6 +27,7 @@ def delete(
     ctx: typer.Context,
     decision_id: str = typer.Argument(..., help="Decision ID to delete"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Delete a decision and its associated drafts.
 
@@ -41,7 +42,7 @@ def delete(
             typer.echo(f"Decision not found: {decision_id}")
             raise typer.Exit(1)
 
-        json_output = ctx.obj.get("json", False) if ctx.obj else False
+        json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         if not yes:
             typer.echo(f"Decision: {decision.id}")
@@ -75,6 +76,7 @@ def retrigger(
     ctx: typer.Context,
     decision_id: str = typer.Argument(..., help="Decision ID to re-evaluate"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Delete a decision and re-evaluate the commit from scratch.
 
@@ -97,7 +99,7 @@ def retrigger(
             typer.echo(f"Project not found: {decision.project_id}")
             raise typer.Exit(1)
 
-        json_output = ctx.obj.get("json", False) if ctx.obj else False
+        json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         if not yes:
             typer.echo(f"Decision: {decision.id}")
@@ -161,6 +163,7 @@ def rewind(
     project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
     force: bool = typer.Option(False, "--force", "-f", help="Allow rewind even with posted drafts"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Rewind a decision to its evaluation point, removing all downstream artifacts.
 
@@ -179,7 +182,7 @@ def rewind(
 
     conn = _get_conn()
     try:
-        json_output = ctx.obj.get("json", False) if ctx.obj else False
+        json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         # Resolve project
         repo_path = _resolve_project(project)
@@ -302,6 +305,7 @@ def list_cmd(
     ctx: typer.Context,
     project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
     limit: int = typer.Option(20, "--limit", "-n", help="Max decisions to show"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """List decisions for a project.
 
@@ -318,7 +322,7 @@ def list_cmd(
             raise typer.Exit(1)
 
         decisions = ops.get_recent_decisions(conn, proj.id, limit=limit)
-        json_output = ctx.obj.get("json", False) if ctx.obj else False
+        json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         if json_output:
             typer.echo(json_mod.dumps([d.to_dict() for d in decisions], indent=2, default=str))
