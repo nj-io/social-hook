@@ -88,6 +88,12 @@ Show current rate limit status (daily cap, gap timer, queue, cost).
 Example: social-hook rate-limits
 Example: social-hook --json rate-limits
 
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | boolean | false | Output as JSON |
+
 ---
 
 ### `social-hook scheduler-tick`
