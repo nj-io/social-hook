@@ -42,9 +42,6 @@ def run(harness, runner):
         assert project.name == "social-media-auto-hook"
         assert Path(project.repo_path).resolve() == Path(harness.repo_path).resolve()
         assert project.paused is False, f"paused={project.paused}"
-        assert project.audience_introduced is False, (
-            f"audience_introduced={project.audience_introduced}"
-        )
 
         lifecycle = get_lifecycle(harness.conn, harness.project_id)
         assert lifecycle is not None, "Lifecycle not found"
@@ -102,10 +99,17 @@ def run(harness, runner):
 
     runner.run_scenario("A6", "Duplicate origin blocked", a6)
 
-    # A7: Project introduction — first trigger with audience_introduced=False
+    # A7: Project introduction — first trigger with platform not yet introduced
     def a7():
         from social_hook.db import get_recent_decisions
+        from social_hook.db.operations import get_all_platform_introduced
         from social_hook.trigger import run_trigger
+
+        # Verify no platforms are introduced yet
+        intro_status = get_all_platform_introduced(harness.conn, harness.project_id)
+        assert all(not v for v in intro_status.values()), (
+            f"Expected no platforms introduced, got {intro_status}"
+        )
 
         exit_code = run_trigger(
             COMMITS["significant"], str(harness.repo_path), verbose=runner.verbose
@@ -129,7 +133,7 @@ def run(harness, runner):
         # Add to review report
         runner.add_review_item(
             "A7",
-            title="Project Introduction (audience_introduced=False)",
+            title="Project Introduction (per-platform, not yet introduced)",
             decision=d.decision,
             episode_type=d.episode_type,
             post_category=d.post_category,
@@ -144,27 +148,55 @@ def run(harness, runner):
         if drafts:
             runner.review_items[-1]["draft_content"] = drafts[0].content
             detail += f", Draft: {len(drafts[0].content)} chars"
+            # Verify intro drafts are marked as is_intro
+            intro_drafts = [dr for dr in drafts if getattr(dr, "is_intro", False)]
+            if intro_drafts:
+                detail += f", Intro drafts: {len(intro_drafts)}"
 
         return detail
 
     runner.run_scenario(
-        "A7", "Project introduction (audience_introduced=False)", a7, llm_call=True, isolate=True
+        "A7",
+        "Project introduction (per-platform, not yet introduced)",
+        a7,
+        llm_call=True,
+        isolate=True,
     )
 
-    # A8: Verify audience_introduced flag operations
+    # A8: Verify per-platform introduced operations
     def a8():
-        from social_hook.db.operations import get_audience_introduced, set_audience_introduced
+        from social_hook.db.operations import (
+            get_all_platform_introduced,
+            get_platform_introduced,
+            reset_platform_introduced,
+            set_platform_introduced,
+        )
 
-        # Test set/get round-trip (works regardless of initial state)
-        set_audience_introduced(harness.conn, harness.project_id, True)
-        assert get_audience_introduced(harness.conn, harness.project_id) is True
+        pid = harness.project_id
 
-        set_audience_introduced(harness.conn, harness.project_id, False)
-        assert get_audience_introduced(harness.conn, harness.project_id) is False
+        # Test set/get round-trip per platform
+        set_platform_introduced(harness.conn, pid, "x", True)
+        assert get_platform_introduced(harness.conn, pid, "x") is True
+        assert get_platform_introduced(harness.conn, pid, "linkedin") is False
 
-        return "Flag operations: OK"
+        set_platform_introduced(harness.conn, pid, "linkedin", True)
+        all_intro = get_all_platform_introduced(harness.conn, pid)
+        assert all_intro.get("x") is True
+        assert all_intro.get("linkedin") is True
 
-    runner.run_scenario("A8", "Verify audience_introduced flag operations", a8)
+        # Test per-platform reset
+        reset_platform_introduced(harness.conn, pid, "x")
+        assert get_platform_introduced(harness.conn, pid, "x") is False
+        assert get_platform_introduced(harness.conn, pid, "linkedin") is True
+
+        # Test reset all
+        reset_platform_introduced(harness.conn, pid)
+        all_intro = get_all_platform_introduced(harness.conn, pid)
+        assert all(not v for v in all_intro.values()), f"Expected all False, got {all_intro}"
+
+        return "Per-platform introduced operations: OK"
+
+    runner.run_scenario("A8", "Verify per-platform introduced operations", a8)
 
     # A9: Project summary freshness
     def a9():

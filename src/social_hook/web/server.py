@@ -238,7 +238,11 @@ def _run_background_task(
     Args:
         task_type: Task category (e.g. "create_draft", "consolidate").
         ref_id: Reference key the frontend uses to find this task
-            (e.g. decision_id).
+            (e.g. decision_id).  Must be unique across concurrently
+            running tasks — ``useBackgroundTasks`` deduplicates by
+            ref_id and will silently drop collisions.  Prefix with
+            task_type when multiple task types target the same entity
+            (e.g. ``f"summary:{project_id}"`` vs bare ``project_id``).
         project_id: Project this task belongs to.
         fn: Zero-arg callable that returns a JSON-serialisable result dict.
         on_success: Optional callback receiving ``fn``'s return value,
@@ -1369,6 +1373,134 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
     )
 
 
+@app.post("/api/projects/{project_id}/summary-draft")
+async def api_summary_draft(project_id: str):
+    """Generate an introductory first draft from the project summary.
+
+    Creates a Decision with trigger_source="manual" and drafts for all
+    enabled platforms.  Uses the background-task pattern so the frontend
+    can track progress via WebSocket.
+    """
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+        repo_path = project["repo_path"]
+        pid = project["id"]
+        pname = project["name"]
+
+        # Prevent duplicate runs
+        running = conn.execute(
+            "SELECT id FROM background_tasks WHERE type = 'summary_draft'"
+            " AND project_id = ? AND status = 'running'",
+            (project_id,),
+        ).fetchone()
+        if running:
+            raise HTTPException(status_code=409, detail="Summary draft already in progress")
+    finally:
+        conn.close()
+
+    config = _get_config()
+
+    def _blocking_summary_draft():
+        import sqlite3 as _sqlite3
+
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.trigger import run_summary_trigger
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+        try:
+            # Run discovery first if no summary exists
+            proj = ops.get_project(conn2, pid)
+            proj_summary = proj.summary if proj else None
+            if not proj_summary:
+                from social_hook.config.project import load_project_config
+                from social_hook.llm.discovery import discover_project
+                from social_hook.llm.factory import create_client
+
+                project_config = load_project_config(repo_path)
+                client = create_client(config.models.evaluator, config)
+                ops.emit_data_event(conn2, "pipeline", "discovering", pid, pid)
+                disc_summary, disc_files, disc_file_summaries, disc_prompt_docs = discover_project(
+                    client=client,
+                    repo_path=repo_path,
+                    project_docs=project_config.context.project_docs,
+                    max_discovery_tokens=project_config.context.max_discovery_tokens,
+                    max_file_size=project_config.context.max_file_size,
+                    db=conn2,
+                    project_id=pid,
+                )
+                if disc_summary:
+                    ops.update_project_summary(conn2, pid, disc_summary)
+                    if disc_files:
+                        ops.update_discovery_files(conn2, pid, disc_files)
+                    if disc_file_summaries:
+                        ops.upsert_file_summaries(conn2, pid, disc_file_summaries)
+                    if disc_prompt_docs:
+                        ops.update_prompt_docs(conn2, pid, disc_prompt_docs)
+                    ops.emit_data_event(conn2, "project", "updated", pid, pid)
+                    proj_summary = disc_summary
+                    # Re-fetch project with updated summary
+                    proj = ops.get_project(conn2, pid)
+
+            if not proj_summary:
+                return {"draft_ids": [], "count": 0, "error": "Discovery produced no summary"}
+
+            result = run_summary_trigger(
+                config=config,
+                conn=conn2,
+                db=db,
+                project=proj,
+                summary=proj_summary,
+                repo_path=repo_path,
+            )
+            return result or {"draft_ids": [], "count": 0}
+        finally:
+            conn2.close()
+
+    def _on_summary_drafted(result: dict) -> None:
+        draft_id = result.get("draft_id")
+        if not draft_id:
+            return
+        conn2 = _get_conn()
+        try:
+            from social_hook.drafting import DraftResult
+            from social_hook.scheduling import calculate_optimal_time
+
+            d = ops.get_draft(conn2, draft_id)
+            if d:
+                sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=pname,
+                    project_id=pid,
+                    commit_hash="summary",
+                    commit_message="Project introduction",
+                    draft_results=[DraftResult(draft=d, schedule=sched, thread_tweets=[])],
+                )
+        except Exception:
+            logger.debug("Summary draft notification failed", exc_info=True)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "summary_draft",
+        ref_id=f"summary:{project_id}",
+        project_id=pid,
+        fn=_blocking_summary_draft,
+        on_success=_on_summary_drafted,
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
+
+
 @app.get("/api/projects/{project_id}/posts")
 async def api_project_posts(
     project_id: str,
@@ -2073,6 +2205,25 @@ async def api_media(file_path: str):
 # ---------------------------------------------------------------------------
 
 
+@app.get("/api/wizard/templates")
+async def api_get_wizard_templates():
+    """Return content strategy templates for the setup wizard."""
+    from social_hook.setup.templates import templates_to_dicts
+
+    return {"templates": templates_to_dicts()}
+
+
+@app.get("/api/wizard/detect-providers")
+async def api_detect_providers():
+    """Detect available LLM providers for the setup wizard."""
+    import os
+
+    from social_hook.setup.wizard import discover_providers
+
+    providers = await asyncio.to_thread(discover_providers, dict(os.environ))
+    return {"providers": providers}
+
+
 @app.get("/api/settings/config")
 async def api_get_config():
     """Return current config as JSON."""
@@ -2769,6 +2920,7 @@ async def api_browse_directory(path: str = Query(default="~")):
     return {
         "current": str(resolved),
         "parent": str(resolved.parent) if resolved != home else str(home),
+        "is_git": (resolved / ".git").exists(),
         "directories": dirs,
     }
 
@@ -2880,5 +3032,66 @@ async def api_delete_project(project_id: str):
         ops.delete_project(conn, project_id)
         ops.emit_data_event(conn, "project", "deleted", project_id, project_id)
         return {"status": "deleted", "project_id": project_id}
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Platform Introduced (per-platform introduction tracking)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/introduced")
+async def api_project_introduced(project_id: str):
+    """Get per-platform introduction status for a project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        rows = conn.execute(
+            "SELECT platform, introduced, introduced_at FROM platform_introduced WHERE project_id = ?",
+            (project_id,),
+        ).fetchall()
+        platforms = {}
+        for row in rows:
+            platforms[row[0]] = {
+                "introduced": bool(row[1]),
+                "introduced_at": row[2],
+            }
+        return {"platforms": platforms}
+    finally:
+        conn.close()
+
+
+class IntroducedResetBody(BaseModel):
+    platform: str | None = None
+
+
+@app.post("/api/projects/{project_id}/introduced/reset")
+async def api_project_introduced_reset(project_id: str, body: IntroducedResetBody):
+    """Reset introduction status for a platform or all platforms."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        count = ops.reset_platform_introduced(conn, project_id, body.platform)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"reset": count, "platform": body.platform or "all"}
+    finally:
+        conn.close()
+
+
+class IntroducedSetBody(BaseModel):
+    platform: str
+    value: bool = True
+
+
+@app.post("/api/projects/{project_id}/introduced/set")
+async def api_project_introduced_set(project_id: str, body: IntroducedSetBody):
+    """Set introduction status for a specific platform."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        ops.set_platform_introduced(conn, project_id, body.platform, body.value)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"platform": body.platform, "introduced": body.value}
     finally:
         conn.close()

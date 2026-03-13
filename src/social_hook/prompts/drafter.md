@@ -60,6 +60,15 @@ Match the voice described in the social-context.md section. Key principles:
 - Avoid hype language and marketing speak
 - Use the author's natural voice, not generic "developer Twitter" voice
 
+## Author Identity
+
+When an Author Identity section appears in the project context below, you MUST write
+from that perspective. Use the specified pronouns consistently. Never switch between
+"I" and "we" within a post unless the identity explicitly calls for it.
+
+When an intro hook is provided, use it naturally — prominently in early posts,
+fading as the audience becomes familiar. Never repeat it verbatim across posts.
+
 ## Voice Memories
 
 Pay attention to the Voice Memories section. These are direct feedback from the author:

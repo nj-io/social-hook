@@ -54,6 +54,8 @@ class Gatekeeper:
         narrative_debt: int | None = None,
         audience_introduced: bool | None = None,
         linked_decision: Any | None = None,
+        social_context: str | None = None,
+        platform_introduced: dict[str, bool] | None = None,
     ) -> RouteActionInput:
         """Route a user message to the appropriate handler.
 
@@ -70,8 +72,10 @@ class Gatekeeper:
             lifecycle_phase: Current project lifecycle phase
             active_arcs: Active narrative arcs
             narrative_debt: Current narrative debt counter
-            audience_introduced: Whether audience has been introduced
+            audience_introduced: Whether audience has been introduced (deprecated, use platform_introduced)
             linked_decision: Decision linked to the current draft
+            social_context: Project social context for voice awareness
+            platform_introduced: Per-platform introduction state dict
 
         Returns:
             Validated RouteActionInput with routing decision
@@ -96,6 +100,8 @@ class Gatekeeper:
             narrative_debt=narrative_debt,
             audience_introduced=audience_introduced,
             linked_decision=linked_decision,
+            social_context=social_context,
+            platform_introduced=platform_introduced,
         )
 
         response = self.client.complete(

@@ -44,8 +44,8 @@ def insert_project(conn: sqlite3.Connection, project: Project) -> str:
     """
     conn.execute(
         """
-        INSERT INTO projects (id, name, repo_path, repo_origin, summary, summary_updated_at, audience_introduced, paused)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, name, repo_path, repo_origin, summary, summary_updated_at, paused)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         project.to_row(),
     )
@@ -271,7 +271,7 @@ def rewind_decision(conn: sqlite3.Connection, decision_id: str, force: bool = Fa
 
     # Fetch all drafts for this decision
     draft_rows = conn.execute(
-        "SELECT id, status, is_intro FROM drafts WHERE decision_id = ?",
+        "SELECT id, status, is_intro, platform FROM drafts WHERE decision_id = ?",
         (decision_id,),
     ).fetchall()
     draft_ids = [r[0] for r in draft_rows]
@@ -333,21 +333,20 @@ def rewind_decision(conn: sqlite3.Connection, decision_id: str, force: bool = Fa
         )
         arc_decremented = True
 
-    # Reset audience_introduced if deleted drafts were the only intros
+    # Reset platform_introduced for platforms whose intro drafts were deleted
     audience_reset = False
     intro_drafts = [r for r in draft_rows if r[2]]
     if intro_drafts:
-        remaining = conn.execute(
-            """SELECT COUNT(*) FROM drafts
-               WHERE project_id = ? AND is_intro = 1 AND decision_id != ?""",
-            (decision.project_id, decision_id),
-        ).fetchone()[0]
-        if remaining == 0:
-            conn.execute(
-                "UPDATE projects SET audience_introduced = 0 WHERE id = ?",
-                (decision.project_id,),
-            )
-            audience_reset = True
+        intro_platforms = set(r[3] for r in intro_drafts)
+        for plat in intro_platforms:
+            remaining = conn.execute(
+                """SELECT COUNT(*) FROM drafts
+                   WHERE project_id = ? AND is_intro = 1 AND decision_id != ? AND platform = ?""",
+                (decision.project_id, decision_id, plat),
+            ).fetchone()[0]
+            if remaining == 0:
+                reset_platform_introduced(conn, decision.project_id, plat)
+                audience_reset = True
 
     # Reset decision to unprocessed state
     conn.execute(
@@ -1408,26 +1407,108 @@ def get_arc_posts(conn: sqlite3.Connection, arc_id: str) -> list[Post]:
 
 
 def get_audience_introduced(conn: sqlite3.Connection, project_id: str) -> bool:
-    """Check if the audience has been introduced for a project."""
+    """Check if the audience has been introduced for a project.
+
+    DEPRECATED: Use get_all_platform_introduced() instead.
+    Returns True if all tracked platforms are introduced.
+    """
+    rows = conn.execute(
+        "SELECT introduced FROM platform_introduced WHERE project_id = ?",
+        (project_id,),
+    ).fetchall()
+    if not rows:
+        return False
+    return all(bool(r[0]) for r in rows)
+
+
+def set_audience_introduced(conn: sqlite3.Connection, project_id: str, value: bool) -> bool:
+    """Update the audience_introduced flag for a project.
+
+    DEPRECATED: Use set_platform_introduced() instead.
+    Sets all tracked platforms to the given value.
+    """
+    cursor = conn.execute(
+        "UPDATE platform_introduced SET introduced = ?, introduced_at = CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE project_id = ?",
+        (1 if value else 0, 1 if value else 0, project_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_platform_introduced(conn: sqlite3.Connection, project_id: str, platform: str) -> bool:
+    """Check if a specific platform has been introduced for a project."""
     row = conn.execute(
-        "SELECT audience_introduced FROM projects WHERE id = ?", (project_id,)
+        "SELECT introduced FROM platform_introduced WHERE project_id = ? AND platform = ?",
+        (project_id, platform),
     ).fetchone()
     if row:
         return bool(row[0])
     return False
 
 
-def set_audience_introduced(conn: sqlite3.Connection, project_id: str, value: bool) -> bool:
-    """Update the audience_introduced flag for a project.
+def set_platform_introduced(
+    conn: sqlite3.Connection, project_id: str, platform: str, value: bool
+) -> bool:
+    """Set the introduced state for a specific platform.
 
-    Returns True if a row was updated.
+    Returns True if a row was inserted/updated.
     """
-    cursor = conn.execute(
-        "UPDATE projects SET audience_introduced = ? WHERE id = ?",
-        (1 if value else 0, project_id),
+    conn.execute(
+        """
+        INSERT INTO platform_introduced (project_id, platform, introduced, introduced_at)
+        VALUES (?, ?, ?, CASE WHEN ? THEN datetime('now') ELSE NULL END)
+        ON CONFLICT(project_id, platform) DO UPDATE SET
+            introduced = excluded.introduced,
+            introduced_at = CASE WHEN excluded.introduced THEN
+                COALESCE(platform_introduced.introduced_at, excluded.introduced_at)
+            ELSE NULL END
+        """,
+        (project_id, platform, 1 if value else 0, 1 if value else 0),
     )
     conn.commit()
-    return cursor.rowcount > 0
+    return True
+
+
+def get_all_platform_introduced(conn: sqlite3.Connection, project_id: str) -> dict[str, bool]:
+    """Get introduction state for all platforms of a project.
+
+    Returns dict mapping platform name to introduced status.
+    """
+    rows = conn.execute(
+        "SELECT platform, introduced FROM platform_introduced WHERE project_id = ?",
+        (project_id,),
+    ).fetchall()
+    return {row[0]: bool(row[1]) for row in rows}
+
+
+def reset_platform_introduced(
+    conn: sqlite3.Connection, project_id: str, platform: str | None = None
+) -> int:
+    """Reset introduced state. If platform is None, reset all platforms for this project.
+
+    Returns the number of rows updated.
+    """
+    if platform is None:
+        cursor = conn.execute(
+            "UPDATE platform_introduced SET introduced = 0, introduced_at = NULL WHERE project_id = ?",
+            (project_id,),
+        )
+    else:
+        cursor = conn.execute(
+            "UPDATE platform_introduced SET introduced = 0, introduced_at = NULL WHERE project_id = ? AND platform = ?",
+            (project_id, platform),
+        )
+    conn.commit()
+    return cursor.rowcount
+
+
+def get_first_post_date(conn: sqlite3.Connection, project_id: str, platform: str) -> str | None:
+    """Return earliest posted_at for a project+platform. For identity instruction temporal context."""
+    row = conn.execute(
+        "SELECT MIN(posted_at) FROM posts WHERE project_id = ? AND platform = ?",
+        (project_id, platform),
+    ).fetchone()
+    return row[0] if row and row[0] else None
 
 
 # =============================================================================

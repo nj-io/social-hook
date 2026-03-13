@@ -6,8 +6,8 @@ import Link from "next/link";
 import { fetchChannelsStatus, fetchDraft, fetchEnabledPlatforms, generateMediaSpec, resendDraftNotification } from "@/lib/api";
 import { platformLabel } from "@/lib/platform";
 import type { Decision, Draft } from "@/lib/types";
-import { StatusBadge } from "@/components/status-badge";
-import { DecisionBadge } from "@/components/decision-badge";
+import { parseTags } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
 import { MediaSection } from "@/components/media-section";
 import { DraftActionPanel } from "@/components/draft-action-panel";
 import { useDataEvents } from "@/lib/use-data-events";
@@ -96,7 +96,9 @@ export default function DraftDetailPage() {
 
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-bold">Draft Detail</h1>
-        <StatusBadge status={draft.status} />
+        <Badge value={draft.status} variant="status" />
+        {draft.is_intro && <Badge value="INTRO" variant="system" />}
+        {draft.platform === "preview" && <Badge value="Preview" variant="system" />}
         <code className="text-xs text-muted-foreground">{draft.id}</code>
         {daemonRunning && (
           <button
@@ -120,6 +122,17 @@ export default function DraftDetailPage() {
           <span>Scheduled: {new Date(draft.suggested_time).toLocaleString()}</span>
         )}
       </div>
+
+      {/* Metadata pills */}
+      {draft.decision && (
+        <div className="flex flex-wrap gap-1.5">
+          {draft.decision.episode_type && <Badge value={draft.decision.episode_type} variant="category" />}
+          {draft.decision.post_category && <Badge value={draft.decision.post_category} variant="category" />}
+          {parseTags(draft.decision.episode_tags).map((tag) => (
+            <Badge key={tag} value={tag} variant="default" />
+          ))}
+        </div>
+      )}
 
       {/* Preview banner */}
       {draft.platform === "preview" && draft.status !== "superseded" && (
@@ -205,7 +218,7 @@ function EvaluatorAnalysis({ decision }: { decision: Decision }) {
       >
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-medium text-muted-foreground">Evaluator Analysis</h2>
-          <DecisionBadge decision={decision.decision} />
+          <Badge value={decision.decision} variant="decision" />
         </div>
         <span className="text-xs text-muted-foreground">{open ? "Hide" : "Show"}</span>
       </button>

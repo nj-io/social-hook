@@ -29,7 +29,10 @@ COMMON_TIMEZONES = [
     "UTC",
 ]
 
-WIZARD_TOTAL_SECTIONS = 10
+WIZARD_TOTAL_SECTIONS = (
+    8  # Core flow: strategy, identity, platforms, connection, voice, audience, credentials, project
+)
+WIZARD_ADVANCED_SECTIONS = 9  # Additional: models, telegram, media, scheduling, rate limits, consolidation, journey, web, installations
 
 
 # =============================================================================
@@ -180,7 +183,7 @@ def _info(message: str) -> None:
         typer.echo(f"  i {message}")
 
 
-def _discover_providers(env: dict) -> list[dict]:
+def discover_providers(env: dict) -> list[dict]:
     """Detect which providers are available from environment/PATH/localhost."""
     import shutil
 
@@ -495,6 +498,272 @@ def _load_existing() -> tuple[dict[str, str], dict[str, Any]]:
 
 
 # =============================================================================
+# Strategy-first sections
+# =============================================================================
+
+
+def _setup_strategy(
+    yaml_config: dict,
+    existing_yaml: dict,
+    progress: WizardProgress | None = None,
+) -> str | None:
+    """Content strategy selection — step 0 of the wizard.
+
+    Returns the selected template ID (or None for custom).
+    Pre-fills downstream defaults based on the chosen template.
+    """
+    from social_hook.setup.templates import STRATEGY_TEMPLATES
+
+    if progress:
+        progress.set_section(1, "Content Strategy", substeps=2)
+    _section(
+        "Content Strategy",
+        "What kind of content do you want to create?",
+        progress=progress,
+    )
+
+    # Build choices from templates
+    choices = [f"{t.name} — {t.description}" for t in STRATEGY_TEMPLATES]
+    existing_strategy = existing_yaml.get("content_strategy")
+    default_choice = choices[0]
+    if existing_strategy:
+        for i, t in enumerate(STRATEGY_TEMPLATES):
+            if t.id == existing_strategy:
+                default_choice = choices[i]
+                break
+
+    selected = _select("Choose a content strategy:", choices, default=default_choice)
+    if progress:
+        progress.advance()
+
+    # Find the template
+    selected_idx = choices.index(selected)
+    template = STRATEGY_TEMPLATES[selected_idx]
+
+    if template.id != "custom":
+        # Show summary of pre-filled values
+        d = template.defaults
+        typer.echo(f"\n  Template: {template.name}")
+        typer.echo(f"  Identity: {d.identity}")
+        typer.echo(f"  Voice: {d.voice_tone}")
+        typer.echo(f"  Audience: {d.audience}")
+        typer.echo(f"  Post when: {d.post_when}")
+        typer.echo(f"  Avoid: {d.avoid}")
+
+        if _confirm("Accept these defaults?"):
+            # Write strategy to config
+            yaml_config["content_strategy"] = template.id
+            yaml_config.setdefault("content_strategies", {})[template.id] = {
+                "audience": d.audience,
+                "voice": d.voice_tone,
+                "post_when": d.post_when,
+                "avoid": d.avoid,
+            }
+            _success(f"Using '{template.name}' strategy")
+            if progress:
+                progress.advance()
+            return template.id
+
+    # Custom or user wants to modify defaults
+    yaml_config["content_strategy"] = template.id
+    if progress:
+        progress.advance()
+    return template.id
+
+
+def _setup_identity(
+    yaml_config: dict,
+    existing_yaml: dict,
+    template_id: str | None = None,
+    progress: WizardProgress | None = None,
+) -> None:
+    """Named identity definitions — creates identity entries in config."""
+    from social_hook.setup.templates import get_template
+
+    if progress:
+        progress.set_section(2, "Identity", substeps=3)
+    _section(
+        "Identity",
+        "Who speaks in your content? Create one or more named identities.",
+        progress=progress,
+    )
+
+    template = get_template(template_id) if template_id else None
+    default_type = template.defaults.identity if template else "myself"
+    default_hook = template.defaults.example_intro_hook if template else ""
+
+    identities: dict[str, dict] = {}
+
+    # First identity
+    type_choices = ["myself", "team", "company", "project", "custom"]
+    identity_type = _select(
+        "Identity type:",
+        type_choices,
+        default=default_type,
+    )
+    if progress:
+        progress.advance()
+
+    name = _prompt("Name for this identity (e.g., 'neil', 'acme')", default="default")
+    label = _prompt("Display label (e.g., 'Neil', 'Acme Corp')", default=name.title())
+    description = _prompt("Brief description (optional)", default="")
+    intro_hook = _prompt(
+        "Intro hook for early posts (optional)",
+        default=default_hook,
+    )
+    if progress:
+        progress.advance()
+
+    identity_data: dict[str, Any] = {"type": identity_type, "label": label}
+    if description:
+        identity_data["description"] = description
+    if intro_hook:
+        identity_data["intro_hook"] = intro_hook
+    identities[name] = identity_data
+
+    # Additional identities
+    while _confirm("Add another identity?", default=False):
+        identity_type = _select("Identity type:", type_choices, default="myself")
+        add_name = _prompt("Name for this identity", default="")
+        add_label = _prompt("Display label", default=add_name.title())
+        add_desc = _prompt("Brief description (optional)", default="")
+        add_hook = _prompt("Intro hook (optional)", default="")
+        add_data: dict[str, Any] = {"type": identity_type, "label": add_label}
+        if add_desc:
+            add_data["description"] = add_desc
+        if add_hook:
+            add_data["intro_hook"] = add_hook
+        identities[add_name] = add_data
+
+    yaml_config["identities"] = identities
+    yaml_config["default_identity"] = list(identities.keys())[0]
+    _success(f"Created {len(identities)} identity definition(s)")
+    if progress:
+        progress.advance()
+
+
+def _setup_connection(
+    yaml_config: dict,
+    progress: WizardProgress | None = None,
+) -> None:
+    """Link identities to platforms."""
+    if progress:
+        progress.set_section(4, "Connection", substeps=2)
+    _section(
+        "Connection",
+        "Link identities to platforms.",
+        progress=progress,
+    )
+
+    identities = yaml_config.get("identities", {})
+    platforms_config = yaml_config.get("platforms", {})
+    identity_names = list(identities.keys())
+
+    if not identity_names or not platforms_config:
+        _info("Skipping — configure identities and platforms first.")
+        return
+
+    if len(identity_names) == 1:
+        # Single identity — auto-assign to all platforms
+        default_identity = identity_names[0]
+        yaml_config["default_identity"] = default_identity
+        for _pname, pcfg in platforms_config.items():
+            if isinstance(pcfg, dict):
+                pcfg["identity"] = default_identity
+        _success(f"All platforms use identity '{default_identity}'")
+        if progress:
+            progress.advance()
+            progress.advance()
+        return
+
+    # Multiple identities — prompt per platform
+    default_name = yaml_config.get("default_identity", identity_names[0])
+    default_identity = _select(
+        "Default identity:",
+        identity_names,
+        default=default_name,
+    )
+    yaml_config["default_identity"] = default_identity
+    if progress:
+        progress.advance()
+
+    for pname in platforms_config:
+        if isinstance(platforms_config[pname], dict) and platforms_config[pname].get("enabled"):
+            chosen = _select(
+                f"Identity for {pname}:",
+                identity_names,
+                default=default_identity,
+            )
+            platforms_config[pname]["identity"] = chosen
+
+    _success("Platform-identity connections configured")
+    if progress:
+        progress.advance()
+
+
+def _setup_audience(
+    yaml_config: dict,
+    existing_yaml: dict,
+    template_id: str | None = None,
+    progress: WizardProgress | None = None,
+) -> None:
+    """Audience configuration — who reads the content."""
+    from social_hook.setup.templates import get_template
+
+    if progress:
+        progress.set_section(6, "Audience", substeps=3)
+    _section(
+        "Audience",
+        "Who reads your content?",
+        progress=progress,
+    )
+
+    template = get_template(template_id) if template_id else None
+    defaults = template.defaults if template else None
+
+    # Check if template defaults are acceptable
+    if defaults and defaults.audience:
+        typer.echo("\n  Template defaults:")
+        typer.echo(f"  Audience: {defaults.audience}")
+        typer.echo(f"  Technical level: {defaults.technical_level}")
+        if _confirm("Template defaults look good?"):
+            # Write strategy with template defaults
+            strategy_name = template_id or "custom"
+            yaml_config.setdefault("content_strategies", {}).setdefault(strategy_name, {}).update(
+                {"audience": defaults.audience}
+            )
+            _success("Using template audience defaults")
+            if progress:
+                progress.advance()
+                progress.advance()
+                progress.advance()
+            return
+
+    audience = _prompt(
+        "Primary audience",
+        default=(defaults.audience if defaults else "") or "Developers, indie hackers, builders",
+    )
+    if progress:
+        progress.advance()
+
+    tech_choices = ["beginner", "intermediate", "advanced"]
+    tech_default = (defaults.technical_level if defaults else "") or "intermediate"
+    _select("Audience technical level:", tech_choices, default=tech_default)
+    if progress:
+        progress.advance()
+
+    # Write to strategy
+    strategy_name = template_id or "custom"
+    yaml_config.setdefault("content_strategies", {}).setdefault(strategy_name, {}).update(
+        {"audience": audience}
+    )
+
+    _success("Audience configured")
+    if progress:
+        progress.advance()
+
+
+# =============================================================================
 # Main wizard
 # =============================================================================
 
@@ -502,12 +771,14 @@ def _load_existing() -> tuple[dict[str, str], dict[str, Any]]:
 def run_wizard(
     validate: bool = False,
     only: str | None = None,
+    advanced: bool | None = None,
 ) -> bool:
     """Run the interactive setup wizard.
 
     Args:
         validate: If True, only validate existing config (no changes)
         only: If set, only configure this component (e.g., 'telegram', 'x')
+        advanced: If True, include advanced sections. If None, prompt after core.
 
     Returns:
         True if setup completed successfully
@@ -516,6 +787,9 @@ def run_wizard(
 
     if validate:
         return _validate_existing()
+
+    # Determine total sections for progress bar
+    total = WIZARD_TOTAL_SECTIONS + (WIZARD_ADVANCED_SECTIONS if advanced else 0)
 
     # Welcome panel
     try:
@@ -529,17 +803,18 @@ def run_wizard(
                 f"[bold]{PROJECT_NAME} Setup[/bold]\n\n"
                 f"{PROJECT_NAME} automatically turns your git commits into social media posts.\n"
                 "It watches your repos, uses AI to decide what's worth posting about,\n"
-                "drafts content in your voice, and sends it for your approval via Telegram.\n\n"
+                "drafts content in your voice, and sends it for your approval.\n\n"
                 "This wizard will configure:\n"
-                "  1. AI model selection (provider & model for each role)\n"
-                "  2. API credentials (only what's needed for your chosen providers)\n"
-                "  3. Voice & style (how your posts sound)\n"
-                "  4. Telegram bot (for draft notifications & approvals)\n"
-                "  5. Platforms (X/Twitter, LinkedIn, custom)\n"
-                "  6. Image generation\n"
-                "  7. Scheduling preferences\n"
-                "  8. Web dashboard\n\n"
-                "Press Ctrl+C at any time to cancel.\n"
+                "  1. Content strategy (what kind of content to create)\n"
+                "  2. Identity (who speaks in your content)\n"
+                "  3. Platforms (X/Twitter, LinkedIn, custom)\n"
+                "  4. Connection (link identities to platforms)\n"
+                "  5. Voice & style (how your posts sound)\n"
+                "  6. Audience (who reads your content)\n"
+                "  7. Credentials (API keys for providers & platforms)\n"
+                "  8. Project (register a repository)\n\n"
+                + ("  [dim]Advanced sections included (--advanced)[/dim]\n\n" if advanced else "")
+                + "Press Ctrl+C at any time to cancel.\n"
                 "[dim]Existing values shown as defaults.[/dim]",
                 title="Welcome",
                 border_style="cyan",
@@ -550,14 +825,16 @@ def run_wizard(
         typer.echo(f"\n=== {PROJECT_NAME} Setup ===\n")
         typer.echo(f"{PROJECT_NAME} automatically turns your git commits into social media posts.")
         typer.echo("This wizard will configure:")
-        typer.echo("  1. AI model selection (provider & model for each role)")
-        typer.echo("  2. API credentials (only what's needed for your chosen providers)")
-        typer.echo("  3. Voice & style (how your posts sound)")
-        typer.echo("  4. Telegram bot (for draft notifications & approvals)")
-        typer.echo("  5. Platforms (X/Twitter, LinkedIn, custom)")
-        typer.echo("  6. Image generation")
-        typer.echo("  7. Scheduling preferences")
-        typer.echo("  8. Web dashboard")
+        typer.echo("  1. Content strategy (what kind of content to create)")
+        typer.echo("  2. Identity (who speaks in your content)")
+        typer.echo("  3. Platforms (X/Twitter, LinkedIn, custom)")
+        typer.echo("  4. Connection (link identities to platforms)")
+        typer.echo("  5. Voice & style (how your posts sound)")
+        typer.echo("  6. Audience (who reads your content)")
+        typer.echo("  7. Credentials (API keys for providers & platforms)")
+        typer.echo("  8. Project (register a repository)")
+        if advanced:
+            typer.echo("  + Advanced sections (models, media, scheduling, etc.)")
         typer.echo("\nPress Ctrl+C at any time to cancel.")
         typer.echo("Existing values shown as defaults.\n")
 
@@ -569,10 +846,11 @@ def run_wizard(
         existing_env, existing_yaml = _load_existing()
 
         # Progress tracker
-        progress = WizardProgress()
+        progress = WizardProgress(total_sections=total)
 
         env_vars: dict[str, str] = {}
         yaml_config: dict[str, Any] = {}
+        template_id: str | None = None
 
         def _save_progress() -> None:
             """Save whatever we have so far."""
@@ -581,97 +859,146 @@ def run_wizard(
             if yaml_config:
                 _save_config_yaml(base, yaml_config)
 
-        # Section 1: Model selection
-        if only is None or only == "models":
+        # --- Standalone --only paths ---
+        if only == "models":
             _setup_models(yaml_config, existing_yaml, env_vars, existing_env, progress)
             _save_progress()
-
-        # Section 2: API keys
-        if only is None or only == "apikeys":
+            _success("Setup complete!")
+            return True
+        elif only == "apikeys":
             _setup_api_keys(env_vars, existing_env, yaml_config, existing_yaml, progress)
             _save_progress()
-
-        # Section 3: Voice & style
-        if only is None or only == "voice":
+            _success("Setup complete!")
+            return True
+        elif only == "voice":
             _setup_voice_style(base, progress)
-
-        # Section 4: Telegram
-        if only is None or only == "telegram":
+            _success("Setup complete!")
+            return True
+        elif only == "telegram":
             _setup_telegram(env_vars, existing_env, progress)
             _save_progress()
-
-        # Section 5: Platforms (X, LinkedIn, custom)
-        if only is None or only == "platforms":
+            _success("Setup complete!")
+            return True
+        elif only == "platforms":
             _setup_platforms(yaml_config, env_vars, existing_env, existing_yaml, progress)
             _save_progress()
+            _success("Setup complete!")
+            return True
         elif only == "x":
             _setup_x(env_vars, yaml_config, existing_env, existing_yaml, progress)
             _save_progress()
+            _success("Setup complete!")
+            return True
         elif only == "linkedin":
             _setup_linkedin(env_vars, existing_env, progress)
             _save_progress()
-
-        # Section 6: Media generation
-        if only is None or only == "media":
+            _success("Setup complete!")
+            return True
+        elif only == "image":
             _setup_media_gen(env_vars, yaml_config, existing_env, progress)
             _save_progress()
-
-        # Section 6b: Scheduling (standalone path)
-        if only == "scheduling":
+            _success("Setup complete!")
+            return True
+        elif only == "scheduling":
             _setup_scheduling(base, yaml_config, existing_yaml, progress)
             _save_progress()
-
-        # Journey capture (standalone path)
-        if only == "journey":
+            _success("Setup complete!")
+            return True
+        elif only == "journey":
             _setup_journey_capture(yaml_config, progress)
             _save_progress()
-
-        # Web dashboard (standalone path)
-        if only == "web":
+            _success("Setup complete!")
+            return True
+        elif only == "web":
             _setup_web_dashboard(yaml_config, progress)
             _save_progress()
+            _success("Setup complete!")
+            return True
 
-        installed = False
-        if only is None:
-            # Section 7: Scheduling
+        # --- Core flow (strategy-first) ---
+
+        # 1. Content Strategy
+        template_id = _setup_strategy(yaml_config, existing_yaml, progress)
+        _save_progress()
+
+        # 2. Identity
+        _setup_identity(yaml_config, existing_yaml, template_id=template_id, progress=progress)
+        _save_progress()
+
+        # 3. Platforms
+        _setup_platforms(yaml_config, env_vars, existing_env, existing_yaml, progress)
+        _save_progress()
+
+        # 4. Connection (link identities to platforms)
+        _setup_connection(yaml_config, progress)
+        _save_progress()
+
+        # 5. Voice & Style
+        _setup_voice_style(base, progress)
+
+        # 6. Audience
+        _setup_audience(yaml_config, existing_yaml, template_id=template_id, progress=progress)
+        _save_progress()
+
+        # 7. Credentials (API keys for chosen models + platforms)
+        _setup_models(yaml_config, existing_yaml, env_vars, existing_env, progress)
+        _save_progress()
+        _setup_api_keys(env_vars, existing_env, yaml_config, existing_yaml, progress)
+        _save_progress()
+
+        # 8. Project registration
+        # (This is handled by the register command — just remind the user)
+        _section("Project", "Register a repository to start tracking commits.", progress=progress)
+        _info(
+            f"Run `{PROJECT_SLUG} project register /path/to/repo` to register a project,\n"
+            f"or use `{PROJECT_SLUG} quickstart` for a guided first-project experience."
+        )
+
+        # --- Advanced sections ---
+        run_advanced = advanced
+        if run_advanced is None:
+            typer.echo("")
+            run_advanced = _confirm(
+                "Configure advanced settings? (models, media, scheduling, etc.)", default=False
+            )
+
+        if run_advanced:
+            _setup_telegram(env_vars, existing_env, progress)
+            _save_progress()
+            _setup_media_gen(env_vars, yaml_config, existing_env, progress)
+            _save_progress()
             _setup_scheduling(base, yaml_config, existing_yaml, progress)
             _save_progress()
-            # Section 9: Web Dashboard
+            _setup_journey_capture(yaml_config, progress)
+            _save_progress()
             _setup_web_dashboard(yaml_config, progress)
             _save_progress()
-            _show_summary(env_vars, yaml_config)
-            # Section 10: Installations
-            installed = _setup_installations(yaml_config, progress)
+
+        _show_summary(env_vars, yaml_config)
+        installed = _setup_installations(yaml_config, progress)
 
         # --- Completion message with warnings ---
         warnings: list[str] = []
-        if only is None:
-            # Check if needed API keys are present
-            models_config = yaml_config if yaml_config.get("models") else {}
-            needed = _keys_needed_for_config(models_config)
-            all_env = {**existing_env, **env_vars}
-            missing_keys = [k for k in needed if k not in all_env]
+        models_config = yaml_config if yaml_config.get("models") else {}
+        needed = _keys_needed_for_config(models_config)
+        all_env = {**existing_env, **env_vars}
+        missing_keys = [k for k in needed if k not in all_env]
 
-            has_telegram = "TELEGRAM_BOT_TOKEN" in env_vars or existing_env.get(
-                "TELEGRAM_BOT_TOKEN"
+        has_telegram = "TELEGRAM_BOT_TOKEN" in env_vars or existing_env.get("TELEGRAM_BOT_TOKEN")
+        has_voice = (base / "social-context.md").exists()
+
+        for k in missing_keys:
+            warnings.append(f"{k} not configured — required for chosen provider")
+        if not has_telegram:
+            warnings.append("Telegram bot not configured — no draft notifications")
+        if not has_voice:
+            warnings.append(
+                f"Voice & style not configured — run `{PROJECT_SLUG} setup --only voice`"
             )
-            has_voice = (base / "social-context.md").exists()
-            has_x = "X_API_KEY" in env_vars or existing_env.get("X_API_KEY")
-
-            for k in missing_keys:
-                warnings.append(f"{k} not configured — required for chosen provider")
-            if not has_telegram:
-                warnings.append("Telegram bot not configured — no draft notifications")
-            if not has_voice:
-                warnings.append(
-                    f"Voice & style not configured — run `{PROJECT_SLUG} setup --only voice`"
-                )
-            if not has_x:
-                warnings.append("X (Twitter) not configured — no auto-posting")
-            if not installed:
-                warnings.append(
-                    f"Installations skipped — run `{PROJECT_SLUG} setup` to install hook, cron, and bot"
-                )
+        if not installed:
+            warnings.append(
+                f"Installations skipped — run `{PROJECT_SLUG} setup` to install hook, cron, and bot"
+            )
 
         if warnings:
             typer.echo("")
@@ -1370,7 +1697,7 @@ def _setup_models(
 
     # Detect available providers
     combined_env = {**existing_env, **env_vars}
-    providers = _discover_providers(combined_env)
+    providers = discover_providers(combined_env)
 
     setup_mode = _select(
         "How would you like to configure models?",
