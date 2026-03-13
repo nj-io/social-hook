@@ -8,7 +8,7 @@ version = "0.9.0"
 description = "Automated social media content from development activity"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = {text = "MIT"}
 authors = [
     { name = "Neil", email = "26359601+nj-io@users.noreply.github.com" }
 ]
