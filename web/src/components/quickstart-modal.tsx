@@ -6,6 +6,7 @@ import { CardSelect } from "@/components/wizard/card-select";
 import { FolderPickerModal } from "@/components/settings/folder-picker-modal";
 import type { StrategyTemplate } from "@/lib/types";
 import {
+  createSummaryDraft,
   fetchWizardTemplates,
   importCommits,
   registerProject,
@@ -109,12 +110,17 @@ export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }:
       // 3. Register project
       const projectRes = await registerProject(repoPath, undefined, true);
 
-      // 4. Import commits
+      // 4. Import commits + generate summary draft
       if (projectRes.project?.id) {
         try {
           await importCommits(projectRes.project.id);
         } catch {
           // Non-fatal
+        }
+        try {
+          await createSummaryDraft(projectRes.project.id);
+        } catch {
+          // Non-fatal — draft generation may fail if no summary yet
         }
       }
 
@@ -132,9 +138,9 @@ export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }:
     return (
       <Modal open={true} onClose={() => { onComplete(); onClose(); }} maxWidth="max-w-lg">
         <div className="animate-wizard-dissolve space-y-4 text-center">
-          <h3 className="text-lg font-semibold">Preview is ready</h3>
+          <h3 className="text-lg font-semibold">Generating your first draft</h3>
           <p className="text-sm text-muted-foreground">
-            Your project has been registered with a preview platform. Drafts will appear on the dashboard when commits are detected.
+            Your project has been registered and a draft is being generated. You&apos;ll see a notification on the dashboard when it&apos;s ready for review.
           </p>
           <div className="rounded-md border border-accent/30 bg-accent/5 p-4 text-sm">
             Like what you see?{" "}

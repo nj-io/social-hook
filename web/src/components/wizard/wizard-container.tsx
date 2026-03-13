@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { StrategyTemplate } from "@/lib/types";
 import {
+  createSummaryDraft,
   fetchWizardTemplates,
   importCommits,
   registerProject,
@@ -220,12 +221,17 @@ export function WizardContainer({ onComplete, onClose }: WizardContainerProps) {
           data.installGitHook,
         );
 
-        // 5. Import commits
+        // 5. Import commits + generate summary draft
         if (projectRes.project?.id) {
           try {
             await importCommits(projectRes.project.id);
           } catch {
             // Non-fatal: import can happen later
+          }
+          try {
+            await createSummaryDraft(projectRes.project.id);
+          } catch {
+            // Non-fatal: draft generation may fail if no summary yet
           }
         }
       }

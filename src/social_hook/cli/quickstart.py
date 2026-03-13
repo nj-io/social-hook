@@ -301,8 +301,7 @@ def _run_discovery(
             typer.echo(f"Project summary exists ({len(existing.summary)} chars)")
         return existing.summary
 
-    if not is_json:
-        typer.echo("Running project discovery...")
+    from social_hook.cli._spinner import spinner
 
     project_config = load_project_config(repo_path)
     db = DryRunContext(conn, dry_run=dry_run)
@@ -312,15 +311,16 @@ def _run_discovery(
         from social_hook.llm.factory import create_client
 
         client = create_client(config.models.evaluator, config, verbose=verbose)
-        summary, selected_files, file_summaries, prompt_docs = discover_project(
-            client=client,
-            repo_path=repo_path,
-            project_docs=project_config.context.project_docs,
-            max_discovery_tokens=project_config.context.max_discovery_tokens,
-            max_file_size=project_config.context.max_file_size,
-            db=db,
-            project_id=project.id,
-        )
+        with spinner("Discovering project...", quiet=is_json):
+            summary, selected_files, file_summaries, prompt_docs = discover_project(
+                client=client,
+                repo_path=repo_path,
+                project_docs=project_config.context.project_docs,
+                max_discovery_tokens=project_config.context.max_discovery_tokens,
+                max_file_size=project_config.context.max_file_size,
+                db=db,
+                project_id=project.id,
+            )
 
         if summary and not dry_run:
             ops.update_project_summary(conn, project.id, summary)
@@ -360,25 +360,24 @@ def _run_summary_draft(
     is_json: bool,
 ) -> dict[str, Any] | None:
     """Generate a summary-based first draft. Returns draft info dict or None."""
+    from social_hook.cli._spinner import spinner
     from social_hook.llm.dry_run import DryRunContext
-
-    if not is_json:
-        typer.echo("Generating first draft from project summary...")
 
     db = DryRunContext(conn, dry_run=False)
 
     try:
         from social_hook.trigger import run_summary_trigger
 
-        draft_result = run_summary_trigger(
-            config=config,
-            conn=conn,
-            db=db,
-            project=project,
-            summary=summary,
-            repo_path=repo_path,
-            verbose=verbose,
-        )
+        with spinner("Generating first draft...", quiet=is_json):
+            draft_result = run_summary_trigger(
+                config=config,
+                conn=conn,
+                db=db,
+                project=project,
+                summary=summary,
+                repo_path=repo_path,
+                verbose=verbose,
+            )
         return draft_result
 
     except Exception as e:
@@ -427,17 +426,19 @@ def _run_batch_evaluate(
         typer.echo(f"  Found {len(unevaluated_hashes)} unevaluated commit(s)")
 
     results: list[dict[str, Any]] = []
+    from social_hook.cli._spinner import spinner
     from social_hook.trigger import run_trigger
 
     for commit_hash in unevaluated_hashes:
         try:
-            exit_code = run_trigger(
-                commit_hash=commit_hash,
-                repo_path=repo_path,
-                dry_run=dry_run,
-                verbose=verbose,
-                trigger_source="manual",
-            )
+            with spinner(f"Evaluating commit {commit_hash[:8]}...", quiet=is_json):
+                exit_code = run_trigger(
+                    commit_hash=commit_hash,
+                    repo_path=repo_path,
+                    dry_run=dry_run,
+                    verbose=verbose,
+                    trigger_source="manual",
+                )
             results.append(
                 {
                     "commit_hash": commit_hash,
