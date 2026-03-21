@@ -533,7 +533,7 @@ def scheduler_tick(
         release_lock(effective_lock)
 
 
-def _tick_single_draft(conn, config, draft_id, dry_run):
+def _tick_single_draft(conn, config, draft_id, dry_run) -> int:
     """Post a single draft by ID (post-now mode).
 
     Skips promote_deferred_drafts and _drain_deferred_evaluations.
