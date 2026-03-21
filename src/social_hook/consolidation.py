@@ -86,6 +86,9 @@ def consolidation_tick(
                     batch_id,
                     dry_run,
                 )
+            else:
+                logger.warning("Unknown consolidation mode: %s", config.consolidation.mode)
+                return
 
             # Mark as processed (direct DB write, not via DryRunContext)
             if not dry_run:

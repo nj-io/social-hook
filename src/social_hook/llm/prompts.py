@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from social_hook.parsing import safe_json_loads
+
 logger = logging.getLogger(__name__)
 
 from social_hook.config.project import (
@@ -452,12 +454,9 @@ def assemble_evaluator_prompt(
 
     # Project documentation — LLM-selected during discovery
     if project_context.project.repo_path and project_context.project.prompt_docs:
-        import json as _json
-
-        try:
-            doc_paths = _json.loads(project_context.project.prompt_docs)
-        except (ValueError, TypeError):
-            doc_paths = []
+        doc_paths = safe_json_loads(
+            project_context.project.prompt_docs, "project.prompt_docs", default=[]
+        )
         if doc_paths:
             repo = Path(project_context.project.repo_path)
             sections.append("\n---\n## Project Documentation")
@@ -659,44 +658,38 @@ def assemble_drafter_prompt(
         # project understanding in first posts.
         discovery_files_loaded = False
         if not platform_introduced and project_context.project.discovery_files:
-            try:
-                import json as _json
-
-                disc_files = _json.loads(project_context.project.discovery_files)
-                if disc_files:
-                    sections.append("\n---\n## Project Documentation (Discovery)")
-                    tokens_used = 0
-                    for rel_path in disc_files:
-                        fpath = repo / rel_path
-                        if not fpath.exists() or not fpath.is_file():
-                            continue
-                        try:
-                            content = fpath.read_text(encoding="utf-8", errors="replace")
-                            file_tokens = count_tokens(content)
-                            if tokens_used + file_tokens > config.max_doc_tokens:
-                                remaining = config.max_doc_tokens - tokens_used
-                                if remaining > 100:
-                                    content = content[: remaining * 4] + "\n[...truncated]"
-                                    sections.append(f"\n### {rel_path}")
-                                    sections.append(content)
-                                break
-                            sections.append(f"\n### {rel_path}")
-                            sections.append(content)
-                            tokens_used += file_tokens
-                        except (OSError, UnicodeDecodeError):
-                            continue
-                    discovery_files_loaded = True
-            except (ValueError, TypeError):
-                pass
+            disc_files = safe_json_loads(
+                project_context.project.discovery_files, "project.discovery_files", default=[]
+            )
+            if disc_files:
+                sections.append("\n---\n## Project Documentation (Discovery)")
+                tokens_used = 0
+                for rel_path in disc_files:
+                    fpath = repo / rel_path
+                    if not fpath.exists() or not fpath.is_file():
+                        continue
+                    try:
+                        content = fpath.read_text(encoding="utf-8", errors="replace")
+                        file_tokens = count_tokens(content)
+                        if tokens_used + file_tokens > config.max_doc_tokens:
+                            remaining = config.max_doc_tokens - tokens_used
+                            if remaining > 100:
+                                content = content[: remaining * 4] + "\n[...truncated]"
+                                sections.append(f"\n### {rel_path}")
+                                sections.append(content)
+                            break
+                        sections.append(f"\n### {rel_path}")
+                        sections.append(content)
+                        tokens_used += file_tokens
+                    except (OSError, UnicodeDecodeError):
+                        continue
+                discovery_files_loaded = True
 
         # Fallback to prompt_docs when no discovery files loaded
         if not discovery_files_loaded and project_context.project.prompt_docs:
-            import json as _json
-
-            try:
-                doc_paths = _json.loads(project_context.project.prompt_docs)
-            except (ValueError, TypeError):
-                doc_paths = []
+            doc_paths = safe_json_loads(
+                project_context.project.prompt_docs, "project.prompt_docs", default=[]
+            )
             if doc_paths:
                 sections.append("\n---\n## Project Documentation")
                 tokens_used = 0

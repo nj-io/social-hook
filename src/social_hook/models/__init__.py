@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
+from social_hook.parsing import safe_json_loads
+
 # =============================================================================
 # Enums (must match DB CHECK constraints)
 # =============================================================================
@@ -22,6 +24,32 @@ class DraftStatus(Enum):
     SUPERSEDED = "superseded"
     CANCELLED = "cancelled"
     DEFERRED = "deferred"
+
+
+# Single source of truth for status group checks.
+# Import these instead of writing inline tuples.
+TERMINAL_STATUSES = frozenset(
+    {
+        DraftStatus.POSTED.value,
+        DraftStatus.REJECTED.value,
+        DraftStatus.CANCELLED.value,
+        DraftStatus.SUPERSEDED.value,
+    }
+)
+PENDING_STATUSES = frozenset(
+    {
+        DraftStatus.DRAFT.value,
+        DraftStatus.APPROVED.value,
+        DraftStatus.SCHEDULED.value,
+        DraftStatus.DEFERRED.value,
+    }
+)
+EDITABLE_STATUSES = frozenset(
+    {
+        DraftStatus.DRAFT.value,
+        DraftStatus.DEFERRED.value,
+    }
+)
 
 
 class DecisionType(Enum):
@@ -257,27 +285,29 @@ class Decision:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Decision":
-        import json
-
         platforms = d.get("platforms", {})
         if isinstance(platforms, str):
-            platforms = json.loads(platforms)
+            platforms = safe_json_loads(platforms, "Decision.platforms", default={})
 
         episode_tags = d.get("episode_tags", [])
         if isinstance(episode_tags, str):
-            episode_tags = json.loads(episode_tags)
+            episode_tags = safe_json_loads(episode_tags, "Decision.episode_tags", default=[])
 
         targets = d.get("targets", {})
         if isinstance(targets, str):
-            targets = json.loads(targets)
+            targets = safe_json_loads(targets, "Decision.targets", default={})
 
         consolidate_with = d.get("consolidate_with")
         if isinstance(consolidate_with, str):
-            consolidate_with = json.loads(consolidate_with)
+            consolidate_with = safe_json_loads(
+                consolidate_with, "Decision.consolidate_with", default=[]
+            )
 
         reference_posts = d.get("reference_posts")
         if isinstance(reference_posts, str):
-            reference_posts = json.loads(reference_posts)
+            reference_posts = safe_json_loads(
+                reference_posts, "Decision.reference_posts", default=[]
+            )
 
         return cls(
             id=d["id"],
@@ -390,19 +420,19 @@ class Draft:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Draft":
-        import json
-
         media_paths = d.get("media_paths", [])
         if isinstance(media_paths, str):
-            media_paths = json.loads(media_paths)
+            media_paths = safe_json_loads(media_paths, "Draft.media_paths", default=[])
         media_spec_raw = d.get("media_spec")
         if isinstance(media_spec_raw, str):
-            media_spec = json.loads(media_spec_raw) if media_spec_raw else None
+            media_spec = safe_json_loads(media_spec_raw, "Draft.media_spec", default=None)
         else:
             media_spec = media_spec_raw
         media_spec_used_raw = d.get("media_spec_used")
         if isinstance(media_spec_used_raw, str):
-            media_spec_used = json.loads(media_spec_used_raw) if media_spec_used_raw else None
+            media_spec_used = safe_json_loads(
+                media_spec_used_raw, "Draft.media_spec_used", default=None
+            )
         else:
             media_spec_used = media_spec_used_raw
         return cls(
@@ -485,9 +515,7 @@ class DraftTweet:
     def from_dict(cls, d: dict[str, Any]) -> "DraftTweet":
         media_paths = d.get("media_paths", [])
         if isinstance(media_paths, str):
-            import json
-
-            media_paths = json.loads(media_paths)
+            media_paths = safe_json_loads(media_paths, "DraftTweet.media_paths", default=[])
         return cls(
             id=d["id"],
             draft_id=d["draft_id"],
@@ -652,9 +680,7 @@ class Lifecycle:
     def from_dict(cls, d: dict[str, Any]) -> "Lifecycle":
         evidence = d.get("evidence", [])
         if isinstance(evidence, str):
-            import json
-
-            evidence = json.loads(evidence)
+            evidence = safe_json_loads(evidence, "Lifecycle.evidence", default={})
         return cls(
             project_id=d["project_id"],
             phase=d.get("phase", "research"),

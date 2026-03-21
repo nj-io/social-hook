@@ -12,6 +12,7 @@ from social_hook.messaging.base import (
     MessagingAdapter,
     OutboundMessage,
 )
+from social_hook.models import EDITABLE_STATUSES, TERMINAL_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ def _answer_callback(adapter: MessagingAdapter, callback_id: str, text: str = ""
 
 def _guard_draft_editable(adapter, chat_id, draft):
     """Return True if draft is editable, else send error and return False."""
-    if draft.status not in ("draft", "deferred"):
+    if draft.status not in EDITABLE_STATUSES:
         _send(adapter, chat_id, f"Cannot edit media — draft is {draft.status}.")
         return False
     return True
@@ -220,6 +221,7 @@ def btn_approve(
             )
             return
 
+        # Scheduled drafts go through the scheduler; use unschedule first
         if draft.status not in ("draft", "approved", "deferred"):
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
@@ -441,6 +443,7 @@ def btn_quick_approve(
             )
             return
 
+        # Scheduled drafts go through the scheduler; use unschedule first
         if draft.status not in ("draft", "approved", "deferred"):
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
@@ -1137,7 +1140,7 @@ def _offer_sibling_sync(adapter, chat_id, conn, draft_id):
     from social_hook.db.operations import get_sister_drafts
 
     sisters = get_sister_drafts(conn, draft_id)
-    editable = [s for s in sisters if s.status in ("draft", "deferred")]
+    editable = [s for s in sisters if s.status in EDITABLE_STATUSES]
     if editable:
         platforms = ", ".join(s.platform for s in editable)
         buttons = [
@@ -1262,7 +1265,7 @@ def btn_media_sync_siblings(
             return
 
         # Only sync to editable sisters
-        editable = [s for s in sisters if s.status in ("draft", "deferred")]
+        editable = [s for s in sisters if s.status in EDITABLE_STATUSES]
         if not editable:
             _send(adapter, chat_id, "No editable sister drafts to sync to.")
             return
@@ -1612,7 +1615,7 @@ def btn_promote_submenu(
         if draft.platform != "preview":
             _send(adapter, chat_id, "Only preview drafts can be promoted.")
             return
-        if draft.status in ("posted", "rejected", "cancelled", "superseded"):
+        if draft.status in TERMINAL_STATUSES:
             _send(adapter, chat_id, f"Cannot promote: draft status is '{draft.status}'")
             return
     finally:
@@ -1676,7 +1679,7 @@ def btn_promote_to(
         if draft.platform != "preview":
             _send(adapter, chat_id, "Only preview drafts can be promoted.")
             return
-        if draft.status in ("posted", "rejected", "cancelled", "superseded"):
+        if draft.status in TERMINAL_STATUSES:
             _send(adapter, chat_id, f"Cannot promote: draft status is '{draft.status}'")
             return
 
@@ -1809,6 +1812,7 @@ def btn_post_now(
             )
             return
 
+        # Scheduled drafts go through the scheduler; use unschedule first
         if draft.status not in ("draft", "approved", "deferred"):
             _send(adapter, chat_id, f"Cannot post draft with status: {draft.status}")
             return

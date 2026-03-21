@@ -1,9 +1,12 @@
 """Media adapter registry with lazy initialization."""
 
 import importlib
+import logging
 from typing import Any
 
 from social_hook.adapters.media.base import MediaAdapter
+
+logger = logging.getLogger(__name__)
 
 # Lazy singleton cache
 _adapter_cache: dict[str, MediaAdapter] = {}
@@ -79,6 +82,9 @@ def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | N
         from social_hook.adapters.media.rayso import RaySoAdapter
 
         adapter = RaySoAdapter()
+
+    else:
+        logger.warning("Unknown media adapter: %s (available: %s)", name, MEDIA_ADAPTER_NAMES)
 
     if adapter:
         _adapter_cache[name] = adapter

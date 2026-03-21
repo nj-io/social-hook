@@ -7,9 +7,9 @@ from urllib.parse import quote
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+from social_hook.models import PENDING_STATUSES, TERMINAL_STATUSES
 
-TERMINAL_STATUSES = {"posted", "rejected", "cancelled", "superseded"}
+app = typer.Typer(no_args_is_help=True)
 
 
 def _get_conn():
@@ -162,7 +162,7 @@ def schedule(
                 "<id> --platform <name>' to create a platform-specific draft."
             )
             raise typer.Exit(1)
-        if draft.status not in ("draft", "approved", "scheduled", "deferred"):
+        if draft.status not in PENDING_STATUSES:
             typer.echo(f"Cannot schedule: draft status is '{draft.status}'")
             raise typer.Exit(1)
 
@@ -493,6 +493,7 @@ def quick_approve(
                 "<id> --platform <name>' to create a platform-specific draft."
             )
             raise typer.Exit(1)
+        # Scheduled drafts go through the scheduler; use unschedule first
         if draft.status not in ("draft", "approved", "deferred"):
             typer.echo(f"Cannot quick-approve: draft status is '{draft.status}'")
             raise typer.Exit(1)
@@ -696,9 +697,7 @@ def list_cmd(
             commit_hash=commit,
         )
         if pending:
-            drafts = [
-                d for d in drafts if d.status in ("draft", "approved", "scheduled", "deferred")
-            ]
+            drafts = [d for d in drafts if d.status in PENDING_STATUSES]
         json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         if json_output:
@@ -979,6 +978,7 @@ def post_now(
             )
             raise typer.Exit(1)
 
+        # Scheduled drafts go through the scheduler; use unschedule first
         if draft.status not in ("draft", "approved", "deferred"):
             typer.echo(f"Cannot post: draft status is '{draft.status}'")
             raise typer.Exit(1)

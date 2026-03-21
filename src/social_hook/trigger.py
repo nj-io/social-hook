@@ -12,6 +12,7 @@ from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
 from social_hook.models import CommitInfo, Decision, Draft, is_draftable
+from social_hook.parsing import safe_int
 from social_hook.rate_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -77,9 +78,9 @@ def parse_commit_info(commit_hash: str, repo_path: str) -> CommitInfo:
                     for part in line.split(","):
                         part = part.strip()
                         if "insertion" in part:
-                            insertions = int(part.split()[0])
+                            insertions = safe_int(part.split()[0], 0, "git stat insertions")
                         elif "deletion" in part:
-                            deletions = int(part.split()[0])
+                            deletions = safe_int(part.split()[0], 0, "git stat deletions")
 
         # Get diff
         diff = subprocess.run(
@@ -322,6 +323,7 @@ def run_trigger(
                 and freshness["days_since_summary"] >= cfg.refresh_after_days
             )
         except Exception:
+            logger.warning("Summary freshness check failed, skipping refresh", exc_info=True)
             needs_refresh = False
         if needs_refresh:
             try:
@@ -505,6 +507,7 @@ def run_trigger(
                     continue  # handled by _execute_merge_groups below
                 if not dry_run:
                     draft_ref = ops.get_draft(conn, qa.draft_id)
+                    # Intentionally excludes deferred — queue actions target active drafts only
                     if not draft_ref or draft_ref.status not in ("draft", "approved", "scheduled"):
                         if verbose:
                             print(f"Queue action skipped: draft {qa.draft_id} not actionable")
@@ -715,6 +718,7 @@ def _execute_merge_groups(
             valid_decisions: list[Decision] = []
             for ga in group_actions:
                 draft = ops.get_draft(conn, ga.draft_id)
+                # Intentionally excludes deferred — queue actions target active drafts only
                 if (
                     not draft
                     or draft.status not in ("draft", "approved", "scheduled")
