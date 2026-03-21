@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Generate CLI reference documentation from the Typer app.
 
-Introspects the Click command tree and writes markdown files to docs/cli/.
+Introspects the Click command tree and writes markdown files to site-docs/cli/.
 Run from repo root: python scripts/generate_cli_docs.py
 
 Output structure:
-  docs/cli/index.md          — overview with global options and command list
-  docs/cli/<group>.md        — one page per command group (draft, project, etc.)
-  docs/cli/root-commands.md  — top-level commands (version, init, trigger, etc.)
+  site-docs/cli/index.md          — overview with global options and command list
+  site-docs/cli/<group>.md        — one page per command group (draft, project, etc.)
+  site-docs/cli/root-commands.md  — top-level commands (version, init, trigger, etc.)
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import typer.main
 from social_hook.cli import app
 from social_hook.constants import PROJECT_SLUG
 
-DOCS_DIR = Path(__file__).resolve().parent.parent / "docs" / "cli"
+DOCS_DIR = Path(__file__).resolve().parent.parent / "site-docs" / "cli"
 
 # Commands to exclude from docs (internal hooks)
 HIDDEN_COMMANDS = {"commit-hook", "git-hook", "narrative-capture"}
@@ -271,7 +271,7 @@ def main() -> None:
     index_path.write_text(index_page)
     print(f"  wrote {index_path.relative_to(DOCS_DIR.parent.parent)}")
 
-    print(f"\nGenerated {len(groups) + 2} files in docs/cli/")
+    print(f"\nGenerated {len(groups) + 2} files in site-docs/cli/")
 
 
 if __name__ == "__main__":

@@ -3,9 +3,9 @@ site_description: Automated social media content from development activity
 site_url: https://nj-io.github.io/social-hook/docs/
 repo_url: https://github.com/nj-io/social-hook
 repo_name: nj-io/social-hook
-edit_uri: edit/main/docs/
+edit_uri: edit/main/site-docs/
 
-docs_dir: docs
+docs_dir: site-docs
 site_dir: site
 
 theme:
