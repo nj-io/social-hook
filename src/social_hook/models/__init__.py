@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
+from social_hook.parsing import safe_json_loads
+
 # =============================================================================
 # Enums (must match DB CHECK constraints)
 # =============================================================================
@@ -22,6 +24,32 @@ class DraftStatus(Enum):
     SUPERSEDED = "superseded"
     CANCELLED = "cancelled"
     DEFERRED = "deferred"
+
+
+# Single source of truth for status group checks.
+# Import these instead of writing inline tuples.
+TERMINAL_STATUSES = frozenset(
+    {
+        DraftStatus.POSTED.value,
+        DraftStatus.REJECTED.value,
+        DraftStatus.CANCELLED.value,
+        DraftStatus.SUPERSEDED.value,
+    }
+)
+PENDING_STATUSES = frozenset(
+    {
+        DraftStatus.DRAFT.value,
+        DraftStatus.APPROVED.value,
+        DraftStatus.SCHEDULED.value,
+        DraftStatus.DEFERRED.value,
+    }
+)
+EDITABLE_STATUSES = frozenset(
+    {
+        DraftStatus.DRAFT.value,
+        DraftStatus.DEFERRED.value,
+    }
+)
 
 
 class DecisionType(Enum):
@@ -126,7 +154,6 @@ class Project:
     repo_origin: str | None = None
     summary: str | None = None
     summary_updated_at: datetime | None = None
-    audience_introduced: bool = False
     paused: bool = False
     discovery_files: str | None = None  # JSON-serialized list of file paths
     prompt_docs: str | None = None
@@ -141,7 +168,6 @@ class Project:
             "repo_origin": self.repo_origin,
             "summary": self.summary,
             "summary_updated_at": _to_iso(self.summary_updated_at),
-            "audience_introduced": self.audience_introduced,
             "paused": self.paused,
             "discovery_files": self.discovery_files,
             "prompt_docs": self.prompt_docs,
@@ -158,7 +184,6 @@ class Project:
             repo_origin=d.get("repo_origin"),
             summary=d.get("summary"),
             summary_updated_at=_from_iso(d.get("summary_updated_at")),
-            audience_introduced=bool(d.get("audience_introduced", False)),
             paused=bool(d.get("paused", False)),
             discovery_files=d.get("discovery_files"),
             prompt_docs=d.get("prompt_docs"),
@@ -167,7 +192,7 @@ class Project:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (id, name, repo_path, repo_origin, summary, summary_updated_at, audience_introduced, paused)."""
+        """Return tuple for INSERT (id, name, repo_path, repo_origin, summary, summary_updated_at, paused)."""
         return (
             self.id,
             self.name,
@@ -175,7 +200,6 @@ class Project:
             self.repo_origin,
             self.summary,
             _to_iso(self.summary_updated_at),
-            1 if self.audience_introduced else 0,
             1 if self.paused else 0,
         )
 
@@ -261,27 +285,29 @@ class Decision:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Decision":
-        import json
-
         platforms = d.get("platforms", {})
         if isinstance(platforms, str):
-            platforms = json.loads(platforms)
+            platforms = safe_json_loads(platforms, "Decision.platforms", default={})
 
         episode_tags = d.get("episode_tags", [])
         if isinstance(episode_tags, str):
-            episode_tags = json.loads(episode_tags)
+            episode_tags = safe_json_loads(episode_tags, "Decision.episode_tags", default=[])
 
         targets = d.get("targets", {})
         if isinstance(targets, str):
-            targets = json.loads(targets)
+            targets = safe_json_loads(targets, "Decision.targets", default={})
 
         consolidate_with = d.get("consolidate_with")
         if isinstance(consolidate_with, str):
-            consolidate_with = json.loads(consolidate_with)
+            consolidate_with = safe_json_loads(
+                consolidate_with, "Decision.consolidate_with", default=[]
+            )
 
         reference_posts = d.get("reference_posts")
         if isinstance(reference_posts, str):
-            reference_posts = json.loads(reference_posts)
+            reference_posts = safe_json_loads(
+                reference_posts, "Decision.reference_posts", default=[]
+            )
 
         return cls(
             id=d["id"],
@@ -394,19 +420,19 @@ class Draft:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Draft":
-        import json
-
         media_paths = d.get("media_paths", [])
         if isinstance(media_paths, str):
-            media_paths = json.loads(media_paths)
+            media_paths = safe_json_loads(media_paths, "Draft.media_paths", default=[])
         media_spec_raw = d.get("media_spec")
         if isinstance(media_spec_raw, str):
-            media_spec = json.loads(media_spec_raw) if media_spec_raw else None
+            media_spec = safe_json_loads(media_spec_raw, "Draft.media_spec", default=None)
         else:
             media_spec = media_spec_raw
         media_spec_used_raw = d.get("media_spec_used")
         if isinstance(media_spec_used_raw, str):
-            media_spec_used = json.loads(media_spec_used_raw) if media_spec_used_raw else None
+            media_spec_used = safe_json_loads(
+                media_spec_used_raw, "Draft.media_spec_used", default=None
+            )
         else:
             media_spec_used = media_spec_used_raw
         return cls(
@@ -489,9 +515,7 @@ class DraftTweet:
     def from_dict(cls, d: dict[str, Any]) -> "DraftTweet":
         media_paths = d.get("media_paths", [])
         if isinstance(media_paths, str):
-            import json
-
-            media_paths = json.loads(media_paths)
+            media_paths = safe_json_loads(media_paths, "DraftTweet.media_paths", default=[])
         return cls(
             id=d["id"],
             draft_id=d["draft_id"],
@@ -656,9 +680,7 @@ class Lifecycle:
     def from_dict(cls, d: dict[str, Any]) -> "Lifecycle":
         evidence = d.get("evidence", [])
         if isinstance(evidence, str):
-            import json
-
-            evidence = json.loads(evidence)
+            evidence = safe_json_loads(evidence, "Lifecycle.evidence", default={})
         return cls(
             project_id=d["project_id"],
             phase=d.get("phase", "research"),
@@ -870,11 +892,11 @@ class ProjectContext:
     lifecycle: Optional["Lifecycle"]
     active_arcs: list["Arc"]
     narrative_debt: int
-    audience_introduced: bool
-    pending_drafts: list["Draft"]
-    recent_decisions: list["Decision"]
-    recent_posts: list["Post"]
-    project_summary: str | None
+    platform_introduced: dict[str, bool] = field(default_factory=dict)
+    pending_drafts: list["Draft"] = field(default_factory=list)
+    recent_decisions: list["Decision"] = field(default_factory=list)
+    recent_posts: list["Post"] = field(default_factory=list)
+    project_summary: str | None = None
     memories: list[dict] = field(default_factory=list)
     milestone_summaries: list[dict] = field(default_factory=list)
     context_notes: list[dict] = field(default_factory=list)
@@ -882,3 +904,11 @@ class ProjectContext:
     held_decisions: list["Decision"] = field(default_factory=list)
     arc_posts: dict[str, list["Post"]] = field(default_factory=dict)
     file_summaries: list[dict[str, str]] = field(default_factory=list)
+    identity: Any = None  # IdentityConfig | None — kept as Any to avoid circular import
+
+    @property
+    def all_introduced(self) -> bool:
+        """True if all tracked platforms have been introduced."""
+        if not self.platform_introduced:
+            return False
+        return all(self.platform_introduced.values())

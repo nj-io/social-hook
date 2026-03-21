@@ -30,6 +30,8 @@ class Expert:
         project_summary: str | None = None,
         db: Any | None = None,
         project_id: str | None = None,
+        social_context: str | None = None,
+        identity: Any | None = None,
     ) -> ExpertResponseInput:
         """Handle an escalated request.
 
@@ -41,6 +43,8 @@ class Expert:
             project_summary: Pre-injected project summary
             db: Database context for usage logging
             project_id: Project ID for usage tracking
+            social_context: Project social context for voice consistency
+            identity: Resolved IdentityConfig for maintaining perspective
 
         Returns:
             Validated ExpertResponseInput with response
@@ -54,6 +58,8 @@ class Expert:
             escalation_reason,
             escalation_context,
             project_summary,
+            social_context=social_context,
+            identity=identity,
         )
 
         response = self.client.complete(

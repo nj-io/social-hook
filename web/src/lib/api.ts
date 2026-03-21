@@ -1,4 +1,4 @@
-import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, RateLimitStatus, UsageSummary, Arc, WebEvent } from "./types";
+import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent } from "./types";
 import { getSessionId } from "./session";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -408,8 +408,20 @@ export async function retriggerDecision(
   });
 }
 
+// Promote
+export async function promoteDraft(
+  draftId: string,
+  platform: string,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/promote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ platform }),
+  });
+}
+
 // Platforms
-export async function fetchEnabledPlatforms(): Promise<{ platforms: Record<string, { priority: string; type: string }>; count: number }> {
+export async function fetchEnabledPlatforms(): Promise<{ platforms: Record<string, { priority: string; type: string }>; count: number; real_count: number }> {
   return apiFetch("/api/platforms/enabled");
 }
 
@@ -480,6 +492,7 @@ export async function clearMemories(projectPath: string): Promise<{ status: stri
 export async function browseDirectory(path?: string): Promise<{
   current: string;
   parent: string;
+  is_git: boolean;
   directories: { name: string; path: string; is_git: boolean }[];
 }> {
   const params = path ? `?path=${encodeURIComponent(path)}` : "";
@@ -527,4 +540,18 @@ export async function deleteProject(projectId: string): Promise<{ status: string
 // Rate limits
 export async function fetchRateLimits(): Promise<RateLimitStatus> {
   return apiFetch("/api/rate-limits/status");
+}
+
+// Wizard templates
+export async function fetchWizardTemplates(): Promise<{ templates: StrategyTemplate[] }> {
+  return apiFetch("/api/wizard/templates");
+}
+
+// Summary draft
+export async function createSummaryDraft(
+  projectId: string,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/summary-draft`, {
+    method: "POST",
+  });
 }

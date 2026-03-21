@@ -72,7 +72,12 @@ def help_cmd(
     import click
 
     click_app = typer.main.get_command(app)
-    command_parts = ctx.args  # e.g. ["draft", "approve"]
+    # Handle --json appearing after command path (forgiving flag placement)
+    if "--json" in ctx.args:
+        json_output = True
+        command_parts = [a for a in ctx.args if a != "--json"]
+    else:
+        command_parts = ctx.args  # e.g. ["draft", "approve"]
 
     def _cmd_to_dict(cmd, name=None):
         result = {}
@@ -80,6 +85,7 @@ def help_cmd(
             result["name"] = name
         if cmd.help:
             result["help"] = cmd.help.split("\n")[0]
+            result["description"] = cmd.help.strip()
 
         if hasattr(cmd, "commands") and cmd.commands:
             cmds = {}
@@ -128,6 +134,8 @@ def help_cmd(
 
     def _resolve_command(parts):
         """Walk the Click command tree following the given path parts."""
+        from difflib import get_close_matches
+
         current = click_app
         info_parts = [PROJECT_SLUG]
         for part in parts:
@@ -136,7 +144,16 @@ def help_cmd(
                 raise typer.Exit(1)
             sub = current.commands.get(part)
             if not sub:
-                typer.echo(f"Unknown command: {' '.join(parts)}")
+                available = sorted(current.commands.keys())
+                suggestions = get_close_matches(part, available, n=3, cutoff=0.5)
+                msg = f"Unknown command: {part}"
+                if suggestions:
+                    msg += "\n\nDid you mean?"
+                    for s in suggestions:
+                        msg += f"\n  {' '.join(info_parts)} {s}"
+                else:
+                    msg += f"\n\nAvailable: {', '.join(available)}"
+                typer.echo(msg)
                 raise typer.Exit(1)
             current = sub
             info_parts.append(part)
@@ -198,8 +215,8 @@ def help_cmd(
 def init():
     """Initialize social-hook (create directories and database).
 
-    DEV ONLY: This is a temporary command for testing. Use 'social-hook setup'
-    when it's available (WS4).
+    Creates ~/.social-hook/ with config templates and an empty database.
+    For guided setup with platform credentials, use 'social-hook setup' instead.
     """
     from social_hook.db import init_database
     from social_hook.filesystem import get_db_path, init_filesystem
@@ -232,13 +249,16 @@ def trigger(
     verbose = ctx.obj.get("verbose", False)
     config_path = ctx.obj.get("config")
 
-    exit_code = run_trigger(
-        commit_hash=commit,
-        repo_path=repo,
-        dry_run=dry_run,
-        config_path=str(config_path) if config_path else None,
-        verbose=verbose,
-    )
+    from social_hook.cli._spinner import spinner
+
+    with spinner("Evaluating commit..."):
+        exit_code = run_trigger(
+            commit_hash=commit,
+            repo_path=repo,
+            dry_run=dry_run,
+            config_path=str(config_path) if config_path else None,
+            verbose=verbose,
+        )
     raise SystemExit(exit_code)
 
 
@@ -533,6 +553,10 @@ def discover(
         max_file_size=project_config.context.max_file_size,
         db=db_ctx,
         project_id=project.id,
+        on_progress=lambda stage: (
+            typer.echo(f"[{stage}] {project.name}"),  # type: ignore[func-returns-value]
+            ops.emit_data_event(conn, "pipeline", stage, project.id, project.id),  # type: ignore[func-returns-value]
+        ),
     )
 
     if summary:
@@ -859,7 +883,9 @@ from social_hook.cli.snapshot import app as snapshot_app
 app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
 
 from social_hook.cli.events import events as events_cmd
+from social_hook.cli.quickstart import quickstart as quickstart_cmd
 from social_hook.cli.rate_limits import rate_limits as rate_limits_cmd
 
 app.command("events")(events_cmd)
 app.command("rate-limits")(rate_limits_cmd)
+app.command("quickstart")(quickstart_cmd)

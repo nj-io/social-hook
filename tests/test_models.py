@@ -5,6 +5,9 @@ from datetime import datetime
 import pytest
 
 from social_hook.models import (
+    EDITABLE_STATUSES,
+    PENDING_STATUSES,
+    TERMINAL_STATUSES,
     Arc,
     ArcStatus,
     Decision,
@@ -108,14 +111,13 @@ class TestProjectModel:
             id="project_123",
             name="test-project",
             repo_path="/tmp/test",
-            audience_introduced=True,
             created_at=datetime(2026, 1, 15, 10, 30, 0),
         )
 
         d = project.to_dict()
         assert d["id"] == "project_123"
         assert d["name"] == "test-project"
-        assert d["audience_introduced"] is True
+        assert "audience_introduced" not in d
         assert d["created_at"] == "2026-01-15T10:30:00"
 
     def test_project_from_dict(self):
@@ -124,13 +126,11 @@ class TestProjectModel:
             "id": "project_123",
             "name": "test-project",
             "repo_path": "/tmp/test",
-            "audience_introduced": 1,
             "created_at": "2026-01-15T10:30:00",
         }
 
         project = Project.from_dict(d)
         assert project.id == "project_123"
-        assert project.audience_introduced is True
         assert project.created_at == datetime(2026, 1, 15, 10, 30, 0)
 
     def test_project_to_row(self):
@@ -679,6 +679,31 @@ class TestUsageLogTriggerSource:
         row = u.to_row()
         assert len(row) == 11
         assert row[-1] == "manual"
+
+
+class TestStatusGroups:
+    """Tests for status group frozensets."""
+
+    def test_terminal_statuses_values(self):
+        """TERMINAL_STATUSES contains exactly the expected values."""
+        assert {"posted", "rejected", "cancelled", "superseded"} == TERMINAL_STATUSES
+
+    def test_pending_statuses_values(self):
+        """PENDING_STATUSES contains exactly the expected values."""
+        assert {"draft", "approved", "scheduled", "deferred"} == PENDING_STATUSES
+
+    def test_editable_statuses_values(self):
+        """EDITABLE_STATUSES contains exactly the expected values."""
+        assert {"draft", "deferred"} == EDITABLE_STATUSES
+
+    def test_editable_subset_of_pending(self):
+        """EDITABLE_STATUSES is a proper subset of PENDING_STATUSES."""
+        assert EDITABLE_STATUSES < PENDING_STATUSES
+
+    def test_status_groups_cover_all_enum_values(self):
+        """TERMINAL | PENDING | {failed} covers every DraftStatus value."""
+        all_values = {s.value for s in DraftStatus}
+        assert TERMINAL_STATUSES | PENDING_STATUSES | {"failed"} == all_values
 
 
 class TestHelperFunctions:

@@ -7,9 +7,9 @@ from urllib.parse import quote
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+from social_hook.models import PENDING_STATUSES, TERMINAL_STATUSES
 
-TERMINAL_STATUSES = {"posted", "rejected", "cancelled", "superseded"}
+app = typer.Typer(no_args_is_help=True)
 
 
 def _get_conn():
@@ -41,6 +41,30 @@ def _get_draft_or_exit(conn, draft_id: str):
     return draft
 
 
+def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
+    """Re-split content into draft_tweets if the draft has an existing thread."""
+    from social_hook.db import operations as ops
+    from social_hook.drafting import _parse_thread_tweets
+    from social_hook.filesystem import generate_id
+    from social_hook.models import DraftTweet
+
+    existing = ops.get_draft_tweets(conn, draft_id)
+    if not existing:
+        return
+
+    parts = _parse_thread_tweets(new_content, thread_min=1)
+    new_tweets = [
+        DraftTweet(
+            id=generate_id("tweet"),
+            draft_id=draft_id,
+            position=i,
+            content=part,
+        )
+        for i, part in enumerate(parts)
+    ]
+    ops.replace_draft_tweets(conn, draft_id, new_tweets)
+
+
 @app.command()
 def approve(
     ctx: typer.Context,
@@ -52,6 +76,12 @@ def approve(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
+        if draft.platform == "preview":
+            typer.echo(
+                "Preview drafts cannot be posted. Use 'social-hook draft promote "
+                "<id> --platform <name>' to create a platform-specific draft."
+            )
+            raise typer.Exit(1)
         if draft.status in TERMINAL_STATUSES:
             typer.echo(f"Cannot approve: draft status is '{draft.status}'")
             raise typer.Exit(1)
@@ -126,7 +156,13 @@ def schedule(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.status not in ("draft", "approved", "scheduled", "deferred"):
+        if draft.platform == "preview":
+            typer.echo(
+                "Preview drafts cannot be posted. Use 'social-hook draft promote "
+                "<id> --platform <name>' to create a platform-specific draft."
+            )
+            raise typer.Exit(1)
+        if draft.status not in PENDING_STATUSES:
             typer.echo(f"Cannot schedule: draft status is '{draft.status}'")
             raise typer.Exit(1)
 
@@ -185,6 +221,83 @@ def cancel(
 
 
 @app.command()
+def reopen(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to reopen"),
+):
+    """Reopen a cancelled or rejected draft.
+
+    Example: social-hook draft reopen draft-abc123
+    """
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if draft.status not in ("cancelled", "rejected"):
+            typer.echo(
+                f"Cannot reopen: draft status is '{draft.status}' (must be 'cancelled' or 'rejected')"
+            )
+            raise typer.Exit(1)
+        if getattr(draft, "is_intro", False):
+            typer.echo("Intro drafts cannot be reopened — create a new draft instead.")
+            raise typer.Exit(1)
+        ops.update_draft(conn, draft_id, status="draft", last_error="")
+        ops.emit_data_event(conn, "draft", "reopened", draft_id, draft.project_id)
+        typer.echo(f"Draft {draft_id} reopened.")
+    finally:
+        conn.close()
+
+
+@app.command()
+def unapprove(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to unapprove"),
+):
+    """Revert approval on a draft.
+
+    Example: social-hook draft unapprove draft-abc123
+    """
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if draft.status != "approved":
+            typer.echo(f"Cannot unapprove: draft status is '{draft.status}' (must be 'approved')")
+            raise typer.Exit(1)
+        ops.update_draft(conn, draft_id, status="draft")
+        ops.emit_data_event(conn, "draft", "unapproved", draft_id, draft.project_id)
+        typer.echo(f"Draft {draft_id} unapproved.")
+    finally:
+        conn.close()
+
+
+@app.command()
+def unschedule(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to unschedule"),
+):
+    """Revert scheduling on a draft.
+
+    Example: social-hook draft unschedule draft-abc123
+    """
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if draft.status != "scheduled":
+            typer.echo(f"Cannot unschedule: draft status is '{draft.status}' (must be 'scheduled')")
+            raise typer.Exit(1)
+        ops.update_draft(conn, draft_id, status="draft", scheduled_time="")
+        ops.emit_data_event(conn, "draft", "unscheduled", draft_id, draft.project_id)
+        typer.echo(f"Draft {draft_id} unscheduled.")
+    finally:
+        conn.close()
+
+
+@app.command()
 def retry(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to retry"),
@@ -227,6 +340,7 @@ def edit(
             raise typer.Exit(1)
         old_content = draft.content
         ops.update_draft(conn, draft_id, content=content)
+        _resync_thread_tweets(conn, draft_id, content)
         ops.insert_draft_change(
             conn,
             DraftChange(
@@ -280,20 +394,45 @@ def redraft(
 
         summary = ops.get_project_summary(conn, draft.project_id)
 
+        from social_hook.cli._spinner import spinner
+
+        # Load social context and identity for voice consistency
+        social_context = None
+        identity = None
+        project = ops.get_project(conn, draft.project_id)
+        if project and project.repo_path:
+            try:
+                from social_hook.config.project import load_project_config
+
+                pc = load_project_config(project.repo_path)
+                social_context = pc.social_context
+            except Exception:
+                pass
+        try:
+            from social_hook.config.yaml import resolve_identity
+
+            identity = resolve_identity(config, draft.platform)
+        except Exception:
+            pass
+
         expert = Expert(client)
-        result = expert.handle(
-            draft=draft,
-            user_message=angle,
-            escalation_reason="angle_change",
-            project_summary=summary,
-            project_id=draft.project_id,
-            db=conn,
-        )
+        with spinner("Redrafting with new angle..."):
+            result = expert.handle(
+                draft=draft,
+                user_message=angle,
+                escalation_reason="angle_change",
+                project_summary=summary,
+                project_id=draft.project_id,
+                db=conn,
+                social_context=social_context,
+                identity=identity,
+            )
 
         if result.refined_content or result.refined_media_spec:
             if result.refined_content:
                 old_content = draft.content
                 ops.update_draft(conn, draft_id, content=result.refined_content)
+                _resync_thread_tweets(conn, draft_id, result.refined_content)
                 ops.insert_draft_change(
                     conn,
                     DraftChange(
@@ -456,6 +595,13 @@ def quick_approve(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
+        if draft.platform == "preview":
+            typer.echo(
+                "Preview drafts cannot be posted. Use 'social-hook draft promote "
+                "<id> --platform <name>' to create a platform-specific draft."
+            )
+            raise typer.Exit(1)
+        # Scheduled drafts go through the scheduler; use unschedule first
         if draft.status not in ("draft", "approved", "deferred"):
             typer.echo(f"Cannot quick-approve: draft status is '{draft.status}'")
             raise typer.Exit(1)
@@ -520,8 +666,11 @@ def media_regen(
             typer.echo(f"Media adapter '{draft.media_type}' not available.")
             raise typer.Exit(1)
 
+        from social_hook.cli._spinner import spinner
+
         output_dir = str(get_base_path() / "media-cache" / draft_id)
-        result = media_adapter.generate(spec=draft.media_spec, output_dir=output_dir)
+        with spinner("Generating media..."):
+            result = media_adapter.generate(spec=draft.media_spec, output_dir=output_dir)
 
         if result.success and result.file_path:
             old_paths = draft.media_paths
@@ -630,12 +779,13 @@ def media_edit(
 def list_cmd(
     ctx: typer.Context,
     status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
-    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project ID"),
+    project: str | None = typer.Option(None, "--project", "-i", help="Filter by project ID"),
     decision: str | None = typer.Option(None, "--decision", "-d", help="Filter by decision ID"),
     commit: str | None = typer.Option(None, "--commit", "-c", help="Filter by commit hash"),
     pending: bool = typer.Option(
         False, "--pending", help="Show only actionable drafts (draft/approved/scheduled)"
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """List drafts with optional filters.
 
@@ -655,10 +805,8 @@ def list_cmd(
             commit_hash=commit,
         )
         if pending:
-            drafts = [
-                d for d in drafts if d.status in ("draft", "approved", "scheduled", "deferred")
-            ]
-        json_output = ctx.obj.get("json", False) if ctx.obj else False
+            drafts = [d for d in drafts if d.status in PENDING_STATUSES]
+        json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         if json_output:
             typer.echo(json_mod.dumps([d.to_dict() for d in drafts], indent=2, default=str))
@@ -669,16 +817,35 @@ def list_cmd(
             return
 
         typer.echo(
-            f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Fmt':<8} {'Media':<7} {'Content'}"
+            f"{'ID':<16} {'Status':<12} {'Platform':<10} {'Fmt':<8} {'Media':<7} {'Tags':<20} {'Content'}"
         )
-        typer.echo("-" * 87)
+        typer.echo("-" * 107)
         for d in drafts:
-            content_preview = d.content[:40].replace("\n", " ") if d.content else ""
-            intro = " [INTRO]" if getattr(d, "is_intro", False) else ""
+            content_preview = d.content[:35].replace("\n", " ") if d.content else ""
+            intro = "[INTRO]" if getattr(d, "is_intro", False) else ""
             fmt = d.post_format or "single"
             media = d.media_type[:5] if d.media_type else "-"
+
+            # Build tags from linked decision
+            tags = []
+            if intro:
+                tags.append(intro)
+            try:
+                dec = ops.get_decision(conn, d.decision_id)
+                if dec:
+                    if dec.episode_type:
+                        tags.append(f"[{dec.episode_type}]")
+                    if dec.post_category:
+                        tags.append(f"[{dec.post_category}]")
+                    if dec.episode_tags:
+                        for t in dec.episode_tags:
+                            tags.append(f"[{t}]")
+            except Exception:
+                pass
+            tag_str = " ".join(tags)[:18] if tags else "-"
+
             typer.echo(
-                f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {fmt:<8} {media:<7} {content_preview}{intro}"
+                f"{d.id[:14]:<16} {d.status:<12} {d.platform:<10} {fmt:<8} {media:<7} {tag_str:<20} {content_preview}"
             )
     finally:
         conn.close()
@@ -689,6 +856,7 @@ def show(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to show"),
     open_media: bool = typer.Option(False, "--open", help="Open media files in default viewer"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Show full detail for a draft including media spec and change history.
 
@@ -702,7 +870,7 @@ def show(
         changes = ops.get_draft_changes(conn, draft_id)
         tweets = ops.get_draft_tweets(conn, draft_id)
 
-        json_output = ctx.obj.get("json", False) if ctx.obj else False
+        json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         if json_output:
             data = draft.to_dict()
@@ -753,5 +921,136 @@ def show(
             typer.echo(f"\nChanges ({len(changes)}):")
             for c in changes:
                 typer.echo(f"  {c.changed_at} [{c.changed_by}] {c.field}")
+    finally:
+        conn.close()
+
+
+@app.command()
+def promote(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Preview draft ID to promote"),
+    platform: str = typer.Option(
+        ..., "--platform", "-p", help="Target platform (e.g., x, linkedin)"
+    ),
+    json: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Promote a preview draft to a real platform.
+
+    Creates a new draft for the target platform using the LLM drafter,
+    then marks the preview draft as superseded.
+
+    Example: social-hook draft promote draft-abc123 --platform x
+    """
+    from social_hook.compat import evaluation_from_decision
+    from social_hook.config.project import ProjectConfig, load_project_config
+    from social_hook.config.yaml import load_full_config
+    from social_hook.db import operations as ops
+    from social_hook.drafting import draft_for_platforms
+    from social_hook.errors import ConfigError
+    from social_hook.llm.dry_run import DryRunContext
+    from social_hook.llm.prompts import assemble_evaluator_context
+    from social_hook.models import CommitInfo
+
+    use_json = json or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if draft.platform != "preview":
+            typer.echo(f"Draft is not a preview draft (platform: {draft.platform}).")
+            raise typer.Exit(1)
+        if draft.status in TERMINAL_STATUSES:
+            typer.echo(f"Cannot promote: draft status is '{draft.status}'")
+            raise typer.Exit(1)
+
+        config_path = ctx.obj.get("config") if ctx.obj else None
+        config = load_full_config(str(config_path) if config_path else None)
+
+        pcfg = config.platforms.get(platform)
+        if not pcfg or not pcfg.enabled:
+            typer.echo(f"Platform '{platform}' is not enabled.")
+            raise typer.Exit(1)
+
+        decision = ops.get_decision(conn, draft.decision_id)
+        if not decision:
+            typer.echo(f"Decision not found: {draft.decision_id}")
+            raise typer.Exit(1)
+
+        project = ops.get_project(conn, decision.project_id)
+        if not project:
+            typer.echo(f"Project not found: {decision.project_id}")
+            raise typer.Exit(1)
+
+        try:
+            project_config = load_project_config(project.repo_path)
+        except ConfigError:
+            project_config = ProjectConfig(repo_path=project.repo_path)
+
+        from social_hook.trigger import parse_commit_info
+
+        try:
+            commit = parse_commit_info(decision.commit_hash, project.repo_path)
+        except Exception:
+            commit = CommitInfo(
+                hash=decision.commit_hash,
+                message=decision.commit_message or "",
+                diff="",
+                files_changed=[],
+            )
+
+        dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
+        db = DryRunContext(conn, dry_run=dry_run)
+
+        context = assemble_evaluator_context(
+            db,
+            project.id,
+            project_config,
+            commit_timestamp=getattr(commit, "timestamp", None),
+            parent_timestamp=getattr(commit, "parent_timestamp", None),
+        )
+
+        evaluation = evaluation_from_decision(decision, "draft")
+
+        from social_hook.cli._spinner import spinner
+
+        with spinner(f"Redrafting for {platform}..."):
+            results = draft_for_platforms(
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+                target_platform_names=[platform],
+                skip_content_filter=True,
+            )
+
+        if not results:
+            typer.echo("No draft created.")
+            raise typer.Exit(1)
+
+        new_draft = results[0].draft
+        ops.supersede_draft(conn, draft_id, new_draft.id)
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+
+        if use_json:
+            typer.echo(
+                json_mod.dumps(
+                    {
+                        "old_draft_id": draft_id,
+                        "new_draft_id": new_draft.id,
+                        "platform": new_draft.platform,
+                        "status": "promoted",
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(f"Preview draft {draft_id} promoted to {platform}.")
+            typer.echo(f"New draft: {new_draft.id}")
+            typer.echo(f"Content: {new_draft.content}")
     finally:
         conn.close()

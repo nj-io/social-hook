@@ -4,6 +4,23 @@ import type { GatewayEnvelope } from "@/lib/websocket";
 import type { DataChangeEvent } from "@/lib/types";
 import { fetchTasks, type BackgroundTask } from "@/lib/api";
 
+/** Default client-side timeout: 10 minutes (matches backend _STALE_TASK_TIMEOUT_SECONDS). */
+const DEFAULT_TIMEOUT_MS = 600_000;
+
+/** How often to check for timed-out tasks (seconds). */
+const TIMEOUT_CHECK_INTERVAL_MS = 5_000;
+
+interface TrackOptions {
+  /** Client-side timeout in ms. Default: 600_000 (10 min). */
+  timeoutMs?: number;
+}
+
+/** Internal tracking entry: the task plus its timeout deadline. */
+interface TrackedEntry {
+  task: BackgroundTask;
+  deadlineMs: number;
+}
+
 /**
  * Tracks background tasks for a given project via DB polling + WebSocket events.
  *
@@ -12,6 +29,10 @@ import { fetchTasks, type BackgroundTask } from "@/lib/api";
  *
  * Returns a map of ref_id -> BackgroundTask for running/recently-completed tasks,
  * plus a helper to start tracking a newly-created task.
+ *
+ * IMPORTANT: Tasks are keyed and deduplicated by ref_id. If two different task
+ * types share the same ref_id and run concurrently, only one will be tracked.
+ * Prefix ref_id with the task type when this is possible (e.g. "summary:proj_123").
  */
 export function useBackgroundTasks(
   projectId: string,
@@ -21,6 +42,14 @@ export function useBackgroundTasks(
   const { addListener, removeListener } = useGateway();
   const onCompletedRef = useRef(onTaskCompleted);
   onCompletedRef.current = onTaskCompleted;
+
+  // Ref that bridges React state batching: trackTask writes here immediately
+  // so refreshTasks can see tracked tasks even before React applies setTasks.
+  const trackedRef = useRef<Map<string, TrackedEntry>>(new Map());
+
+  const fireCompleted = useCallback((task: BackgroundTask) => {
+    onCompletedRef.current?.(task);
+  }, []);
 
   const refreshTasks = useCallback(async () => {
     try {
@@ -35,7 +64,16 @@ export function useBackgroundTasks(
         latestTasks.push(t);
       }
       setTasks((prev) => {
-        const next = new Map(prev);
+        // Merge trackedRef into prev so we detect transitions even when
+        // React batched the trackTask setTasks with this one.
+        const merged = new Map(prev);
+        for (const [refId, entry] of trackedRef.current) {
+          if (!merged.has(refId)) {
+            merged.set(refId, entry.task);
+          }
+        }
+
+        const next = new Map(merged);
         for (const t of latestTasks) {
           const existing = next.get(t.ref_id);
           // Only update if we're tracking this ref_id or it's running
@@ -45,9 +83,9 @@ export function useBackgroundTasks(
         }
         // Fire callback for tasks that just completed
         for (const t of latestTasks) {
-          const existing = prev.get(t.ref_id);
+          const existing = merged.get(t.ref_id);
           if (existing?.status === "running" && t.status !== "running") {
-            onCompletedRef.current?.(t);
+            fireCompleted(t);
           }
         }
         return next;
@@ -55,7 +93,7 @@ export function useBackgroundTasks(
     } catch {
       // Non-critical
     }
-  }, [projectId]);
+  }, [projectId, fireCompleted]);
 
   // On mount: restore running tasks from DB
   useEffect(() => {
@@ -87,31 +125,66 @@ export function useBackgroundTasks(
     return () => removeListener(listenerId);
   }, [projectId, addListener, removeListener, refreshTasks]);
 
+  // Client-side timeout: periodically check tracked tasks against deadlines
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = Date.now();
+      for (const [refId, entry] of trackedRef.current) {
+        if (entry.task.status === "running" && now >= entry.deadlineMs) {
+          const timedOut: BackgroundTask = {
+            ...entry.task,
+            status: "failed",
+            error: "Operation timed out. You can retry from the dashboard.",
+            updated_at: new Date().toISOString(),
+          };
+          trackedRef.current.set(refId, { ...entry, task: timedOut });
+          setTasks((prev) => {
+            const next = new Map(prev);
+            next.set(refId, timedOut);
+            return next;
+          });
+          fireCompleted(timedOut);
+        }
+      }
+    }, TIMEOUT_CHECK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [fireCompleted]);
+
   /** Register a task_id + ref_id that was just kicked off via a 202 response. */
-  const trackTask = useCallback((taskId: string, refId: string, type: string) => {
-    setTasks((prev) => {
-      const next = new Map(prev);
-      next.set(refId, {
-        id: taskId,
-        type,
-        ref_id: refId,
-        project_id: projectId,
-        status: "running",
-        result: null,
-        error: null,
-        created_at: new Date().toISOString(),
-        updated_at: null,
+  const trackTask = useCallback(
+    (taskId: string, refId: string, type: string, opts?: TrackOptions) => {
+      const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const entry: TrackedEntry = {
+        task: {
+          id: taskId,
+          type,
+          ref_id: refId,
+          project_id: projectId,
+          status: "running",
+          result: null,
+          error: null,
+          created_at: new Date().toISOString(),
+          updated_at: null,
+        },
+        deadlineMs: Date.now() + timeoutMs,
+      };
+      trackedRef.current.set(refId, entry);
+      setTasks((prev) => {
+        const next = new Map(prev);
+        next.set(refId, entry.task);
+        return next;
       });
-      return next;
-    });
-    // The task may have already completed before trackTask was called
-    // (race: background thread finishes before the 202 response arrives).
-    // Refresh immediately to catch the completion.
-    refreshTasks();
-  }, [projectId, refreshTasks]);
+      // The task may have already completed before trackTask was called
+      // (race: background thread finishes before the 202 response arrives).
+      // Refresh immediately to catch the completion.
+      refreshTasks();
+    },
+    [projectId, refreshTasks],
+  );
 
   /** Stop tracking a ref_id (e.g. after processing a completion). */
   const clearTask = useCallback((refId: string) => {
+    trackedRef.current.delete(refId);
     setTasks((prev) => {
       const next = new Map(prev);
       next.delete(refId);

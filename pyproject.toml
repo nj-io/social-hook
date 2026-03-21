@@ -4,14 +4,30 @@ build-backend = "hatchling.build"
 
 [project]
 name = "social-hook"
-version = "0.6.0"
+version = "0.9.0"
 description = "Automated social media content from development activity"
+readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
     { name = "Neil", email = "26359601+nj-io@users.noreply.github.com" }
 ]
-keywords = ["social-media", "automation", "cli", "git"]
+keywords = [
+    "social-media",
+    "automation",
+    "cli",
+    "git",
+    "claude",
+    "anthropic",
+    "claude-code",
+    "llm",
+    "ai",
+    "developer-tools",
+    "twitter",
+    "linkedin",
+    "telegram",
+    "content-generation",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -23,7 +39,9 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Version Control :: Git",
-    "Topic :: Internet",
+    "Topic :: Communications",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Environment :: Web Environment",
 ]
 dependencies = [
     "typer[all]>=0.9.0",
@@ -57,6 +75,10 @@ dev = [
     "types-requests>=2.28",
     "vcrpy>=6.0",
 ]
+docs = [
+    "mkdocs-material>=9.0",
+    "pymdown-extensions>=10.0",
+]
 
 [project.scripts]
 social-hook = "social_hook.cli:app"
@@ -66,6 +88,7 @@ Homepage = "https://github.com/nj-io/social-hook"
 Documentation = "https://github.com/nj-io/social-hook#readme"
 Repository = "https://github.com/nj-io/social-hook"
 Issues = "https://github.com/nj-io/social-hook/issues"
+Changelog = "https://github.com/nj-io/social-hook/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/social_hook"]
@@ -89,6 +112,17 @@ ignore = ["E501", "B008"]  # E501: line length handled by formatter; B008: typer
 "src/social_hook/cli/__init__.py" = ["E402"]
 "src/social_hook/llm/prompts.py" = ["E402"]
 "src/social_hook/db/operations.py" = ["E402"]
+
+[tool.coverage.run]
+source = ["social_hook"]
+omit = ["*/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]
 
 [tool.mypy]
 python_version = "3.10"

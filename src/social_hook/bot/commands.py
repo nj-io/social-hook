@@ -13,10 +13,10 @@ from social_hook.messaging.base import (
     MessagingAdapter,
     OutboundMessage,
 )
+from social_hook.models import TERMINAL_STATUSES
+from social_hook.parsing import safe_int
 
 logger = logging.getLogger(__name__)
-
-_TERMINAL_STATUSES = {"posted", "rejected", "cancelled", "superseded"}
 
 # Chat draft context: chat_id → (draft_id, project_id, timestamp)
 _chat_draft_context: dict[str, tuple[str, str, float]] = {}
@@ -40,9 +40,9 @@ def get_chat_draft_context(chat_id: str) -> tuple[str, str] | None:
     return (draft_id, project_id)
 
 
-def _send(adapter: MessagingAdapter, chat_id: str, text: str) -> bool:
+def _send(adapter: MessagingAdapter, chat_id: str, text: str, buttons=None) -> bool:
     """Send a plain message via adapter."""
-    result = adapter.send_message(chat_id, OutboundMessage(text=text))
+    result = adapter.send_message(chat_id, OutboundMessage(text=text, buttons=buttons or []))
     return result.success
 
 
@@ -52,6 +52,37 @@ def _get_conn():
     from social_hook.filesystem import get_db_path
 
     return init_database(get_db_path())
+
+
+def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
+    """Re-split content into draft_tweets if the draft has an existing thread.
+
+    Called after content edits to keep draft_tweets in sync. If the draft
+    has no existing tweets, this is a no-op. Uses _parse_thread_tweets()
+    which is platform-agnostic (string parsing only, no LLM call).
+    """
+    from social_hook.db import operations as ops
+    from social_hook.drafting import _parse_thread_tweets
+    from social_hook.filesystem import generate_id
+    from social_hook.models import DraftTweet
+
+    existing = ops.get_draft_tweets(conn, draft_id)
+    if not existing:
+        return
+
+    # Re-parse with thread_min=1 so any split result replaces the old tweets,
+    # even if the new content has fewer parts than the original thread.
+    parts = _parse_thread_tweets(new_content, thread_min=1)
+    new_tweets = [
+        DraftTweet(
+            id=generate_id("tweet"),
+            draft_id=draft_id,
+            position=i,
+            content=part,
+        )
+        for i, part in enumerate(parts)
+    ]
+    ops.replace_draft_tweets(conn, draft_id, new_tweets)
 
 
 def _build_system_snapshot(conn, project_id: str | None, config, arcs=None) -> str:
@@ -352,6 +383,8 @@ def handle_message(
             gk_narrative_debt = None
             gk_audience_introduced = None
             gk_linked_decision = None
+            gk_social_context = None
+            gk_platform_introduced = None
 
             if project_id:
                 from social_hook.db import operations as ops
@@ -372,6 +405,21 @@ def handle_message(
                     debt = ops.get_narrative_debt(_context_conn, project_id)
                     gk_narrative_debt = debt.debt_counter if debt else 0
                     gk_audience_introduced = ops.get_audience_introduced(_context_conn, project_id)
+                    gk_platform_introduced = ops.get_all_platform_introduced(
+                        _context_conn, project_id
+                    )
+
+                    # Load social context for voice awareness
+                    try:
+                        project = ops.get_project(_context_conn, project_id)
+                        if project and project.repo_path:
+                            from social_hook.config.project import load_project_config
+
+                            pc = load_project_config(project.repo_path)
+                            gk_social_context = pc.social_context
+                    except Exception:
+                        logger.debug("Failed to load social context", exc_info=True)
+
                     if draft_obj and hasattr(draft_obj, "decision_id") and draft_obj.decision_id:
                         gk_linked_decision = ops.get_decision(_context_conn, draft_obj.decision_id)
                 except Exception:
@@ -416,6 +464,8 @@ def handle_message(
                 narrative_debt=gk_narrative_debt,
                 audience_introduced=gk_audience_introduced,
                 linked_decision=gk_linked_decision,
+                social_context=gk_social_context,
+                platform_introduced=gk_platform_introduced,
             )
 
             response_text = None
@@ -472,6 +522,8 @@ def _handle_pending_reply(adapter, chat_id, pending, text, config):
         _save_media_spec(adapter, chat_id, pending.draft_id, text, config)
     elif pending.type == "media_upload":
         _save_media_upload(adapter, chat_id, pending.draft_id, text)
+    else:
+        logger.warning("Unknown pending reply type: %s (draft %s)", pending.type, pending.draft_id)
 
 
 def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
@@ -486,6 +538,15 @@ def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
         draft = get_draft(conn, draft_id)
         if not draft:
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        if draft.platform == "preview":
+            _send(
+                adapter,
+                chat_id,
+                "Preview drafts cannot be scheduled. "
+                "Use the Promote button to redraft for a real platform.",
+            )
             return
 
         try:
@@ -699,6 +760,7 @@ def _apply_expert_result(
     if result.refined_content:
         old_content = draft.content
         update_draft(conn, draft.id, content=result.refined_content)
+        _resync_thread_tweets(conn, draft.id, result.refined_content)
         insert_draft_change(
             conn,
             DraftChange(
@@ -732,7 +794,7 @@ def _apply_expert_result(
             try:
                 from social_hook.drafting import _generate_media
 
-                media_paths, _, _ = _generate_media(
+                media_paths, _, _, _ = _generate_media(
                     config,
                     draft.media_type,
                     result.refined_media_spec,
@@ -767,7 +829,7 @@ def _save_angle(adapter, chat_id, draft_id, text):
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
-        if draft.status in _TERMINAL_STATUSES:
+        if draft.status in TERMINAL_STATUSES:
             _send(adapter, chat_id, f"Cannot redraft: draft is '{draft.status}'")
             return
 
@@ -804,13 +866,23 @@ def _save_angle(adapter, chat_id, draft_id, text):
             if result.refined_media_spec:
                 parts.append("Media spec updated. Run `media-regen` to regenerate media.")
             msg = "\n".join(parts)
-            buttons = get_review_buttons_normalized(draft.id)
+            buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
             adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
         else:
-            _send(adapter, chat_id, f"Expert could not refine draft: {result.reasoning}")
+            _send(
+                adapter,
+                chat_id,
+                f"Expert could not refine draft: {result.reasoning}",
+                buttons=get_review_buttons_normalized(draft_id),
+            )
     except Exception as e:
         logger.exception("Error in angle redraft")
-        _send(adapter, chat_id, f"Error redrafting: {e}")
+        _send(
+            adapter,
+            chat_id,
+            f"Error redrafting: {e}",
+            buttons=get_review_buttons_normalized(draft_id),
+        )
     finally:
         conn.close()
 
@@ -845,6 +917,7 @@ def _save_edit(
 
         old_content = draft.content
         update_draft(conn, draft_id, content=new_content)
+        _resync_thread_tweets(conn, draft_id, new_content)
 
         change = DraftChange(
             id=generate_id("change"),
@@ -863,6 +936,7 @@ def _save_edit(
             adapter,
             chat_id,
             f"Draft `{draft_id[:12]}` updated.\n\n```\n{new_content}\n```",
+            buttons=get_review_buttons_normalized(draft_id),
         )
     finally:
         conn.close()
@@ -966,13 +1040,40 @@ def _handle_expert_escalation(
 
         expert = Expert(client)
 
+        # Resolve social context and identity for expert (non-fatal)
+        expert_social_context = None
+        expert_identity = None
+        expert_summary = None
+        if project_id:
+            try:
+                from social_hook.db import operations as _expert_ops
+
+                _expert_conn = _get_conn()
+                expert_summary = _expert_ops.get_project_summary(_expert_conn, project_id)
+                _expert_project = _expert_ops.get_project(_expert_conn, project_id)
+                if _expert_project and _expert_project.repo_path:
+                    from social_hook.config.project import load_project_config
+
+                    pc = load_project_config(_expert_project.repo_path)
+                    expert_social_context = pc.social_context
+                if draft and hasattr(draft, "platform"):
+                    from social_hook.config.yaml import load_full_config, resolve_identity
+
+                    full_config = load_full_config()
+                    expert_identity = resolve_identity(full_config, draft.platform)
+            except Exception:
+                logger.debug("Failed to resolve expert context", exc_info=True)
+
         result = expert.handle(
             draft=draft,
             user_message=user_message,
             escalation_reason=route.escalation_reason or "user request",
             escalation_context=route.escalation_context,
+            project_summary=expert_summary,
             project_id=project_id,
             db=db,
+            social_context=expert_social_context,
+            identity=expert_identity,
         )
 
         action = result.action.value if hasattr(result.action, "value") else str(result.action)
@@ -1021,7 +1122,7 @@ def _handle_expert_escalation(
                         f"Media spec updated: {json_mod.dumps(result.refined_media_spec)[:200]}"
                     )
                 msg = f"Draft `{draft.id[:12]}` updated by Expert.\n\n" + "\n".join(parts)
-                buttons = get_review_buttons_normalized(draft.id)
+                buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
                 adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
                 return msg
             finally:
@@ -1036,7 +1137,12 @@ def _handle_expert_escalation(
     except Exception as e:
         logger.exception("Error in expert escalation")
         msg = f"Error: {e}"
-        _send(adapter, chat_id, msg)
+        _send(
+            adapter,
+            chat_id,
+            msg,
+            buttons=get_review_buttons_normalized(draft.id) if draft else None,
+        )
         return msg
 
 
@@ -1217,7 +1323,7 @@ def cmd_usage(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -
             from social_hook.db import get_recent_usage
 
             parts = arg.split()
-            limit = int(parts[1]) if len(parts) > 1 else 10
+            limit = safe_int(parts[1], 10, "usage limit argument") if len(parts) > 1 else 10
             entries = get_recent_usage(conn, limit=limit)
             if not entries:
                 _send(adapter, chat_id, "No usage data found.")
@@ -1309,7 +1415,7 @@ def cmd_review(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
             angle=decision.angle if decision else None,
             evaluator_reasoning=decision.reasoning if decision else None,
         )
-        buttons = get_review_buttons_normalized(draft.id)
+        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
         adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
     finally:
         conn.close()
@@ -1344,7 +1450,8 @@ def cmd_approve(adapter: MessagingAdapter, chat_id: str, args: str, config: Any)
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.status not in ("draft", "approved"):
+        # Scheduled drafts go through the scheduler; use unschedule first
+        if draft.status not in ("draft", "approved", "deferred"):
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 

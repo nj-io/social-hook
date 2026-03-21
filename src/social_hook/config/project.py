@@ -3,12 +3,16 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
+from social_hook.parsing import check_unknown_keys
+
+if TYPE_CHECKING:
+    from social_hook.config.yaml import IdentityConfig
 
 
 @dataclass
@@ -102,6 +106,9 @@ class ProjectConfig:
     )
     summary: SummaryConfig = field(default_factory=SummaryConfig)
 
+    # Resolved identity for this project (populated by load_project_config)
+    identity: "IdentityConfig | None" = None
+
 
 def load_project_config(
     repo_path: str | Path,
@@ -193,6 +200,25 @@ def _parse_context_config(data: dict) -> ContextConfig:
     """Parse context section from content-config.yaml."""
     if not data:
         return ContextConfig()
+    check_unknown_keys(
+        data,
+        {
+            "recent_decisions",
+            "recent_posts",
+            "max_tokens",
+            "max_doc_tokens",
+            "max_discovery_tokens",
+            "max_file_size",
+            "project_docs",
+            "pending_draft_detail",
+            "arc_context_chars",
+            "pending_drafts_cap",
+            "max_hold_count",
+            "include_readme",
+            "include_claude_md",
+        },
+        "context",
+    )
     return ContextConfig(
         recent_decisions=data.get("recent_decisions", 30),
         recent_posts=data.get("recent_posts", 15),
@@ -214,8 +240,21 @@ def _parse_strategy_config(data: dict) -> StrategyConfig:
     """Parse strategy section from content-config.yaml."""
     if not data:
         return StrategyConfig()
+    check_unknown_keys(
+        data,
+        {
+            "narrative_debt_threshold",
+            "arc_stagnation_days",
+            "strategy_moment_max_gap_days",
+            "portfolio_window",
+            "episode_preferences",
+        },
+        "strategy",
+    )
 
     ep_data = data.get("episode_preferences", {})
+    if ep_data:
+        check_unknown_keys(ep_data, {"favor", "avoid"}, "strategy.episode_preferences")
     episode_preferences = EpisodePreferences(
         favor=ep_data.get("favor", []),
         avoid=ep_data.get("avoid", []),
@@ -267,6 +306,7 @@ def _parse_summary_config(data: dict) -> SummaryConfig:
     """Parse summary section from content-config.yaml."""
     if not data:
         return SummaryConfig()
+    check_unknown_keys(data, {"refresh_after_commits", "refresh_after_days"}, "summary")
     return SummaryConfig(
         refresh_after_commits=data.get("refresh_after_commits", 20),
         refresh_after_days=data.get("refresh_after_days", 14),

@@ -22,8 +22,8 @@ import {
   type BackgroundTask,
 } from "@/lib/api";
 import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
-import { StatusBadge } from "@/components/status-badge";
-import { DecisionBadge } from "@/components/decision-badge";
+import { Badge } from "@/components/ui/badge";
+import { Modal } from "@/components/ui/modal";
 import { SimpleMarkdown } from "@/components/simple-markdown";
 import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
@@ -158,7 +158,7 @@ export default function ProjectDetailPage() {
       setTotalDecisions(dec.total ?? 0);
         setPosts(po.posts);
         setUsage(us);
-        setPlatformCount(plat.count);
+        setPlatformCount(plat.real_count);
         loadMemories(detail.repo_path);
         fetchDecisionBranches(id).then(({ branches }) => setDecisionBranches(branches)).catch(() => {});
       } catch (e) {
@@ -254,7 +254,7 @@ export default function ProjectDetailPage() {
       <div>
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold">{project.name}</h1>
-          {!!project.paused && <StatusBadge status="paused" />}
+          {!!project.paused && <Badge value="paused" variant="status" />}
         </div>
         <p className="mt-1 truncate text-sm text-muted-foreground">{project.repo_path}</p>
         {/* Project Summary */}
@@ -518,7 +518,7 @@ export default function ProjectDetailPage() {
                           />
                         </td>
                         <td className="py-2 pr-4">
-                          <DecisionBadge decision={d.decision} />
+                          <Badge value={d.decision} variant="decision" />
                         </td>
                         <td className="py-2 pr-4">
                           <div>
@@ -569,8 +569,12 @@ export default function ProjectDetailPage() {
                           <p className="whitespace-pre-wrap">{d.reasoning || "-"}</p>
                         </td>
                         <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
-                        <td className="hidden py-2 pr-4 text-xs sm:table-cell">{d.episode_type || "-"}</td>
-                        <td className="hidden py-2 pr-4 text-xs md:table-cell">{d.post_category || "-"}</td>
+                        <td className="hidden py-2 pr-4 sm:table-cell">
+                          {d.episode_type ? <Badge value={d.episode_type} variant="category" /> : <span className="text-xs">-</span>}
+                        </td>
+                        <td className="hidden py-2 pr-4 md:table-cell">
+                          {d.post_category ? <Badge value={d.post_category} variant="category" /> : <span className="text-xs">-</span>}
+                        </td>
                         <td className="py-2 pr-4 text-xs text-muted-foreground">
                           {new Date(d.created_at).toLocaleDateString()}
                         </td>
@@ -739,30 +743,26 @@ export default function ProjectDetailPage() {
       )}
 
       {/* Re-draft confirmation modal */}
-      {confirmRedraft && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setConfirmRedraft(null)}>
-          <div className="mx-4 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold">Create another draft?</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              This decision already has drafts. Creating a new one will call the LLM again and add another draft.
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmRedraft(null)}
-                className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleCreateDraft(confirmRedraft)}
-                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80"
-              >
-                Create Draft
-              </button>
-            </div>
-          </div>
+      <Modal open={!!confirmRedraft} onClose={() => setConfirmRedraft(null)} maxWidth="max-w-sm">
+        <h3 className="text-sm font-semibold">Create another draft?</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This decision already has drafts. Creating a new one will call the LLM again and add another draft.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={() => setConfirmRedraft(null)}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => confirmRedraft && handleCreateDraft(confirmRedraft)}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80"
+          >
+            Create Draft
+          </button>
         </div>
-      )}
+      </Modal>
 
       {/* Delete confirmation modal */}
       {confirmDelete && (() => {
@@ -771,46 +771,44 @@ export default function ProjectDetailPage() {
           .filter((d) => ids.includes(d.id))
           .reduce((sum, d) => sum + d.draft_count, 0);
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !actionLoading && setConfirmDelete(false)}>
-            <div className="mx-4 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-sm font-semibold">Delete {ids.length === 1 ? "decision" : `${ids.length} decisions`}?</h3>
-              <p className="mt-2 text-sm text-muted-foreground">
-                This will permanently delete {ids.length} decision{ids.length !== 1 ? "s" : ""}{totalDrafts > 0 ? ` and ${totalDrafts} associated draft${totalDrafts !== 1 ? "s" : ""}` : ""}.
-              </p>
-              {actionError && (
-                <p className="mt-2 text-sm text-destructive">{actionError}</p>
-              )}
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  onClick={() => setConfirmDelete(false)}
-                  disabled={actionLoading}
-                  className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={async () => {
-                    setActionLoading(true);
-                    setActionError(null);
-                    try {
-                      await Promise.all(ids.map((did) => deleteDecision(did)));
-                      setDecisions((prev) => prev.filter((d) => !ids.includes(d.id)));
-                      setSelectedDecisions(new Set());
-                      setConfirmDelete(false);
-                    } catch (err) {
-                      setActionError(err instanceof Error ? err.message : "Delete failed");
-                    } finally {
-                      setActionLoading(false);
-                    }
-                  }}
-                  disabled={actionLoading}
-                  className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80 disabled:opacity-50"
-                >
-                  {actionLoading ? "Deleting..." : "Delete"}
-                </button>
-              </div>
+          <Modal open={true} onClose={() => !actionLoading && setConfirmDelete(false)} maxWidth="max-w-sm">
+            <h3 className="text-sm font-semibold">Delete {ids.length === 1 ? "decision" : `${ids.length} decisions`}?</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This will permanently delete {ids.length} decision{ids.length !== 1 ? "s" : ""}{totalDrafts > 0 ? ` and ${totalDrafts} associated draft${totalDrafts !== 1 ? "s" : ""}` : ""}.
+            </p>
+            {actionError && (
+              <p className="mt-2 text-sm text-destructive">{actionError}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                disabled={actionLoading}
+                className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setActionLoading(true);
+                  setActionError(null);
+                  try {
+                    await Promise.all(ids.map((did) => deleteDecision(did)));
+                    setDecisions((prev) => prev.filter((d) => !ids.includes(d.id)));
+                    setSelectedDecisions(new Set());
+                    setConfirmDelete(false);
+                  } catch (err) {
+                    setActionError(err instanceof Error ? err.message : "Delete failed");
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
+                disabled={actionLoading}
+                className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80 disabled:opacity-50"
+              >
+                {actionLoading ? "Deleting..." : "Delete"}
+              </button>
             </div>
-          </div>
+          </Modal>
         );
       })()}
 
@@ -819,126 +817,120 @@ export default function ProjectDetailPage() {
         const did = Array.from(selectedDecisions)[0];
         const dec = decisions.find((d) => d.id === did);
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !actionLoading && setConfirmRetrigger(false)}>
-            <div className="mx-4 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-sm font-semibold">Re-evaluate commit?</h3>
-              <p className="mt-2 text-sm text-muted-foreground">
-                This will delete the current decision for commit <code className="text-xs">{dec?.commit_hash.slice(0, 7)}</code> and re-run the evaluator. The result may differ from the original evaluation.
-              </p>
-              {actionError && (
-                <p className="mt-2 text-sm text-destructive">{actionError}</p>
-              )}
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  onClick={() => setConfirmRetrigger(false)}
-                  disabled={actionLoading}
-                  className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={async () => {
-                    setActionLoading(true);
-                    setActionError(null);
-                    try {
-                      const res = await retriggerDecision(did);
-                      if (res.status === "retriggered") {
-                        setSelectedDecisions(new Set());
-                        setConfirmRetrigger(false);
-                        reload();
-                      } else {
-                        setActionError(`Re-evaluation failed (exit code ${res.exit_code})`);
-                      }
-                    } catch (err) {
-                      setActionError(err instanceof Error ? err.message : "Retrigger failed");
-                    } finally {
-                      setActionLoading(false);
-                    }
-                  }}
-                  disabled={actionLoading}
-                  className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
-                >
-                  {actionLoading ? "Re-evaluating..." : "Re-evaluate"}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Import history modal */}
-      {importModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !importLoading && setImportModalOpen(false)}>
-          <div className="mx-4 w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold">Import Historical Commits</h3>
+          <Modal open={true} onClose={() => !actionLoading && setConfirmRetrigger(false)} maxWidth="max-w-sm">
+            <h3 className="text-sm font-semibold">Re-evaluate commit?</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              Import past commits as &ldquo;imported&rdquo; decisions so you can evaluate them later.
+              This will delete the current decision for commit <code className="text-xs">{dec?.commit_hash.slice(0, 7)}</code> and re-run the evaluator. The result may differ from the original evaluation.
             </p>
-            {importPreview ? (
-              <div className="mt-3 space-y-1 rounded-md border border-border bg-muted/50 p-3 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Total commits</span>
-                  <span className="font-medium">{importPreview.total_commits}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Already tracked</span>
-                  <span className="font-medium">{importPreview.already_tracked}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Importable</span>
-                  <span className="font-medium text-accent">{importPreview.importable}</span>
-                </div>
-              </div>
-            ) : (
-              <p className="mt-3 text-xs text-muted-foreground">Loading preview...</p>
+            {actionError && (
+              <p className="mt-2 text-sm text-destructive">{actionError}</p>
             )}
-            <div className="mt-3">
-              <label className="text-xs text-muted-foreground">Branch (optional)</label>
-              <select
-                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
-                value={importBranch}
-                onChange={async (e) => {
-                  const branch = e.target.value;
-                  setImportBranch(branch);
-                  try {
-                    const preview = await fetchImportPreview(id, branch || null);
-                    setImportPreview(preview);
-                  } catch { setImportPreview(null); }
-                }}
-              >
-                <option value="">All branches</option>
-                {decisionBranches.map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </select>
-            </div>
             <div className="mt-4 flex justify-end gap-2">
               <button
-                onClick={() => setImportModalOpen(false)}
-                disabled={importLoading}
+                onClick={() => setConfirmRetrigger(false)}
+                disabled={actionLoading}
                 className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={async () => {
-                  setImportLoading(true);
+                  setActionLoading(true);
+                  setActionError(null);
                   try {
-                    const res = await importCommits(id, importBranch || null);
-                    trackTask(res.task_id, "__import__", "import_commits");
-                  } catch {
-                    setImportLoading(false);
+                    const res = await retriggerDecision(did);
+                    if (res.status === "retriggered") {
+                      setSelectedDecisions(new Set());
+                      setConfirmRetrigger(false);
+                      reload();
+                    } else {
+                      setActionError(`Re-evaluation failed (exit code ${res.exit_code})`);
+                    }
+                  } catch (err) {
+                    setActionError(err instanceof Error ? err.message : "Retrigger failed");
+                  } finally {
+                    setActionLoading(false);
                   }
                 }}
-                disabled={importLoading || isTaskRunning("__import__") || (importPreview != null && importPreview.importable === 0)}
+                disabled={actionLoading}
                 className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
               >
-                {importLoading || isTaskRunning("__import__") ? "Importing..." : "Import"}
+                {actionLoading ? "Re-evaluating..." : "Re-evaluate"}
               </button>
             </div>
+          </Modal>
+        );
+      })()}
+
+      {/* Import history modal */}
+      <Modal open={importModalOpen} onClose={() => !importLoading && setImportModalOpen(false)} maxWidth="max-w-sm">
+        <h3 className="text-sm font-semibold">Import Historical Commits</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Import past commits as &ldquo;imported&rdquo; decisions so you can evaluate them later.
+        </p>
+        {importPreview ? (
+          <div className="mt-3 space-y-1 rounded-md border border-border bg-muted/50 p-3 text-xs">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Total commits</span>
+              <span className="font-medium">{importPreview.total_commits}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Already tracked</span>
+              <span className="font-medium">{importPreview.already_tracked}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Importable</span>
+              <span className="font-medium text-accent">{importPreview.importable}</span>
+            </div>
           </div>
+        ) : (
+          <p className="mt-3 text-xs text-muted-foreground">Loading preview...</p>
+        )}
+        <div className="mt-3">
+          <label className="text-xs text-muted-foreground">Branch (optional)</label>
+          <select
+            className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
+            value={importBranch}
+            onChange={async (e) => {
+              const branch = e.target.value;
+              setImportBranch(branch);
+              try {
+                const preview = await fetchImportPreview(id, branch || null);
+                setImportPreview(preview);
+              } catch { setImportPreview(null); }
+            }}
+          >
+            <option value="">All branches</option>
+            {decisionBranches.map((b) => (
+              <option key={b} value={b}>{b}</option>
+            ))}
+          </select>
         </div>
-      )}
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={() => setImportModalOpen(false)}
+            disabled={importLoading}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              setImportLoading(true);
+              try {
+                const res = await importCommits(id, importBranch || null);
+                trackTask(res.task_id, "__import__", "import_commits");
+              } catch {
+                setImportLoading(false);
+              }
+            }}
+            disabled={importLoading || isTaskRunning("__import__") || (importPreview != null && importPreview.importable === 0)}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+          >
+            {importLoading || isTaskRunning("__import__") ? "Importing..." : "Import"}
+          </button>
+        </div>
+      </Modal>
 
       {/* Floating action bar */}
       {(selectedDecisions.size >= 1 || isTaskRunning(CONSOLIDATE_REF)) && (
@@ -956,37 +948,79 @@ export default function ProjectDetailPage() {
               {consolidateResult?.error && (
                 <span className="text-xs text-destructive">{consolidateResult.error}</span>
               )}
-              <button
-                onClick={() => setSelectedDecisions(new Set())}
-                className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
-              >
-                Clear
-              </button>
-              {selectedDecisions.size === 1 && (
-                <button
-                  onClick={() => { setActionError(null); setConfirmRetrigger(true); }}
-                  className="rounded-md border border-accent px-4 py-1.5 text-sm font-medium text-accent hover:bg-accent/10"
-                >
-                  Re-evaluate
-                </button>
-              )}
-              <button
-                onClick={() => { setActionError(null); setConfirmDelete(true); }}
-                className="rounded-md border border-destructive/50 px-4 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
-              >
-                Delete {selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}
-              </button>
-              {selectedDecisions.size >= 2 && (
-                <button
-                  onClick={handleConsolidate}
-                  disabled={isTaskRunning(CONSOLIDATE_REF)}
-                  className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
-                >
-                  {isTaskRunning(CONSOLIDATE_REF)
-                    ? "Consolidating..."
-                    : `Consolidate ${selectedDecisions.size} → Create Draft`}
-                </button>
-              )}
+              {(() => {
+                const selectedList = decisions.filter((d) => selectedDecisions.has(d.id));
+                const allImported = selectedList.length > 0 && selectedList.every((d) => d.decision === "imported");
+                const allEvaluated = selectedList.length > 0 && selectedList.every((d) => d.decision !== "imported");
+                const isMixed = !allImported && !allEvaluated;
+                return (
+                  <>
+                    <button
+                      onClick={() => setSelectedDecisions(new Set())}
+                      className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+                    >
+                      Clear
+                    </button>
+                    {selectedDecisions.size === 1 && allEvaluated && (
+                      <button
+                        onClick={() => { setActionError(null); setConfirmRetrigger(true); }}
+                        className="rounded-md border border-accent px-4 py-1.5 text-sm font-medium text-accent hover:bg-accent/10"
+                      >
+                        Re-evaluate
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setActionError(null); setConfirmDelete(true); }}
+                      className="rounded-md border border-destructive/50 px-4 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
+                    >
+                      Delete {selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}
+                    </button>
+                    {allImported && selectedDecisions.size >= 1 && (
+                      <button
+                        onClick={async () => {
+                          setActionLoading(true);
+                          setActionError(null);
+                          try {
+                            for (const did of Array.from(selectedDecisions)) {
+                              const res = await retriggerDecision(did);
+                              if (res.status !== "retriggered") {
+                                setActionError(`Evaluate failed for ${did.slice(0, 8)} (exit code ${res.exit_code})`);
+                                break;
+                              }
+                            }
+                            setSelectedDecisions(new Set());
+                            reload();
+                          } catch (err) {
+                            setActionError(err instanceof Error ? err.message : "Batch evaluate failed");
+                          } finally {
+                            setActionLoading(false);
+                          }
+                        }}
+                        disabled={actionLoading}
+                        className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        {actionLoading
+                          ? "Evaluating..."
+                          : `Batch evaluate (${selectedDecisions.size})`}
+                      </button>
+                    )}
+                    {allEvaluated && selectedDecisions.size >= 2 && (
+                      <button
+                        onClick={handleConsolidate}
+                        disabled={isTaskRunning(CONSOLIDATE_REF) || isMixed}
+                        className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                      >
+                        {isTaskRunning(CONSOLIDATE_REF)
+                          ? "Consolidating..."
+                          : `Consolidate ${selectedDecisions.size} → Create Draft`}
+                      </button>
+                    )}
+                    {isMixed && selectedDecisions.size >= 2 && (
+                      <span className="text-xs text-muted-foreground">Mixed selection — select only imported or only evaluated decisions</span>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>

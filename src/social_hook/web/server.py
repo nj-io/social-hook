@@ -32,6 +32,8 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
+from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES
+from social_hook.parsing import safe_json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +240,11 @@ def _run_background_task(
     Args:
         task_type: Task category (e.g. "create_draft", "consolidate").
         ref_id: Reference key the frontend uses to find this task
-            (e.g. decision_id).
+            (e.g. decision_id).  Must be unique across concurrently
+            running tasks — ``useBackgroundTasks`` deduplicates by
+            ref_id and will silently drop collisions.  Prefix with
+            task_type when multiple task types target the same entity
+            (e.g. ``f"summary:{project_id}"`` vs bare ``project_id``).
         project_id: Project this task belongs to.
         fn: Zero-arg callable that returns a JSON-serialisable result dict.
         on_success: Optional callback receiving ``fn``'s return value,
@@ -381,17 +387,20 @@ def _get_events_since(last_id: int, session_id: str | None = None) -> list[dict]
                 "SELECT id, type, data, created_at FROM web_events WHERE id > ? ORDER BY id ASC",
                 (last_id,),
             ).fetchall()
-        return [
-            {
-                "id": row["id"],
-                "type": row["type"],
-                "data": json.loads(row["data"]),
-                "created_at": row["created_at"],
-            }
-            for row in rows
-        ]
-    except Exception:
-        return []
+        results = []
+        for row in rows:
+            parsed = safe_json_loads(row["data"], "web_events.data")
+            if parsed is None:
+                continue
+            results.append(
+                {
+                    "id": row["id"],
+                    "type": row["type"],
+                    "data": parsed,
+                    "created_at": row["created_at"],
+                }
+            )
+        return results
     finally:
         conn.close()
 
@@ -416,7 +425,7 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    handle_command(msg, adapter, config)
+    await asyncio.to_thread(handle_command, msg, adapter, config)
 
     events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
@@ -425,8 +434,6 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
 @app.post("/api/callback")
 async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
     """Execute a button callback via the web adapter."""
-    import asyncio
-
     from social_hook.bot.buttons import handle_callback
 
     adapter = _get_adapter(scope_id=x_session_id)
@@ -469,7 +476,7 @@ async def api_message(body: MessageRequest, x_session_id: str = Header("web")):
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    handle_message(msg, adapter, config)
+    await asyncio.to_thread(handle_message, msg, adapter, config)
 
     events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
@@ -598,6 +605,8 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
 
                 msg = InboundMessage(chat_id=chat_id, text=text, message_id="web_0")
                 await asyncio.to_thread(handle_message, msg, adapter, _get_config())
+            else:
+                logger.warning("Unknown WS command type: %s from %s", command_type, client_id)
         except Exception as e:
             await _hub.send(
                 client_id,
@@ -618,6 +627,8 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
     elif envelope.type == "unsubscribe":
         channel = envelope.payload.get("channel", "web")
         _hub.unsubscribe(client_id, channel)
+    else:
+        logger.warning("Unknown WS envelope type: %s from %s", envelope.type, client_id)
 
 
 async def _event_bridge_loop():
@@ -660,10 +671,14 @@ async def _event_bridge_loop():
                 (last_id,),
             ).fetchall()
             for r in rows:
+                parsed = safe_json_loads(r["data"], "web_events.data (ws bridge)")
+                if parsed is None:
+                    last_id = r["id"]
+                    continue
                 ev = {
                     "id": r["id"],
                     "type": r["type"],
-                    "data": json.loads(r["data"]),
+                    "data": parsed,
                     "created_at": r["created_at"],
                 }
                 envelope = GatewayEnvelope(type="event", channel="web", payload=ev)
@@ -710,11 +725,7 @@ async def api_drafts(
         )
         drafts = [d.to_dict() for d in draft_models]
         if pending:
-            drafts = [
-                d
-                for d in drafts
-                if d.get("status") in ("draft", "approved", "scheduled", "deferred")
-            ]
+            drafts = [d for d in drafts if d.get("status") in PENDING_STATUSES]
         return {"drafts": drafts}
     finally:
         conn.close()
@@ -832,7 +843,7 @@ async def api_upload_draft_media(draft_id: str, file: UploadFile):
         draft = ops.get_draft(conn, draft_id)
         if not draft:
             raise HTTPException(status_code=404, detail="Draft not found")
-        if draft.status not in ("draft", "deferred"):
+        if draft.status not in EDITABLE_STATUSES:
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot upload media — draft is {draft.status}",
@@ -982,6 +993,151 @@ async def api_resend_draft_notification(draft_id: str):
         raise HTTPException(status_code=404, detail=str(e)) from None
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from None
+
+
+@app.post("/api/drafts/{draft_id}/promote")
+async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Promote a preview draft to a real platform.
+
+    Creates a new draft for the target platform using the LLM drafter,
+    then marks the preview draft as superseded.
+
+    Body:
+        platform: Target platform name (e.g. "x", "linkedin")
+    """
+    platform = body.get("platform")
+    if not platform:
+        raise HTTPException(status_code=400, detail="Missing 'platform' in body")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.platform != "preview":
+            raise HTTPException(status_code=400, detail="Only preview drafts can be promoted")
+        if draft.status in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot promote draft with status '{draft.status}'",
+            )
+
+        decision = ops.get_decision(conn, draft.decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="Decision not found")
+
+        project = ops.get_project(conn, decision.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    finally:
+        conn.close()
+
+    config = _get_config()
+
+    pcfg = config.platforms.get(platform)
+    if not pcfg or not pcfg.enabled:
+        raise HTTPException(status_code=400, detail=f"Platform '{platform}' is not enabled")
+
+    from social_hook.compat import evaluation_from_decision
+    from social_hook.config.project import ProjectConfig, load_project_config
+    from social_hook.models import CommitInfo
+
+    try:
+        project_config = load_project_config(project.repo_path)
+    except ConfigError:
+        project_config = ProjectConfig(repo_path=project.repo_path)
+
+    from social_hook.trigger import parse_commit_info
+
+    try:
+        commit = parse_commit_info(decision.commit_hash, project.repo_path)
+    except Exception:
+        commit = CommitInfo(
+            hash=decision.commit_hash,
+            message=decision.commit_message or "",
+            diff="",
+            files_changed=[],
+        )
+
+    evaluation = evaluation_from_decision(decision, "draft")
+
+    def _blocking_promote():
+        import sqlite3 as _sqlite3
+
+        from social_hook.drafting import draft_for_platforms
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.prompts import assemble_evaluator_context
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+        try:
+            context = assemble_evaluator_context(
+                db,
+                project.id,
+                project_config,
+                commit_timestamp=getattr(commit, "timestamp", None),
+                parent_timestamp=getattr(commit, "parent_timestamp", None),
+            )
+            db.emit_data_event("pipeline", "promoting", draft_id[:8], project.id)
+            results = draft_for_platforms(
+                config,
+                conn2,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+                target_platform_names=[platform],
+                skip_content_filter=True,
+            )
+            return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
+        finally:
+            conn2.close()
+
+    def _on_promote_done(result: dict) -> None:
+        conn2 = _get_conn()
+        try:
+            new_draft_ids = result.get("draft_ids", [])
+            if new_draft_ids:
+                ops.supersede_draft(conn2, draft_id, new_draft_ids[0])
+                ops.emit_data_event(conn2, "draft", "updated", draft_id, project.id)
+
+            from social_hook.drafting import DraftResult
+            from social_hook.scheduling import calculate_optimal_time
+
+            draft_results = []
+            for did in new_draft_ids:
+                d = ops.get_draft(conn2, did)
+                if d:
+                    sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_tweets=[]))
+            if draft_results:
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    commit_hash=commit.hash,
+                    commit_message=commit.message,
+                    draft_results=draft_results,
+                )
+        except Exception:
+            logger.debug("Promote notification failed", exc_info=True)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "promote_draft",
+        ref_id=draft_id,
+        project_id=project.id,
+        fn=_blocking_promote,
+        on_success=_on_promote_done,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
 
 
 @app.get("/api/projects")
@@ -1226,6 +1382,134 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
     )
 
 
+@app.post("/api/projects/{project_id}/summary-draft")
+async def api_summary_draft(project_id: str):
+    """Generate an introductory first draft from the project summary.
+
+    Creates a Decision with trigger_source="manual" and drafts for all
+    enabled platforms.  Uses the background-task pattern so the frontend
+    can track progress via WebSocket.
+    """
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+        repo_path = project["repo_path"]
+        pid = project["id"]
+        pname = project["name"]
+
+        # Prevent duplicate runs
+        running = conn.execute(
+            "SELECT id FROM background_tasks WHERE type = 'summary_draft'"
+            " AND project_id = ? AND status = 'running'",
+            (project_id,),
+        ).fetchone()
+        if running:
+            raise HTTPException(status_code=409, detail="Summary draft already in progress")
+    finally:
+        conn.close()
+
+    config = _get_config()
+
+    def _blocking_summary_draft():
+        import sqlite3 as _sqlite3
+
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.trigger import run_summary_trigger
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+        try:
+            # Run discovery first if no summary exists
+            proj = ops.get_project(conn2, pid)
+            proj_summary = proj.summary if proj else None
+            if not proj_summary:
+                from social_hook.config.project import load_project_config
+                from social_hook.llm.discovery import discover_project
+                from social_hook.llm.factory import create_client
+
+                project_config = load_project_config(repo_path)
+                client = create_client(config.models.evaluator, config)
+                ops.emit_data_event(conn2, "pipeline", "discovering", pid, pid)
+                disc_summary, disc_files, disc_file_summaries, disc_prompt_docs = discover_project(
+                    client=client,
+                    repo_path=repo_path,
+                    project_docs=project_config.context.project_docs,
+                    max_discovery_tokens=project_config.context.max_discovery_tokens,
+                    max_file_size=project_config.context.max_file_size,
+                    db=conn2,
+                    project_id=pid,
+                )
+                if disc_summary:
+                    ops.update_project_summary(conn2, pid, disc_summary)
+                    if disc_files:
+                        ops.update_discovery_files(conn2, pid, disc_files)
+                    if disc_file_summaries:
+                        ops.upsert_file_summaries(conn2, pid, disc_file_summaries)
+                    if disc_prompt_docs:
+                        ops.update_prompt_docs(conn2, pid, disc_prompt_docs)
+                    ops.emit_data_event(conn2, "project", "updated", pid, pid)
+                    proj_summary = disc_summary
+                    # Re-fetch project with updated summary
+                    proj = ops.get_project(conn2, pid)
+
+            if not proj_summary:
+                return {"draft_ids": [], "count": 0, "error": "Discovery produced no summary"}
+
+            result = run_summary_trigger(
+                config=config,
+                conn=conn2,
+                db=db,
+                project=proj,
+                summary=proj_summary,
+                repo_path=repo_path,
+            )
+            return result or {"draft_ids": [], "count": 0}
+        finally:
+            conn2.close()
+
+    def _on_summary_drafted(result: dict) -> None:
+        draft_id = result.get("draft_id")
+        if not draft_id:
+            return
+        conn2 = _get_conn()
+        try:
+            from social_hook.drafting import DraftResult
+            from social_hook.scheduling import calculate_optimal_time
+
+            d = ops.get_draft(conn2, draft_id)
+            if d:
+                sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=pname,
+                    project_id=pid,
+                    commit_hash="summary",
+                    commit_message="Project introduction",
+                    draft_results=[DraftResult(draft=d, schedule=sched, thread_tweets=[])],
+                )
+        except Exception:
+            logger.debug("Summary draft notification failed", exc_info=True)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "summary_draft",
+        ref_id=f"summary:{project_id}",
+        project_id=pid,
+        fn=_blocking_summary_draft,
+        on_success=_on_summary_drafted,
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
+
+
 @app.get("/api/projects/{project_id}/posts")
 async def api_project_posts(
     project_id: str,
@@ -1325,25 +1609,12 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
     except ConfigError:
         project_config = ProjectConfig(repo_path=project.repo_path)
 
+    from social_hook.compat import evaluation_from_decision
     from social_hook.trigger import parse_commit_info
 
     commit = parse_commit_info(decision.commit_hash, project.repo_path)
 
-    from types import SimpleNamespace
-
-    evaluation = SimpleNamespace(
-        decision="draft",
-        reasoning=decision.reasoning,
-        angle=decision.angle,
-        episode_type=decision.episode_type,
-        post_category=decision.post_category,
-        arc_id=decision.arc_id,
-        new_arc_theme=None,
-        media_tool=decision.media_tool,
-        reference_posts=None,
-        include_project_docs=True,
-        commit_summary=decision.commit_summary,
-    )
+    evaluation = evaluation_from_decision(decision, "draft")
 
     def _blocking_create_draft():
         import sqlite3 as _sqlite3
@@ -1542,7 +1813,8 @@ async def api_enabled_platforms():
     for name, pcfg in config.platforms.items():
         if pcfg.enabled:
             enabled[name] = {"priority": pcfg.priority, "type": pcfg.type}
-    return {"platforms": enabled, "count": len(enabled)}
+    real_count = sum(1 for n in enabled if n != "preview")
+    return {"platforms": enabled, "count": len(enabled), "real_count": real_count}
 
 
 @app.post("/api/decisions/consolidate")
@@ -1596,21 +1868,10 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         files_changed=[],
     )
 
-    from types import SimpleNamespace
+    from social_hook.compat import evaluation_from_decision
 
     anchor = decisions[-1]
-    evaluation = SimpleNamespace(
-        decision="draft",
-        reasoning=anchor.reasoning,
-        angle=anchor.angle,
-        episode_type=anchor.episode_type,
-        post_category=anchor.post_category,
-        arc_id=anchor.arc_id,
-        media_tool=anchor.media_tool,
-        reference_posts=anchor.reference_posts,
-        include_project_docs=True,
-        commit_summary=anchor.commit_summary,
-    )
+    evaluation = evaluation_from_decision(anchor, "draft")
 
     def _blocking_consolidate():
         import sqlite3 as _sqlite3
@@ -1817,7 +2078,9 @@ async def api_tasks(
                     "ref_id": r["ref_id"],
                     "project_id": r["project_id"],
                     "status": r["status"],
-                    "result": json.loads(r["result"]) if r["result"] else None,
+                    "result": safe_json_loads(r["result"], "background_tasks.result")
+                    if r["result"]
+                    else None,
                     "error": r["error"],
                     "created_at": r["created_at"],
                     "updated_at": r["updated_at"],
@@ -1951,6 +2214,25 @@ async def api_media(file_path: str):
 # ---------------------------------------------------------------------------
 # Settings endpoints
 # ---------------------------------------------------------------------------
+
+
+@app.get("/api/wizard/templates")
+async def api_get_wizard_templates():
+    """Return content strategy templates for the setup wizard."""
+    from social_hook.setup.templates import templates_to_dicts
+
+    return {"templates": templates_to_dicts()}
+
+
+@app.get("/api/wizard/detect-providers")
+async def api_detect_providers():
+    """Detect available LLM providers for the setup wizard."""
+    import os
+
+    from social_hook.setup.wizard import discover_providers
+
+    providers = await asyncio.to_thread(discover_providers, dict(os.environ))
+    return {"providers": providers}
 
 
 @app.get("/api/settings/config")
@@ -2649,6 +2931,7 @@ async def api_browse_directory(path: str = Query(default="~")):
     return {
         "current": str(resolved),
         "parent": str(resolved.parent) if resolved != home else str(home),
+        "is_git": (resolved / ".git").exists(),
         "directories": dirs,
     }
 
@@ -2760,5 +3043,66 @@ async def api_delete_project(project_id: str):
         ops.delete_project(conn, project_id)
         ops.emit_data_event(conn, "project", "deleted", project_id, project_id)
         return {"status": "deleted", "project_id": project_id}
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Platform Introduced (per-platform introduction tracking)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/introduced")
+async def api_project_introduced(project_id: str):
+    """Get per-platform introduction status for a project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        rows = conn.execute(
+            "SELECT platform, introduced, introduced_at FROM platform_introduced WHERE project_id = ?",
+            (project_id,),
+        ).fetchall()
+        platforms = {}
+        for row in rows:
+            platforms[row[0]] = {
+                "introduced": bool(row[1]),
+                "introduced_at": row[2],
+            }
+        return {"platforms": platforms}
+    finally:
+        conn.close()
+
+
+class IntroducedResetBody(BaseModel):
+    platform: str | None = None
+
+
+@app.post("/api/projects/{project_id}/introduced/reset")
+async def api_project_introduced_reset(project_id: str, body: IntroducedResetBody):
+    """Reset introduction status for a platform or all platforms."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        count = ops.reset_platform_introduced(conn, project_id, body.platform)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"reset": count, "platform": body.platform or "all"}
+    finally:
+        conn.close()
+
+
+class IntroducedSetBody(BaseModel):
+    platform: str
+    value: bool = True
+
+
+@app.post("/api/projects/{project_id}/introduced/set")
+async def api_project_introduced_set(project_id: str, body: IntroducedSetBody):
+    """Set introduction status for a specific platform."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        ops.set_platform_introduced(conn, project_id, body.platform, body.value)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"platform": body.platform, "introduced": body.value}
     finally:
         conn.close()

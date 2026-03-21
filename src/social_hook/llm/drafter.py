@@ -39,6 +39,11 @@ class Drafter:
         media_config: Optional["MediaGenerationConfig"] = None,
         media_guidance: dict[str, "MediaToolGuidance"] | None = None,
         referenced_posts: list | None = None,
+        platform_introduced: bool | None = None,
+        identity: Any | None = None,
+        target_post_count: int = 0,
+        is_first_post: bool = False,
+        first_post_date: str | None = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit.
 
@@ -74,6 +79,11 @@ class Drafter:
             media_config=media_config,
             media_guidance=media_guidance,
             referenced_posts=referenced_posts,
+            platform_name=platform,
+            identity=identity,
+            target_post_count=target_post_count,
+            is_first_post=is_first_post,
+            first_post_date=first_post_date,
         )
 
         # Build narrative-aware user message
@@ -88,11 +98,16 @@ class Drafter:
         if hasattr(decision, "angle") and decision.angle:
             angle_info = f"Angle: {decision.angle}\n"
 
-        # Introduction context for first-ever posts
+        # Introduction context for first-ever posts on this platform
         intro_info = ""
-        if not project_context.audience_introduced:
+        is_intro = (
+            platform_introduced is False
+            if platform_introduced is not None
+            else not project_context.all_introduced
+        )
+        if is_intro:
             intro_info = (
-                "IMPORTANT: This is the FIRST POST for this project. "
+                "IMPORTANT: This is the FIRST POST for this project on this platform. "
                 "The audience has never heard of it. Write an introductory "
                 "post that tells the story of what this project is, what "
                 "problem it solves, and why it matters. Don't just summarize "
@@ -204,6 +219,10 @@ class Drafter:
         platform: str = "x",
         media_config: Optional["MediaGenerationConfig"] = None,
         media_guidance: dict[str, "MediaToolGuidance"] | None = None,
+        identity: Any | None = None,
+        target_post_count: int = 0,
+        is_first_post: bool = False,
+        first_post_date: str | None = None,
     ) -> CreateDraftInput:
         """Create a thread (>= 4 tweets) for a post-worthy commit.
 
@@ -215,6 +234,10 @@ class Drafter:
             platform: Target platform
             media_config: Media generation config (enabled tools)
             media_guidance: Per-tool content guidance
+            identity: Resolved IdentityConfig for this platform
+            target_post_count: Posts published on this platform
+            is_first_post: Whether this is the first post
+            first_post_date: Earliest posted_at for this platform
 
         Returns:
             Validated CreateDraftInput with thread content
@@ -229,6 +252,11 @@ class Drafter:
             commit,
             media_config=media_config,
             media_guidance=media_guidance,
+            platform_name=platform,
+            identity=identity,
+            target_post_count=target_post_count,
+            is_first_post=is_first_post,
+            first_post_date=first_post_date,
         )
 
         user_content = (

@@ -25,6 +25,7 @@ def events(
         "-f",
         help="Follow new events in real time",
     ),
+    json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Watch live pipeline events (commits, decisions, drafts).
 
@@ -33,7 +34,7 @@ def events(
     from social_hook.db.connection import ResilientConnection, init_database
     from social_hook.filesystem import get_db_path
 
-    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+    json_mode = json_mode or (ctx.obj.get("json", False) if ctx.obj else False)
     db_path = get_db_path()
     init_database(db_path)  # ensure schema exists
 
@@ -129,8 +130,7 @@ def _print_human(data: dict, created_at: str | None) -> None:
 
     # Entity-specific formatting
     if entity == "pipeline":
-        label = "evaluating" if action == "evaluating" else "drafting"
-        typer.echo(f"[{ts}] [{entity:<8}] {label:<12} {entity_id}")
+        typer.echo(f"[{ts}] [{entity:<8}] {action:<12} {entity_id}")
     elif entity == "draft" and action == "created":
         preview = f'  "{content[:60]}..."' if content else ""
         plat = f"  ({platform})" if platform else ""

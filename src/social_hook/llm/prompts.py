@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from social_hook.parsing import safe_json_loads
+
 logger = logging.getLogger(__name__)
 
 from social_hook.config.project import (
@@ -64,8 +66,73 @@ def _render_narrative_sections(sections: list[str], narratives: list[dict]) -> N
             sections.append("**Post angles:** " + "; ".join(n["social_hooks"][:3]))
 
 
+_BUNDLED_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+
+
+def _build_identity_instruction(
+    identity: Any,
+    target_post_count: int = 0,
+    is_first_post: bool = False,
+    first_post_date: str | None = None,
+) -> str:
+    """Build an Author Identity section for drafter/expert prompts.
+
+    Passes raw data (post count, first post flag, date) — the LLM
+    decides how to use intro hooks based on audience familiarity.
+
+    Args:
+        identity: IdentityConfig or None
+        target_post_count: Posts published on this platform
+        is_first_post: Whether this is the first post on this platform
+        first_post_date: ISO date of earliest post on this platform
+
+    Returns:
+        Identity instruction string, or "" if no identity configured
+    """
+    if identity is None:
+        return ""
+    pronoun_map = {
+        "myself": "first person singular (I, me, my)",
+        "team": "first person plural (we, our, us)",
+        "company": "first person plural as the company (we, our, us)",
+        "project": "third person or project voice (it, the project)",
+    }
+    label = getattr(identity, "label", "") or ""
+    id_type = getattr(identity, "type", "myself") or "myself"
+    description = getattr(identity, "description", None)
+    intro_hook = getattr(identity, "intro_hook", None)
+
+    pronouns = pronoun_map.get(id_type, f"the voice of: {label}")
+
+    sections = [
+        "\n## Author Identity\n",
+        f"**Identity**: {label}\n",
+    ]
+    if description:
+        sections.append(f"**About**: {description}\n")
+    sections.append(
+        f"**Perspective**: Write using {pronouns}. "
+        f"Maintain this perspective consistently throughout all content.\n"
+    )
+
+    if intro_hook:
+        sections.append(
+            f'\n**Intro hook**: "{intro_hook}"\n'
+            f"Posts published on this platform/target: {target_post_count}. "
+            f"First post: {'yes' if is_first_post else 'no'}. "
+            f"Posting since: {first_post_date or 'N/A'}.\n"
+            f"Use the intro hook naturally — prominently in early posts, "
+            f"fading as the audience becomes familiar. Don't repeat it verbatim across posts.\n"
+        )
+
+    return "\n".join(sections)
+
+
 def load_prompt(role: str) -> str:
-    """Load a prompt template from ~/.social-hook/prompts/{role}.md.
+    """Load a prompt template for an agent role.
+
+    Search order: user prompts (~/.social-hook/prompts/{role}.md),
+    then bundled prompts (src/social_hook/prompts/{role}.md).
 
     Args:
         role: Agent role name (evaluator, drafter, gatekeeper)
@@ -74,15 +141,19 @@ def load_prompt(role: str) -> str:
         Prompt template content
 
     Raises:
-        PromptNotFoundError: If prompt file does not exist
+        PromptNotFoundError: If prompt file does not exist in either location
     """
-    prompt_path = Path.home() / CONFIG_DIR_NAME / "prompts" / f"{role}.md"
-    if not prompt_path.exists():
-        raise PromptNotFoundError(
-            f"Prompt file not found: {prompt_path}. "
-            f"Run '{PROJECT_SLUG} setup' to create default prompts."
-        )
-    return prompt_path.read_text(encoding="utf-8")
+    user_path = Path.home() / CONFIG_DIR_NAME / "prompts" / f"{role}.md"
+    if user_path.exists():
+        return user_path.read_text(encoding="utf-8")
+
+    bundled_path = _BUNDLED_PROMPTS_DIR / f"{role}.md"
+    if bundled_path.exists():
+        return bundled_path.read_text(encoding="utf-8")
+
+    raise PromptNotFoundError(
+        f"Prompt file not found: {user_path}. Run '{PROJECT_SLUG} setup' to create default prompts."
+    )
 
 
 def count_tokens(text: str) -> int:
@@ -224,7 +295,13 @@ def assemble_evaluator_prompt(
         lc = project_context.lifecycle
         sections.append(f"- Lifecycle phase: {lc.phase} (confidence: {lc.confidence})")
     sections.append(f"- Narrative debt: {project_context.narrative_debt}")
-    sections.append(f"- Audience introduced: {project_context.audience_introduced}")
+    if project_context.platform_introduced:
+        intro_items = ", ".join(
+            f"{p}: {'yes' if v else 'no'}" for p, v in project_context.platform_introduced.items()
+        )
+        sections.append(f"- Platform introduced: {{{intro_items}}}")
+    else:
+        sections.append(f"- Platform introduced: {project_context.all_introduced}")
 
     if project_context.active_arcs:
         sections.append("### Active Arcs")
@@ -377,12 +454,9 @@ def assemble_evaluator_prompt(
 
     # Project documentation — LLM-selected during discovery
     if project_context.project.repo_path and project_context.project.prompt_docs:
-        import json as _json
-
-        try:
-            doc_paths = _json.loads(project_context.project.prompt_docs)
-        except (ValueError, TypeError):
-            doc_paths = []
+        doc_paths = safe_json_loads(
+            project_context.project.prompt_docs, "project.prompt_docs", default=[]
+        )
         if doc_paths:
             repo = Path(project_context.project.repo_path)
             sections.append("\n---\n## Project Documentation")
@@ -472,13 +546,18 @@ def assemble_drafter_prompt(
     media_config: Optional["MediaGenerationConfig"] = None,
     media_guidance: dict[str, "MediaToolGuidance"] | None = None,
     referenced_posts: list | None = None,
+    platform_name: str | None = None,
+    identity: Any | None = None,
+    target_post_count: int = 0,
+    is_first_post: bool = False,
+    first_post_date: str | None = None,
 ) -> str:
     """Assemble full drafter system prompt with context.
 
     Per TECH_ARCH L1582-1607: Includes evaluation result, arc context (when
     post_category == 'arc'), recent posts, and commit details.
 
-    When audience_introduced=false, also includes project documentation
+    When platform not yet introduced, also includes project documentation
     (README, CLAUDE.md) so the drafter can write a proper introduction.
 
     Args:
@@ -491,6 +570,12 @@ def assemble_drafter_prompt(
         config: Context config for doc inclusion limits
         media_config: Media generation config (enabled tools)
         media_guidance: Per-tool content guidance
+        referenced_posts: Evaluator-identified relevant posts
+        platform_name: Current target platform name
+        identity: Resolved IdentityConfig for this platform
+        target_post_count: Posts published on this platform
+        is_first_post: Whether this is the first post on this platform
+        first_post_date: Earliest posted_at for this platform
 
     Returns:
         Complete system prompt string
@@ -505,17 +590,35 @@ def assemble_drafter_prompt(
     if project_context.social_context:
         sections.append(project_context.social_context)
 
-    # Current state — audience introduction status
+    # Current state — per-platform introduction status
+    platform_introduced = (
+        project_context.platform_introduced.get(platform_name, False)
+        if platform_name
+        else project_context.all_introduced
+    )
     sections.append("\n---\n## Current State")
-    sections.append(f"- Audience introduced: {project_context.audience_introduced}")
-    if not project_context.audience_introduced:
+    if project_context.platform_introduced:
+        intro_items = ", ".join(
+            f"{p}: {'yes' if v else 'no'}" for p, v in project_context.platform_introduced.items()
+        )
+        sections.append(f"- Platform introduced: {{{intro_items}}}")
+    else:
+        sections.append(f"- Platform introduced: {platform_introduced}")
+    if not platform_introduced:
         sections.append(
-            "- **THIS IS THE FIRST POST FOR THIS PROJECT.** "
+            "- **THIS IS THE FIRST POST FOR THIS PROJECT ON THIS PLATFORM.** "
             "The audience does not know what this project is yet. "
             "You must write an introductory post that explains what the "
             "project does, what problem it solves, and why it matters — "
             "not just what this commit changed."
         )
+
+    # Author Identity (after social context, before discovery-injected sections)
+    identity_section = _build_identity_instruction(
+        identity, target_post_count, is_first_post, first_post_date
+    )
+    if identity_section:
+        sections.append(identity_section)
 
     # Memories
     if project_context.memories:
@@ -537,8 +640,8 @@ def assemble_drafter_prompt(
     _render_narrative_sections(sections, project_context.session_narratives)
 
     # Project documentation — included when the evaluator requests it
-    # (include_project_docs=true) or when audience hasn't been introduced yet.
-    include_docs = not project_context.audience_introduced
+    # (include_project_docs=true) or when platform hasn't been introduced yet.
+    include_docs = not platform_introduced
     if (
         hasattr(decision, "include_project_docs")
         and decision.include_project_docs
@@ -554,45 +657,39 @@ def assemble_drafter_prompt(
         # load those files instead of just README+CLAUDE.md for deeper
         # project understanding in first posts.
         discovery_files_loaded = False
-        if not project_context.audience_introduced and project_context.project.discovery_files:
-            try:
-                import json as _json
-
-                disc_files = _json.loads(project_context.project.discovery_files)
-                if disc_files:
-                    sections.append("\n---\n## Project Documentation (Discovery)")
-                    tokens_used = 0
-                    for rel_path in disc_files:
-                        fpath = repo / rel_path
-                        if not fpath.exists() or not fpath.is_file():
-                            continue
-                        try:
-                            content = fpath.read_text(encoding="utf-8", errors="replace")
-                            file_tokens = count_tokens(content)
-                            if tokens_used + file_tokens > config.max_doc_tokens:
-                                remaining = config.max_doc_tokens - tokens_used
-                                if remaining > 100:
-                                    content = content[: remaining * 4] + "\n[...truncated]"
-                                    sections.append(f"\n### {rel_path}")
-                                    sections.append(content)
-                                break
-                            sections.append(f"\n### {rel_path}")
-                            sections.append(content)
-                            tokens_used += file_tokens
-                        except (OSError, UnicodeDecodeError):
-                            continue
-                    discovery_files_loaded = True
-            except (ValueError, TypeError):
-                pass
+        if not platform_introduced and project_context.project.discovery_files:
+            disc_files = safe_json_loads(
+                project_context.project.discovery_files, "project.discovery_files", default=[]
+            )
+            if disc_files:
+                sections.append("\n---\n## Project Documentation (Discovery)")
+                tokens_used = 0
+                for rel_path in disc_files:
+                    fpath = repo / rel_path
+                    if not fpath.exists() or not fpath.is_file():
+                        continue
+                    try:
+                        content = fpath.read_text(encoding="utf-8", errors="replace")
+                        file_tokens = count_tokens(content)
+                        if tokens_used + file_tokens > config.max_doc_tokens:
+                            remaining = config.max_doc_tokens - tokens_used
+                            if remaining > 100:
+                                content = content[: remaining * 4] + "\n[...truncated]"
+                                sections.append(f"\n### {rel_path}")
+                                sections.append(content)
+                            break
+                        sections.append(f"\n### {rel_path}")
+                        sections.append(content)
+                        tokens_used += file_tokens
+                    except (OSError, UnicodeDecodeError):
+                        continue
+                discovery_files_loaded = True
 
         # Fallback to prompt_docs when no discovery files loaded
         if not discovery_files_loaded and project_context.project.prompt_docs:
-            import json as _json
-
-            try:
-                doc_paths = _json.loads(project_context.project.prompt_docs)
-            except (ValueError, TypeError):
-                doc_paths = []
+            doc_paths = safe_json_loads(
+                project_context.project.prompt_docs, "project.prompt_docs", default=[]
+            )
             if doc_paths:
                 sections.append("\n---\n## Project Documentation")
                 tokens_used = 0
@@ -712,6 +809,8 @@ def assemble_gatekeeper_prompt(
     narrative_debt: int | None = None,
     audience_introduced: bool | None = None,
     linked_decision: Any | None = None,
+    social_context: str | None = None,
+    platform_introduced: dict[str, bool] | None = None,
 ) -> str:
     """Assemble gatekeeper system prompt with enriched context.
 
@@ -730,13 +829,19 @@ def assemble_gatekeeper_prompt(
         lifecycle_phase: Current project lifecycle phase
         active_arcs: Active narrative arcs
         narrative_debt: Current narrative debt counter
-        audience_introduced: Whether audience has been introduced
+        audience_introduced: Whether audience has been introduced (deprecated, use platform_introduced)
         linked_decision: Decision linked to the current draft
+        social_context: Project social context for voice awareness
+        platform_introduced: Per-platform introduction state dict
 
     Returns:
         Complete system prompt string
     """
     sections = [prompt]
+
+    if social_context:
+        sections.append("\n---\n## Project Context")
+        sections.append(social_context)
 
     if system_snapshot:
         sections.append("\n---\n" + system_snapshot)
@@ -745,7 +850,12 @@ def assemble_gatekeeper_prompt(
     state_lines = []
     if lifecycle_phase is not None:
         state_lines.append(f"- Lifecycle phase: {lifecycle_phase}")
-    if audience_introduced is not None:
+    if platform_introduced is not None:
+        intro_items = ", ".join(
+            f"{p}: {'yes' if v else 'no'}" for p, v in platform_introduced.items()
+        )
+        state_lines.append(f"- Platform introduced: {{{intro_items}}}")
+    elif audience_introduced is not None:
         state_lines.append(f"- Audience introduced: {audience_introduced}")
     if narrative_debt is not None:
         state_lines.append(f"- Narrative debt: {narrative_debt}")
@@ -840,6 +950,8 @@ def assemble_expert_prompt(
     escalation_reason: str,
     escalation_context: str | None = None,
     project_summary: str | None = None,
+    social_context: str | None = None,
+    identity: Any | None = None,
 ) -> str:
     """Assemble expert system prompt for escalated requests.
 
@@ -853,11 +965,22 @@ def assemble_expert_prompt(
         escalation_reason: Why the Gatekeeper escalated
         escalation_context: Additional context from Gatekeeper
         project_summary: Pre-injected project summary
+        social_context: Project social context for voice consistency
+        identity: Resolved IdentityConfig for maintaining perspective
 
     Returns:
         Complete system prompt string
     """
     sections = [prompt]
+
+    if social_context:
+        sections.append("\n---\n## Project Context")
+        sections.append(social_context)
+
+    identity_section = _build_identity_instruction(identity)
+    if identity_section:
+        sections.append(identity_section)
+        sections.append("When revising, maintain the author's identity and perspective.")
 
     if project_summary:
         sections.append("\n---\n## Project Summary")
@@ -932,7 +1055,7 @@ def assemble_evaluator_context(
     debt = db.get_narrative_debt(project_id)
     narrative_debt = debt.debt_counter if debt else 0
 
-    audience_introduced = db.get_audience_introduced(project_id)
+    platform_introduced = db.get_all_platform_introduced(project_id)
     pending_drafts = db.get_pending_drafts(project_id)
     held_decisions = db.get_held_decisions(project_id, limit=20)
     recent_decisions = db.get_recent_decisions_for_llm(project_id, limit=config.recent_decisions)
@@ -970,7 +1093,7 @@ def assemble_evaluator_context(
         lifecycle=lifecycle,
         active_arcs=active_arcs,
         narrative_debt=narrative_debt,
-        audience_introduced=audience_introduced,
+        platform_introduced=platform_introduced,
         pending_drafts=pending_drafts,
         recent_decisions=recent_decisions,
         recent_posts=recent_posts,

@@ -4,8 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchDrafts, fetchEnabledPlatforms, fetchProjects } from "@/lib/api";
 import type { Draft, Project } from "@/lib/types";
+import { parseTags } from "@/lib/types";
 import { RateLimitCard } from "@/components/rate-limit-card";
-import { StatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
+import { WizardModal } from "@/components/wizard/wizard-modal";
+import { QuickstartModal } from "@/components/quickstart-modal";
 import { useDataEvents } from "@/lib/use-data-events";
 
 export default function DashboardPage() {
@@ -14,6 +17,9 @@ export default function DashboardPage() {
   const [platformCount, setPlatformCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showWizard, setShowWizard] = useState(false);
+  const [showQuickstart, setShowQuickstart] = useState(false);
+  const [wizardProject, setWizardProject] = useState<{ repoPath: string; projectId: string } | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -28,7 +34,7 @@ export default function DashboardPage() {
   // Fetch platform count separately (not on reload — only on mount)
   useEffect(() => {
     fetchEnabledPlatforms()
-      .then((res) => setPlatformCount(res.count))
+      .then((res) => setPlatformCount(res.real_count))
       .catch(() => setPlatformCount(null));
   }, []);
 
@@ -75,7 +81,7 @@ export default function DashboardPage() {
 
       {platformCount === 0 && (
         <div className="rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300">
-          No platforms are enabled — drafts won&apos;t be generated from commits.
+          No platforms are enabled. Drafts will still be generated, but you won&apos;t be able to post.
           Enable a platform in{" "}
           <Link href="/settings?section=platforms" className="font-medium underline hover:no-underline">
             Settings &rarr; Platforms
@@ -97,7 +103,26 @@ export default function DashboardPage() {
       <div>
         <h2 className="mb-3 text-lg font-semibold">Projects</h2>
         {projects.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No projects registered yet. Push a commit to a tracked project to get started.</p>
+          <div className="rounded-lg border-2 border-dashed border-accent/30 p-8 text-center">
+            <h3 className="text-lg font-semibold">Get started in 3 minutes</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Set up your voice, connect platforms, and register your first project.
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-3">
+              <button
+                onClick={() => setShowWizard(true)}
+                className="rounded-md bg-accent px-6 py-2.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 transition-colors"
+              >
+                Start Setup
+              </button>
+              <button
+                onClick={() => setShowQuickstart(true)}
+                className="rounded-md border border-border px-6 py-2.5 text-sm font-medium hover:bg-muted transition-colors"
+              >
+                Quick Preview
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => {
@@ -126,7 +151,7 @@ export default function DashboardPage() {
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(projectStatusCounts).map(([status, count]) => (
                       <div key={status} className="flex items-center gap-1">
-                        <StatusBadge status={status} />
+                        <Badge value={status} variant="status" />
                         <span className="text-xs text-muted-foreground">{count}</span>
                       </div>
                     ))}
@@ -150,7 +175,12 @@ export default function DashboardPage() {
           </Link>
         </div>
         {drafts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No drafts yet.</p>
+          <div className="rounded-lg border border-border p-6 text-center">
+            <p className="text-sm text-muted-foreground">No drafts yet.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Make a commit to a registered project, or import existing commits from a project page.
+            </p>
+          </div>
         ) : (
           <div className="space-y-2">
             {drafts.slice(0, 5).map((draft) => (
@@ -162,18 +192,57 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-muted-foreground">{draft.platform}</span>
-                    <StatusBadge status={draft.status} />
+                    <Badge value={draft.status} variant="status" />
+                    {draft.is_intro && <Badge value="INTRO" variant="system" />}
+                    {draft.platform === "preview" && <Badge value="Preview" variant="system" />}
                   </div>
                   <span className="text-xs text-muted-foreground">
                     {new Date(draft.created_at).toLocaleDateString()}
                   </span>
                 </div>
                 <p className="mt-1 truncate text-sm">{draft.content}</p>
+                {draft.decision && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {draft.decision.episode_type && <Badge value={draft.decision.episode_type} variant="category" />}
+                    {draft.decision.post_category && <Badge value={draft.decision.post_category} variant="category" />}
+                    {parseTags(draft.decision.episode_tags).slice(0, 3).map((tag) => (
+                      <Badge key={tag} value={tag} variant="default" />
+                    ))}
+                    {parseTags(draft.decision.episode_tags).length > 3 && (
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs text-muted-foreground">
+                        +{parseTags(draft.decision.episode_tags).length - 3} more
+                      </span>
+                    )}
+                  </div>
+                )}
               </Link>
             ))}
           </div>
         )}
       </div>
+
+      {/* Wizard modal */}
+      <WizardModal
+        open={showWizard}
+        onClose={() => { setShowWizard(false); setWizardProject(null); }}
+        onComplete={() => {
+          setShowWizard(false);
+          setWizardProject(null);
+          reload();
+        }}
+        prefilledProject={wizardProject}
+      />
+
+      {/* Quickstart modal */}
+      <QuickstartModal
+        open={showQuickstart}
+        onClose={() => setShowQuickstart(false)}
+        onComplete={reload}
+        onOpenFullWizard={(project) => {
+          if (project) setWizardProject(project);
+          setShowWizard(true);
+        }}
+      />
     </div>
   );
 }

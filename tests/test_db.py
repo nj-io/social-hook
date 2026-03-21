@@ -123,6 +123,7 @@ class TestDatabaseInitialization:
             "chat_messages",
             "background_tasks",
             "file_summaries",
+            "platform_introduced",
         }
 
         assert table_names == expected_tables
@@ -136,9 +137,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 18."""
+        """Check schema version is a timestamp (>= 20260209131940)."""
         version = get_schema_version(temp_db)
-        assert version == 18
+        assert version >= 20260209131940
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent.

@@ -1,0 +1,73 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to reproduce the issue.
+      placeholder: |
+        1. Run `social-hook ...`
+        2. ...
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include error messages or logs if available.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of Social Hook is affected?
+      options:
+        - CLI
+        - Web Dashboard
+        - Telegram Bot
+        - Evaluation Pipeline
+        - Draft Generation
+        - Media Generation
+        - Narrative / Arcs
+        - Configuration / Setup
+        - Database / Snapshots
+        - Scheduling
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Please provide version and platform info.
+      placeholder: |
+        - social-hook version: (run `social-hook version`)
+        - Python version:
+        - OS:
+        - LLM provider: (anthropic / claude-cli / openrouter / ollama)
+        - Installed extras: (media / multi-provider / slack)
+    validations:
+      required: false

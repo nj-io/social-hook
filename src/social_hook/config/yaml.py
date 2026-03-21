@@ -9,6 +9,7 @@ import yaml
 from social_hook.config.platforms import OutputPlatformConfig
 from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
+from social_hook.parsing import check_unknown_keys
 
 # Valid X account tiers and their character limits
 VALID_TIERS = ("free", "basic", "premium", "premium_plus")
@@ -169,6 +170,26 @@ class RateLimitsConfig:
 
 
 @dataclass
+class IdentityConfig:
+    """Named identity definition for content authorship."""
+
+    type: str = "myself"  # "myself" | "team" | "company" | "project" | "custom"
+    label: str = ""
+    description: str | None = None
+    intro_hook: str | None = None
+
+
+@dataclass
+class ContentStrategyConfig:
+    """Content strategy definition. Matches TARGETS_DESIGN.md strategy shape."""
+
+    audience: str | None = None
+    voice: str | None = None
+    post_when: str | None = None
+    avoid: str | None = None
+
+
+@dataclass
 class Config:
     """Main configuration object."""
 
@@ -187,9 +208,22 @@ class Config:
     rate_limits: RateLimitsConfig = field(default_factory=RateLimitsConfig)
     channels: dict[str, ChannelConfig] = field(default_factory=dict)
     notification_level: str = "all_decisions"  # "all_decisions" or "drafts_only"
+    identities: dict[str, IdentityConfig] = field(default_factory=dict)
+    default_identity: str | None = None
+    content_strategies: dict[str, ContentStrategyConfig] = field(default_factory=dict)
+    content_strategy: str | None = None  # Reference to active strategy name
 
     # Environment variables (populated by load_full_config)
     env: dict[str, str] = field(default_factory=dict)
+
+
+def resolve_identity(config: Config, platform_name: str) -> IdentityConfig | None:
+    """Resolve identity for a platform: platform.identity -> default_identity -> None."""
+    pcfg = config.platforms.get(platform_name)
+    identity_name = (pcfg.identity if pcfg else None) or config.default_identity
+    if identity_name and identity_name in config.identities:
+        return config.identities[identity_name]
+    return None
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
@@ -298,6 +332,26 @@ def load_config(config_path: str | Path | None = None) -> Config:
 
 def _parse_config(data: dict[str, Any]) -> Config:
     """Parse raw config dict into Config object."""
+    check_unknown_keys(
+        data,
+        {
+            "models",
+            "platforms",
+            "media_generation",
+            "scheduling",
+            "journey_capture",
+            "consolidation",
+            "channels",
+            "notification_level",
+            "rate_limits",
+            "identities",
+            "default_identity",
+            "content_strategies",
+            "content_strategy",
+        },
+        "content-config",
+    )
+
     # Models
     models_data = data.get("models", {})
     default_models: dict[str, str] = DEFAULT_CONFIG["models"]  # type: ignore[assignment]
@@ -370,6 +424,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
             filter=pfilter,
             frequency=freq,
             scheduling=pdata.get("scheduling"),
+            identity=pdata.get("identity"),
         )
 
     # Default: X enabled as primary if no platforms specified
@@ -487,6 +542,41 @@ def _parse_config(data: dict[str, Any]) -> Config:
             f"Invalid notification_level '{notification_level}': must be 'all_decisions' or 'drafts_only'"
         )
 
+    # Identities
+    identities: dict[str, IdentityConfig] = {}
+    for id_name, id_data in data.get("identities", {}).items():
+        if not isinstance(id_data, dict):
+            raise ConfigError(f"Identity '{id_name}' config must be a dict")
+        identities[id_name] = IdentityConfig(
+            type=id_data.get("type", "myself"),
+            label=id_data.get("label", id_name),
+            description=id_data.get("description"),
+            intro_hook=id_data.get("intro_hook"),
+        )
+    default_identity = data.get("default_identity")
+
+    # Content strategies
+    content_strategies: dict[str, ContentStrategyConfig] = {}
+    for cs_name, cs_data in data.get("content_strategies", {}).items():
+        if not isinstance(cs_data, dict):
+            raise ConfigError(f"Content strategy '{cs_name}' config must be a dict")
+        content_strategies[cs_name] = ContentStrategyConfig(
+            audience=cs_data.get("audience"),
+            voice=cs_data.get("voice"),
+            post_when=cs_data.get("post_when"),
+            avoid=cs_data.get("avoid"),
+        )
+    content_strategy = data.get("content_strategy")
+
+    # Cross-reference validation
+    if default_identity and default_identity not in identities:
+        raise ConfigError(f"default_identity '{default_identity}' not found in identities")
+    if content_strategy and content_strategy not in content_strategies:
+        raise ConfigError(f"content_strategy '{content_strategy}' not found in content_strategies")
+    for pname, pcfg in platforms.items():
+        if pcfg.identity and pcfg.identity not in identities:
+            raise ConfigError(f"Platform '{pname}' references unknown identity '{pcfg.identity}'")
+
     return Config(
         models=models,
         platforms=platforms,
@@ -497,6 +587,10 @@ def _parse_config(data: dict[str, Any]) -> Config:
         rate_limits=rate_limits,
         channels=channels,
         notification_level=notification_level,
+        identities=identities,
+        default_identity=default_identity,
+        content_strategies=content_strategies,
+        content_strategy=content_strategy,
     )
 
 

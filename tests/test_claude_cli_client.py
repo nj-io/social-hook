@@ -38,6 +38,15 @@ TEXT_DELTA_EVENT = {
     },
 }
 
+INPUT_JSON_DELTA_EVENT = {
+    "type": "stream_event",
+    "event": {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {"type": "input_json_delta", "partial_json": '{"decision": "post_worthy"}'},
+    },
+}
+
 RESULT_EVENT = {
     "type": "result",
     "subtype": "success",
@@ -507,3 +516,94 @@ class TestErrorHandling:
         client = ClaudeCliClient()
         with pytest.raises(MalformedResponseError, match="No text content"):
             client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+
+class TestInputJsonDelta:
+    """Tests for input_json_delta parsing in the NDJSON stream."""
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_input_json_delta_parsed(self, mock_popen):
+        """input_json_delta events are parsed into a tool call."""
+        ndjson = _make_ndjson(SYSTEM_EVENT, INPUT_JSON_DELTA_EVENT, RESULT_EVENT)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
+        client = ClaudeCliClient()
+        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert isinstance(resp, NormalizedResponse)
+        assert len(resp.content) == 1
+        tc = resp.content[0]
+        assert isinstance(tc, NormalizedToolCall)
+        assert tc.name == "log_decision"
+        assert tc.input == {"decision": "post_worthy"}
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_multiple_input_json_deltas_accumulated(self, mock_popen):
+        """Multiple input_json_delta events with chunked partial_json are reassembled."""
+        delta1 = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '{"decision":'},
+            },
+        }
+        delta2 = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": ' "post_worthy"}'},
+            },
+        }
+        ndjson = _make_ndjson(SYSTEM_EVENT, delta1, delta2, RESULT_EVENT)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
+        client = ClaudeCliClient()
+        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        assert resp.content[0].input == {"decision": "post_worthy"}
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_mixed_text_and_input_json_blocks(self, mock_popen):
+        """text_delta and input_json_delta at the same index are both accumulated."""
+        text_block = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": '{"decision":'},
+            },
+        }
+        tool_block = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": ' "post_worthy"}'},
+            },
+        }
+        ndjson = _make_ndjson(SYSTEM_EVENT, text_block, tool_block, RESULT_EVENT)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
+        client = ClaudeCliClient()
+        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        # Both delta types at the same index are concatenated into one result
+        assert resp.content[0].input == {"decision": "post_worthy"}
+
+    @patch("social_hook.llm.claude_cli.subprocess.Popen")
+    def test_unknown_delta_type_ignored_gracefully(self, mock_popen):
+        """signature_delta type doesn't crash the parser."""
+        sig_delta = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "signature_delta", "signature": "abc123"},
+            },
+        }
+        ndjson = _make_ndjson(SYSTEM_EVENT, sig_delta, TEXT_DELTA_EVENT, RESULT_EVENT)
+        mock_popen.return_value = _make_mock_popen(stdout=ndjson)
+        client = ClaudeCliClient()
+        resp = client.complete(SAMPLE_MESSAGES, [SAMPLE_TOOL])
+
+        # Should still parse the text_delta successfully
+        assert resp.content[0].input == {"decision": "post_worthy"}

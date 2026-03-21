@@ -135,8 +135,17 @@ def notify_draft_review(
             is_thread=is_thread,
             tweet_count=tweet_count,
             media_info=media_info,
+            episode_type=result.episode_type,
+            post_category=result.post_category,
+            angle=result.angle,
+            episode_tags=result.episode_tags,
+            is_intro=getattr(draft, "is_intro", False),
         )
-        buttons = get_review_buttons_normalized(draft.id)
+        buttons = get_review_buttons_normalized(
+            draft.id,
+            platform=draft.platform,
+            is_intro=getattr(draft, "is_intro", False),
+        )
         msg = OutboundMessage(text=msg_text, buttons=buttons)
         broadcast_notification(
             config,
@@ -192,8 +201,14 @@ def resend_draft_notification(
             angle=decision.angle if decision else None,
             episode_type=decision.episode_type if decision else None,
             post_category=decision.post_category if decision else None,
+            episode_tags=decision.episode_tags if decision else None,
+            is_intro=getattr(draft, "is_intro", False),
         )
-        buttons = get_review_buttons_normalized(draft.id)
+        buttons = get_review_buttons_normalized(
+            draft.id,
+            platform=draft.platform,
+            is_intro=getattr(draft, "is_intro", False),
+        )
         msg = OutboundMessage(text=msg_text, buttons=buttons)
         broadcast_notification(
             config,

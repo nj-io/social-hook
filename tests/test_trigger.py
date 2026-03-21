@@ -478,7 +478,7 @@ class TestTriggerUsesAdapter:
         mock_parse.return_value = commit
 
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
 
@@ -708,7 +708,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -774,7 +774,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -825,7 +825,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -880,7 +880,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -938,7 +938,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -995,7 +995,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1105,7 +1105,7 @@ class TestTriggerSendsMediaNotification:
         mock_by_path.return_value = Project(id="p1", name="test-proj", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1248,7 +1248,7 @@ class TestPerPlatformPipeline:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1331,7 +1331,7 @@ class TestPerPlatformPipeline:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1431,7 +1431,7 @@ class TestPerPlatformPipeline:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1493,7 +1493,7 @@ class TestPerPlatformPipeline:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]

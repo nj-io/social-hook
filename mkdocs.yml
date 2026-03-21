@@ -1,0 +1,88 @@
+site_name: Social Hook
+site_description: Automated social media content from development activity
+site_url: https://nj-io.github.io/social-hook/docs/
+repo_url: https://github.com/nj-io/social-hook
+repo_name: nj-io/social-hook
+edit_uri: edit/main/site-docs/
+
+docs_dir: site-docs
+site_dir: site
+
+theme:
+  name: material
+  favicon: assets/favicon.png
+  logo: assets/favicon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  homepage: https://nj-io.github.io/social-hook/
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - CLI Reference:
+    - Overview: cli/index.md
+    - Commands: cli/root-commands.md
+    - arc: cli/arc.md
+    - bot: cli/bot.md
+    - config: cli/config.md
+    - decision: cli/decision.md
+    - draft: cli/draft.md
+    - inspect: cli/inspect.md
+    - journey: cli/journey.md
+    - manual: cli/manual.md
+    - media: cli/media.md
+    - memory: cli/memory.md
+    - project: cli/project.md
+    - snapshot: cli/snapshot.md
+  - Concepts:
+    - Overview: concepts/index.md
+    - How the Pipeline Works: concepts/pipeline.md
+    - Narrative Arcs: concepts/narrative-arcs.md
+    - Voice Memory: concepts/voice-memory.md
+    - Media Generation: concepts/media-generation.md
+  - Configuration:
+    - config.yaml: configuration/config.md
+    - content-config.yaml: configuration/content-config.md
+    - social-context.md: configuration/social-context.md
