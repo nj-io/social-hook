@@ -52,37 +52,6 @@ def _extract_json(text: str) -> dict:
     raise MalformedResponseError(f"Could not extract JSON from CLI output: {text[:200]}")
 
 
-def _extract_assistant_text(raw: list | dict) -> str | None:
-    """Extract text from assistant message content blocks.
-
-    The CLI's --output-format json returns an array of event objects.
-    Assistant messages contain the full model output in content blocks.
-    We use this instead of the envelope's "result" field because the
-    result field is subject to stdout truncation (Claude Code CLI bug
-    #2904: truncates large JSON lines at fixed character boundaries).
-
-    Returns concatenated text from the last assistant message's text
-    blocks, or None if no text content is found.
-    """
-    if not isinstance(raw, list):
-        return None
-
-    # Walk backwards to find the last assistant message with text content
-    for el in reversed(raw):
-        if not isinstance(el, dict) or el.get("type") != "assistant":
-            continue
-        content = el.get("message", {}).get("content", [])
-        texts = [
-            block["text"]
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
-        ]
-        if texts:
-            return "\n".join(texts)
-
-    return None
-
-
 class ClaudeCliClient(LLMClient):
     """LLM client that uses the Claude Code CLI (claude -p) for completions."""
 
@@ -228,10 +197,10 @@ class ClaudeCliClient(LLMClient):
             raise MalformedResponseError(f"Claude CLI error (exit {result.returncode}): {detail}")
 
         # 6. Parse NDJSON events from stream-json output.
-        #    Each line is a separate JSON object. Text content arrives as
-        #    small content_block_delta events that won't hit the CLI's
-        #    string truncation limit (bug #2904).
-        text_parts = []
+        #    Each line is a separate JSON object. Content arrives as
+        #    content_block_delta events (text_delta for text, input_json_delta
+        #    for tool calls). Parse by block index to accumulate both types.
+        content_blocks: dict[int, list[str]] = {}  # index -> text chunks
         envelope = {}
 
         for line in result.stdout.strip().split("\n"):
@@ -243,21 +212,27 @@ class ClaudeCliClient(LLMClient):
             except json.JSONDecodeError:
                 continue
 
-            # Collect text from streaming delta events
-            # Format: {"type":"stream_event","event":{"type":"content_block_delta",
-            #          "delta":{"type":"text_delta","text":"chunk"}}}
             if event.get("type") == "stream_event":
                 inner = event.get("event", {})
                 if inner.get("type") == "content_block_delta":
+                    index = inner.get("index", 0)
                     delta = inner.get("delta", {})
-                    if delta.get("type") == "text_delta":
-                        text_parts.append(delta.get("text", ""))
+                    delta_type = delta.get("type", "")
+                    if delta_type == "text_delta":
+                        content_blocks.setdefault(index, []).append(delta.get("text", ""))
+                    elif delta_type == "input_json_delta":
+                        content_blocks.setdefault(index, []).append(delta.get("partial_json", ""))
+                    # thinking_delta, signature_delta — skip (not output content)
 
             # Capture the result envelope for usage data
             elif event.get("type") == "result":
                 envelope = event
 
-        result_text = "".join(text_parts)
+        result_text = ""
+        if content_blocks:
+            for idx in sorted(content_blocks):
+                result_text += "".join(content_blocks[idx])
+
         if not result_text:
             # Fallback: try the result field (may be truncated — bug #2904)
             result_text = envelope.get("result", "")

@@ -553,6 +553,10 @@ def discover(
         max_file_size=project_config.context.max_file_size,
         db=db_ctx,
         project_id=project.id,
+        on_progress=lambda stage: (
+            typer.echo(f"[{stage}] {project.name}"),  # type: ignore[func-returns-value]
+            ops.emit_data_event(conn, "pipeline", stage, project.id, project.id),  # type: ignore[func-returns-value]
+        ),
     )
 
     if summary:

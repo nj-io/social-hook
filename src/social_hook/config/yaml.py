@@ -9,6 +9,7 @@ import yaml
 from social_hook.config.platforms import OutputPlatformConfig
 from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
+from social_hook.parsing import check_unknown_keys
 
 # Valid X account tiers and their character limits
 VALID_TIERS = ("free", "basic", "premium", "premium_plus")
@@ -331,6 +332,26 @@ def load_config(config_path: str | Path | None = None) -> Config:
 
 def _parse_config(data: dict[str, Any]) -> Config:
     """Parse raw config dict into Config object."""
+    check_unknown_keys(
+        data,
+        {
+            "models",
+            "platforms",
+            "media_generation",
+            "scheduling",
+            "journey_capture",
+            "consolidation",
+            "channels",
+            "notification_level",
+            "rate_limits",
+            "identities",
+            "default_identity",
+            "content_strategies",
+            "content_strategy",
+        },
+        "content-config",
+    )
+
     # Models
     models_data = data.get("models", {})
     default_models: dict[str, str] = DEFAULT_CONFIG["models"]  # type: ignore[assignment]

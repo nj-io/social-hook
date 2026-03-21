@@ -5,6 +5,9 @@ from datetime import datetime
 import pytest
 
 from social_hook.models import (
+    EDITABLE_STATUSES,
+    PENDING_STATUSES,
+    TERMINAL_STATUSES,
     Arc,
     ArcStatus,
     Decision,
@@ -676,6 +679,31 @@ class TestUsageLogTriggerSource:
         row = u.to_row()
         assert len(row) == 11
         assert row[-1] == "manual"
+
+
+class TestStatusGroups:
+    """Tests for status group frozensets."""
+
+    def test_terminal_statuses_values(self):
+        """TERMINAL_STATUSES contains exactly the expected values."""
+        assert {"posted", "rejected", "cancelled", "superseded"} == TERMINAL_STATUSES
+
+    def test_pending_statuses_values(self):
+        """PENDING_STATUSES contains exactly the expected values."""
+        assert {"draft", "approved", "scheduled", "deferred"} == PENDING_STATUSES
+
+    def test_editable_statuses_values(self):
+        """EDITABLE_STATUSES contains exactly the expected values."""
+        assert {"draft", "deferred"} == EDITABLE_STATUSES
+
+    def test_editable_subset_of_pending(self):
+        """EDITABLE_STATUSES is a proper subset of PENDING_STATUSES."""
+        assert EDITABLE_STATUSES < PENDING_STATUSES
+
+    def test_status_groups_cover_all_enum_values(self):
+        """TERMINAL | PENDING | {failed} covers every DraftStatus value."""
+        all_values = {s.value for s in DraftStatus}
+        assert TERMINAL_STATUSES | PENDING_STATUSES | {"failed"} == all_values
 
 
 class TestHelperFunctions:
