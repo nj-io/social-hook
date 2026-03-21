@@ -158,10 +158,12 @@ def calculate_optimal_time(
                 st = st.replace(tzinfo=timezone.utc)
             scheduled_times.append(st)
 
-    for d in optimal_days:
-        if d not in _DAY_MAP:
+    for day_name in optimal_days:
+        if day_name not in _DAY_MAP:
             logger.warning(
-                "Unrecognized day name in optimal_days: %r (expected: %s)", d, list(_DAY_MAP.keys())
+                "Unrecognized day name in optimal_days: %r (expected: %s)",
+                day_name,
+                list(_DAY_MAP.keys()),
             )
     optimal_day_nums = [_DAY_MAP[d] for d in optimal_days if d in _DAY_MAP]
 

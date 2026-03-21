@@ -88,7 +88,7 @@ def consolidation_tick(
                 )
             else:
                 logger.warning("Unknown consolidation mode: %s", config.consolidation.mode)
-                return
+                return total_processed
 
             # Mark as processed (direct DB write, not via DryRunContext)
             if not dry_run:
