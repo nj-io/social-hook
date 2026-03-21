@@ -1,7 +1,33 @@
 """Section U: Platform Posting scenarios."""
 
+import logging
+
 from e2e.constants import COMMITS
 from e2e.helpers.snapshots import snapshot_rollback
+
+log = logging.getLogger(__name__)
+
+
+def _post_detail(result, platform):
+    """Format post result as a readable string with clickable link."""
+    lines = [
+        f"       Platform:    {platform}",
+        f"       External ID: {result.external_id}",
+    ]
+    if result.external_url:
+        lines.append(f"       URL:         \033[4m{result.external_url}\033[0m")
+    return "\n".join(lines)
+
+
+def _pause_before_delete(pause, url=None):
+    """If --pause is set, wait for user confirmation before deleting."""
+    if not pause:
+        return
+    msg = "       Press Enter to delete"
+    if url:
+        msg += f" ({url})"
+    msg += "..."
+    input(msg)
 
 
 def get_enabled_platforms(config):
@@ -23,8 +49,14 @@ def get_enabled_platforms(config):
     return platforms
 
 
-def run(harness, runner, live=False):
-    """U1-U6: Platform posting scenarios."""
+def run(harness, runner, live=False, pause=False):
+    """U1-U6: Platform posting scenarios.
+
+    Args:
+        live: Use real API calls (vs VCR cassettes).
+        pause: Pause after each live post for manual verification before deletion.
+            Implies --live. Use with: python scripts/e2e_test.py --only platform-posting --pause
+    """
     from social_hook.db import operations as ops
 
     if not harness.project_id:
@@ -66,8 +98,6 @@ def run(harness, runner, live=False):
 
         # Phase 1b: Single post + delete
         def u_single_post(plat=platform, adapter=plat_adapter):
-            import logging
-
             from e2e.vcr_config import vcr_context
 
             log_path = harness.base / "e2e-platform-posts.log"
@@ -84,18 +114,24 @@ def run(harness, runner, live=False):
                 with open(log_path, "a") as f:
                     f.write(f"{plat}\t{result.external_id}\t{result.external_url}\n")
 
+                print(_post_detail(result, plat))
+
                 runner.add_review_item(
                     f"U-{plat}-post",
                     title=f"Single post: {plat}",
                     review_question=f"Post created: {result.external_url}",
+                    external_id=result.external_id,
+                    external_url=result.external_url,
                 )
 
                 # Cleanup: delete the test post
                 if live and result.external_id:
+                    _pause_before_delete(pause, result.external_url)
                     try:
                         adapter.delete(result.external_id)
+                        print(f"       Deleted: {result.external_id}")
                     except Exception as e:
-                        logging.warning(f"Failed to delete test post {result.external_id}: {e}")
+                        log.warning(f"Failed to delete test post {result.external_id}: {e}")
 
                 return f"Posted: {result.external_id}"
 

@@ -63,7 +63,17 @@ def main():
         action="store_true",
         help="Use real API calls instead of VCR cassettes for platform tests",
     )
+    parser.add_argument(
+        "--pause",
+        action="store_true",
+        help="Pause after each live post so you can verify it on the platform before deletion. "
+        "Implies --live. Only affects Section U (Platform Posting).",
+    )
     args = parser.parse_args()
+
+    # --pause implies --live
+    if args.pause:
+        args.live = True
 
     # Determine provider
     provider = args.provider
@@ -193,6 +203,7 @@ def main():
             kwargs = {"adapter": adapter} if info["needs_adapter"] else {}
             if info.get("needs_live"):
                 kwargs["live"] = args.live
+                kwargs["pause"] = args.pause
             mod.run(harness, runner, **kwargs)
 
             # Auto-save base-project fixture after section A
