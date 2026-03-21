@@ -1,14 +1,8 @@
 import Link from "next/link";
 import type { Draft } from "@/lib/types";
-import { StatusBadge } from "./status-badge";
-
-function platformLabel(platform: string): string {
-  const labels: Record<string, string> = {
-    x: "X (Twitter)",
-    linkedin: "LinkedIn",
-  };
-  return labels[platform] ?? platform;
-}
+import { parseTags } from "@/lib/types";
+import { platformLabel } from "@/lib/platform";
+import { Badge } from "./ui/badge";
 
 export function DraftCard({ draft }: { draft: Draft }) {
   const preview = draft.content.length > 140
@@ -26,9 +20,25 @@ export function DraftCard({ draft }: { draft: Draft }) {
             <span className="text-xs font-medium text-muted-foreground">
               {platformLabel(draft.platform)}
             </span>
-            <StatusBadge status={draft.status} />
+            <Badge value={draft.status} variant="status" />
+            {draft.is_intro && <Badge value="INTRO" variant="system" />}
+            {draft.platform === "preview" && <Badge value="Preview" variant="system" />}
           </div>
           <p className="text-sm text-foreground">{preview}</p>
+          {draft.decision && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {draft.decision.episode_type && <Badge value={draft.decision.episode_type} variant="category" />}
+              {draft.decision.post_category && <Badge value={draft.decision.post_category} variant="category" />}
+              {parseTags(draft.decision.episode_tags).slice(0, 3).map((tag) => (
+                <Badge key={tag} value={tag} variant="default" />
+              ))}
+              {parseTags(draft.decision.episode_tags).length > 3 && (
+                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs text-muted-foreground">
+                  +{parseTags(draft.decision.episode_tags).length - 3} more
+                </span>
+              )}
+            </div>
+          )}
           {draft.suggested_time && (
             <p className="mt-1 text-xs text-muted-foreground">
               Scheduled: {new Date(draft.suggested_time).toLocaleString()}

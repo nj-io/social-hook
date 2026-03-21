@@ -1,4 +1,4 @@
-import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, UsageSummary, Arc, WebEvent } from "./types";
+import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent } from "./types";
 import { getSessionId } from "./session";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -330,11 +330,53 @@ export async function testChannel(channel: string): Promise<{ success: boolean; 
 export async function updateDraftMediaSpec(
   draftId: string,
   mediaSpec: Record<string, unknown>,
+  mediaType?: string,
 ): Promise<{ status: string }> {
+  const body: Record<string, unknown> = { media_spec: mediaSpec };
+  if (mediaType) body.media_type = mediaType;
   return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/media-spec`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_spec: mediaSpec }),
+    body: JSON.stringify(body),
+  });
+}
+
+export async function uploadDraftMedia(
+  draftId: string,
+  file: File,
+): Promise<{ status: string; media_paths: string[] }> {
+  const form = new FormData();
+  form.append("file", file);
+  const headers = new Headers();
+  headers.set("X-Session-Id", getSessionId());
+  const res = await fetch(`/api/drafts/${encodeURIComponent(draftId)}/media-upload`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Upload failed ${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+export async function generateMediaSpec(
+  draftId: string,
+  mediaType: string,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/generate-spec`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tool_name: mediaType }),
+  });
+}
+
+export async function resendDraftNotification(
+  draftId: string,
+): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/resend-notification`, {
+    method: "POST",
   });
 }
 
@@ -366,8 +408,20 @@ export async function retriggerDecision(
   });
 }
 
+// Promote
+export async function promoteDraft(
+  draftId: string,
+  platform: string,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/promote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ platform }),
+  });
+}
+
 // Platforms
-export async function fetchEnabledPlatforms(): Promise<{ platforms: Record<string, { priority: string; type: string }>; count: number }> {
+export async function fetchEnabledPlatforms(): Promise<{ platforms: Record<string, { priority: string; type: string }>; count: number; real_count: number }> {
   return apiFetch("/api/platforms/enabled");
 }
 
@@ -438,6 +492,7 @@ export async function clearMemories(projectPath: string): Promise<{ status: stri
 export async function browseDirectory(path?: string): Promise<{
   current: string;
   parent: string;
+  is_git: boolean;
   directories: { name: string; path: string; is_git: boolean }[];
 }> {
   const params = path ? `?path=${encodeURIComponent(path)}` : "";
@@ -480,4 +535,23 @@ export async function registerProject(
 
 export async function deleteProject(projectId: string): Promise<{ status: string; project_id: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+}
+
+// Rate limits
+export async function fetchRateLimits(): Promise<RateLimitStatus> {
+  return apiFetch("/api/rate-limits/status");
+}
+
+// Wizard templates
+export async function fetchWizardTemplates(): Promise<{ templates: StrategyTemplate[] }> {
+  return apiFetch("/api/wizard/templates");
+}
+
+// Summary draft
+export async function createSummaryDraft(
+  projectId: string,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/summary-draft`, {
+    method: "POST",
+  });
 }

@@ -1,9 +1,9 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   lint:
@@ -17,6 +17,14 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
+      - name: Check for duplicate migration numbers
+        run: |
+          cd src/social_hook/db/migrations
+          dupes=$(ls *.sql 2>/dev/null | sed 's/_.*//' | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "::error::Duplicate migration numbers: $dupes"
+            exit 1
+          fi
 
   typecheck:
     runs-on: ubuntu-latest
@@ -41,7 +49,22 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
       - run: pip install -e ".[dev]"
-      - run: pytest tests/ -q
+      - name: Run tests with coverage
+        if: matrix.python-version == '3.12'
+        run: pytest tests/ -q --cov=social_hook --cov-report=xml
         env:
           COLUMNS: "200"
           NO_COLOR: "1"
+      - name: Run tests
+        if: matrix.python-version != '3.12'
+        run: pytest tests/ -q
+        env:
+          COLUMNS: "200"
+          NO_COLOR: "1"
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

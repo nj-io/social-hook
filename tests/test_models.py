@@ -17,6 +17,7 @@ from social_hook.models import (
     PostCategory,
     PostFormat,
     Project,
+    UsageLog,
     is_draftable,
     is_held,
 )
@@ -39,12 +40,15 @@ class TestEnums:
         assert DraftStatus.FAILED.value == "failed"
         assert DraftStatus.SUPERSEDED.value == "superseded"
         assert DraftStatus.CANCELLED.value == "cancelled"
+        assert DraftStatus.DEFERRED.value == "deferred"
 
     def test_decision_type_values(self):
         """DecisionType values are correct."""
         assert DecisionType.DRAFT.value == "draft"
         assert DecisionType.HOLD.value == "hold"
         assert DecisionType.SKIP.value == "skip"
+        assert DecisionType.IMPORTED.value == "imported"
+        assert DecisionType.DEFERRED_EVAL.value == "deferred_eval"
 
     def test_post_format_values(self):
         """PostFormat values are correct."""
@@ -104,14 +108,13 @@ class TestProjectModel:
             id="project_123",
             name="test-project",
             repo_path="/tmp/test",
-            audience_introduced=True,
             created_at=datetime(2026, 1, 15, 10, 30, 0),
         )
 
         d = project.to_dict()
         assert d["id"] == "project_123"
         assert d["name"] == "test-project"
-        assert d["audience_introduced"] is True
+        assert "audience_introduced" not in d
         assert d["created_at"] == "2026-01-15T10:30:00"
 
     def test_project_from_dict(self):
@@ -120,13 +123,11 @@ class TestProjectModel:
             "id": "project_123",
             "name": "test-project",
             "repo_path": "/tmp/test",
-            "audience_introduced": 1,
             "created_at": "2026-01-15T10:30:00",
         }
 
         project = Project.from_dict(d)
         assert project.id == "project_123"
-        assert project.audience_introduced is True
         assert project.created_at == datetime(2026, 1, 15, 10, 30, 0)
 
     def test_project_to_row(self):
@@ -265,7 +266,7 @@ class TestDecisionModel:
             reasoning="Test",
             commit_message="Add auth module",
         )
-        assert len(decision.to_row()) == 18
+        assert len(decision.to_row()) == 19
 
     def test_decision_to_dict_includes_commit_message(self):
         """Decision.to_dict() includes commit_message."""
@@ -347,7 +348,7 @@ class TestDecisionNewFields:
         d = Decision(
             id="test", project_id="p", commit_hash="abc", decision="draft", reasoning="test"
         )
-        assert len(d.to_row()) == 18
+        assert len(d.to_row()) == 19
 
     def test_decision_new_types_valid(self):
         """New decision types (draft, hold, skip) are accepted."""
@@ -464,7 +465,7 @@ class TestDecisionReferencePosts:
     def test_to_row_length_with_reference_posts(self):
         """Decision.to_row() returns 18-element tuple."""
         d = Decision(id="t", project_id="p", commit_hash="c", decision="draft", reasoning="r")
-        assert len(d.to_row()) == 18
+        assert len(d.to_row()) == 19
 
 
 class TestDecisionImported:
@@ -558,6 +559,123 @@ class TestDraftNewFields:
         assert d.is_intro is True
         assert d.post_format == "reply"
         assert d.reference_post_id == "post_abc"
+
+
+class TestDeferredEvalDecision:
+    """Tests for deferred_eval decision type and trigger_source field."""
+
+    def test_deferred_eval_enum_exists(self):
+        """DecisionType.DEFERRED_EVAL exists with correct value."""
+        assert DecisionType.DEFERRED_EVAL.value == "deferred_eval"
+
+    def test_decision_with_deferred_eval(self):
+        """Decision with deferred_eval type is valid."""
+        d = Decision(
+            id="test",
+            project_id="p",
+            commit_hash="abc",
+            decision="deferred_eval",
+            reasoning="Rate limited",
+        )
+        assert d.decision == "deferred_eval"
+
+    def test_decision_trigger_source_default(self):
+        """Decision.trigger_source defaults to 'commit'."""
+        d = Decision(
+            id="test",
+            project_id="p",
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+        )
+        assert d.trigger_source == "commit"
+
+    def test_decision_trigger_source_roundtrip(self):
+        """Decision trigger_source survives to_dict/from_dict roundtrip."""
+        d = Decision(
+            id="test",
+            project_id="p",
+            commit_hash="abc",
+            decision="deferred_eval",
+            reasoning="Rate limited",
+            trigger_source="auto",
+        )
+        d_dict = d.to_dict()
+        assert d_dict["trigger_source"] == "auto"
+
+        d2 = Decision.from_dict(d_dict)
+        assert d2.trigger_source == "auto"
+        assert d2.decision == "deferred_eval"
+
+    def test_decision_from_dict_missing_trigger_source(self):
+        """Decision.from_dict handles missing trigger_source (backward compat)."""
+        d_dict = {
+            "id": "test",
+            "project_id": "p",
+            "commit_hash": "abc",
+            "decision": "draft",
+            "reasoning": "test",
+        }
+        d = Decision.from_dict(d_dict)
+        assert d.trigger_source == "commit"
+
+    def test_decision_to_row_includes_trigger_source(self):
+        """Decision.to_row() includes trigger_source as last element."""
+        d = Decision(
+            id="test",
+            project_id="p",
+            commit_hash="abc",
+            decision="draft",
+            reasoning="test",
+            trigger_source="scheduler",
+        )
+        row = d.to_row()
+        assert row[-1] == "scheduler"
+
+
+class TestUsageLogTriggerSource:
+    """Tests for trigger_source field on UsageLog."""
+
+    def test_usage_log_trigger_source_default(self):
+        """UsageLog.trigger_source defaults to 'auto'."""
+        u = UsageLog(id="u1", operation_type="evaluate", model="opus")
+        assert u.trigger_source == "auto"
+
+    def test_usage_log_trigger_source_roundtrip(self):
+        """UsageLog trigger_source survives to_dict/from_dict roundtrip."""
+        u = UsageLog(
+            id="u1",
+            operation_type="evaluate",
+            model="opus",
+            trigger_source="manual",
+        )
+        u_dict = u.to_dict()
+        assert u_dict["trigger_source"] == "manual"
+
+        u2 = UsageLog.from_dict(u_dict)
+        assert u2.trigger_source == "manual"
+
+    def test_usage_log_from_dict_missing_trigger_source(self):
+        """UsageLog.from_dict handles missing trigger_source (backward compat)."""
+        u_dict = {
+            "id": "u1",
+            "operation_type": "evaluate",
+            "model": "opus",
+        }
+        u = UsageLog.from_dict(u_dict)
+        assert u.trigger_source == "auto"
+
+    def test_usage_log_to_row_includes_trigger_source(self):
+        """UsageLog.to_row() includes trigger_source."""
+        u = UsageLog(
+            id="u1",
+            operation_type="evaluate",
+            model="opus",
+            trigger_source="manual",
+        )
+        row = u.to_row()
+        assert len(row) == 11
+        assert row[-1] == "manual"
 
 
 class TestHelperFunctions:

@@ -178,7 +178,7 @@ def main():
                     sys.exit(1)
 
         # Run sections in order using the registry
-        for letter in "ABCDEFGHIJKLMNQR":
+        for letter in "ABCDEFGHIJKLMNQRST":
             if letter not in sections_to_run:
                 continue
             info = SECTION_REGISTRY[letter]

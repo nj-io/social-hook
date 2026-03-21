@@ -15,6 +15,7 @@ export interface PlatformConfig {
   max_length?: number;
   filter?: string;
   frequency?: string;
+  identity?: string;
   scheduling?: SchedulingOverride;
 }
 
@@ -61,6 +62,20 @@ export interface ConsolidationConfig {
   time_window_max_drafts: number;
 }
 
+export interface IdentityConfig {
+  type: "myself" | "team" | "company" | "project" | "custom";
+  label: string;
+  description?: string;
+  intro_hook?: string;
+}
+
+export interface ContentStrategyConfig {
+  audience: string;
+  voice: string;
+  post_when?: string;
+  avoid?: string;
+}
+
 export interface Config {
   models: ModelsConfig;
   platforms: Record<string, PlatformConfig>;
@@ -69,6 +84,34 @@ export interface Config {
   journey_capture: JourneyCaptureConfig;
   consolidation?: ConsolidationConfig;
   channels?: Record<string, ChannelConfig>;
+  rate_limits?: RateLimitsConfig;
+  identities?: Record<string, IdentityConfig>;
+  default_identity?: string;
+  content_strategies?: Record<string, ContentStrategyConfig>;
+  content_strategy?: string;
+}
+
+export interface StrategyTemplate {
+  id: string;
+  name: string;
+  description: string;
+  defaults: {
+    identity: string;
+    voiceTone: string;
+    audience: string;
+    technicalLevel: string;
+    platformFilter: string;
+    platformFrequency: string;
+    postWhen: string;
+    avoid: string;
+    exampleIntroHook: string;
+  };
+}
+
+export interface PlatformIntroduced {
+  platform: string;
+  introduced: boolean;
+  first_post_date?: string;
 }
 
 export interface DraftTweet {
@@ -148,7 +191,7 @@ export interface Decision {
   reasoning: string;
   angle: string;
   episode_type: string;
-  episode_tags: string[];
+  episode_tags: string | string[];
   post_category: string;
   arc_id?: string;
   media_tool?: string;
@@ -239,6 +282,21 @@ export interface ChannelsStatusResponse {
   daemon_running: boolean;
 }
 
+export interface RateLimitStatus {
+  evaluations_today: number;
+  max_evaluations_per_day: number;
+  manual_evaluations_today: number;
+  next_available_in_seconds: number;
+  queued_triggers: number;
+  cost_today_cents: number;
+}
+
+export interface RateLimitsConfig {
+  max_evaluations_per_day: number;
+  min_evaluation_gap_minutes: number;
+  batch_throttled: boolean;
+}
+
 export interface DataChangeEvent {
   entity: string;
   action: string;
@@ -264,4 +322,13 @@ export interface ProjectDetail extends Project {
   post_count: number;
   narrative_count: number;
   journey_capture_enabled?: boolean;
+}
+
+/** Parse episode_tags which may arrive as a JSON string or an array. */
+export function parseTags(tags: string | string[] | undefined | null): string[] {
+  if (Array.isArray(tags)) return tags;
+  if (typeof tags === "string") {
+    try { return JSON.parse(tags); } catch { return []; }
+  }
+  return [];
 }

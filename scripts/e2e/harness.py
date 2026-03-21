@@ -22,11 +22,26 @@ _E2E_FIXTURE_SUMMARY = (
 )
 
 _E2E_FIXTURE_FILE_SUMMARIES = [
-    {"path": "src/social_hook/trigger.py", "summary": "Core pipeline entry point. Parses git commits, runs evaluator LLM, creates decisions and drafts per platform."},
-    {"path": "src/social_hook/llm/prompts.py", "summary": "Prompt assembly for evaluator, drafter, and gatekeeper agents. Builds context from DB state, project docs, and commit info."},
-    {"path": "src/social_hook/llm/discovery.py", "summary": "Two-pass project discovery: file selection via LLM, then summary generation with per-file summaries and prompt doc selection."},
-    {"path": "src/social_hook/web/server.py", "summary": "FastAPI web server powering the dashboard. WebSocket events, project management, draft lifecycle, and settings endpoints."},
-    {"path": "src/social_hook/config/project.py", "summary": "Per-project configuration loading from content-config.yaml with typed dataclasses for context, strategy, media guidance, and summary settings."},
+    {
+        "path": "src/social_hook/trigger.py",
+        "summary": "Core pipeline entry point. Parses git commits, runs evaluator LLM, creates decisions and drafts per platform.",
+    },
+    {
+        "path": "src/social_hook/llm/prompts.py",
+        "summary": "Prompt assembly for evaluator, drafter, and gatekeeper agents. Builds context from DB state, project docs, and commit info.",
+    },
+    {
+        "path": "src/social_hook/llm/discovery.py",
+        "summary": "Two-pass project discovery: file selection via LLM, then summary generation with per-file summaries and prompt doc selection.",
+    },
+    {
+        "path": "src/social_hook/web/server.py",
+        "summary": "FastAPI web server powering the dashboard. WebSocket events, project management, draft lifecycle, and settings endpoints.",
+    },
+    {
+        "path": "src/social_hook/config/project.py",
+        "summary": "Per-project configuration loading from content-config.yaml with typed dataclasses for context, strategy, media guidance, and summary settings.",
+    },
 ]
 
 
@@ -341,8 +356,6 @@ class E2EHarness:
             insert_lifecycle,
             insert_narrative_debt,
             insert_project,
-            update_project_summary,
-            upsert_file_summaries,
         )
         from social_hook.filesystem import generate_id
         from social_hook.models import Lifecycle, NarrativeDebt, Project
@@ -362,9 +375,6 @@ class E2EHarness:
             paused=paused,
         )
         insert_project(self.conn, project)
-
-        update_project_summary(self.conn, project.id, _E2E_FIXTURE_SUMMARY)
-        upsert_file_summaries(self.conn, project.id, _E2E_FIXTURE_FILE_SUMMARIES)
 
         lifecycle = Lifecycle(
             project_id=project.id,
@@ -464,7 +474,7 @@ class E2EHarness:
             "DELETE FROM milestone_summaries WHERE project_id = ?", (self.project_id,)
         )
         self.conn.execute(
-            "UPDATE projects SET audience_introduced = 0 WHERE id = ?", (self.project_id,)
+            "DELETE FROM platform_introduced WHERE project_id = ?", (self.project_id,)
         )
         self.conn.commit()
 

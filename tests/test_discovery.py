@@ -371,7 +371,7 @@ class TestDiscoverySkippedWhenSummaryExists:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=False,
+            platform_introduced={"x": False},
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],
@@ -403,7 +403,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=False,
+            platform_introduced={"x": False},
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],
@@ -447,7 +447,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=False,
+            platform_introduced={"x": False},
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],
@@ -488,7 +488,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             lifecycle=None,
             active_arcs=[],
             narrative_debt=0,
-            audience_introduced=True,  # Already introduced
+            platform_introduced={"x": True},  # Already introduced
             pending_drafts=[],
             recent_decisions=[],
             recent_posts=[],
@@ -507,7 +507,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             commit=commit,
         )
 
-        # audience_introduced=True with include_project_docs=True,
+        # platform_introduced={"x": True} with include_project_docs=True,
         # should use prompt_docs fallback if no discovery files priority
         assert "Project Documentation (Discovery)" not in result
 
@@ -673,15 +673,11 @@ class TestFileSummariesDbOperations:
         temp_db.commit()
 
         # First upsert
-        upsert_file_summaries(
-            temp_db, "proj_1", [{"path": "old.py", "summary": "Old file"}]
-        )
+        upsert_file_summaries(temp_db, "proj_1", [{"path": "old.py", "summary": "Old file"}])
         assert len(get_file_summaries(temp_db, "proj_1")) == 1
 
         # Second upsert with different files
-        upsert_file_summaries(
-            temp_db, "proj_1", [{"path": "new.py", "summary": "New file"}]
-        )
+        upsert_file_summaries(temp_db, "proj_1", [{"path": "new.py", "summary": "New file"}])
         result = get_file_summaries(temp_db, "proj_1")
         assert len(result) == 1
         assert result[0]["path"] == "new.py"
@@ -713,12 +709,8 @@ class TestFileSummariesDbOperations:
         )
         temp_db.commit()
 
-        upsert_file_summaries(
-            temp_db, "proj_1", [{"path": "a.py", "summary": "File A"}]
-        )
-        upsert_file_summaries(
-            temp_db, "proj_2", [{"path": "b.py", "summary": "File B"}]
-        )
+        upsert_file_summaries(temp_db, "proj_1", [{"path": "a.py", "summary": "File A"}])
+        upsert_file_summaries(temp_db, "proj_2", [{"path": "b.py", "summary": "File B"}])
 
         result_1 = get_file_summaries(temp_db, "proj_1")
         result_2 = get_file_summaries(temp_db, "proj_2")

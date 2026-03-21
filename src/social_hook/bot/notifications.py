@@ -21,6 +21,8 @@ def format_draft_review(
     post_category: str | None = None,
     angle: str | None = None,
     evaluator_reasoning: str | None = None,
+    episode_tags: list[str] | None = None,
+    is_intro: bool = False,
 ) -> str:
     """Format a draft review notification message.
 
@@ -40,12 +42,31 @@ def format_draft_review(
         post_category: Evaluator post category
         angle: Evaluator suggested angle
         evaluator_reasoning: Evaluator reasoning text
+        episode_tags: Evaluator episode tags
+        is_intro: Whether this is an introduction post
 
     Returns:
         Formatted Markdown message
     """
+    # Build metadata tag line
+    tags = []
+    if is_intro:
+        tags.append("[INTRO]")
+    if episode_type:
+        tags.append(f"[{episode_type}]")
+    if post_category:
+        tags.append(f"[{post_category}]")
+    if episode_tags:
+        for t in episode_tags:
+            tags.append(f"[{t}]")
+    tag_line = " ".join(tags)
+
+    header = "*New draft ready for review*"
+    if tag_line:
+        header = f"{tag_line} {header}"
+
     lines = [
-        "*New draft ready for review*",
+        header,
         "",
         f"Project: {project_name}",
         f"Commit: `{commit_hash}` - {commit_message}",
@@ -80,16 +101,32 @@ def format_draft_review(
     return "\n".join(lines)
 
 
-def get_review_buttons_normalized(draft_id: str) -> list:
+def get_review_buttons_normalized(
+    draft_id: str, platform: str = "", is_intro: bool = False
+) -> list:
     """Get review buttons as normalized ButtonRow list.
 
     Args:
         draft_id: Draft ID for callback data
+        platform: Platform name — when "preview", shows Promote instead of
+            approve/schedule/post-now buttons.
+        is_intro: Whether this draft is an introduction post
 
     Returns:
         List of ButtonRow instances
     """
     from social_hook.messaging.base import Button, ButtonRow
+
+    if platform == "preview":
+        return [
+            ButtonRow(
+                buttons=[
+                    Button(label="Edit", action="edit", payload=draft_id),
+                    Button(label="Reject", action="reject", payload=draft_id),
+                    Button(label="Promote", action="promote", payload=draft_id),
+                ]
+            ),
+        ]
 
     return [
         ButtonRow(

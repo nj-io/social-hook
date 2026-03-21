@@ -200,6 +200,23 @@ class MermaidAdapter(MediaAdapter):
         finally:
             input_file.unlink(missing_ok=True)
 
+    @classmethod
+    def spec_schema(cls) -> dict:
+        """Return spec schema for Mermaid diagrams."""
+        return {
+            "required": {"diagram": "Mermaid markup string"},
+            "optional": {
+                "theme": "default|dark|forest|neutral",
+                "format": "png|svg",
+                "width": "int",
+                "height": "int",
+            },
+        }
+
+    def preview_text(self, spec: dict) -> str:
+        """Return human-readable preview of the diagram spec."""
+        return spec.get("diagram") or spec.get("code") or "No diagram specified"
+
     def supports(self, media_type: str) -> bool:
         """Check if adapter handles this media type.
 

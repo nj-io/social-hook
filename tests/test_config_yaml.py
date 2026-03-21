@@ -5,6 +5,7 @@ import pytest
 from social_hook.config.yaml import (
     Config,
     MediaGenerationConfig,
+    RateLimitsConfig,
     SchedulingConfig,
     _deep_merge,
     load_config,
@@ -569,3 +570,271 @@ class TestSaveConfig:
                 config_path=config_path,
             )
             mock_install.assert_called_once()
+
+
+class TestRateLimitsConfig:
+    """Tests for rate_limits config section."""
+
+    def test_defaults(self):
+        """RateLimitsConfig has correct defaults."""
+        rl = RateLimitsConfig()
+        assert rl.max_evaluations_per_day == 15
+        assert rl.min_evaluation_gap_minutes == 10
+        assert rl.batch_throttled is False
+
+    def test_config_includes_rate_limits(self):
+        """Default Config includes rate_limits with defaults."""
+        config = Config()
+        assert isinstance(config.rate_limits, RateLimitsConfig)
+        assert config.rate_limits.max_evaluations_per_day == 15
+
+    def test_parse_rate_limits_from_yaml(self, temp_dir):
+        """Parse rate_limits section from YAML config."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+rate_limits:
+  max_evaluations_per_day: 25
+  min_evaluation_gap_minutes: 5
+  batch_throttled: true
+"""
+        )
+        config = load_config(config_path)
+        assert config.rate_limits.max_evaluations_per_day == 25
+        assert config.rate_limits.min_evaluation_gap_minutes == 5
+        assert config.rate_limits.batch_throttled is True
+
+    def test_rate_limits_missing_uses_defaults(self, temp_dir):
+        """Config without rate_limits section uses defaults."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+platforms:
+  x:
+    enabled: true
+    priority: primary
+    account_tier: free
+"""
+        )
+        config = load_config(config_path)
+        assert config.rate_limits.max_evaluations_per_day == 15
+        assert config.rate_limits.min_evaluation_gap_minutes == 10
+
+    def test_invalid_max_evaluations_raises(self):
+        """Invalid max_evaluations_per_day raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_evaluations_per_day"):
+            validate_config({"rate_limits": {"max_evaluations_per_day": 0}})
+
+    def test_invalid_max_evaluations_type_raises(self):
+        """Non-integer max_evaluations_per_day raises ConfigError."""
+        with pytest.raises(ConfigError, match="max_evaluations_per_day"):
+            validate_config({"rate_limits": {"max_evaluations_per_day": "ten"}})
+
+    def test_invalid_min_gap_raises(self):
+        """Negative min_evaluation_gap_minutes raises ConfigError."""
+        with pytest.raises(ConfigError, match="min_evaluation_gap_minutes"):
+            validate_config({"rate_limits": {"min_evaluation_gap_minutes": -1}})
+
+
+class TestIdentityConfig:
+    """Tests for named identity definitions."""
+
+    def test_parse_identities(self, temp_dir):
+        """Parse identities from YAML config."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+identities:
+  neil:
+    type: myself
+    label: Neil
+    description: "Product lead at Acme Corp"
+    intro_hook: "Hi, I'm Neil"
+  acme:
+    type: company
+    label: Acme Corp
+default_identity: neil
+"""
+        )
+        config = load_config(config_path)
+
+        assert len(config.identities) == 2
+        assert config.identities["neil"].type == "myself"
+        assert config.identities["neil"].label == "Neil"
+        assert config.identities["neil"].description == "Product lead at Acme Corp"
+        assert config.identities["neil"].intro_hook == "Hi, I'm Neil"
+        assert config.identities["acme"].type == "company"
+        assert config.identities["acme"].label == "Acme Corp"
+        assert config.identities["acme"].description is None
+        assert config.default_identity == "neil"
+
+    def test_default_identity_not_in_identities_raises(self):
+        """default_identity referencing unknown identity raises ConfigError."""
+        with pytest.raises(ConfigError, match="default_identity.*not found"):
+            validate_config({"default_identity": "ghost"})
+
+    def test_platform_identity_not_in_identities_raises(self):
+        """Platform referencing unknown identity raises ConfigError."""
+        with pytest.raises(ConfigError, match="unknown identity"):
+            validate_config(
+                {
+                    "platforms": {
+                        "x": {"enabled": True, "priority": "primary", "identity": "ghost"}
+                    },
+                }
+            )
+
+    def test_platform_identity_valid(self, temp_dir):
+        """Platform identity reference resolves correctly."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+identities:
+  neil:
+    type: myself
+    label: Neil
+platforms:
+  x:
+    enabled: true
+    priority: primary
+    identity: neil
+"""
+        )
+        config = load_config(config_path)
+        assert config.platforms["x"].identity == "neil"
+
+    def test_empty_identities_default(self):
+        """Config without identities has empty dict."""
+        config = Config()
+        assert config.identities == {}
+        assert config.default_identity is None
+
+    def test_identity_label_defaults_to_name(self):
+        """Identity label defaults to the key name if not specified."""
+        config = validate_config(
+            {
+                "identities": {"myname": {"type": "myself"}},
+            }
+        )
+        assert config.identities["myname"].label == "myname"
+
+    def test_identity_type_defaults_to_myself(self):
+        """Identity type defaults to 'myself'."""
+        config = validate_config(
+            {
+                "identities": {"test": {"label": "Test"}},
+            }
+        )
+        assert config.identities["test"].type == "myself"
+
+
+class TestResolveIdentity:
+    """Tests for resolve_identity() helper."""
+
+    def test_resolve_platform_identity(self):
+        """Platform-level identity takes precedence."""
+        from social_hook.config.platforms import OutputPlatformConfig
+        from social_hook.config.yaml import IdentityConfig, resolve_identity
+
+        config = Config(
+            identities={
+                "neil": IdentityConfig(type="myself", label="Neil"),
+                "acme": IdentityConfig(type="company", label="Acme"),
+            },
+            default_identity="neil",
+            platforms={
+                "linkedin": OutputPlatformConfig(enabled=True, identity="acme"),
+            },
+        )
+        result = resolve_identity(config, "linkedin")
+        assert result is not None
+        assert result.label == "Acme"
+
+    def test_resolve_falls_back_to_default(self):
+        """Falls back to default_identity when platform has no identity."""
+        from social_hook.config.platforms import OutputPlatformConfig
+        from social_hook.config.yaml import IdentityConfig, resolve_identity
+
+        config = Config(
+            identities={"neil": IdentityConfig(type="myself", label="Neil")},
+            default_identity="neil",
+            platforms={"x": OutputPlatformConfig(enabled=True)},
+        )
+        result = resolve_identity(config, "x")
+        assert result is not None
+        assert result.label == "Neil"
+
+    def test_resolve_returns_none_when_no_identity(self):
+        """Returns None when no identity configured."""
+        from social_hook.config.yaml import resolve_identity
+
+        config = Config()
+        assert resolve_identity(config, "x") is None
+
+    def test_resolve_unknown_platform(self):
+        """Returns default for unknown platform name."""
+        from social_hook.config.yaml import IdentityConfig, resolve_identity
+
+        config = Config(
+            identities={"neil": IdentityConfig(type="myself", label="Neil")},
+            default_identity="neil",
+        )
+        result = resolve_identity(config, "unknown_platform")
+        assert result is not None
+        assert result.label == "Neil"
+
+
+class TestContentStrategyConfig:
+    """Tests for content strategy definitions."""
+
+    def test_parse_content_strategies(self, temp_dir):
+        """Parse content strategies from YAML config."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+content_strategies:
+  building-public:
+    audience: "Developers, indie hackers"
+    voice: "Conversational, honest"
+    post_when: "All development activity"
+    avoid: "Corporate speak"
+content_strategy: building-public
+"""
+        )
+        config = load_config(config_path)
+
+        assert len(config.content_strategies) == 1
+        cs = config.content_strategies["building-public"]
+        assert cs.audience == "Developers, indie hackers"
+        assert cs.voice == "Conversational, honest"
+        assert cs.post_when == "All development activity"
+        assert cs.avoid == "Corporate speak"
+        assert config.content_strategy == "building-public"
+
+    def test_content_strategy_not_in_strategies_raises(self):
+        """content_strategy referencing unknown strategy raises ConfigError."""
+        with pytest.raises(ConfigError, match="content_strategy.*not found"):
+            validate_config({"content_strategy": "nonexistent"})
+
+    def test_empty_strategies_default(self):
+        """Config without strategies has empty dict."""
+        config = Config()
+        assert config.content_strategies == {}
+        assert config.content_strategy is None
+
+    def test_partial_strategy_fields(self, temp_dir):
+        """Strategies can have partial fields (all optional)."""
+        config_path = temp_dir / "config.yaml"
+        config_path.write_text(
+            """\
+content_strategies:
+  minimal:
+    audience: "Everyone"
+"""
+        )
+        config = load_config(config_path)
+        cs = config.content_strategies["minimal"]
+        assert cs.audience == "Everyone"
+        assert cs.voice is None
+        assert cs.post_when is None
+        assert cs.avoid is None

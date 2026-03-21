@@ -2,14 +2,20 @@
 
 import os
 import signal
+import subprocess
+import time
+from contextlib import suppress
 from pathlib import Path
-
-from social_hook.filesystem import get_base_path
 
 
 def get_pid_file() -> Path:
-    """Get the path to the bot PID file."""
-    return get_base_path() / "bot.pid"
+    """Get the path to the bot PID file.
+
+    Always uses the main base path (~/.social-hook/bot.pid), not a
+    worktree-specific path. Only one bot daemon can run per Telegram
+    token, so all worktrees share the same PID file.
+    """
+    return Path.home() / ".social-hook" / "bot.pid"
 
 
 def write_pid(pid_file: Path | None = None) -> None:
@@ -45,21 +51,34 @@ def remove_pid(pid_file: Path | None = None) -> None:
 
 
 def is_pid_alive(pid: int) -> bool:
-    """Check if a process with given PID is alive.
+    """Check if a process with given PID is alive (not a zombie).
 
     Args:
         pid: Process ID to check
 
     Returns:
-        True if process exists
+        True if process exists and is not a zombie
     """
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True  # Process exists but we can't signal it
+    # os.kill(0) succeeds for zombie processes — check actual state
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "state=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        state = result.stdout.strip()
+        if state.startswith("Z"):
+            return False
+    except Exception:
+        pass  # If ps fails, trust the kill(0) result
+    return True
 
 
 def is_running(pid_file: Path | None = None) -> bool:
@@ -79,7 +98,10 @@ def is_running(pid_file: Path | None = None) -> bool:
 
 
 def stop_bot(pid_file: Path | None = None) -> bool:
-    """Stop the bot daemon by sending SIGTERM.
+    """Stop the bot daemon by sending SIGTERM, with SIGKILL fallback.
+
+    Waits up to 40s for graceful shutdown (TelegramRunner blocks on
+    requests.get(timeout=35) during long-poll). If still alive, sends SIGKILL.
 
     Returns:
         True if the bot was stopped
@@ -89,10 +111,18 @@ def stop_bot(pid_file: Path | None = None) -> bool:
         return False
     try:
         os.kill(pid, signal.SIGTERM)
-        remove_pid(pid_file)
-        return True
     except ProcessLookupError:
         remove_pid(pid_file)
         return False
     except PermissionError:
         return False
+    # Wait up to 40s for graceful shutdown, then SIGKILL
+    for _ in range(8):
+        time.sleep(5)
+        if not is_pid_alive(pid):
+            remove_pid(pid_file)
+            return True
+    with suppress(ProcessLookupError, PermissionError):
+        os.kill(pid, signal.SIGKILL)
+    remove_pid(pid_file)
+    return True

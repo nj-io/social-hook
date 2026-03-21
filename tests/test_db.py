@@ -7,17 +7,20 @@ import pytest
 
 from social_hook.db import (
     delete_project,
+    execute_queue_action,
     get_active_arcs,
     get_all_recent_decisions,
     get_all_recent_posts,
     get_arc_posts,
     get_connection,
     get_deferred_drafts,
+    get_deferred_eval_decisions,
     get_distinct_branches,
     get_draft,
     get_draft_changes,
     get_draft_tweets,
     get_due_drafts,
+    get_last_auto_evaluation_time,
     get_lifecycle,
     get_milestone_summaries,
     get_narrative_debt,
@@ -33,6 +36,7 @@ from social_hook.db import (
     get_recent_posts_for_context,
     get_schema_version,
     get_summary_freshness,
+    get_today_auto_evaluation_count,
     get_usage_summary,
     increment_narrative_debt,
     init_database,
@@ -96,7 +100,7 @@ class TestDatabaseInitialization:
         assert result[0] == 1
 
     def test_all_tables_exist(self, temp_db):
-        """Verify all 16 tables exist."""
+        """Verify all 15 tables exist."""
         tables = temp_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
@@ -119,6 +123,7 @@ class TestDatabaseInitialization:
             "chat_messages",
             "background_tasks",
             "file_summaries",
+            "platform_introduced",
         }
 
         assert table_names == expected_tables
@@ -132,9 +137,9 @@ class TestDatabaseInitialization:
             )
 
     def test_schema_version(self, temp_db):
-        """Check schema version returns 18."""
+        """Check schema version is a timestamp (>= 20260209131940)."""
         version = get_schema_version(temp_db)
-        assert version == 18
+        assert version >= 20260209131940
 
     def test_init_twice_idempotent(self, temp_dir):
         """Running init twice is idempotent.
@@ -1760,3 +1765,231 @@ class TestGetPostsByIds:
         results = get_posts_by_ids(temp_db, ["post_ccc", "post_nonexistent"])
         assert len(results) == 1
         assert results[0].id == "post_ccc"
+
+
+class TestRateLimitsOperations:
+    """Tests for rate limiting DB operations."""
+
+    def _make_project(self, temp_db):
+        project = Project(
+            id=generate_id("project"),
+            name="test-rate-limits",
+            repo_path="/tmp/test",
+        )
+        insert_project(temp_db, project)
+        return project
+
+    def test_insert_decision_deferred_eval(self, temp_db):
+        """Insert decision with deferred_eval type succeeds."""
+        project = self._make_project(temp_db)
+        d = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="deferred_eval",
+            reasoning="Rate limited",
+            trigger_source="auto",
+        )
+        insert_decision(temp_db, d)
+
+        decisions = get_recent_decisions(temp_db, project.id)
+        assert len(decisions) == 1
+        assert decisions[0].decision == "deferred_eval"
+        assert decisions[0].trigger_source == "auto"
+
+    def test_get_recent_decisions_for_llm_excludes_deferred(self, temp_db):
+        """get_recent_decisions_for_llm excludes deferred_eval decisions."""
+        project = self._make_project(temp_db)
+
+        d1 = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Good commit",
+        )
+        insert_decision(temp_db, d1)
+
+        d2 = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="def456",
+            decision="deferred_eval",
+            reasoning="Rate limited",
+        )
+        insert_decision(temp_db, d2)
+
+        llm_decisions = get_recent_decisions_for_llm(temp_db, project.id)
+        assert len(llm_decisions) == 1
+        assert llm_decisions[0].decision == "draft"
+
+    def test_get_deferred_eval_decisions(self, temp_db):
+        """get_deferred_eval_decisions returns only unprocessed deferred_eval."""
+        project = self._make_project(temp_db)
+
+        # Unprocessed deferred_eval
+        d1 = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="deferred_eval",
+            reasoning="Rate limited",
+        )
+        insert_decision(temp_db, d1)
+
+        # Processed deferred_eval (mark it processed)
+        d2 = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="def456",
+            decision="deferred_eval",
+            reasoning="Rate limited",
+        )
+        insert_decision(temp_db, d2)
+        temp_db.execute("UPDATE decisions SET processed = 1 WHERE id = ?", (d2.id,))
+        temp_db.commit()
+
+        # Normal decision (should not appear)
+        d3 = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="ghi789",
+            decision="draft",
+            reasoning="Good commit",
+        )
+        insert_decision(temp_db, d3)
+
+        deferred = get_deferred_eval_decisions(temp_db, project.id)
+        assert len(deferred) == 1
+        assert deferred[0].id == d1.id
+
+    def test_get_today_auto_evaluation_count(self, temp_db):
+        """get_today_auto_evaluation_count counts only auto evaluations today."""
+        # Auto evaluation (should count)
+        u1 = UsageLog(
+            id=generate_id("usage"),
+            operation_type="evaluate",
+            model="opus",
+            trigger_source="auto",
+        )
+        insert_usage(temp_db, u1)
+
+        # Manual evaluation (should NOT count)
+        u2 = UsageLog(
+            id=generate_id("usage"),
+            operation_type="evaluate",
+            model="opus",
+            trigger_source="manual",
+        )
+        insert_usage(temp_db, u2)
+
+        # Auto drafting (should NOT count - wrong operation type)
+        u3 = UsageLog(
+            id=generate_id("usage"),
+            operation_type="draft",
+            model="opus",
+            trigger_source="auto",
+        )
+        insert_usage(temp_db, u3)
+
+        count = get_today_auto_evaluation_count(temp_db)
+        assert count == 1
+
+    def test_get_last_auto_evaluation_time(self, temp_db):
+        """get_last_auto_evaluation_time returns most recent auto eval time."""
+        # No evaluations yet
+        assert get_last_auto_evaluation_time(temp_db) is None
+
+        # Insert auto evaluation
+        u1 = UsageLog(
+            id=generate_id("usage"),
+            operation_type="evaluate",
+            model="opus",
+            trigger_source="auto",
+        )
+        insert_usage(temp_db, u1)
+
+        result = get_last_auto_evaluation_time(temp_db)
+        assert result is not None
+
+    def test_insert_usage_with_trigger_source(self, temp_db):
+        """insert_usage persists trigger_source field."""
+        u = UsageLog(
+            id=generate_id("usage"),
+            operation_type="evaluate",
+            model="opus",
+            trigger_source="manual",
+        )
+        insert_usage(temp_db, u)
+
+        row = temp_db.execute(
+            "SELECT trigger_source FROM usage_log WHERE id = ?", (u.id,)
+        ).fetchone()
+        assert row[0] == "manual"
+
+    def test_execute_queue_action_merge(self, temp_db):
+        """execute_queue_action handles merge action (marks draft as superseded)."""
+        project = self._make_project(temp_db)
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Test",
+        )
+        insert_decision(temp_db, decision)
+
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test content",
+        )
+        insert_draft(temp_db, draft)
+
+        execute_queue_action(temp_db, "merge", draft.id, "merged into new draft")
+
+        updated = get_draft(temp_db, draft.id)
+        assert updated.status == "superseded"
+
+    def test_execute_queue_action_invalid_raises(self, temp_db):
+        """execute_queue_action raises ValueError for unknown action type."""
+        project = self._make_project(temp_db)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Test",
+        )
+        insert_decision(temp_db, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="Test content",
+        )
+        insert_draft(temp_db, draft)
+
+        with pytest.raises(ValueError, match="Unknown queue action"):
+            execute_queue_action(temp_db, "invalid_action", draft.id, "bad action")
+
+    def test_decision_trigger_source_persists(self, temp_db):
+        """Decision trigger_source persists through insert -> get."""
+        project = self._make_project(temp_db)
+        d = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="test",
+            trigger_source="scheduler",
+        )
+        insert_decision(temp_db, d)
+
+        decisions = get_recent_decisions(temp_db, project.id)
+        assert len(decisions) == 1
+        assert decisions[0].trigger_source == "scheduler"

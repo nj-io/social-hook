@@ -4,13 +4,33 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from social_hook.config.yaml import ChannelConfig
-from social_hook.models import Project
+from social_hook.models import Decision, Project
+from social_hook.rate_limits import GateResult
 from social_hook.trigger import (
+    _build_merge_commit,
+    _build_merge_evaluation,
+    _execute_merge_groups,
     git_remote_origin,
     parse_commit_info,
     run_trigger,
 )
+
+
+@pytest.fixture(autouse=True)
+def _allow_rate_limit():
+    """Default: rate limit gate allows all evaluations.
+
+    Tests that need to verify gate behavior should explicitly patch
+    social_hook.trigger.check_rate_limit themselves (which overrides this).
+    """
+    with patch(
+        "social_hook.trigger.check_rate_limit",
+        return_value=GateResult(blocked=False, reason=""),
+    ):
+        yield
 
 
 class TestParseCommitInfo:
@@ -458,7 +478,7 @@ class TestTriggerUsesAdapter:
         mock_parse.return_value = commit
 
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
 
@@ -688,7 +708,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -754,7 +774,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -805,7 +825,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -860,7 +880,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -918,7 +938,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -975,7 +995,7 @@ class TestTriggerMedia:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1085,7 +1105,7 @@ class TestTriggerSendsMediaNotification:
         mock_by_path.return_value = Project(id="p1", name="test-proj", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1228,7 +1248,7 @@ class TestPerPlatformPipeline:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1311,7 +1331,7 @@ class TestPerPlatformPipeline:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1411,7 +1431,7 @@ class TestPerPlatformPipeline:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1473,7 +1493,7 @@ class TestPerPlatformPipeline:
         mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
         mock_parse.return_value = mocks["commit"]
         mock_context.return_value = MagicMock(
-            held_decisions=[], audience_introduced=True, project_summary="test"
+            held_decisions=[], platform_introduced={"x": True}, project_summary="test"
         )
         mock_proj_config.return_value = MagicMock()
         mock_evaluator_cls.return_value = mocks["evaluator_instance"]
@@ -1487,6 +1507,153 @@ class TestPerPlatformPipeline:
 # =============================================================================
 # Per-tool media disable tests (2a)
 # =============================================================================
+
+
+class TestRateLimitGate:
+    """Tests for rate limit gate integration in run_trigger."""
+
+    @patch("social_hook.trigger.check_rate_limit")
+    @patch("social_hook.trigger._get_current_branch")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_commit_trigger_gated_when_limit_hit(
+        self, mock_config, mock_db, mock_db_path, mock_by_path, mock_branch, mock_gate
+    ):
+        """Auto commit trigger is gated when rate limit is hit."""
+        from social_hook.rate_limits import GateResult
+
+        mock_config.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_db.return_value = mock_conn
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_branch.return_value = "main"
+        mock_gate.return_value = GateResult(blocked=True, reason="Daily limit reached: 15/15")
+
+        exit_code = run_trigger("abc123", "/tmp", trigger_source="commit")
+        assert exit_code == 0
+        mock_conn.close.assert_called()
+
+    @patch("social_hook.trigger.check_rate_limit")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger._get_current_branch")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_manual_trigger_bypasses_gate(
+        self,
+        mock_config,
+        mock_db,
+        mock_db_path,
+        mock_by_path,
+        mock_branch,
+        mock_parse,
+        mock_proj_config,
+        mock_context,
+        mock_gate,
+    ):
+        """Manual trigger bypasses rate limit gate entirely."""
+        mock_config.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_db.return_value = mock_conn
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_branch.return_value = "main"
+        mock_parse.return_value = MagicMock(
+            hash="abc123", message="test", timestamp=None, parent_timestamp=None
+        )
+        mock_context.return_value = MagicMock(project_summary="test")
+
+        # Proceeds past gate (not called), fails later at evaluator — that's fine
+        run_trigger("abc123", "/tmp", trigger_source="manual")
+        mock_gate.assert_not_called()
+
+    @patch("social_hook.trigger.check_rate_limit")
+    @patch("social_hook.trigger.assemble_evaluator_context")
+    @patch("social_hook.config.project.load_project_config")
+    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger._get_current_branch")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_drain_trigger_bypasses_gate(
+        self,
+        mock_config,
+        mock_db,
+        mock_db_path,
+        mock_by_path,
+        mock_branch,
+        mock_parse,
+        mock_proj_config,
+        mock_context,
+        mock_gate,
+    ):
+        """Drain trigger bypasses rate limit gate entirely."""
+        mock_config.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_db.return_value = mock_conn
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_branch.return_value = "main"
+        mock_parse.return_value = MagicMock(
+            hash="abc123", message="test", timestamp=None, parent_timestamp=None
+        )
+        mock_context.return_value = MagicMock(project_summary="test")
+
+        run_trigger("abc123", "/tmp", trigger_source="drain")
+        mock_gate.assert_not_called()
+
+    @patch("social_hook.trigger.check_rate_limit")
+    @patch("social_hook.trigger._get_current_branch")
+    @patch("social_hook.trigger.ops.get_project_by_path")
+    @patch("social_hook.trigger.get_db_path")
+    @patch("social_hook.trigger.init_database")
+    @patch("social_hook.trigger.load_full_config")
+    def test_deferred_decision_created_with_correct_fields(
+        self, mock_config, mock_db, mock_db_path, mock_by_path, mock_branch, mock_gate
+    ):
+        """Deferred decision has correct type, reason, trigger_source, and no commit_message."""
+        from social_hook.rate_limits import GateResult
+
+        mock_config.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_db.return_value = mock_conn
+        mock_db_path.return_value = Path("/tmp/test.db")
+        mock_by_path.return_value = Project(id="p1", name="test", repo_path="/tmp")
+        mock_branch.return_value = "main"
+        mock_gate.return_value = GateResult(blocked=True, reason="Gap not elapsed: 7m remaining")
+
+        # Capture the decision inserted via DryRunContext
+        inserted_decisions = []
+
+        class CaptureDryRun:
+            def __init__(self, conn, dry_run=False):
+                self.conn = conn
+
+            def insert_decision(self, decision):
+                inserted_decisions.append(decision)
+
+            def emit_data_event(self, *args, **kwargs):
+                pass
+
+        with patch("social_hook.trigger.DryRunContext", side_effect=CaptureDryRun):
+            exit_code = run_trigger("abc123", "/tmp", trigger_source="commit")
+
+        assert exit_code == 0
+        assert len(inserted_decisions) == 1
+        d = inserted_decisions[0]
+        assert d.decision == "deferred_eval"
+        assert d.reasoning == "Gap not elapsed: 7m remaining"
+        assert d.commit_message is None
+        assert d.trigger_source == "commit"
+        assert d.branch == "main"
+        assert d.project_id == "p1"
 
 
 class TestGenerateMediaPerTool:
@@ -2018,3 +2185,425 @@ class TestDecisionNotification:
             assert "skip" in sent_msg.text
             assert "test-proj" in sent_msg.text
             assert "abc12345" in sent_msg.text
+
+
+# ---------------------------------------------------------------------------
+# Merge queue action helpers
+# ---------------------------------------------------------------------------
+
+
+class TestBuildMergeEvaluation:
+    """Tests for _build_merge_evaluation."""
+
+    def _make_draft(self, **kwargs):
+        defaults = {
+            "id": "draft_1",
+            "project_id": "p1",
+            "decision_id": "dec_1",
+            "platform": "x",
+            "content": "Some draft content",
+            "status": "draft",
+        }
+        defaults.update(kwargs)
+        from social_hook.models import Draft
+
+        return Draft(**defaults)
+
+    def _make_decision(self, **kwargs):
+        defaults = {
+            "id": "dec_1",
+            "project_id": "p1",
+            "commit_hash": "abc12345",
+            "decision": "draft",
+            "reasoning": "Good commit",
+            "angle": "feature angle",
+            "post_category": "arc",
+            "arc_id": "arc_1",
+            "media_tool": "mermaid",
+            "commit_summary": "Added a feature",
+        }
+        defaults.update(kwargs)
+        return Decision(**defaults)
+
+    def test_with_instruction(self):
+        drafts = [self._make_draft(id="d1"), self._make_draft(id="d2")]
+        decisions = [
+            self._make_decision(id="dec_1", commit_summary="First change"),
+            self._make_decision(
+                id="dec_2",
+                commit_hash="def67890",
+                commit_summary="Second change",
+                post_category="opportunistic",
+                arc_id=None,
+                media_tool=None,
+            ),
+        ]
+        result = _build_merge_evaluation(drafts, decisions, "Lead with the API angle")
+        assert result.angle == "Lead with the API angle"
+        assert result.decision == "draft"
+        assert result.episode_type is None
+        assert result.post_category == "opportunistic"  # from decisions[-1]
+        assert result.arc_id is None  # from decisions[-1]
+        assert result.media_tool is None  # from decisions[-1]
+        assert "First change" in result.commit_summary
+        assert "Second change" in result.commit_summary
+        assert result.new_arc_theme is None
+        assert result.reference_posts is None
+        assert result.include_project_docs is None
+
+    def test_without_instruction(self):
+        drafts = [self._make_draft(id="d1"), self._make_draft(id="d2")]
+        decisions = [
+            self._make_decision(id="dec_1", angle="angle one"),
+            self._make_decision(id="dec_2", commit_hash="def67890", angle="angle two"),
+        ]
+        result = _build_merge_evaluation(drafts, decisions, None)
+        assert result.angle == "angle one + angle two"
+
+    def test_without_instruction_no_angles(self):
+        drafts = [self._make_draft(id="d1"), self._make_draft(id="d2")]
+        decisions = [
+            self._make_decision(id="dec_1", angle=None),
+            self._make_decision(id="dec_2", commit_hash="def67890", angle=None),
+        ]
+        result = _build_merge_evaluation(drafts, decisions, None)
+        assert result.angle == "Consolidate these drafts"
+
+
+class TestBuildMergeCommit:
+    """Tests for _build_merge_commit."""
+
+    def test_basic(self):
+        decisions = [
+            Decision(
+                id="dec_1",
+                project_id="p1",
+                commit_hash="abc12345",
+                decision="draft",
+                reasoning="Good",
+                commit_summary="Added feature A",
+            ),
+            Decision(
+                id="dec_2",
+                project_id="p1",
+                commit_hash="def67890",
+                decision="draft",
+                reasoning="Also good",
+                commit_summary="Added feature B",
+            ),
+        ]
+        from social_hook.models import Draft
+
+        drafts = [
+            Draft(
+                id="d1",
+                project_id="p1",
+                decision_id="dec_1",
+                platform="x",
+                content="Draft about feature A",
+            ),
+            Draft(
+                id="d2",
+                project_id="p1",
+                decision_id="dec_2",
+                platform="x",
+                content="Draft about feature B",
+            ),
+        ]
+        result = _build_merge_commit(decisions, drafts)
+        assert result.hash.startswith("merge-")
+        assert "Merge of 2 drafts" in result.message
+        assert "Original drafts to consolidate" in result.diff
+        assert "Draft about feature A" in result.diff
+        assert "Draft about feature B" in result.diff
+        assert result.files_changed == []
+
+
+class TestExecuteMergeGroups:
+    """Tests for _execute_merge_groups."""
+
+    def _make_draft(self, id="d1", platform="x", decision_id="dec_1", **kwargs):
+        from social_hook.models import Draft
+
+        defaults = {
+            "id": id,
+            "project_id": "p1",
+            "decision_id": decision_id,
+            "platform": platform,
+            "content": f"Content for {id}",
+            "status": "draft",
+        }
+        defaults.update(kwargs)
+        return Draft(**defaults)
+
+    def _make_decision(self, id="dec_1", commit_hash="abc12345", **kwargs):
+        defaults = {
+            "id": id,
+            "project_id": "p1",
+            "commit_hash": commit_hash,
+            "decision": "draft",
+            "reasoning": "Good commit",
+            "angle": "feature",
+            "post_category": "arc",
+            "commit_summary": f"Summary for {id}",
+        }
+        defaults.update(kwargs)
+        return Decision(**defaults)
+
+    def _make_queue_actions(self, groups):
+        """Build queue_actions dict from a list of (group_label, draft_ids, instruction) tuples."""
+        from social_hook.llm.schemas import QueueAction
+
+        actions = []
+        for group_label, draft_ids, instruction in groups:
+            for i, did in enumerate(draft_ids):
+                qa = QueueAction(
+                    action="merge",
+                    draft_id=did,
+                    reason="merge test",
+                    merge_group=group_label,
+                    merge_instruction=instruction if i == 0 else None,
+                )
+                actions.append(qa)
+        return {"default": actions}
+
+    def _setup_mocks(self, drafts_map, decisions_map):
+        """Return (mock_config, mock_conn, mock_db, mock_project, mock_context, mock_pconfig)."""
+        from social_hook.config.platforms import OutputPlatformConfig
+
+        config = MagicMock()
+        config.platforms = {
+            "x": OutputPlatformConfig(enabled=True, priority="primary", type="builtin"),
+            "linkedin": OutputPlatformConfig(enabled=True, priority="secondary", type="builtin"),
+        }
+        config.scheduling = MagicMock()
+        conn = MagicMock()
+        db = MagicMock()
+        project = MagicMock()
+        project.id = "p1"
+        context = MagicMock()
+        pconfig = MagicMock()
+
+        return config, conn, db, project, context, pconfig
+
+    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.trigger.ops.supersede_draft")
+    @patch("social_hook.trigger.ops.get_decision")
+    @patch("social_hook.trigger.ops.get_draft")
+    def test_happy_path(self, mock_get_draft, mock_get_dec, mock_supersede, mock_dfp):
+        d1 = self._make_draft(id="d1", decision_id="dec_1")
+        d2 = self._make_draft(id="d2", decision_id="dec_2")
+        dec1 = self._make_decision(id="dec_1")
+        dec2 = self._make_decision(id="dec_2", commit_hash="def67890")
+
+        mock_get_draft.side_effect = lambda _conn, did: {"d1": d1, "d2": d2}.get(did)
+        mock_get_dec.side_effect = lambda _conn, did: {"dec_1": dec1, "dec_2": dec2}.get(did)
+
+        replacement_draft = MagicMock()
+        replacement_draft.draft.id = "merged_d1"
+        mock_dfp.return_value = [replacement_draft]
+
+        queue_actions = self._make_queue_actions([("A", ["d1", "d2"], "Combine them")])
+        config, conn, db, project, context, pconfig = self._setup_mocks(
+            {"d1": d1, "d2": d2}, {"dec_1": dec1, "dec_2": dec2}
+        )
+
+        _execute_merge_groups(
+            queue_actions,
+            config,
+            conn,
+            db,
+            project,
+            context,
+            pconfig,
+            dry_run=False,
+            verbose=False,
+        )
+
+        mock_dfp.assert_called_once()
+        assert mock_supersede.call_count == 2
+        mock_supersede.assert_any_call(conn, "d1", "merged_d1")
+        mock_supersede.assert_any_call(conn, "d2", "merged_d1")
+
+    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.trigger.ops.get_decision")
+    @patch("social_hook.trigger.ops.get_draft")
+    def test_single_valid_draft_skips(self, mock_get_draft, mock_get_dec, mock_dfp):
+        d1 = self._make_draft(id="d1")
+        mock_get_draft.side_effect = lambda _conn, did: d1 if did == "d1" else None
+        mock_get_dec.return_value = self._make_decision()
+
+        queue_actions = self._make_queue_actions([("A", ["d1", "d2"], "Combine")])
+        config, conn, db, project, context, pconfig = self._setup_mocks({}, {})
+
+        _execute_merge_groups(
+            queue_actions,
+            config,
+            conn,
+            db,
+            project,
+            context,
+            pconfig,
+            dry_run=False,
+            verbose=False,
+        )
+
+        mock_dfp.assert_not_called()
+
+    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.trigger.ops.supersede_draft")
+    @patch("social_hook.trigger.ops.get_decision")
+    @patch("social_hook.trigger.ops.get_draft")
+    def test_multiple_groups(self, mock_get_draft, mock_get_dec, mock_supersede, mock_dfp):
+        d1 = self._make_draft(id="d1", decision_id="dec_1")
+        d2 = self._make_draft(id="d2", decision_id="dec_2")
+        d3 = self._make_draft(id="d3", decision_id="dec_3")
+        d4 = self._make_draft(id="d4", decision_id="dec_4")
+        dec1 = self._make_decision(id="dec_1")
+        dec2 = self._make_decision(id="dec_2", commit_hash="b")
+        dec3 = self._make_decision(id="dec_3", commit_hash="c")
+        dec4 = self._make_decision(id="dec_4", commit_hash="d")
+
+        all_drafts = {"d1": d1, "d2": d2, "d3": d3, "d4": d4}
+        all_decs = {"dec_1": dec1, "dec_2": dec2, "dec_3": dec3, "dec_4": dec4}
+        mock_get_draft.side_effect = lambda _conn, did: all_drafts.get(did)
+        mock_get_dec.side_effect = lambda _conn, did: all_decs.get(did)
+
+        replacement = MagicMock()
+        replacement.draft.id = "merged_x"
+        mock_dfp.return_value = [replacement]
+
+        queue_actions = self._make_queue_actions(
+            [
+                ("A", ["d1", "d2"], "Group A"),
+                ("B", ["d3", "d4"], "Group B"),
+            ]
+        )
+        config, conn, db, project, context, pconfig = self._setup_mocks({}, {})
+
+        _execute_merge_groups(
+            queue_actions,
+            config,
+            conn,
+            db,
+            project,
+            context,
+            pconfig,
+            dry_run=False,
+            verbose=False,
+        )
+
+        assert mock_dfp.call_count == 2
+
+    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.trigger.ops.supersede_draft")
+    @patch("social_hook.trigger.ops.get_decision")
+    @patch("social_hook.trigger.ops.get_draft")
+    def test_cross_platform_subgrouping(
+        self, mock_get_draft, mock_get_dec, mock_supersede, mock_dfp
+    ):
+        d1 = self._make_draft(id="d1", platform="x", decision_id="dec_1")
+        d2 = self._make_draft(id="d2", platform="x", decision_id="dec_2")
+        d3 = self._make_draft(id="d3", platform="linkedin", decision_id="dec_3")
+        dec1 = self._make_decision(id="dec_1")
+        dec2 = self._make_decision(id="dec_2", commit_hash="b")
+        dec3 = self._make_decision(id="dec_3", commit_hash="c")
+
+        all_drafts = {"d1": d1, "d2": d2, "d3": d3}
+        all_decs = {"dec_1": dec1, "dec_2": dec2, "dec_3": dec3}
+        mock_get_draft.side_effect = lambda _conn, did: all_drafts.get(did)
+        mock_get_dec.side_effect = lambda _conn, did: all_decs.get(did)
+
+        replacement = MagicMock()
+        replacement.draft.id = "merged_x"
+        mock_dfp.return_value = [replacement]
+
+        queue_actions = self._make_queue_actions([("A", ["d1", "d2", "d3"], "Combine")])
+        config, conn, db, project, context, pconfig = self._setup_mocks({}, {})
+
+        _execute_merge_groups(
+            queue_actions,
+            config,
+            conn,
+            db,
+            project,
+            context,
+            pconfig,
+            dry_run=False,
+            verbose=False,
+        )
+
+        # Only "x" group has 2+ drafts, "linkedin" has 1 → skipped
+        mock_dfp.assert_called_once()
+        assert mock_supersede.call_count == 2  # only the 2 "x" drafts superseded
+
+    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.trigger.ops.supersede_draft")
+    @patch("social_hook.trigger.ops.get_decision")
+    @patch("social_hook.trigger.ops.get_draft")
+    def test_dry_run(self, mock_get_draft, mock_get_dec, mock_supersede, mock_dfp):
+        d1 = self._make_draft(id="d1", decision_id="dec_1")
+        d2 = self._make_draft(id="d2", decision_id="dec_2")
+        dec1 = self._make_decision(id="dec_1")
+        dec2 = self._make_decision(id="dec_2", commit_hash="b")
+
+        mock_get_draft.side_effect = lambda _conn, did: {"d1": d1, "d2": d2}.get(did)
+        mock_get_dec.side_effect = lambda _conn, did: {"dec_1": dec1, "dec_2": dec2}.get(did)
+
+        replacement = MagicMock()
+        replacement.draft.id = "merged_x"
+        mock_dfp.return_value = [replacement]
+
+        queue_actions = self._make_queue_actions([("A", ["d1", "d2"], "Combine")])
+        config, conn, db, project, context, pconfig = self._setup_mocks({}, {})
+
+        _execute_merge_groups(
+            queue_actions,
+            config,
+            conn,
+            db,
+            project,
+            context,
+            pconfig,
+            dry_run=True,
+            verbose=False,
+        )
+
+        # dry_run: drafting happens (for preview) but supersede should not
+        mock_supersede.assert_not_called()
+
+    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.trigger.ops.supersede_draft")
+    @patch("social_hook.trigger.ops.get_decision")
+    @patch("social_hook.trigger.ops.get_draft")
+    def test_deferred_draft_no_supersede(
+        self, mock_get_draft, mock_get_dec, mock_supersede, mock_dfp
+    ):
+        d1 = self._make_draft(id="d1", decision_id="dec_1")
+        d2 = self._make_draft(id="d2", decision_id="dec_2")
+        dec1 = self._make_decision(id="dec_1")
+        dec2 = self._make_decision(id="dec_2", commit_hash="b")
+
+        mock_get_draft.side_effect = lambda _conn, did: {"d1": d1, "d2": d2}.get(did)
+        mock_get_dec.side_effect = lambda _conn, did: {"dec_1": dec1, "dec_2": dec2}.get(did)
+
+        # Empty results = scheduler deferred the merged draft
+        mock_dfp.return_value = []
+
+        queue_actions = self._make_queue_actions([("A", ["d1", "d2"], "Combine")])
+        config, conn, db, project, context, pconfig = self._setup_mocks({}, {})
+
+        _execute_merge_groups(
+            queue_actions,
+            config,
+            conn,
+            db,
+            project,
+            context,
+            pconfig,
+            dry_run=False,
+            verbose=False,
+        )
+
+        mock_dfp.assert_called_once()
+        mock_supersede.assert_not_called()  # originals preserved

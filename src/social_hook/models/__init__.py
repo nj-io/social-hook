@@ -31,6 +31,7 @@ class DecisionType(Enum):
     HOLD = "hold"
     SKIP = "skip"
     IMPORTED = "imported"
+    DEFERRED_EVAL = "deferred_eval"
 
 
 class EpisodeType(Enum):
@@ -125,7 +126,6 @@ class Project:
     repo_origin: str | None = None
     summary: str | None = None
     summary_updated_at: datetime | None = None
-    audience_introduced: bool = False
     paused: bool = False
     discovery_files: str | None = None  # JSON-serialized list of file paths
     prompt_docs: str | None = None
@@ -140,7 +140,6 @@ class Project:
             "repo_origin": self.repo_origin,
             "summary": self.summary,
             "summary_updated_at": _to_iso(self.summary_updated_at),
-            "audience_introduced": self.audience_introduced,
             "paused": self.paused,
             "discovery_files": self.discovery_files,
             "prompt_docs": self.prompt_docs,
@@ -157,7 +156,6 @@ class Project:
             repo_origin=d.get("repo_origin"),
             summary=d.get("summary"),
             summary_updated_at=_from_iso(d.get("summary_updated_at")),
-            audience_introduced=bool(d.get("audience_introduced", False)),
             paused=bool(d.get("paused", False)),
             discovery_files=d.get("discovery_files"),
             prompt_docs=d.get("prompt_docs"),
@@ -166,7 +164,7 @@ class Project:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (id, name, repo_path, repo_origin, summary, summary_updated_at, audience_introduced, paused)."""
+        """Return tuple for INSERT (id, name, repo_path, repo_origin, summary, summary_updated_at, paused)."""
         return (
             self.id,
             self.name,
@@ -174,7 +172,6 @@ class Project:
             self.repo_origin,
             self.summary,
             _to_iso(self.summary_updated_at),
-            1 if self.audience_introduced else 0,
             1 if self.paused else 0,
         )
 
@@ -204,6 +201,7 @@ class Decision:
     processed_at: datetime | None = None
     batch_id: str | None = None
     branch: str | None = None
+    trigger_source: str = "commit"
     created_at: datetime | None = None
 
     def __post_init__(self):
@@ -253,6 +251,7 @@ class Decision:
             "processed_at": _to_iso(self.processed_at),
             "batch_id": self.batch_id,
             "branch": self.branch,
+            "trigger_source": self.trigger_source,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -302,11 +301,12 @@ class Decision:
             processed_at=_from_iso(d.get("processed_at")),
             batch_id=d.get("batch_id"),
             branch=d.get("branch"),
+            trigger_source=d.get("trigger_source", "commit"),
             created_at=_from_iso(d.get("created_at")),
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (18 columns)."""
+        """Return tuple for INSERT (19 columns)."""
         import json
 
         return (
@@ -328,6 +328,7 @@ class Decision:
             json.dumps(self.consolidate_with) if self.consolidate_with is not None else None,
             json.dumps(self.reference_posts) if self.reference_posts is not None else None,
             self.branch,
+            self.trigger_source,
         )
 
 
@@ -784,6 +785,7 @@ class UsageLog:
     cost_cents: float = 0.0
     project_id: str | None = None
     commit_hash: str | None = None
+    trigger_source: str = "auto"
     created_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -798,6 +800,7 @@ class UsageLog:
             "cache_creation_tokens": self.cache_creation_tokens,
             "cost_cents": self.cost_cents,
             "commit_hash": self.commit_hash,
+            "trigger_source": self.trigger_source,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -814,6 +817,7 @@ class UsageLog:
             cache_creation_tokens=d.get("cache_creation_tokens", 0),
             cost_cents=d.get("cost_cents", 0.0),
             commit_hash=d.get("commit_hash"),
+            trigger_source=d.get("trigger_source", "auto"),
             created_at=_from_iso(d.get("created_at")),
         )
 
@@ -830,6 +834,7 @@ class UsageLog:
             self.cache_creation_tokens,
             self.cost_cents,
             self.commit_hash,
+            self.trigger_source,
         )
 
 
@@ -861,11 +866,11 @@ class ProjectContext:
     lifecycle: Optional["Lifecycle"]
     active_arcs: list["Arc"]
     narrative_debt: int
-    audience_introduced: bool
-    pending_drafts: list["Draft"]
-    recent_decisions: list["Decision"]
-    recent_posts: list["Post"]
-    project_summary: str | None
+    platform_introduced: dict[str, bool] = field(default_factory=dict)
+    pending_drafts: list["Draft"] = field(default_factory=list)
+    recent_decisions: list["Decision"] = field(default_factory=list)
+    recent_posts: list["Post"] = field(default_factory=list)
+    project_summary: str | None = None
     memories: list[dict] = field(default_factory=list)
     milestone_summaries: list[dict] = field(default_factory=list)
     context_notes: list[dict] = field(default_factory=list)
@@ -873,3 +878,11 @@ class ProjectContext:
     held_decisions: list["Decision"] = field(default_factory=list)
     arc_posts: dict[str, list["Post"]] = field(default_factory=dict)
     file_summaries: list[dict[str, str]] = field(default_factory=list)
+    identity: Any = None  # IdentityConfig | None — kept as Any to avoid circular import
+
+    @property
+    def all_introduced(self) -> bool:
+        """True if all tracked platforms have been introduced."""
+        if not self.platform_introduced:
+            return False
+        return all(self.platform_introduced.values())

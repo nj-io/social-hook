@@ -72,7 +72,12 @@ def help_cmd(
     import click
 
     click_app = typer.main.get_command(app)
-    command_parts = ctx.args  # e.g. ["draft", "approve"]
+    # Handle --json appearing after command path (forgiving flag placement)
+    if "--json" in ctx.args:
+        json_output = True
+        command_parts = [a for a in ctx.args if a != "--json"]
+    else:
+        command_parts = ctx.args  # e.g. ["draft", "approve"]
 
     def _cmd_to_dict(cmd, name=None):
         result = {}
@@ -80,6 +85,7 @@ def help_cmd(
             result["name"] = name
         if cmd.help:
             result["help"] = cmd.help.split("\n")[0]
+            result["description"] = cmd.help.strip()
 
         if hasattr(cmd, "commands") and cmd.commands:
             cmds = {}
@@ -128,6 +134,8 @@ def help_cmd(
 
     def _resolve_command(parts):
         """Walk the Click command tree following the given path parts."""
+        from difflib import get_close_matches
+
         current = click_app
         info_parts = [PROJECT_SLUG]
         for part in parts:
@@ -136,7 +144,16 @@ def help_cmd(
                 raise typer.Exit(1)
             sub = current.commands.get(part)
             if not sub:
-                typer.echo(f"Unknown command: {' '.join(parts)}")
+                available = sorted(current.commands.keys())
+                suggestions = get_close_matches(part, available, n=3, cutoff=0.5)
+                msg = f"Unknown command: {part}"
+                if suggestions:
+                    msg += "\n\nDid you mean?"
+                    for s in suggestions:
+                        msg += f"\n  {' '.join(info_parts)} {s}"
+                else:
+                    msg += f"\n\nAvailable: {', '.join(available)}"
+                typer.echo(msg)
                 raise typer.Exit(1)
             current = sub
             info_parts.append(part)
@@ -198,8 +215,8 @@ def help_cmd(
 def init():
     """Initialize social-hook (create directories and database).
 
-    DEV ONLY: This is a temporary command for testing. Use 'social-hook setup'
-    when it's available (WS4).
+    Creates ~/.social-hook/ with config templates and an empty database.
+    For guided setup with platform credentials, use 'social-hook setup' instead.
     """
     from social_hook.db import init_database
     from social_hook.filesystem import get_db_path, init_filesystem
@@ -232,13 +249,16 @@ def trigger(
     verbose = ctx.obj.get("verbose", False)
     config_path = ctx.obj.get("config")
 
-    exit_code = run_trigger(
-        commit_hash=commit,
-        repo_path=repo,
-        dry_run=dry_run,
-        config_path=str(config_path) if config_path else None,
-        verbose=verbose,
-    )
+    from social_hook.cli._spinner import spinner
+
+    with spinner("Evaluating commit..."):
+        exit_code = run_trigger(
+            commit_hash=commit,
+            repo_path=repo,
+            dry_run=dry_run,
+            config_path=str(config_path) if config_path else None,
+            verbose=verbose,
+        )
     raise SystemExit(exit_code)
 
 
@@ -339,9 +359,6 @@ def web(
     api_port = _find_free_port(api_port, host)
 
     # Start FastAPI in background
-    from social_hook.filesystem import get_db_path
-
-    typer.echo(f"Database: {get_db_path()}")
     typer.echo(f"Starting API server on {host}:{api_port}...")
     api_proc = sp.Popen(
         ["uvicorn", "social_hook.web.server:app", "--host", host, "--port", str(api_port)],
@@ -387,9 +404,13 @@ def bot_start(
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run as background daemon"),
 ):
     """Start the bot daemon."""
-    from social_hook.bot.process import is_running
+    import os
 
-    if is_running():
+    from social_hook.bot.process import is_running, read_pid
+
+    # If the PID file contains our own PID, we were spawned by the
+    # parent daemon launcher (eager PID write) — proceed normally.
+    if is_running() and read_pid() != os.getpid():
         typer.echo("Bot is already running.")
         raise typer.Exit(1)
 
@@ -432,9 +453,22 @@ def bot_start(
             kwargs["start_new_session"] = True
 
         proc = sp.Popen(cmd, **kwargs)
+        log_fd.close()  # Child inherited the FD; parent doesn't need it
+        # Write PID eagerly so is_running() returns true immediately,
+        # preventing duplicate daemons from concurrent start requests.
+        # The child will overwrite with the same PID in bot.run().
+        pid_file = get_pid_file()
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(proc.pid))
         typer.echo(f"Bot started (PID {proc.pid})")
         return
     else:
+        import logging
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
         typer.echo("Bot starting (foreground mode, Ctrl+C to stop)...")
         bot.run(pid_file=get_pid_file())
 
@@ -448,6 +482,7 @@ def bot_stop():
         typer.echo("Bot is not running.")
         return
 
+    typer.echo("Stopping bot (may take up to 40s)...")
     if stop_bot():
         typer.echo("Bot stopped.")
     else:
@@ -532,18 +567,9 @@ def discover(
                 ops.upsert_file_summaries(conn, project.id, file_summaries)
             if prompt_docs:
                 ops.update_prompt_docs(conn, project.id, prompt_docs)
-            ops.emit_data_event(conn, "project", "updated", project.id, project.id)
         typer.echo(f"\nSelected files ({len(selected_files)}):")
         for f in selected_files:
             typer.echo(f"  {f}")
-        if file_summaries:
-            typer.echo(f"\nFile summaries ({len(file_summaries)}):")
-            for fs in file_summaries:
-                typer.echo(f"  {fs['path']}: {fs['summary'][:80]}")
-        if prompt_docs:
-            typer.echo(f"\nPrompt docs ({len(prompt_docs)}):")
-            for pd in prompt_docs:
-                typer.echo(f"  {pd}")
         typer.echo(f"\nSummary:\n{summary}")
     else:
         typer.echo("Discovery failed - no summary generated.", err=True)
@@ -846,11 +872,20 @@ app.add_typer(decision_app, name="decision", help="Decision management.")
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
 app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
 
+from social_hook.cli.media import app as media_app
+
+# Media commands: gc
+app.add_typer(media_app, name="media", help="Media management.")
+
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
 app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
 
 from social_hook.cli.events import events as events_cmd
+from social_hook.cli.quickstart import quickstart as quickstart_cmd
+from social_hook.cli.rate_limits import rate_limits as rate_limits_cmd
 
 app.command("events")(events_cmd)
+app.command("rate-limits")(rate_limits_cmd)
+app.command("quickstart")(quickstart_cmd)

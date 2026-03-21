@@ -28,7 +28,6 @@ class TestBroadcastIteratesChannels:
             ),
             patch("social_hook.messaging.web.WebAdapter") as mock_web_cls,
             patch("social_hook.messaging.telegram.TelegramAdapter") as mock_tg_cls,
-            patch("social_hook.bot.process.is_running", return_value=False),
         ):
             mock_web = MagicMock()
             mock_web_cls.return_value = mock_web
@@ -43,7 +42,7 @@ class TestBroadcastIteratesChannels:
 
 
 class TestBroadcastButtonBehavior:
-    """Tests for button stripping based on daemon status."""
+    """Tests for button behavior in notifications."""
 
     def _make_msg_with_buttons(self):
         return OutboundMessage(
@@ -58,8 +57,8 @@ class TestBroadcastButtonBehavior:
             ],
         )
 
-    def test_broadcast_strips_buttons_no_daemon(self):
-        """Telegram message has no buttons when daemon not running."""
+    def test_broadcast_always_sends_buttons_to_telegram(self):
+        """Telegram message always includes buttons regardless of daemon state."""
         cfg = MagicMock()
         cfg.channels = {}
         cfg.env.get = lambda key, default="": {
@@ -76,37 +75,6 @@ class TestBroadcastButtonBehavior:
             ),
             patch("social_hook.messaging.web.WebAdapter") as mock_web_cls,
             patch("social_hook.messaging.telegram.TelegramAdapter") as mock_tg_cls,
-            patch("social_hook.bot.process.is_running", return_value=False),
-        ):
-            mock_web_cls.return_value = MagicMock()
-            mock_tg = MagicMock()
-            mock_tg.send_message.return_value = SendResult(success=True)
-            mock_tg_cls.return_value = mock_tg
-
-            broadcast_notification(cfg, msg)
-
-            tg_msg = mock_tg.send_message.call_args[0][1]
-            assert tg_msg.buttons == []
-
-    def test_broadcast_keeps_buttons_with_daemon(self):
-        """Telegram message keeps buttons when daemon is running."""
-        cfg = MagicMock()
-        cfg.channels = {}
-        cfg.env.get = lambda key, default="": {
-            "TELEGRAM_BOT_TOKEN": "fake-token",
-            "TELEGRAM_ALLOWED_CHAT_IDS": "123",
-        }.get(key, default)
-
-        msg = self._make_msg_with_buttons()
-
-        with (
-            patch(
-                "social_hook.filesystem.get_db_path",
-                return_value=Path("/tmp/test.db"),
-            ),
-            patch("social_hook.messaging.web.WebAdapter") as mock_web_cls,
-            patch("social_hook.messaging.telegram.TelegramAdapter") as mock_tg_cls,
-            patch("social_hook.bot.process.is_running", return_value=True),
         ):
             mock_web_cls.return_value = MagicMock()
             mock_tg = MagicMock()
@@ -164,7 +132,6 @@ class TestBroadcastMedia:
             ),
             patch("social_hook.messaging.web.WebAdapter") as mock_web_cls,
             patch("social_hook.messaging.telegram.TelegramAdapter") as mock_tg_cls,
-            patch("social_hook.bot.process.is_running", return_value=False),
         ):
             mock_web = MagicMock()
             mock_web_cls.return_value = mock_web
@@ -215,7 +182,6 @@ class TestBroadcastChatContext:
             ),
             patch("social_hook.messaging.web.WebAdapter") as mock_web_cls,
             patch("social_hook.messaging.telegram.TelegramAdapter") as mock_tg_cls,
-            patch("social_hook.bot.process.is_running", return_value=False),
             patch("social_hook.bot.commands.set_chat_draft_context") as mock_ctx,
         ):
             mock_web_cls.return_value = MagicMock()

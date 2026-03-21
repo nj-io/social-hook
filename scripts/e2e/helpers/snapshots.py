@@ -25,7 +25,9 @@ def snapshot_rollback(harness):
     Uses direct file copy (not CLI snapshot restore) because the CLI
     has bot daemon checks and confirmation prompts unsuitable for E2E.
     """
-    db_path = harness.base / "social-hook.db"
+    from social_hook.filesystem import get_db_path
+
+    db_path = get_db_path()
     backup_fd, backup_path = tempfile.mkstemp(suffix=".db")
 
     try:

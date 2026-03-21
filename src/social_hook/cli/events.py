@@ -25,17 +25,21 @@ def events(
         "-f",
         help="Follow new events in real time",
     ),
+    json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Watch live pipeline events (commits, decisions, drafts).
 
     Example: social-hook events --json
     """
-    from social_hook.db.connection import init_database
+    from social_hook.db.connection import ResilientConnection, init_database
     from social_hook.filesystem import get_db_path
 
-    json_mode = ctx.obj.get("json", False) if ctx.obj else False
+    json_mode = json_mode or (ctx.obj.get("json", False) if ctx.obj else False)
     db_path = get_db_path()
-    conn = init_database(db_path)
+    init_database(db_path)  # ensure schema exists
+
+    rc = ResilientConnection(db_path)
+    conn = rc.conn
 
     try:
         if since == -1:
@@ -53,10 +57,16 @@ def events(
 
         with contextlib.suppress(KeyboardInterrupt):
             while True:
+                conn = rc.check()
+                # If MAX(id) went backwards, DB was replaced — reset cursor
+                row = conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
+                max_id = row[0]
+                if max_id < last_id:
+                    last_id = max_id
                 last_id = _print_events(conn, last_id, entity, json_mode)
                 time.sleep(1)
     finally:
-        conn.close()
+        rc.close()
 
 
 def _print_events(
@@ -120,8 +130,7 @@ def _print_human(data: dict, created_at: str | None) -> None:
 
     # Entity-specific formatting
     if entity == "pipeline":
-        label = "evaluating" if action == "evaluating" else "drafting"
-        typer.echo(f"[{ts}] [{entity:<8}] {label:<12} {entity_id}")
+        typer.echo(f"[{ts}] [{entity:<8}] {action:<12} {entity_id}")
     elif entity == "draft" and action == "created":
         preview = f'  "{content[:60]}..."' if content else ""
         plat = f"  ({platform})" if platform else ""

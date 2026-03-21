@@ -69,12 +69,25 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
 
   async function handleDaemonToggle() {
     setDaemonAction(true);
+    const wasRunning = status?.daemon_running;
     try {
-      if (status?.daemon_running) {
+      if (wasRunning) {
         await stopBotDaemon();
       } else {
         await startBotDaemon();
       }
+      // Poll until the daemon state flips (the subprocess needs time to
+      // write/remove its PID file) or we time out after ~3 seconds.
+      const target = !wasRunning;
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const res = await fetchChannelsStatus();
+        if (!!res.daemon_running === target) {
+          setStatus(res);
+          return;
+        }
+      }
+      // Timed out — refresh with whatever we have
       await loadStatus();
     } catch {
       // Silently handle

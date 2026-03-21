@@ -164,7 +164,9 @@ def list_project_files(
             try:
                 size = fpath.stat().st_size
                 if size > max_file_size:
-                    logger.info("Skipping oversized file from listing: %s (%d bytes)", rel_path, size)
+                    logger.info(
+                        "Skipping oversized file from listing: %s (%d bytes)", rel_path, size
+                    )
                     continue
                 if size < 1024:
                     size_str = f"{size}B"

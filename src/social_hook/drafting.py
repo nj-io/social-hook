@@ -24,6 +24,10 @@ class DraftResult:
     draft: Draft
     schedule: ScheduleResult
     thread_tweets: list[str]
+    episode_type: str | None = None
+    post_category: str | None = None
+    angle: str | None = None
+    episode_tags: list[str] | None = None
 
 
 def draft_for_platforms(
@@ -66,6 +70,35 @@ def draft_for_platforms(
     Returns:
         List of DraftResult for each successfully created draft.
         Empty list if no platforms resolve or all are filtered.
+    """
+    resolved = _resolve_and_filter_platforms(
+        config, evaluation, target_platform_names, skip_content_filter, verbose
+    )
+    if not resolved:
+        return []
+    return _draft_for_resolved_platforms(
+        resolved,
+        config,
+        conn,
+        db,
+        project,
+        decision_id=decision_id,
+        evaluation=evaluation,
+        context=context,
+        commit=commit,
+        project_config=project_config,
+        dry_run=dry_run,
+        verbose=verbose,
+    )
+
+
+def _resolve_and_filter_platforms(
+    config, evaluation, target_platform_names, skip_content_filter, verbose
+):
+    """Resolve enabled platforms and apply content filter.
+
+    Returns:
+        Dict of platform_name -> ResolvedPlatformConfig, or empty dict if none pass.
     """
     # 1. Resolve enabled platforms
     resolved_platforms = {}
@@ -110,35 +143,57 @@ def draft_for_platforms(
         logger.info("No matching platforms. Skipping draft creation.")
         if verbose:
             print("No matching platforms. Skipping draft creation.")
-        return []
+        return {}
 
     # 2. Apply content filter per platform (skipped for manual overrides)
     ep_type = getattr(evaluation, "episode_type", None)
     if ep_type is not None and hasattr(ep_type, "value"):
         ep_type = ep_type.value
     if skip_content_filter:
-        target_platforms = dict(resolved_platforms)
-    else:
-        target_platforms = {}
-        for pname, rpcfg in resolved_platforms.items():
-            if passes_content_filter(rpcfg.filter, ep_type):
-                target_platforms[pname] = rpcfg
-            else:
-                logger.info(
-                    "Platform %s: filtered (filter=%s, episode_type=%s)",
-                    pname,
-                    rpcfg.filter,
-                    ep_type,
-                )
-                if verbose:
-                    print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
+        return dict(resolved_platforms)
 
-        if not target_platforms:
-            logger.info("All platforms filtered out (episode_type=%s). No drafts created.", ep_type)
+    target_platforms = {}
+    for pname, rpcfg in resolved_platforms.items():
+        if passes_content_filter(rpcfg.filter, ep_type):
+            target_platforms[pname] = rpcfg
+        else:
+            logger.info(
+                "Platform %s: filtered (filter=%s, episode_type=%s)",
+                pname,
+                rpcfg.filter,
+                ep_type,
+            )
             if verbose:
-                print("All platforms filtered this commit.")
-            return []
+                print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
 
+    if not target_platforms:
+        logger.info("All platforms filtered out (episode_type=%s). No drafts created.", ep_type)
+        if verbose:
+            print("All platforms filtered this commit.")
+        return {}
+
+    return target_platforms
+
+
+def _draft_for_resolved_platforms(
+    platforms,
+    config,
+    conn: sqlite3.Connection,
+    db,
+    project,
+    decision_id: str,
+    evaluation,
+    context,
+    commit,
+    project_config=None,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> list[DraftResult]:
+    """Core drafting loop: create drafter client, draft per platform, schedule, insert.
+
+    Called directly by merge execution (bypasses resolution + filter).
+    Called by draft_for_platforms() after resolution + filtering.
+    """
     # 3. Create drafter client
     from social_hook.errors import ConfigError
     from social_hook.llm.factory import create_client
@@ -192,7 +247,19 @@ def draft_for_platforms(
 
     # 5. Draft for each target platform
     results = []
-    for pname, rpcfg in target_platforms.items():
+    for pname, rpcfg in platforms.items():
+        # Per-platform introduction check
+        platform_is_introduced = context.platform_introduced.get(pname, False)
+
+        # Resolve identity for this platform
+        from social_hook.config.yaml import resolve_identity
+        from social_hook.db import operations as _id_ops
+
+        resolved_identity = resolve_identity(config, pname)
+        target_post_count = len([p for p in context.recent_posts if p.platform == pname])
+        is_first_post = not platform_is_introduced
+        first_post_date = _id_ops.get_first_post_date(conn, project.id, pname)
+
         try:
             draft_result = drafter.create_draft(
                 evaluation,
@@ -206,6 +273,11 @@ def draft_for_platforms(
                 media_config=config.media_generation,
                 media_guidance=project_config.media_guidance if project_config else None,
                 referenced_posts=referenced_posts,
+                platform_introduced=platform_is_introduced,
+                identity=resolved_identity,
+                target_post_count=target_post_count,
+                is_first_post=is_first_post,
+                first_post_date=first_post_date,
             )
 
             # Override platform: LLM may return any string for unconstrained field
@@ -251,6 +323,10 @@ def draft_for_platforms(
                     platform=pname,
                     media_config=config.media_generation,
                     media_guidance=project_config.media_guidance if project_config else None,
+                    identity=resolved_identity,
+                    target_post_count=target_post_count,
+                    is_first_post=is_first_post,
+                    first_post_date=first_post_date,
                 )
                 thread_tweets = _parse_thread_tweets(
                     thread_result.content,
@@ -313,7 +389,20 @@ def draft_for_platforms(
                     if ref_post.platform == pname:
                         draft.post_format = "quote"
 
+            # Mark as intro if platform not yet introduced
+            if not platform_is_introduced and not dry_run:
+                draft.is_intro = True
+
             db.insert_draft(draft)
+
+            # After draft insertion, mark platform as introduced
+            if not platform_is_introduced and not dry_run:
+                from social_hook.db import operations as _intro_ops
+
+                _intro_ops.set_platform_introduced(conn, project.id, pname, True)
+                context.platform_introduced[pname] = True
+                db.emit_data_event("project", "updated", project.id, project.id)
+
             db.emit_data_event(
                 "draft",
                 "created",
@@ -343,11 +432,25 @@ def draft_for_platforms(
                 )
                 continue
 
+            # Extract metadata from evaluation for notification pass-through
+            _ep_type = getattr(evaluation, "episode_type", None)
+            if _ep_type is not None and hasattr(_ep_type, "value"):
+                _ep_type = _ep_type.value
+            _post_cat = getattr(evaluation, "post_category", None)
+            if _post_cat is not None and hasattr(_post_cat, "value"):
+                _post_cat = _post_cat.value
+            _angle = getattr(evaluation, "angle", None)
+            _ep_tags = getattr(evaluation, "episode_tags", None)
+
             results.append(
                 DraftResult(
                     draft=draft,
                     schedule=schedule,
                     thread_tweets=thread_tweets,
+                    episode_type=_ep_type,
+                    post_category=_post_cat,
+                    angle=_angle,
+                    episode_tags=_ep_tags,
                 )
             )
 

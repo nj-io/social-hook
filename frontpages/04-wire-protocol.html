@@ -1,0 +1,2673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Social Hook — The marketing engine built for devs</title>
+<meta name="description" content="Agent-first, open-source marketing engine. Social Hook watches your development, drafts what matters, and publishes where your audience lives.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="icon" type="image/png" href="favicon.png">
+<meta property="og:image" content="social-preview.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&family=Literata:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+/* ===== RESET & BASE ===== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #F5F6F8;
+  --text-primary: #1A1D23;
+  --text-secondary: #6B7280;
+  --accent: #2563EB;
+  --accent-light: #EFF6FF;
+  --border: #D1D5DB;
+  --node-bg: #FFFFFF;
+  --font-display: 'IBM Plex Sans Condensed', sans-serif;
+  --font-body: 'Literata', serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+  --wire-width: 1.5px;
+  --line-color: var(--accent);
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ===== NAV ===== */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg);
+  border-bottom: var(--wire-width) solid var(--border);
+}
+
+.nav-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text-primary);
+}
+
+.nav-logo-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.nav-logo-text {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.nav-links {
+  display: flex;
+  gap: 28px;
+  list-style: none;
+}
+
+.nav-links a {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.nav-links a:hover { color: var(--accent); }
+
+/* ===== HERO ===== */
+.hero {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 64px 24px 48px;
+  text-align: center;
+  position: relative;
+}
+
+/* Blueprint grid overlay — subtle technical atmosphere, parallax on mouse */
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: -20px;
+  background-image:
+    linear-gradient(rgba(37, 99, 235, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37, 99, 235, 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: var(--grid-x, 0px) var(--grid-y, 0px);
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 75%);
+  transition: background-position 0.4s ease-out;
+}
+
+.pipeline-container {
+  width: 100%;
+  max-width: 790px;
+  margin: 0 auto 48px;
+  overflow: visible;
+}
+
+.pipeline-svg {
+  width: 100%;
+  height: auto;
+}
+
+/* Pipeline elements — initial hidden state, GSAP animates them in */
+.pipeline-line {
+  stroke-dasharray: 1200;
+  stroke-dashoffset: 1200;
+}
+
+.pipeline-node-rect { opacity: 0; }
+.pipeline-node-text { opacity: 0; }
+.pipeline-node-icon { opacity: 0; }
+
+.hero h1 {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+  opacity: 0;
+}
+
+.hero .subline {
+  font-family: var(--font-body);
+  font-size: clamp(16px, 2vw, 19px);
+  color: var(--text-secondary);
+  max-width: 540px;
+  margin: 0 auto 32px;
+  opacity: 0;
+}
+
+.install-block {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--node-bg);
+  border: var(--wire-width) solid var(--border);
+  padding: 12px 20px;
+  opacity: 0;
+}
+
+.install-block code {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  color: var(--text-primary);
+  user-select: all;
+}
+
+.install-block .copy-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  transition: color 0.2s;
+}
+
+.install-block .copy-btn:hover { color: var(--accent); }
+
+/* ===== HERO BADGES ===== */
+.hero-badges {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+  opacity: 0;
+}
+
+.hero-badge {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+.hero-badge-sep {
+  color: var(--border);
+  font-size: 14px;
+}
+
+/* ===== SCROLL REVEAL — hide before GSAP runs ===== */
+[data-reveal] { opacity: 0; }
+
+/* ===== PROBLEM SECTION ===== */
+.problem-section {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 80px 24px;
+  text-align: center;
+  opacity: 0;
+  position: relative;
+}
+
+/* Subtle tint band behind problem section */
+.problem-section::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 0%, rgba(37, 99, 235, 0.018) 30%, rgba(37, 99, 235, 0.018) 70%, transparent 100%);
+  pointer-events: none;
+}
+
+.problem-inner {
+  max-width: 600px;
+  margin: 0 auto;
+  position: relative;
+}
+
+.problem-section h2 {
+  font-family: var(--font-display);
+  font-size: clamp(26px, 3.5vw, 38px);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  margin-bottom: 20px;
+  color: var(--text-primary);
+  position: relative;
+}
+
+/* Accent underline beneath problem heading */
+.problem-section h2::after {
+  content: '';
+  display: block;
+  width: 48px;
+  height: 2px;
+  background: var(--accent);
+  margin: 16px auto 0;
+  opacity: 0.5;
+}
+
+.problem-section p {
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+/* ===== TRIPTYCH ===== */
+.triptych {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+  opacity: 0;
+}
+
+.triptych-inner {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.triptych-panel {
+  flex: 1;
+  background: var(--node-bg);
+  border: var(--wire-width) solid var(--border);
+  border-top: 2px solid var(--accent);
+  padding: 32px 24px 28px;
+  position: relative;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+  transition: border-color 0.2s, box-shadow 0.3s, transform 0.3s;
+  opacity: 0;
+}
+
+.triptych-panel::before {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 10px;
+  height: 10px;
+  border-bottom: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+  opacity: 0.35;
+  transition: opacity 0.3s;
+}
+
+.triptych-panel::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: -1px;
+  width: 10px;
+  height: 10px;
+  border-bottom: 2px solid var(--accent);
+  border-left: 2px solid var(--accent);
+  opacity: 0.35;
+  transition: opacity 0.3s;
+}
+
+.triptych-panel:hover {
+  border-color: var(--accent);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+  transform: perspective(800px) rotateX(-1deg) rotateY(1.5deg) translateY(-3px);
+}
+
+.triptych-panel:hover::before,
+.triptych-panel:hover::after {
+  opacity: 0.7;
+}
+
+.triptych-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  margin-bottom: 10px;
+  letter-spacing: 0.04em;
+}
+
+.triptych-panel h3 {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.triptych-panel p {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.triptych-wire {
+  width: 32px;
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.triptych-wire::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: var(--wire-width);
+  background: var(--accent);
+}
+
+.triptych-wire::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+@media (max-width: 768px) {
+  .triptych-inner {
+    flex-direction: column;
+  }
+
+  .triptych-wire {
+    width: 100%;
+    height: 32px;
+  }
+
+  .triptych-wire::before {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    right: auto;
+    width: var(--wire-width);
+    height: 100%;
+  }
+
+  .triptych-wire::after {
+    top: 50%;
+    left: 50%;
+  }
+}
+
+/* ===== WIRE SPINE ===== */
+.wire-spine {
+  position: relative;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px;
+  background-image: radial-gradient(circle, rgba(37, 99, 235, 0.06) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Wire spine line — animated by GSAP (replaced ::before) */
+.wire-spine-line {
+  position: absolute;
+  left: 68px;
+  top: 0;
+  bottom: 0;
+  width: var(--wire-width);
+  background: var(--line-color);
+  transform-origin: top center;
+  transform: scaleY(0);
+}
+
+/* Energy pulse container — dots travel down the spine */
+.spine-pulse {
+  position: absolute;
+  left: 67px;
+  width: 3px;
+  height: 3px;
+  background: var(--accent);
+  opacity: 0;
+  z-index: 3;
+  box-shadow: 0 0 6px rgba(37, 99, 235, 0.4);
+}
+
+/* ===== NODE SECTIONS ===== */
+.node-section {
+  position: relative;
+  padding: 48px 0 48px 120px;
+  opacity: 0;
+}
+
+.node-dot {
+  position: absolute;
+  left: 57px;
+  top: 52px;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--accent);
+  background: var(--node-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition: box-shadow 0.3s ease;
+}
+
+/* Node dot glow is applied by GSAP on scroll */
+
+/* Horizontal extension line from node dot — suggests connection to broader system */
+.node-dot::after {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  width: 42px;
+  height: var(--wire-width);
+  background: linear-gradient(90deg, var(--accent), transparent);
+  opacity: 0.2;
+  margin-left: 2px;
+}
+
+.node-section:hover .node-dot {
+  box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.14);
+}
+
+.node-section:hover .node-dot::after {
+  opacity: 0.45;
+}
+
+.node-dot-inner {
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+}
+
+.node-section h2 {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.node-section .node-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+.node-section p {
+  font-size: 16px;
+  color: var(--text-secondary);
+  max-width: 480px;
+  line-height: 1.65;
+  margin-bottom: 20px;
+}
+
+/* Illustrative cards */
+.illus-card {
+  background: var(--node-bg);
+  border: var(--wire-width) solid var(--border);
+  border-left: 3px solid var(--accent);
+  padding: 16px 20px;
+  max-width: 400px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  position: relative;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.03);
+  transition: transform 0.3s, box-shadow 0.3s;
+}
+
+.illus-card:hover {
+  transform: perspective(600px) rotateX(-0.5deg) translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08), 0 12px 32px rgba(0, 0, 0, 0.05);
+}
+
+.illus-card::before {
+  content: '';
+  position: absolute;
+  left: -41px;
+  top: 50%;
+  width: 40px;
+  height: var(--wire-width);
+  background: var(--border);
+}
+
+.illus-card .card-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.illus-card .dim { color: var(--text-secondary); }
+.illus-card .hl { color: var(--accent); }
+
+/* Tweet preview card */
+.tweet-card {
+  background: var(--node-bg);
+  border: var(--wire-width) solid var(--border);
+  padding: 16px 20px;
+  max-width: 400px;
+  position: relative;
+}
+
+.tweet-card::before {
+  content: '';
+  position: absolute;
+  left: -41px;
+  top: 50%;
+  width: 40px;
+  height: var(--wire-width);
+  background: var(--border);
+}
+
+.tweet-card .card-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.tweet-card .tweet-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tweet-card .avatar {
+  width: 32px;
+  height: 32px;
+  background: var(--accent-light);
+  border: var(--wire-width) solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tweet-card .avatar svg { width: 16px; height: 16px; }
+
+.tweet-card .tweet-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tweet-card .tweet-handle {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.tweet-card .tweet-body {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+/* Telegram mock */
+.tg-card {
+  background: var(--node-bg);
+  border: var(--wire-width) solid var(--border);
+  padding: 16px 20px;
+  max-width: 400px;
+  position: relative;
+}
+
+.tg-card::before {
+  content: '';
+  position: absolute;
+  left: -41px;
+  top: 50%;
+  width: 40px;
+  height: var(--wire-width);
+  background: var(--border);
+}
+
+.tg-card .card-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.tg-msg {
+  background: var(--accent-light);
+  border-left: 3px solid var(--accent);
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.tg-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.tg-btn {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 16px;
+  border: var(--wire-width) solid var(--border);
+  background: var(--node-bg);
+  color: var(--text-primary);
+  cursor: default;
+}
+
+.tg-btn.approve {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Platform icons row */
+.platform-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.platform-icon {
+  width: 44px;
+  height: 44px;
+  border: var(--wire-width) solid var(--border);
+  background: var(--node-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s, box-shadow 0.3s;
+}
+
+.platform-icon:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
+.platform-icon svg {
+  width: 20px;
+  height: 20px;
+  color: var(--text-secondary);
+}
+
+/* ===== JUNCTION SECTIONS ===== */
+.junction {
+  position: relative;
+  padding: 48px 0 48px 120px;
+  opacity: 0;
+}
+
+.junction-connector {
+  position: absolute;
+  left: 57px;
+  top: 32px;
+  width: 62px;
+  height: var(--wire-width);
+  background: var(--accent);
+  z-index: 1;
+}
+
+.junction-node {
+  position: absolute;
+  left: 60px;
+  top: 24px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  background: var(--bg);
+}
+
+.junction-node svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+.junction-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 80px;
+}
+
+.junction-card {
+  background: var(--node-bg);
+  border: var(--wire-width) solid var(--border);
+  border-top: 2px solid var(--accent);
+  padding: 14px 16px;
+  min-width: 160px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.2s, box-shadow 0.3s, transform 0.2s;
+  opacity: 0;
+}
+
+.junction-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 20px rgba(37, 99, 235, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+  transform: perspective(600px) rotateX(-1deg) translateY(-2px);
+}
+
+.junction-card h4 {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: var(--text-primary);
+}
+
+.junction-card p {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* ===== ARCHITECTURE ===== */
+.architecture {
+  position: relative;
+  padding: 64px 0 48px 120px;
+  opacity: 0;
+}
+
+.arch-dot {
+  position: absolute;
+  left: 57px;
+  top: 68px;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--accent);
+  background: var(--node-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.arch-dot-inner {
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+}
+
+.architecture h2 {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+
+.architecture > p {
+  font-size: 16px;
+  color: var(--text-secondary);
+  max-width: 480px;
+  margin-bottom: 28px;
+}
+
+.arch-svg-wrapper {
+  max-width: 700px;
+  overflow: visible;
+}
+
+.arch-svg-wrapper svg {
+  width: 100%;
+  height: auto;
+}
+
+/* ===== GETTING STARTED (ENDPOINT) ===== */
+.endpoint {
+  position: relative;
+  padding: 64px 0 64px 120px;
+  opacity: 0;
+}
+
+.endpoint-node {
+  position: absolute;
+  left: 49px;
+  top: 68px;
+  width: 38px;
+  height: 38px;
+  border: 2.5px solid var(--accent);
+  background: var(--accent-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.endpoint-node-inner {
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+}
+
+/* Cap the wire at the endpoint */
+.wire-spine::after {
+  content: '';
+  position: absolute;
+  left: 56px;
+  bottom: 0;
+  width: 24px;
+  height: 3px;
+  background: var(--accent);
+  z-index: 3;
+}
+
+.endpoint h2 {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+
+.endpoint p {
+  font-size: 16px;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  max-width: 440px;
+}
+
+.endpoint-install {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--node-bg);
+  border: var(--wire-width) solid var(--accent);
+  padding: 14px 22px;
+  margin-bottom: 16px;
+  transition: box-shadow 0.3s, transform 0.2s;
+}
+
+.endpoint-install:hover {
+  box-shadow: 0 2px 12px rgba(37, 99, 235, 0.12);
+  transform: translateY(-1px);
+}
+
+.endpoint-install code {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  color: var(--text-primary);
+  user-select: all;
+}
+
+.endpoint-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-github {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 20px;
+  background: var(--text-primary);
+  color: var(--node-bg);
+  text-decoration: none;
+  border: none;
+  transition: opacity 0.2s;
+}
+
+.btn-github:hover { opacity: 0.85; }
+
+.btn-github svg { width: 18px; height: 18px; }
+
+.btn-docs {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 20px;
+  background: var(--node-bg);
+  color: var(--text-primary);
+  text-decoration: none;
+  border: var(--wire-width) solid var(--border);
+  transition: border-color 0.2s;
+}
+
+.btn-docs:hover { border-color: var(--accent); }
+
+/* ===== FOOTER ===== */
+.footer {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px 24px 32px;
+  border-top: var(--wire-width) solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  position: relative;
+}
+
+
+.footer-left {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.footer-links {
+  display: flex;
+  gap: 20px;
+  list-style: none;
+}
+
+.footer-links a {
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.footer-links a:hover { color: var(--accent); }
+
+/* ===== SECTION DIVIDER ===== */
+.section-divider {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px;
+  height: 1px;
+  position: relative;
+}
+
+.section-divider::before {
+  content: '';
+  display: block;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent) 20%, var(--accent) 80%, transparent);
+  opacity: 0.2;
+}
+
+.section-divider::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  opacity: 0.25;
+}
+
+/* ===== CONTENT CASCADE (3D) ===== */
+.content-cascade {
+  position: relative;
+  margin: 36px 0 8px;
+  height: 360px;
+  perspective: 1000px;
+  perspective-origin: 5% 50%;
+  transform-style: preserve-3d;
+  overflow: visible;
+}
+
+.cascade-origin {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  transform-origin: center center;
+  background: var(--node-bg);
+  border: 1.5px solid var(--accent);
+  padding: 8px 14px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  z-index: 10;
+  opacity: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.cascade-origin-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  white-space: nowrap;
+}
+
+.cascade-origin-step .step-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.cascade-origin-step .step-line {
+  width: 1px;
+  height: 8px;
+  background: var(--border);
+  margin-left: 2px;
+}
+
+.cascade-origin-connector {
+  width: 1px;
+  height: 6px;
+  background: var(--border);
+  margin-left: 2px;
+}
+
+.cascade-card {
+  position: absolute;
+  left: 76px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--node-bg);
+  border: 1px solid var(--border);
+  border-top: 1.5px solid var(--accent);
+  padding: 10px 14px;
+  opacity: 0;
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.3s;
+}
+
+.cascade-card:hover {
+  box-shadow:
+    0 2px 6px rgba(37, 99, 235, 0.08),
+    0 12px 32px rgba(0, 0, 0, 0.08);
+}
+
+.cascade-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.cascade-frame {
+  border: 1px solid var(--border);
+  opacity: 0.25;
+  background: linear-gradient(90deg, transparent 0%, rgba(37,99,235,0.03) 50%, transparent 100%);
+  background-size: 200% 100%;
+}
+
+.cascade-code-line {
+  height: 4px;
+  margin-bottom: 4px;
+  opacity: 0.35;
+}
+.cascade-code-line:last-child { margin-bottom: 0; }
+.cascade-code-line.indent { margin-left: 10px; }
+
+/* Signal dots fired from Commit */
+.cascade-signal {
+  position: absolute;
+  pointer-events: none;
+  z-index: 15;
+}
+
+/* Directional radio arcs toward content */
+.radio-wave {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  clip-path: polygon(40% 0%, 100% 0%, 100% 100%, 40% 100%);
+  pointer-events: none;
+  z-index: 14;
+  opacity: 0;
+  box-shadow: 2px 0 12px rgba(37, 99, 235, 0.08);
+}
+
+
+/* Junction card background illustrations */
+.junction-card {
+  position: relative;
+  overflow: visible;
+  perspective: 400px;
+}
+
+.junction-card-bg {
+  position: absolute;
+  top: -35px;
+  right: -30px;
+  width: 180px;
+  height: 180px;
+  opacity: 0.13;
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.4s;
+  transform-style: preserve-3d;
+  filter:
+    drop-shadow(1px 1px 0 rgba(37, 99, 235, 0.08))
+    drop-shadow(2px 2px 0 rgba(37, 99, 235, 0.06))
+    drop-shadow(3px 3px 0 rgba(37, 99, 235, 0.04))
+    drop-shadow(4px 4px 0 rgba(37, 99, 235, 0.02));
+}
+
+.junction-card:hover .junction-card-bg {
+  opacity: 0.18;
+}
+
+.junction-card h4,
+.junction-card p {
+  position: relative;
+  z-index: 1;
+}
+
+.cascade-skel {
+  height: 5px;
+  background: var(--border);
+  margin-bottom: 5px;
+  opacity: 0.4;
+}
+
+.cascade-skel:last-child { margin-bottom: 0; }
+.cascade-skel.w80 { width: 80%; }
+.cascade-skel.w60 { width: 60%; }
+.cascade-skel.w40 { width: 40%; }
+
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 768px) {
+  .wire-spine-line {
+    left: 36px;
+  }
+  .wire-spine::after {
+    left: 24px;
+  }
+
+  .node-section {
+    padding: 36px 0 36px 76px;
+  }
+  .node-dot {
+    left: 25px;
+    top: 40px;
+  }
+
+  .junction {
+    padding: 20px 0 20px 76px;
+  }
+  .junction-connector {
+    left: 25px;
+    width: 50px;
+  }
+  .junction-node {
+    left: 28px;
+    top: 20px;
+  }
+
+  .architecture {
+    padding: 48px 0 36px 76px;
+  }
+  .arch-dot {
+    left: 25px;
+    top: 52px;
+  }
+
+  .endpoint {
+    padding: 48px 0 48px 76px;
+  }
+  .endpoint-node {
+    left: 17px;
+    top: 52px;
+  }
+
+  .illus-card::before,
+  .tweet-card::before,
+  .tg-card::before {
+    display: none;
+  }
+
+  .illus-card, .tweet-card, .tg-card {
+    max-width: 100%;
+  }
+
+  .hero { padding: 40px 24px 32px; }
+  .hero h1 { font-size: 28px; }
+
+  /* Hide horizontal pipeline on mobile, show collapsed */
+  .pipeline-desktop { display: none !important; }
+  .pipeline-mobile-collapsed { display: block !important; }
+
+  /* Mobile cascade — vertical orbit */
+  .content-cascade {
+    height: 560px;
+    perspective: 800px;
+    perspective-origin: 50% 10%;
+    overflow: hidden;
+  }
+  .cascade-origin {
+    left: 50%;
+    top: 24px;
+    transform: translateX(-50%);
+    flex-direction: row;
+    gap: 8px;
+  }
+  .cascade-origin-connector {
+    width: 12px;
+    height: 1px;
+    margin-left: 0;
+  }
+  .cascade-card {
+    left: 0 !important;
+    top: 0 !important;
+    max-width: 200px;
+  }
+  .radio-wave {
+    clip-path: polygon(0% 40%, 100% 40%, 100% 100%, 0% 100%);
+  }
+}
+
+@media (min-width: 769px) {
+  .pipeline-mobile-collapsed { display: none !important; }
+  .pipeline-desktop { display: block !important; }
+}
+
+/* ===== CYCLING MOBILE PIPELINE ===== */
+.pipeline-mobile-collapsed {
+  width: 100%;
+  max-width: 340px;
+  margin: 0 auto 32px;
+}
+
+.pipeline-cycle {
+  position: relative;
+  height: 64px;
+  overflow: hidden;
+  /* Center the visible 2-node window (120+40+120 = 280px) in the container */
+  margin: 0 auto;
+  max-width: 280px;
+}
+
+.pipeline-cycle-track {
+  display: flex;
+  align-items: center;
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+
+.pipeline-cycle-node {
+  width: 120px;
+  height: 52px;
+  background: var(--node-bg);
+  border: 1.5px solid var(--accent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.pipeline-cycle-node .cn-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.pipeline-cycle-node .cn-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
+.pipeline-cycle-wire {
+  width: 40px;
+  height: 1.5px;
+  background: var(--accent);
+  flex-shrink: 0;
+  position: relative;
+  overflow: visible;
+}
+
+.pipeline-cycle-wire .wire-arrow {
+  position: absolute;
+  right: -4px;
+  top: -3.5px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--accent);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+
+/* Flowing dot on the visible wire */
+.pipeline-cycle-wire .wire-dot {
+  position: absolute;
+  top: -2.5px;
+  left: -6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: wireDotFlow 2s ease-in-out infinite;
+}
+
+@keyframes wireDotFlow {
+  0% { left: -6px; opacity: 0; }
+  15% { opacity: 0.9; }
+  85% { opacity: 0.9; }
+  100% { left: calc(100% + 2px); opacity: 0; }
+}
+
+/* Step indicator dots below */
+.pipeline-cycle-indicators {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.pipeline-cycle-indicators .ind {
+  width: 6px;
+  height: 6px;
+  background: var(--border);
+  transition: background 0.3s, transform 0.3s;
+}
+
+.pipeline-cycle-indicators .ind.active {
+  background: var(--accent);
+  transform: scale(1.3);
+}
+
+@media (max-width: 480px) {
+  .nav-inner { padding: 0 16px; }
+  .nav-links { gap: 16px; }
+  .nav-links a { font-size: 13px; }
+  .footer { padding: 20px 16px 24px; flex-direction: column; align-items: flex-start; }
+  .junction-cards { flex-direction: column; }
+  .junction-card { min-width: unset; }
+  .endpoint-actions { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<!-- ===== NAV ===== -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#" class="nav-logo">
+      <svg class="nav-logo-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="1" width="26" height="26" rx="0" stroke="#2563EB" stroke-width="1.5" fill="#fff"/>
+        <circle cx="8" cy="14" r="3" fill="#2563EB"/>
+        <line x1="11" y1="14" x2="17" y2="14" stroke="#2563EB" stroke-width="1.5"/>
+        <circle cx="20" cy="14" r="3" stroke="#2563EB" stroke-width="1.5" fill="#EFF6FF"/>
+      </svg>
+      <span class="nav-logo-text">Social Hook</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="#architecture-section">Docs</a></li>
+      <li><a href="https://github.com/nj-io/social-hook" target="_blank" rel="noopener">GitHub</a></li>
+      <li><a href="https://pypi.org/project/social-hook/" target="_blank" rel="noopener">PyPI</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ===== HERO ===== -->
+<section class="hero">
+  <!-- Desktop horizontal pipeline -->
+  <div class="pipeline-container pipeline-desktop">
+    <svg class="pipeline-svg" viewBox="0 10 790 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <!-- Connection lines -->
+      <line class="pipeline-line" x1="140" y1="50" x2="760" y2="50" stroke="#2563EB" stroke-width="1.5"/>
+
+      <!-- Flowing dots on segments -->
+
+      <!-- Node 1: Commit -->
+      <rect class="pipeline-node-rect pn-1" x="22" y="20" width="120" height="60" fill="#fff" stroke="#2563EB" stroke-width="1.5"/>
+      <text class="pipeline-node-text pt-1" x="82" y="47" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-weight="600" font-size="14" fill="#1A1D23">Commit</text>
+      <text class="pipeline-node-icon pi-1" x="82" y="64" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="#6B7280">git push</text>
+
+      <!-- Node 2: Evaluate -->
+      <rect class="pipeline-node-rect pn-2" x="176" y="20" width="120" height="60" fill="#fff" stroke="#2563EB" stroke-width="1.5"/>
+      <text class="pipeline-node-text pt-2" x="236" y="47" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-weight="600" font-size="14" fill="#1A1D23">Evaluate</text>
+      <text class="pipeline-node-icon pi-2" x="236" y="64" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="#6B7280">AI scoring</text>
+
+      <!-- Node 3: Draft -->
+      <rect class="pipeline-node-rect pn-3" x="330" y="20" width="120" height="60" fill="#fff" stroke="#2563EB" stroke-width="1.5"/>
+      <text class="pipeline-node-text pt-3" x="390" y="47" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-weight="600" font-size="14" fill="#1A1D23">Draft</text>
+      <text class="pipeline-node-icon pi-3" x="390" y="64" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="#6B7280">per-platform</text>
+
+      <!-- Node 4: Approve -->
+      <rect class="pipeline-node-rect pn-4" x="484" y="20" width="120" height="60" fill="#fff" stroke="#2563EB" stroke-width="1.5"/>
+      <text class="pipeline-node-text pt-4" x="544" y="47" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-weight="600" font-size="14" fill="#1A1D23">Approve</text>
+      <text class="pipeline-node-icon pi-4" x="544" y="64" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="#6B7280">human review</text>
+
+      <!-- Node 5: Post -->
+      <rect class="pipeline-node-rect pn-5" x="638" y="20" width="120" height="60" fill="#fff" stroke="#2563EB" stroke-width="1.5"/>
+      <text class="pipeline-node-text pt-5" x="698" y="47" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-weight="600" font-size="14" fill="#1A1D23">Post</text>
+      <text class="pipeline-node-icon pi-5" x="698" y="64" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="#6B7280">multi-platform</text>
+
+      <!-- Arrowhead at end -->
+      <polygon class="pipeline-node-rect pn-5" points="762,44 776,50 762,56" fill="#2563EB"/>
+
+      <!-- Connector dots at junctions -->
+      <circle class="pipeline-node-rect pn-1" cx="142" cy="50" r="3" fill="#2563EB"/>
+      <circle class="pipeline-node-rect pn-2" cx="296" cy="50" r="3" fill="#2563EB"/>
+      <circle class="pipeline-node-rect pn-3" cx="450" cy="50" r="3" fill="#2563EB"/>
+      <circle class="pipeline-node-rect pn-4" cx="604" cy="50" r="3" fill="#2563EB"/>
+
+      <!-- Input arrow on left -->
+      <line class="pipeline-line" x1="0" y1="50" x2="22" y2="50" stroke="#2563EB" stroke-width="1.5" stroke-dasharray="1200" stroke-dashoffset="1200"/>
+    </svg>
+  </div>
+
+  <!-- Mobile cycling pipeline -->
+  <div class="pipeline-mobile-collapsed" id="pipeline-cycle-container">
+    <div class="pipeline-cycle">
+      <div class="pipeline-cycle-track" id="pipeline-cycle-track">
+        <!-- Nodes and wires are injected by JS to enable seamless looping -->
+      </div>
+    </div>
+    <div class="pipeline-cycle-indicators" id="pipeline-cycle-indicators">
+      <div class="ind active"></div>
+      <div class="ind"></div>
+      <div class="ind"></div>
+      <div class="ind"></div>
+      <div class="ind"></div>
+    </div>
+  </div>
+
+  <h1>The marketing engine built for devs</h1>
+  <p class="subline">Social Hook runs your marketing while you run your code. It watches what you build, drafts what matters, and publishes where your audience lives. <strong>Free for Claude Code subscribers.</strong></p>
+
+  <div class="install-block">
+    <code>pip install social-hook</code>
+    <button class="copy-btn" onclick="navigator.clipboard.writeText('pip install social-hook')" title="Copy to clipboard">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="5" y="5" width="9" height="9" rx="1"/>
+        <path d="M3 11V3a1 1 0 011-1h8"/>
+      </svg>
+    </button>
+  </div>
+  <div class="hero-badges">
+    <span class="hero-badge">agent-first</span>
+    <span class="hero-badge-sep">&middot;</span>
+    <span class="hero-badge">open source</span>
+    <span class="hero-badge-sep">&middot;</span>
+    <span class="hero-badge">MIT licensed</span>
+  </div>
+</section>
+
+<!-- ===== THE PROBLEM ===== -->
+<section class="problem-section" data-reveal>
+  <div class="problem-inner">
+    <h2>You ship faster than ever. Nobody knows.</h2>
+    <p>AI agents help you build 10x faster. But marketing didn't get the same upgrade. The bottleneck moved from engineering to visibility. You're shipping features every day &mdash; and your audience has no idea.</p>
+  </div>
+</section>
+
+<div class="section-divider"></div>
+
+<!-- ===== WHAT IT DOES (TRIPTYCH) ===== -->
+<section class="triptych" data-reveal>
+  <div class="triptych-inner">
+    <div class="triptych-panel">
+      <div class="triptych-label">01</div>
+      <h3>Reacts to your work</h3>
+      <p>Watches commits in real time. Evaluates what's post-worthy. Drafts platform-native content. Review everything, or let it run fully autonomous &mdash; your call.</p>
+    </div>
+    <div class="triptych-wire"></div>
+    <div class="triptych-panel">
+      <div class="triptych-label">02</div>
+      <h3>Thinks ahead</h3>
+      <p>Tracks your project's narrative over time. Knows where you are in the lifecycle. Fills content gaps before you notice them.</p>
+    </div>
+    <div class="triptych-wire"></div>
+    <div class="triptych-panel">
+      <div class="triptych-label">03</div>
+      <h3>Reaches everywhere</h3>
+      <p>Every platform your audience lives on, with any media you can imagine. Diagrams, videos, infographics, code walkthroughs, all generated and published automatically, adapted to each audience.</p>
+    </div>
+  </div>
+</section>
+
+<div class="section-divider"></div>
+
+<!-- ===== WIRE SPINE SECTIONS ===== -->
+<div class="wire-spine">
+  <!-- Animated vertical wire line (replaces ::before pseudo-element) -->
+  <div class="wire-spine-line"></div>
+  <div class="spine-pulse" id="spine-pulse-1"></div>
+  <div class="spine-pulse" id="spine-pulse-2"></div>
+
+  <!-- THE PIPELINE -->
+  <div class="node-section" data-reveal id="pipeline-section">
+    <div class="node-dot"><div class="node-dot-inner"></div></div>
+    <div class="node-label">The Pipeline</div>
+    <h2>One commit. Many voices.</h2>
+    <p>Each platform gets its own identity. The evaluator reads your work, decides what matters, and drafts content shaped to each audience. Commits chain into narratives. One push becomes a thread on X, a deep dive on LinkedIn, a visual on Instagram.</p>
+    <div class="content-cascade" id="content-cascade">
+      <div class="cascade-origin" id="cascade-origin">
+        <div class="cascade-origin-step"><span class="step-dot"></span> Commit</div>
+        <div class="cascade-origin-connector"></div>
+        <div class="cascade-origin-step"><span class="step-dot"></span> Evaluate</div>
+        <div class="cascade-origin-connector"></div>
+        <div class="cascade-origin-step"><span class="step-dot"></span> Draft</div>
+      </div>
+
+      <!-- X -->
+      <div class="cascade-card" data-card="0" style="width: 115px;">
+        <svg class="cascade-icon" viewBox="0 0 18 18" fill="#2563EB"><path d="M13.6 2h2.1L10.5 8.3 16.5 16h-4.2l-3.3-4.3L4.7 16H2.6l5.5-6.3L2.2 2h4.3l3 3.9L13.6 2zm-.7 12.6h1.2L5.9 3.3H4.6l8.3 11.3z"/></svg>
+        <div class="cascade-skel"></div>
+        <div class="cascade-skel w60"></div>
+      </div>
+
+      <!-- LinkedIn -->
+      <div class="cascade-card" data-card="1" style="width: 130px;">
+        <svg class="cascade-icon" viewBox="0 0 18 18" fill="#2563EB"><path d="M2 1h14a1 1 0 011 1v14a1 1 0 01-1 1H2a1 1 0 01-1-1V2a1 1 0 011-1zm2.5 6.5v6.2h2.2V7.5H4.5zm1.1-3.3a1.3 1.3 0 100 2.6 1.3 1.3 0 000-2.6zm3.6 3.3v6.2h2.2V10c0-.9.4-1.4 1.2-1.4.7 0 1 .5 1 1.4v3.7h2.2V9.5c0-2-1-3-2.5-3-.9 0-1.6.4-2 1.1V7.5H9.2z"/></svg>
+        <div class="cascade-skel"></div>
+        <div class="cascade-skel"></div>
+        <div class="cascade-skel w80"></div>
+      </div>
+
+      <!-- Video -->
+      <div class="cascade-card" data-card="2" style="width: 105px;">
+        <svg class="cascade-icon" viewBox="0 0 18 18" fill="none" stroke="#2563EB" stroke-width="1.2"><rect x="1" y="3" width="16" height="12"/><polygon points="7,5.5 7,12.5 13,9" fill="#2563EB" stroke="none"/></svg>
+        <div class="cascade-frame" style="height: 44px;"></div>
+      </div>
+
+      <!-- Diagram -->
+      <div class="cascade-card" data-card="3" style="width: 110px;">
+        <svg class="cascade-icon" viewBox="0 0 18 18" fill="none" stroke="#2563EB" stroke-width="1.2"><rect x="1" y="6" width="5" height="5"/><rect x="12" y="2" width="5" height="4"/><rect x="12" y="11" width="5" height="4"/><line x1="6" y1="8.5" x2="12" y2="4"/><line x1="6" y1="8.5" x2="12" y2="13"/></svg>
+        <div class="cascade-frame" style="height: 40px;"></div>
+      </div>
+
+      <!-- Reddit -->
+      <div class="cascade-card" data-card="4" style="width: 115px;">
+        <svg class="cascade-icon" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="10" r="6" stroke="#2563EB" stroke-width="1.2"/><circle cx="6.5" cy="9.5" r="1" fill="#2563EB"/><circle cx="11.5" cy="9.5" r="1" fill="#2563EB"/><line x1="9" y1="4" x2="12" y2="1.5" stroke="#2563EB" stroke-width="1.2"/><circle cx="12.5" cy="1.5" r="1" fill="#2563EB"/></svg>
+        <div class="cascade-skel"></div>
+        <div class="cascade-skel w80"></div>
+      </div>
+
+      <!-- Code -->
+      <div class="cascade-card" data-card="5" style="width: 105px;">
+        <svg class="cascade-icon" viewBox="0 0 18 18" fill="none" stroke="#2563EB" stroke-width="1.5"><polyline points="5,4 1,9 5,14"/><polyline points="13,4 17,9 13,14"/><line x1="8" y1="2" x2="10" y2="16"/></svg>
+        <div class="cascade-code-line" style="width: 50%; background: #2563EB;"></div>
+        <div class="cascade-code-line indent" style="width: 65%; background: var(--border);"></div>
+        <div class="cascade-code-line indent" style="width: 45%; background: var(--border);"></div>
+        <div class="cascade-code-line" style="width: 30%; background: #2563EB;"></div>
+      </div>
+
+      <!-- Thread -->
+      <div class="cascade-card" data-card="6" style="width: 100px;">
+        <svg class="cascade-icon" viewBox="0 0 18 18" fill="none" stroke="#2563EB" stroke-width="1.2"><line x1="1" y1="3" x2="17" y2="3"/><line x1="1" y1="7" x2="14" y2="7"/><line x1="1" y1="11" x2="16" y2="11"/><line x1="1" y1="15" x2="11" y2="15"/></svg>
+        <div class="cascade-skel"></div>
+        <div class="cascade-skel w80"></div>
+        <div class="cascade-skel w60"></div>
+      </div>
+
+      <!-- Photo -->
+      <div class="cascade-card" data-card="7" style="width: 105px;">
+        <svg class="cascade-icon" viewBox="0 0 18 18" fill="none" stroke="#2563EB" stroke-width="1.2"><rect x="1" y="3" width="16" height="12"/><circle cx="5.5" cy="7" r="1.5"/><polyline points="1,13 6,9 10,12 13,9 17,13"/></svg>
+        <div class="cascade-frame" style="height: 44px;"></div>
+      </div>
+
+      <!-- Newsletter -->
+      <div class="cascade-card" data-card="8" style="width: 110px;">
+        <svg class="cascade-icon" viewBox="0 0 18 18" fill="none" stroke="#2563EB" stroke-width="1.2"><rect x="1" y="4" width="16" height="11"/><polyline points="1,4 9,10 17,4"/></svg>
+        <div class="cascade-skel"></div>
+        <div class="cascade-skel w60"></div>
+      </div>
+
+      <!-- Ghost 1 -->
+      <div class="cascade-card" data-card="9" style="width: 95px;">
+        <div class="cascade-skel"></div>
+        <div class="cascade-skel w80"></div>
+        <div class="cascade-skel w40"></div>
+      </div>
+
+      <!-- Ghost 2 -->
+      <div class="cascade-card" data-card="10" style="width: 90px;">
+        <div class="cascade-frame" style="height: 36px;"></div>
+      </div>
+
+      <!-- Ghost 3 -->
+      <div class="cascade-card" data-card="11" style="width: 85px;">
+        <div class="cascade-skel w80"></div>
+        <div class="cascade-skel w60"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Junction: Capabilities -->
+  <div class="junction" data-reveal>
+    <div class="junction-node">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
+    </div>
+    <div class="junction-connector"></div>
+    <div class="junction-cards">
+      <div class="junction-card" data-jcard="arcs">
+        <!-- Narrative arc: branching timeline -->
+        <svg class="junction-card-bg" viewBox="0 0 90 90" fill="none" stroke="#2563EB" stroke-width="1.2">
+          <line x1="10" y1="45" x2="80" y2="45"/>
+          <circle cx="20" cy="45" r="3"/>
+          <circle cx="45" cy="45" r="3"/>
+          <circle cx="70" cy="45" r="3"/>
+          <path d="M20 45 Q32 20 45 25" />
+          <path d="M45 25 Q58 30 70 45" />
+          <path d="M20 45 Q32 65 45 60" />
+          <path d="M45 60 Q58 55 70 45" />
+          <circle cx="45" cy="25" r="2.5"/>
+          <circle cx="45" cy="60" r="2.5"/>
+        </svg>
+        <h4>Narrative Arcs</h4>
+        <p>Groups commits into storylines so posts tell a coherent story over time.</p>
+      </div>
+      <div class="junction-card" data-jcard="media">
+        <!-- Media generation: image/video frames -->
+        <svg class="junction-card-bg" viewBox="0 0 90 90" fill="none" stroke="#2563EB" stroke-width="1.2">
+          <rect x="8" y="18" width="34" height="24"/>
+          <polyline points="8,36 18,28 28,32 42,22"/>
+          <circle cx="16" cy="26" r="3"/>
+          <rect x="48" y="14" width="34" height="24" rx="0"/>
+          <polygon points="60,22 60,32 70,27" fill="#2563EB" fill-opacity="0.15"/>
+          <rect x="28" y="48" width="34" height="24"/>
+          <line x1="34" y1="55" x2="56" y2="55"/>
+          <line x1="34" y1="60" x2="50" y2="60"/>
+          <line x1="34" y1="65" x2="54" y2="65"/>
+        </svg>
+        <h4>Media Generation</h4>
+        <p>Diagrams, code screenshots, diff images &mdash; generated and attached automatically.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="junction" data-reveal>
+    <div class="junction-node">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
+    </div>
+    <div class="junction-connector"></div>
+    <div class="junction-cards">
+      <div class="junction-card" data-jcard="schedule">
+        <!-- Scheduling: clock with time slots -->
+        <svg class="junction-card-bg" viewBox="0 0 90 90" fill="none" stroke="#2563EB" stroke-width="1.2">
+          <circle cx="45" cy="45" r="28"/>
+          <circle cx="45" cy="45" r="2" fill="#2563EB" fill-opacity="0.2"/>
+          <line x1="45" y1="45" x2="45" y2="24"/>
+          <line x1="45" y1="45" x2="60" y2="38"/>
+          <!-- tick marks -->
+          <line x1="45" y1="18" x2="45" y2="21"/>
+          <line x1="45" y1="69" x2="45" y2="72"/>
+          <line x1="18" y1="45" x2="21" y2="45"/>
+          <line x1="69" y1="45" x2="72" y2="45"/>
+          <!-- time slots -->
+          <rect x="68" y="16" width="16" height="6" rx="0" fill="#2563EB" fill-opacity="0.08" stroke-width="0.8"/>
+          <rect x="72" y="26" width="12" height="6" rx="0" fill="#2563EB" fill-opacity="0.08" stroke-width="0.8"/>
+          <rect x="68" y="36" width="16" height="6" rx="0" fill="#2563EB" fill-opacity="0.08" stroke-width="0.8"/>
+        </svg>
+        <h4>Smart Scheduling</h4>
+        <p>Posts at optimal times. Respects rate limits and your posting cadence.</p>
+      </div>
+      <div class="junction-card" data-jcard="plugin">
+        <!-- Plugin system: modular blocks -->
+        <svg class="junction-card-bg" viewBox="0 0 90 90" fill="none" stroke="#2563EB" stroke-width="1.2">
+          <!-- central hub -->
+          <rect x="33" y="33" width="24" height="24"/>
+          <!-- plug connectors -->
+          <rect x="12" y="38" width="18" height="14" fill="#2563EB" fill-opacity="0.04"/>
+          <rect x="60" y="38" width="18" height="14" fill="#2563EB" fill-opacity="0.04"/>
+          <rect x="38" y="12" width="14" height="18" fill="#2563EB" fill-opacity="0.04"/>
+          <rect x="38" y="60" width="14" height="18" fill="#2563EB" fill-opacity="0.04"/>
+          <!-- connection nubs -->
+          <line x1="30" y1="42" x2="33" y2="42"/>
+          <line x1="30" y1="48" x2="33" y2="48"/>
+          <line x1="57" y1="42" x2="60" y2="42"/>
+          <line x1="57" y1="48" x2="60" y2="48"/>
+          <line x1="42" y1="30" x2="42" y2="33"/>
+          <line x1="48" y1="30" x2="48" y2="33"/>
+          <line x1="42" y1="57" x2="42" y2="60"/>
+          <line x1="48" y1="57" x2="48" y2="60"/>
+        </svg>
+        <h4>Plugin System</h4>
+        <p>Extend with custom evaluators, drafters, media tools, or platform adapters.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- AGENT-FIRST -->
+  <div class="node-section" data-reveal>
+    <div class="node-dot"><div class="node-dot-inner"></div></div>
+    <div class="node-label">Differentiator</div>
+    <h2>Built for agents, not just humans</h2>
+    <p>A coding agent builds your product and hands off to Social Hook. Marketing runs autonomously. No context-switching. No copy-paste. The developer never leaves the terminal.</p>
+    <p>Every other tool assumes a human is at the controls. Social Hook doesn't.</p>
+    <div class="illus-card">
+      <div class="card-label">Agent Handoff</div>
+      <div><span class="dim">coding agent:</span> <span class="hl">git push</span> &rarr; feature shipped</div>
+      <div><span class="dim">social hook:</span> evaluate &rarr; draft &rarr; schedule</div>
+      <div><span class="dim">developer:</span> <span class="hl">never context-switched</span></div>
+    </div>
+  </div>
+
+  <!-- OPEN SOURCE -->
+  <div class="node-section" data-reveal>
+    <div class="node-dot"><div class="node-dot-inner"></div></div>
+    <div class="node-label">Foundation</div>
+    <h2>Open source.</h2>
+    <p>A complete toolkit: brand discovery, content calendar, multi-platform publishing, plugin ecosystem, local model routing. MIT licensed. Inspect everything, modify anything, trust by default.</p>
+    <div class="illus-card">
+      <div class="card-label">What's Included</div>
+      <div><span class="hl">&check;</span> Brand discovery pipeline</div>
+      <div><span class="hl">&check;</span> Content calendar &amp; scheduling</div>
+      <div><span class="hl">&check;</span> Multi-platform publishing</div>
+      <div><span class="hl">&check;</span> Plugin marketplace</div>
+      <div><span class="hl">&check;</span> Local model routing</div>
+    </div>
+  </div>
+
+  <!-- ===== GETTING STARTED / ENDPOINT ===== -->
+  <div class="endpoint" data-reveal>
+    <div class="endpoint-node"><div class="endpoint-node-inner"></div></div>
+    <h2>Two commands. You're live.</h2>
+    <p>Point it at a repo. Configure your platforms. The engine handles the rest.</p>
+    <div class="endpoint-install">
+      <code>pip install social-hook</code>
+      <button class="copy-btn" onclick="navigator.clipboard.writeText('pip install social-hook')" title="Copy to clipboard">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="5" y="5" width="9" height="9" rx="1"/>
+          <path d="M3 11V3a1 1 0 011-1h8"/>
+        </svg>
+      </button>
+    </div>
+    <div class="endpoint-install" style="margin-top: 8px;">
+      <code>social-hook web</code>
+    </div>
+    <div class="endpoint-actions">
+      <a href="https://github.com/nj-io/social-hook" class="btn-github" target="_blank" rel="noopener">
+        <svg viewBox="0 0 18 18" fill="currentColor"><path d="M9 0C4.03 0 0 4.03 0 9c0 3.98 2.58 7.35 6.16 8.54.45.08.62-.2.62-.43v-1.5c-2.51.55-3.04-1.21-3.04-1.21-.41-1.04-1-1.32-1-1.32-.82-.56.06-.55.06-.55.9.06 1.38.93 1.38.93.8 1.38 2.1.98 2.62.75.08-.58.31-.98.57-1.2-2-.23-4.1-1-4.1-4.46 0-.99.35-1.8.93-2.43-.09-.23-.4-1.15.09-2.4 0 0 .76-.24 2.49.93a8.7 8.7 0 014.54 0c1.73-1.17 2.49-.93 2.49-.93.49 1.25.18 2.17.09 2.4.58.63.93 1.44.93 2.43 0 3.47-2.11 4.23-4.12 4.45.32.28.61.83.61 1.67v2.48c0 .24.16.52.62.43A9 9 0 009 0z"/></svg>
+        View on GitHub
+      </a>
+      <a href="#" class="btn-docs">Read the docs</a>
+    </div>
+  </div>
+
+</div><!-- /wire-spine -->
+
+<!-- ===== FOOTER ===== -->
+<footer class="footer">
+  <div class="footer-left">Social Hook v0.5.0-alpha &middot; MIT License</div>
+  <ul class="footer-links">
+    <li><a href="https://github.com/nj-io/social-hook" target="_blank" rel="noopener">GitHub</a></li>
+    <li><a href="https://pypi.org/project/social-hook/" target="_blank" rel="noopener">PyPI</a></li>
+    <li><a href="#architecture-section">Docs</a></li>
+  </ul>
+</footer>
+
+<script>
+// ===== Mobile pipeline cycling animation =====
+(function() {
+  var stages = [
+    { name: 'Commit',   sub: 'git push' },
+    { name: 'Evaluate', sub: 'AI scoring' },
+    { name: 'Draft',    sub: 'per-platform' },
+    { name: 'Approve',  sub: 'human review' },
+    { name: 'Post',     sub: 'multi-platform' }
+  ];
+
+  var track = document.getElementById('pipeline-cycle-track');
+  var indicators = document.querySelectorAll('#pipeline-cycle-indicators .ind');
+  if (!track) return;
+
+  // Build the track: we need node-wire-node-wire-node... for seamless cycling
+  // Show 2 nodes at a time. Track has all 5 + a clone of the first for seamless wrap.
+  function makeNode(stage) {
+    var node = document.createElement('div');
+    node.className = 'pipeline-cycle-node';
+    node.innerHTML = '<span class="cn-name">' + stage.name + '</span><span class="cn-sub">' + stage.sub + '</span>';
+    return node;
+  }
+
+  function makeWire() {
+    var wire = document.createElement('div');
+    wire.className = 'pipeline-cycle-wire';
+    wire.innerHTML = '<div class="wire-dot"></div><div class="wire-arrow"></div>';
+    return wire;
+  }
+
+  // Build: [node0] [wire] [node1] [wire] ... [node4] [wire] [node0-clone] [wire] [node1-clone]
+  // Two clones at the end so the visible 2-node window is always full during wrap
+  for (var i = 0; i < stages.length; i++) {
+    track.appendChild(makeNode(stages[i]));
+    track.appendChild(makeWire());
+  }
+  track.appendChild(makeNode(stages[0]));
+  track.appendChild(makeWire());
+  track.appendChild(makeNode(stages[1]));
+
+  var STEP = 160; // node width (120) + wire width (40)
+  var currentIndex = 0;
+
+  function advanceCycle() {
+    currentIndex++;
+    track.style.transition = 'transform 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
+    track.style.transform = 'translateX(-' + (currentIndex * STEP) + 'px)';
+
+    // Update indicators
+    var visibleIndex = currentIndex % stages.length;
+    for (var j = 0; j < indicators.length; j++) {
+      indicators[j].classList.toggle('active', j === visibleIndex);
+    }
+
+    // When we've scrolled to the clone region, schedule a snap-back
+    // We snap when currentIndex reaches stages.length (Post → Commit-clone visible)
+    // That looks identical to index 0 (Commit → Evaluate), so snap is invisible
+    if (currentIndex >= stages.length) {
+      track.addEventListener('transitionend', function snapBack() {
+        track.removeEventListener('transitionend', snapBack);
+        track.style.transition = 'none';
+        currentIndex = 0;
+        track.style.transform = 'translateX(0)';
+        // Force browser to paint the snap before anything else
+        void track.offsetHeight;
+      });
+    }
+  }
+
+  setInterval(advanceCycle, 2400);
+})();
+
+// ===== Copy button feedback =====
+document.querySelectorAll('.copy-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var original = this.innerHTML;
+    this.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#2563EB" stroke-width="2"><polyline points="3 8 7 12 13 4"/></svg>';
+    var self = this;
+    setTimeout(function() { self.innerHTML = original; }, 1500);
+  });
+});
+</script>
+
+<!-- GSAP + ScrollTrigger -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+
+<script>
+// ===== GSAP Animation System =====
+// Comprehensive scroll-driven and timeline-based animations for the Wire Protocol page.
+// Wrapped in an IIFE to avoid polluting global scope.
+(function() {
+  'use strict';
+
+  // ---------------------------------------------------------------
+  // Graceful degradation: if GSAP failed to load, reveal everything
+  // after a short timeout so content is never permanently hidden.
+  // ---------------------------------------------------------------
+  if (typeof gsap === 'undefined') {
+    setTimeout(function() {
+      document.querySelectorAll(
+        '.pipeline-node-rect, .pipeline-node-text, .pipeline-node-icon, ' +
+        '.hero h1, .hero .subline, .install-block, .hero-badges, ' +
+        '[data-reveal], .cascade-origin, .cascade-card, .flow-dot, ' +
+        '.triptych-panel, .junction-card'
+      ).forEach(function(el) {
+        el.style.opacity = '1';
+        el.style.transform = 'none';
+      });
+      var spineLine = document.querySelector('.wire-spine-line');
+      if (spineLine) spineLine.style.transform = 'scaleY(1)';
+      // Reveal pipeline line
+      document.querySelectorAll('.pipeline-line').forEach(function(l) {
+        l.style.strokeDashoffset = '0';
+      });
+    }, 1500);
+    return;
+  }
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  // ---------------------------------------------------------------
+  // 1. HERO ENTRANCE TIMELINE
+  //    Pipeline draws in, nodes stagger, then text content fades up.
+  // ---------------------------------------------------------------
+  var heroTL = gsap.timeline({ defaults: { ease: 'power2.out' } });
+
+  // Draw the pipeline line (stroke-dashoffset from 1200 to 0)
+  heroTL.to('.pipeline-line', {
+    strokeDashoffset: 0,
+    duration: 1.8,
+    ease: 'power1.inOut'
+  });
+
+  // Pipeline node rects stagger in
+  heroTL.to('.pipeline-node-rect', {
+    opacity: 1,
+    duration: 0.35,
+    stagger: 0.12,
+    ease: 'power2.out'
+  }, '-=1.2'); // overlap with line drawing
+
+  // Pipeline node text staggers in (slightly after rects)
+  heroTL.to('.pipeline-node-text', {
+    opacity: 1,
+    duration: 0.3,
+    stagger: 0.12,
+    ease: 'power2.out'
+  }, '-=0.9');
+
+  // Pipeline node sub-labels stagger in
+  heroTL.to('.pipeline-node-icon', {
+    opacity: 1,
+    duration: 0.3,
+    stagger: 0.12,
+    ease: 'power2.out'
+  }, '-=0.7');
+
+  // After pipeline completes: hero text content fades up in sequence
+  heroTL.fromTo('.hero h1',
+    { y: 16, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.6, clearProps: 'transform' },
+    '+=0.1'
+  );
+
+  heroTL.fromTo('.hero .subline',
+    { y: 16, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.6, clearProps: 'transform' },
+    '-=0.45'
+  );
+
+  heroTL.fromTo('.install-block',
+    { y: 16, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.6, clearProps: 'transform' },
+    '-=0.45'
+  );
+
+  heroTL.fromTo('.hero-badges',
+    { y: 16, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.6, clearProps: 'transform' },
+    '-=0.45'
+  );
+
+  // ---------------------------------------------------------------
+  // 2. FLOWING DOTS ON DESKTOP PIPELINE (start after hero draws)
+  //    Uses GSAP tweens for smooth dot traversal.
+  // ---------------------------------------------------------------
+  // Wait for hero to finish before revealing anything below it.
+  // This prevents sections near the fold from flashing in early.
+  // ---------------------------------------------------------------
+  heroTL.eventCallback('onComplete', function setupBelowHero() {
+
+  // ---------------------------------------------------------------
+  // 3. SCROLL-TRIGGERED SECTION REVEALS
+  //    Each section type gets a distinct entrance animation.
+  // ---------------------------------------------------------------
+  (function setupScrollReveals() {
+    var reveals = document.querySelectorAll('[data-reveal]');
+
+    reveals.forEach(function(el) {
+      // PROBLEM SECTION — slow scale-up with dramatic fade
+      if (el.classList.contains('problem-section')) {
+        gsap.fromTo(el,
+          { scale: 0.97, opacity: 0 },
+          {
+            scale: 1, opacity: 1, duration: 1.0, ease: 'power3.out',
+            scrollTrigger: { trigger: el, start: 'top 85%', once: true }
+          }
+        );
+        return;
+      }
+
+      // TRIPTYCH — panels slide in from different directions
+      if (el.classList.contains('triptych')) {
+        var panels = el.querySelectorAll('.triptych-panel');
+        gsap.fromTo(el,
+          { opacity: 0 },
+          {
+            opacity: 1, duration: 0.4, ease: 'power2.out',
+            scrollTrigger: { trigger: el, start: 'top 85%', once: true },
+            onComplete: function() {
+              // Left panel from left, center from bottom, right from right
+              if (panels[0]) gsap.fromTo(panels[0],
+                { x: -30, opacity: 0 },
+                { x: 0, opacity: 1, duration: 0.6, ease: 'power2.out' }
+              );
+              if (panels[1]) gsap.fromTo(panels[1],
+                { y: 25, opacity: 0 },
+                { y: 0, opacity: 1, duration: 0.6, delay: 0.1, ease: 'power2.out' }
+              );
+              if (panels[2]) gsap.fromTo(panels[2],
+                { x: 30, opacity: 0 },
+                { x: 0, opacity: 1, duration: 0.6, delay: 0.2, ease: 'power2.out' }
+              );
+            }
+          }
+        );
+        return;
+      }
+
+      // JUNCTIONS — cards cascade in from top-left
+      if (el.classList.contains('junction')) {
+        var cards = el.querySelectorAll('.junction-card');
+        gsap.fromTo(el,
+          { x: -20, opacity: 0 },
+          {
+            x: 0, opacity: 1, duration: 0.6, ease: 'power2.out',
+            scrollTrigger: { trigger: el, start: 'top 85%', once: true },
+            onComplete: function() {
+              gsap.fromTo(cards,
+                { y: 12, x: -8, opacity: 0 },
+                { y: 0, x: 0, opacity: 1, duration: 0.4, stagger: 0.1, ease: 'power2.out' }
+              );
+            }
+          }
+        );
+        return;
+      }
+
+      // NODE SECTIONS — slide in from the left (following the wire)
+      if (el.classList.contains('node-section')) {
+        gsap.fromTo(el,
+          { x: -24, opacity: 0 },
+          {
+            x: 0, opacity: 1, duration: 0.7, ease: 'power2.out',
+            scrollTrigger: { trigger: el, start: 'top 82%', once: true }
+          }
+        );
+        return;
+      }
+
+      // ENDPOINT (Getting Started) — scale up with emphasis
+      if (el.classList.contains('endpoint')) {
+        gsap.fromTo(el,
+          { scale: 0.96, opacity: 0 },
+          {
+            scale: 1, opacity: 1, duration: 0.8, ease: 'power3.out',
+            scrollTrigger: { trigger: el, start: 'top 80%', once: true }
+          }
+        );
+        return;
+      }
+
+      // Default reveal
+      gsap.fromTo(el,
+        { y: 30, opacity: 0 },
+        {
+          y: 0, opacity: 1, duration: 0.7, ease: 'power2.out',
+          scrollTrigger: { trigger: el, start: 'top 85%', once: true }
+        }
+      );
+    });
+  })();
+
+  // ---------------------------------------------------------------
+  // 4. WIRE SPINE LINE — scroll-linked draw animation
+  //    Replaces the static ::before pseudo-element with an animated
+  //    div that scales from 0 to 1 as user scrolls through.
+  // ---------------------------------------------------------------
+  (function setupWireSpine() {
+    var spineLine = document.querySelector('.wire-spine-line');
+    var wireSpine = document.querySelector('.wire-spine');
+    if (!spineLine || !wireSpine) return;
+
+    gsap.to(spineLine, {
+      scaleY: 1,
+      ease: 'none',
+      scrollTrigger: {
+        trigger: wireSpine,
+        start: 'top 70%',
+        end: 'bottom 20%',
+        scrub: 1
+      }
+    });
+  })();
+
+  // ---------------------------------------------------------------
+  // 4b. WIRE SPINE ENERGY PULSES
+  //     Small glowing dots periodically travel down the spine line,
+  //     suggesting live data flow through the system.
+  // ---------------------------------------------------------------
+  (function setupSpinePulses() {
+    var wireSpine = document.querySelector('.wire-spine');
+    var pulse1 = document.getElementById('spine-pulse-1');
+    var pulse2 = document.getElementById('spine-pulse-2');
+    if (!wireSpine || !pulse1 || !pulse2) return;
+
+    function runPulse(el, delay) {
+      var spineHeight = wireSpine.scrollHeight;
+
+      function go() {
+        gsap.fromTo(el,
+          { top: 0, opacity: 0 },
+          {
+            top: spineHeight,
+            opacity: 0,
+            duration: 4 + Math.random() * 2,
+            ease: 'none',
+            delay: delay,
+            onUpdate: function() {
+              // Fade: ramp in over first 5%, hold, ramp out over last 10%
+              var progress = this.progress();
+              var op = 0.6;
+              if (progress < 0.05) op = (progress / 0.05) * 0.6;
+              else if (progress > 0.9) op = ((1 - progress) / 0.1) * 0.6;
+              el.style.opacity = op.toFixed(2);
+            },
+            onComplete: function() {
+              el.style.opacity = '0';
+              delay = 1 + Math.random() * 3;
+              go();
+            }
+          }
+        );
+      }
+
+      // Start only when spine is in view
+      ScrollTrigger.create({
+        trigger: wireSpine,
+        start: 'top 90%',
+        once: true,
+        onEnter: go
+      });
+    }
+
+    runPulse(pulse1, 0.5);
+    runPulse(pulse2, 3.0);
+  })();
+
+  // ---------------------------------------------------------------
+  // 5. NODE DOT PULSE ON SCROLL
+  //    When each .node-section enters, its .node-dot gets a pulse.
+  // ---------------------------------------------------------------
+  (function setupNodePulse() {
+    document.querySelectorAll('.node-section').forEach(function(section) {
+      var dot = section.querySelector('.node-dot');
+      if (!dot) return;
+
+      ScrollTrigger.create({
+        trigger: section,
+        start: 'top 80%',
+        once: true,
+        onEnter: function() {
+          // Brief scale-up pulse with glow
+          gsap.timeline()
+            .to(dot, {
+              scale: 1.35,
+              boxShadow: '0 0 0 10px rgba(37, 99, 235, 0.15)',
+              duration: 0.3,
+              ease: 'power2.out'
+            })
+            .to(dot, {
+              scale: 1,
+              boxShadow: '0 0 0 5px rgba(37, 99, 235, 0.08)',
+              duration: 0.4,
+              ease: 'power2.inOut'
+            });
+        }
+      });
+    });
+  })();
+
+  // ---------------------------------------------------------------
+  // 5b. JUNCTION CARD BACKGROUND ANIMATIONS
+  //     Slow, subtle drift on the background SVG illustrations.
+  // ---------------------------------------------------------------
+  (function setupJunctionBgAnimations() {
+    var bgs = document.querySelectorAll('.junction-card-bg');
+    bgs.forEach(function(bg, i) {
+      var dur = 10 + Math.random() * 6;
+      var delay = Math.random() * 3;
+      var dir = i % 2 === 0 ? 1 : -1;
+
+      // Very subtle 3D rotation + gentle drift
+      gsap.to(bg, {
+        rotateY: dir * (1.5 + Math.random() * 2),
+        rotateX: dir * -(1 + Math.random() * 1.5),
+        y: -2 + Math.random() * 1.5,
+        x: dir * (0.5 + Math.random() * 1),
+        duration: dur,
+        delay: delay,
+        repeat: -1,
+        yoyo: true,
+        ease: 'sine.inOut'
+      });
+    });
+
+    // Parallax: junction cards shift slightly against scroll
+    var jCards = document.querySelectorAll('.junction-card');
+    jCards.forEach(function(card, i) {
+      var shift = 20 + (i % 2) * 15; // alternate between 20px and 35px
+      gsap.to(card, {
+        y: -shift,
+        ease: 'none',
+        scrollTrigger: {
+          trigger: card,
+          start: 'top bottom',
+          end: 'bottom top',
+          scrub: true
+        }
+      });
+    });
+  })();
+
+  // ---------------------------------------------------------------
+  // 6. 3D CONTENT CASCADE
+  //    12 cards fan out from "Commit", orbit continuously in 3D,
+  //    radio waves emanate, card content animates.
+  // ---------------------------------------------------------------
+  (function setupCascade() {
+    var cascade = document.getElementById('content-cascade');
+    var origin = document.getElementById('cascade-origin');
+    if (!cascade) return;
+
+    var cards = Array.prototype.slice.call(cascade.querySelectorAll('.cascade-card'));
+
+    // Orbit configs — desktop spreads horizontally, mobile spreads vertically
+    var desktopOrbits = [
+      // Near ring (close to commit, prominent)
+      { bx: 100, by: -55,  bz: 40,  rx: 32, ry: 25, rz: 38, spd: 0.22, ph: 0,    bs: 1.00, bo: 0.95, mry: 8,  mrx: 4 },
+      { bx: 175, by: 15,   bz: 30,  rx: 28, ry: 22, rz: 35, spd: 0.18, ph: 1.1,  bs: 0.98, bo: 0.92, mry: 7,  mrx: 5 },
+      { bx: 85,  by: 65,   bz: 35,  rx: 30, ry: 28, rz: 40, spd: 0.25, ph: 2.4,  bs: 1.00, bo: 0.95, mry: 9,  mrx: 3 },
+      { bx: 140, by: -95,  bz: 20,  rx: 35, ry: 20, rz: 42, spd: 0.15, ph: 3.7,  bs: 0.96, bo: 0.90, mry: 10, mrx: 4 },
+      // Mid ring
+      { bx: 235, by: -40,  bz: -15, rx: 30, ry: 26, rz: 36, spd: 0.20, ph: 0.6,  bs: 0.94, bo: 0.85, mry: 7,  mrx: 5 },
+      { bx: 200, by: 80,   bz: -10, rx: 26, ry: 30, rz: 34, spd: 0.17, ph: 4.2,  bs: 0.92, bo: 0.82, mry: 6,  mrx: 6 },
+      { bx: 260, by: 30,   bz: -25, rx: 28, ry: 24, rz: 38, spd: 0.23, ph: 1.8,  bs: 0.90, bo: 0.80, mry: 8,  mrx: 4 },
+      { bx: 210, by: -110, bz: -20, rx: 34, ry: 22, rz: 40, spd: 0.14, ph: 5.5,  bs: 0.92, bo: 0.82, mry: 7,  mrx: 5 },
+      // Far ring (background, ghostly)
+      { bx: 310, by: -15,  bz: -45, rx: 25, ry: 28, rz: 32, spd: 0.19, ph: 2.9,  bs: 0.86, bo: 0.65, mry: 6,  mrx: 4 },
+      { bx: 290, by: 70,   bz: -55, rx: 30, ry: 20, rz: 36, spd: 0.12, ph: 0.3,  bs: 0.82, bo: 0.55, mry: 5,  mrx: 3 },
+      { bx: 340, by: -70,  bz: -60, rx: 22, ry: 26, rz: 30, spd: 0.16, ph: 4.8,  bs: 0.80, bo: 0.50, mry: 5,  mrx: 4 },
+      { bx: 320, by: 40,   bz: -50, rx: 28, ry: 24, rz: 34, spd: 0.13, ph: 3.1,  bs: 0.84, bo: 0.55, mry: 6,  mrx: 3 }
+    ];
+
+    // Mobile: pyramid shape — narrow at top, wide at bottom, using full screen width
+    // bx = offset from center (grows aggressively with depth)
+    var mobileOrbitsRaw = [
+      // Top of pyramid — tight, close to center
+      { bx: -5,  by: 120,  bz: 20,  rx: 6,  ry: 10, rz: 12, spd: 0.18, ph: 0,    bs: 0.92, bo: 0.95, mry: 3,  mrx: 1 },
+      { bx: 8,   by: 160,  bz: 16,  rx: 5,  ry: 8,  rz: 10, spd: 0.15, ph: 1.1,  bs: 0.90, bo: 0.92, mry: 2,  mrx: 1 },
+      // Middle — spreading out
+      { bx: -40, by: 210,  bz: 14,  rx: 10, ry: 12, rz: 14, spd: 0.20, ph: 2.4,  bs: 0.92, bo: 0.95, mry: 3,  mrx: 2 },
+      { bx: 35,  by: 250,  bz: 10,  rx: 9,  ry: 10, rz: 12, spd: 0.13, ph: 3.7,  bs: 0.88, bo: 0.90, mry: 2,  mrx: 2 },
+      { bx: -55, by: 295,  bz: -6,  rx: 10, ry: 12, rz: 14, spd: 0.17, ph: 0.6,  bs: 0.86, bo: 0.85, mry: 2,  mrx: 2 },
+      // Bottom — widest, near screen edges
+      { bx: 60,  by: 340,  bz: -3,  rx: 12, ry: 14, rz: 12, spd: 0.14, ph: 4.2,  bs: 0.84, bo: 0.80, mry: 3,  mrx: 3 },
+      { bx: -70, by: 385,  bz: -10, rx: 12, ry: 12, rz: 16, spd: 0.19, ph: 1.8,  bs: 0.82, bo: 0.76, mry: 3,  mrx: 3 },
+      { bx: 75,  by: 430,  bz: -8,  rx: 12, ry: 12, rz: 14, spd: 0.12, ph: 5.5,  bs: 0.80, bo: 0.72, mry: 3,  mrx: 3 },
+      // Ghost layer — following pyramid shape at depth
+      { bx: -8,  by: 145,  bz: -28, rx: 5,  ry: 8,  rz: 8,  spd: 0.16, ph: 2.9,  bs: 0.78, bo: 0.55, mry: 2,  mrx: 1 },
+      { bx: 45,  by: 270,  bz: -32, rx: 8,  ry: 8,  rz: 10, spd: 0.10, ph: 0.3,  bs: 0.75, bo: 0.45, mry: 2,  mrx: 2 },
+      { bx: -60, by: 365,  bz: -35, rx: 10, ry: 10, rz: 10, spd: 0.14, ph: 4.8,  bs: 0.72, bo: 0.40, mry: 2,  mrx: 2 },
+      { bx: 20,  by: 190,  bz: -30, rx: 6,  ry: 8,  rz: 10, spd: 0.11, ph: 3.1,  bs: 0.76, bo: 0.45, mry: 2,  mrx: 1 }
+    ];
+
+    // orbits, maxX assigned inside onEnter based on actual viewport width
+    var orbits = desktopOrbits;
+    var maxX = Infinity;
+
+    var orbiting = false;
+    var orbitStart = 0;
+
+    // Round-robin visibility: one card hidden at a time
+    var hiddenIdx = -1;           // -1 = all visible (before cycling starts)
+    var fadingOut = -1;           // card currently fading out
+    var fadingIn = -1;            // card currently fading in
+    var cardOpacityOverride = {}; // per-card opacity multiplier (0..1);
+
+    // --- Orbit update (runs every frame) ---
+    function updateOrbits() {
+      var elapsed = (gsap.ticker.time - orbitStart);
+
+      for (var i = 0; i < cards.length; i++) {
+        var c = orbits[i];
+        if (!c) continue;
+        var t = elapsed * c.spd + c.ph;
+
+        var dx = Math.sin(t) * c.rx;
+        var dy = Math.cos(t * 0.7 + 0.3) * c.ry;
+        var dz = Math.sin(t * 0.5 + 0.8) * c.rz;
+
+        var ry = Math.sin(t * 0.8 + 0.2) * c.mry;
+        var rx = Math.cos(t * 0.6 + 0.5) * c.mrx;
+
+        var x = Math.max(0, Math.min(c.bx + dx, maxX));
+        var y = c.by + dy;
+        var z = c.bz + dz;
+
+        var depthScale = 1 + dz / 300;
+        var scale = c.bs * depthScale;
+        var op = Math.max(0.15, Math.min(1, c.bo + dz / 180));
+
+        // Apply round-robin override
+        var ovr = cardOpacityOverride[i];
+        if (ovr !== undefined) {
+          op *= ovr;
+          scale *= (0.4 + 0.6 * ovr); // shrink as it fades
+        }
+
+        cards[i].style.zIndex = Math.round(z + 100);
+
+        gsap.set(cards[i], {
+          x: x, y: y, z: z,
+          rotateY: ry, rotateX: rx,
+          scale: scale, opacity: op
+        });
+      }
+    }
+
+    function startOrbiting() {
+      if (orbiting) return;
+      orbiting = true;
+      orbitStart = gsap.ticker.time;
+      gsap.ticker.add(updateOrbits);
+    }
+
+    // --- Round-robin card cycling ---
+    function startCardCycling() {
+      var cycleIdx = 0;
+
+      function cycleNext() {
+        var outIdx = cycleIdx;
+        var inIdx = hiddenIdx;
+
+        // Fade out the next card
+        cardOpacityOverride[outIdx] = 1;
+        gsap.to(cardOpacityOverride, {
+          [outIdx]: 0,
+          duration: 1.2,
+          ease: 'power2.inOut'
+        });
+
+        // Fade in the previously hidden card
+        if (inIdx >= 0) {
+          gsap.to(cardOpacityOverride, {
+            [inIdx]: 1,
+            duration: 1.2,
+            ease: 'power2.inOut',
+            onComplete: function() {
+              delete cardOpacityOverride[inIdx];
+            }
+          });
+        }
+
+        hiddenIdx = outIdx;
+        cycleIdx = (cycleIdx + 1) % cards.length;
+      }
+
+      // First cycle after a short delay
+      setTimeout(function() {
+        cycleNext();
+        setInterval(cycleNext, 3500);
+      }, 2000);
+    }
+
+    // --- Directional radio waves toward content ---
+    // isMobile is set inside onEnter so it reflects the viewport at trigger time
+    var isMobile = false;
+
+    function startRadioWaves() {
+      function emitWave() {
+        var wave = document.createElement('div');
+        wave.className = 'radio-wave';
+        cascade.appendChild(wave);
+
+        var startSize = 10;
+        var endSize = isMobile ? 200 : 260;
+
+        if (isMobile) {
+          // Downward from bottom-center of origin
+          var cx = origin.offsetLeft + origin.offsetWidth / 2;
+          var cy = origin.offsetTop + origin.offsetHeight;
+          gsap.set(wave, {
+            left: cx - startSize / 2,
+            top: cy - startSize * 0.4,
+            width: startSize,
+            height: startSize,
+            opacity: 0.35
+          });
+          gsap.to(wave, {
+            width: endSize,
+            height: endSize,
+            left: cx - endSize / 2,
+            top: cy - endSize * 0.4,
+            opacity: 0,
+            duration: 3.5,
+            ease: 'power1.out',
+            onComplete: function() { if (wave.parentNode) wave.parentNode.removeChild(wave); }
+          });
+        } else {
+          // Rightward from right edge of origin
+          var cx = origin.offsetLeft + origin.offsetWidth;
+          var cy = origin.offsetTop;
+          gsap.set(wave, {
+            left: cx - startSize * 0.4,
+            top: cy - startSize / 2,
+            width: startSize,
+            height: startSize,
+            opacity: 0.35
+          });
+          gsap.to(wave, {
+            width: endSize,
+            height: endSize,
+            left: cx - endSize * 0.4,
+            top: cy - endSize / 2,
+            opacity: 0,
+            duration: 3.5,
+            ease: 'power1.out',
+            onComplete: function() { if (wave.parentNode) wave.parentNode.removeChild(wave); }
+          });
+        }
+      }
+
+      // One wave at a time, every 12s
+      emitWave();
+      setInterval(emitWave, 12000);
+    }
+
+    // --- Content animation: skeleton lines & frames pulse gently ---
+    function startContentAnimation() {
+      var skels = cascade.querySelectorAll('.cascade-skel, .cascade-code-line');
+      for (var i = 0; i < skels.length; i++) {
+        gsap.to(skels[i], {
+          opacity: 0.3,
+          duration: 1.2 + Math.random() * 1.5,
+          repeat: -1, yoyo: true,
+          ease: 'sine.inOut',
+          delay: Math.random() * 2
+        });
+      }
+
+      var frames = cascade.querySelectorAll('.cascade-frame');
+      for (var j = 0; j < frames.length; j++) {
+        gsap.to(frames[j], {
+          borderColor: 'rgba(37, 99, 235, 0.35)',
+          duration: 1.5 + Math.random() * 1,
+          repeat: -1, yoyo: true,
+          ease: 'sine.inOut',
+          delay: Math.random() * 2
+        });
+      }
+    }
+
+    // --- Entrance & trigger ---
+    var pipelineSection = cascade.closest('.node-section');
+    if (!pipelineSection) return;
+
+    ScrollTrigger.create({
+      trigger: pipelineSection,
+      start: 'top 70%',
+      once: true,
+      onEnter: function() {
+        // Evaluate mobile at trigger time, not at page load
+        isMobile = window.innerWidth <= 768;
+        if (isMobile) {
+          var cascadeW = cascade.offsetWidth;
+          var centerX = cascadeW / 2 - 55;
+          orbits = mobileOrbitsRaw.map(function(o) {
+            var copy = {};
+            for (var k in o) copy[k] = o[k];
+            copy.bx = o.bx + centerX;
+            return copy;
+          });
+          maxX = cascadeW - 60;
+        } else {
+          orbits = desktopOrbits;
+          maxX = Infinity;
+        }
+
+        gsap.to(origin, { opacity: 1, duration: 0.4, ease: 'power2.out' });
+
+        if (isMobile) {
+          // Mobile: cards spawn at bottom edge of origin, fan strictly downward
+          var spawnX = origin.offsetLeft + origin.offsetWidth / 2 - 55;
+          var spawnY = origin.offsetTop + origin.offsetHeight + 4;
+          var entranceTL = gsap.timeline({
+            onComplete: function() {
+              startOrbiting();
+              startRadioWaves();
+              startContentAnimation();
+              startCardCycling();
+            }
+          });
+          cards.forEach(function(card, i) {
+            var o = orbits[i];
+            if (!o) return;
+            // Start just below origin, travel mostly downward
+            entranceTL.fromTo(card,
+              { x: spawnX, y: spawnY, z: 0, rotateY: 0, rotateX: 0, scale: 0.15, opacity: 0 },
+              {
+                x: o.bx, y: o.by, z: o.bz,
+                rotateY: 0, rotateX: 0,
+                scale: o.bs, opacity: o.bo,
+                duration: 1.4,
+                ease: 'power2.out'
+              },
+              0.1 * i
+            );
+          });
+        } else {
+          // Desktop: 3D orbital entrance
+          var entranceTL = gsap.timeline({
+            onComplete: function() {
+              startOrbiting();
+              startRadioWaves();
+              startContentAnimation();
+              startCardCycling();
+            }
+          });
+          cards.forEach(function(card, i) {
+            var o = orbits[i];
+            if (!o) return;
+            entranceTL.fromTo(card,
+              { x: 0, y: 0, z: 0, rotateY: 0, rotateX: 0, scale: 0.2, opacity: 0 },
+              {
+                x: o.bx, y: o.by, z: o.bz,
+                rotateY: 0, rotateX: 0,
+                scale: o.bs, opacity: o.bo,
+                duration: 1.0,
+                ease: 'power3.out'
+              },
+              0.06 * i
+            );
+          });
+        }
+      }
+    });
+
+    // --- Mouse-reactive tilt ---
+    cascade.addEventListener('mousemove', function(e) {
+      var rect = cascade.getBoundingClientRect();
+      var mx = (e.clientX - rect.left) / rect.width - 0.5;
+      var my = (e.clientY - rect.top) / rect.height - 0.5;
+      gsap.to(cascade, {
+        rotateY: mx * 8,
+        rotateX: -my * 6,
+        duration: 0.6,
+        ease: 'power2.out',
+        overwrite: 'auto'
+      });
+    });
+
+    cascade.addEventListener('mouseleave', function() {
+      gsap.to(cascade, {
+        rotateY: 0, rotateX: 0,
+        duration: 0.8,
+        ease: 'power2.out',
+        overwrite: 'auto'
+      });
+    });
+  })();
+
+  }); // end heroTL onComplete — setupBelowHero
+
+  // ---------------------------------------------------------------
+  // 7. HERO GRID PARALLAX
+  //    Mouse movement shifts the blueprint grid behind the hero.
+  // ---------------------------------------------------------------
+  (function setupHeroParallax() {
+    var hero = document.querySelector('.hero');
+    if (!hero) return;
+
+    hero.addEventListener('mousemove', function(e) {
+      var rect = hero.getBoundingClientRect();
+      var x = (e.clientX - rect.left) / rect.width - 0.5;
+      var y = (e.clientY - rect.top) / rect.height - 0.5;
+      hero.style.setProperty('--grid-x', (x * 10) + 'px');
+      hero.style.setProperty('--grid-y', (y * 10) + 'px');
+    });
+  })();
+
+})();
+</script>
+
+</body>
+</html>

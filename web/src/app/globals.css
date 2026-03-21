@@ -57,3 +57,105 @@ body {
 .animate-in.slide-in-from-right {
   animation: slide-in-from-right 0.2s ease-out;
 }
+
+@keyframes wizard-dissolve {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-wizard-dissolve { animation: wizard-dissolve 0.3s ease-out; }
+
+@keyframes wizard-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-wizard-backdrop { animation: wizard-backdrop-in 0.2s ease-out; }
+
+/* TopBanner slide-in animation */
+@keyframes slide-in-from-top {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.animate-in.slide-in-from-top {
+  animation: slide-in-from-top 0.3s ease-out;
+}
+
+/* Quickstart generation flow */
+@keyframes progress-step-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-step-enter {
+  animation: progress-step-enter 0.4s ease-out forwards;
+}
+
+@keyframes checkmark-pop {
+  0% { transform: scale(0); opacity: 0; }
+  60% { transform: scale(1.2); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-checkmark-pop {
+  animation: checkmark-pop 0.3s ease-out forwards;
+}
+
+@keyframes draft-ready-enter {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-draft-ready {
+  animation: draft-ready-enter 0.5s ease-out forwards;
+}
+
+/* 3D negative-space masking/reveal animation */
+.gen-mark {
+  perspective: 240px;
+  width: 96px;
+  height: 96px;
+}
+
+.gen-scene {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  animation: gen-orbit 10s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.gen-plane {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  backface-visibility: visible;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+}
+
+.gen-a {
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
+  background: #f0f0f0;
+  transform: rotateY(0deg) translateZ(18px);
+}
+
+.gen-b {
+  width: 40px;
+  height: 52px;
+  margin: -26px 0 0 -20px;
+  background: #666;
+  transform: rotateY(70deg) translateZ(18px);
+}
+
+.gen-c {
+  width: 52px;
+  height: 34px;
+  margin: -17px 0 0 -26px;
+  background: #1a1a1a;
+  transform: rotateY(140deg) translateZ(18px);
+}
+
+@keyframes gen-orbit {
+  0%   { transform: rotateX(20deg) rotateY(0deg); }
+  25%  { transform: rotateX(-10deg) rotateY(90deg); }
+  50%  { transform: rotateX(25deg) rotateY(180deg); }
+  75%  { transform: rotateX(-15deg) rotateY(270deg); }
+  100% { transform: rotateX(20deg) rotateY(360deg); }
+}

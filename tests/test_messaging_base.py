@@ -1,4 +1,4 @@
-"""Tests for the messaging platform abstraction base types."""
+"""Tests for the messaging platform abstraction base types and Template Method."""
 
 import pytest
 
@@ -12,6 +12,55 @@ from social_hook.messaging.base import (
     PlatformCapabilities,
     SendResult,
 )
+
+# --- Stub adapters for Template Method tests ---
+
+
+class StubAdapter(MessagingAdapter):
+    """Minimal adapter for testing base class behavior."""
+
+    platform = "stub"
+
+    def __init__(self):
+        self.send_calls: list[OutboundMessage] = []
+        self.edit_calls: list[tuple[str, OutboundMessage]] = []
+        self.media_calls: list[tuple[str, str, str]] = []
+        self._next_results: list[SendResult] = []
+
+    def queue_result(self, result: SendResult):
+        self._next_results.append(result)
+
+    def _do_send_message(self, chat_id, message):
+        self.send_calls.append(message)
+        return self._next_results.pop(0) if self._next_results else SendResult(success=True)
+
+    def _do_edit_message(self, chat_id, message_id, message):
+        self.edit_calls.append((message_id, message))
+        return self._next_results.pop(0) if self._next_results else SendResult(success=True)
+
+    def _do_send_media(self, chat_id, file_path, caption="", parse_mode="markdown"):
+        self.media_calls.append((file_path, caption, parse_mode))
+        return self._next_results.pop(0) if self._next_results else SendResult(success=True)
+
+    def answer_callback(self, callback_id, text=""):
+        return True
+
+    def get_capabilities(self):
+        return PlatformCapabilities()
+
+
+class SanitizingAdapter(StubAdapter):
+    """Adapter that uppercases text as sanitization (for testing)."""
+
+    platform = "sanitizing"
+
+    def sanitize_text(self, text, parse_mode):
+        if parse_mode == "markdown":
+            return text.upper()
+        return text
+
+    def _is_format_error(self, result):
+        return result.error == "format_error"
 
 
 class TestButton:
@@ -202,7 +251,7 @@ class TestMessagingAdapterABC:
         class PartialAdapter(MessagingAdapter):
             platform = "test"
 
-            def send_message(self, chat_id, message):
+            def _do_send_message(self, chat_id, message):
                 pass
 
         with pytest.raises(TypeError):
@@ -214,10 +263,10 @@ class TestMessagingAdapterABC:
         class FakeAdapter(MessagingAdapter):
             platform = "fake"
 
-            def send_message(self, chat_id, message):
+            def _do_send_message(self, chat_id, message):
                 return SendResult(success=True, message_id="1")
 
-            def edit_message(self, chat_id, message_id, message):
+            def _do_edit_message(self, chat_id, message_id, message):
                 return SendResult(success=True)
 
             def answer_callback(self, callback_id, text=""):
@@ -233,15 +282,15 @@ class TestMessagingAdapterABC:
         assert adapter.get_capabilities().max_message_length == 4096
 
     def test_base_send_media_default_returns_failure(self):
-        """Default send_media() returns SendResult(success=False)."""
+        """Default _do_send_media() returns SendResult(success=False)."""
 
         class MinimalAdapter(MessagingAdapter):
             platform = "minimal"
 
-            def send_message(self, chat_id, message):
+            def _do_send_message(self, chat_id, message):
                 return SendResult(success=True)
 
-            def edit_message(self, chat_id, message_id, message):
+            def _do_edit_message(self, chat_id, message_id, message):
                 return SendResult(success=True)
 
             def answer_callback(self, callback_id, text=""):
@@ -255,3 +304,116 @@ class TestMessagingAdapterABC:
         assert result.success is False
         assert "minimal" in result.error
         assert "does not support media uploads" in result.error
+
+
+# --- Template Method tests ---
+
+
+class TestTemplateMethodPassthrough:
+    def test_send_passes_through(self):
+        adapter = StubAdapter()
+        result = adapter.send_message("chat1", OutboundMessage(text="hello"))
+        assert result.success
+        assert adapter.send_calls[0].text == "hello"
+
+    def test_edit_passes_through(self):
+        adapter = StubAdapter()
+        result = adapter.edit_message("chat1", "msg1", OutboundMessage(text="updated"))
+        assert result.success
+        assert adapter.edit_calls[0][1].text == "updated"
+
+    def test_media_passes_through(self):
+        adapter = StubAdapter()
+        result = adapter.send_media("chat1", "/img.png", caption="cap")
+        assert result.success
+        assert adapter.media_calls[0] == ("/img.png", "cap", "markdown")
+
+    def test_no_retry_on_failure_without_format_error(self):
+        adapter = StubAdapter()
+        adapter.queue_result(SendResult(success=False, error="network"))
+        result = adapter.send_message("chat1", OutboundMessage(text="hi"))
+        assert not result.success
+        assert len(adapter.send_calls) == 1
+
+
+class TestTemplateMethodSanitization:
+    def test_send_sanitizes_text(self):
+        adapter = SanitizingAdapter()
+        adapter.send_message("chat1", OutboundMessage(text="hello"))
+        assert adapter.send_calls[0].text == "HELLO"
+
+    def test_edit_sanitizes_text(self):
+        adapter = SanitizingAdapter()
+        adapter.edit_message("chat1", "msg1", OutboundMessage(text="hello"))
+        assert adapter.edit_calls[0][1].text == "HELLO"
+
+    def test_media_sanitizes_caption(self):
+        adapter = SanitizingAdapter()
+        adapter.send_media("chat1", "/img.png", caption="hello")
+        assert adapter.media_calls[0][1] == "HELLO"
+
+    def test_no_sanitize_for_plain(self):
+        adapter = SanitizingAdapter()
+        adapter.send_message("chat1", OutboundMessage(text="hello", parse_mode="plain"))
+        assert adapter.send_calls[0].text == "hello"
+
+    def test_empty_caption_not_sanitized(self):
+        adapter = SanitizingAdapter()
+        adapter.send_media("chat1", "/img.png", caption="")
+        assert adapter.media_calls[0][1] == ""
+
+
+class TestTemplateMethodFormatRetry:
+    def test_retries_as_plain_on_format_error(self):
+        adapter = SanitizingAdapter()
+        adapter.queue_result(SendResult(success=False, error="format_error"))
+        adapter.queue_result(SendResult(success=True, message_id="2"))
+        result = adapter.send_message("chat1", OutboundMessage(text="hello"))
+        assert result.success
+        assert len(adapter.send_calls) == 2
+        assert adapter.send_calls[0].text == "HELLO"  # Sanitized
+        assert adapter.send_calls[0].parse_mode == "markdown"
+        assert adapter.send_calls[1].text == "hello"  # Original, unsanitized
+        assert adapter.send_calls[1].parse_mode == "plain"
+
+    def test_no_retry_for_non_format_error(self):
+        adapter = SanitizingAdapter()
+        adapter.queue_result(SendResult(success=False, error="network_timeout"))
+        result = adapter.send_message("chat1", OutboundMessage(text="hello"))
+        assert not result.success
+        assert len(adapter.send_calls) == 1
+
+    def test_no_retry_when_already_plain(self):
+        adapter = SanitizingAdapter()
+        adapter.queue_result(SendResult(success=False, error="format_error"))
+        result = adapter.send_message("chat1", OutboundMessage(text="hello", parse_mode="plain"))
+        assert not result.success
+        assert len(adapter.send_calls) == 1
+
+    def test_edit_retries_on_format_error(self):
+        adapter = SanitizingAdapter()
+        adapter.queue_result(SendResult(success=False, error="format_error"))
+        adapter.queue_result(SendResult(success=True))
+        result = adapter.edit_message("chat1", "msg1", OutboundMessage(text="hello"))
+        assert result.success
+        assert len(adapter.edit_calls) == 2
+        assert adapter.edit_calls[1][1].parse_mode == "plain"
+
+    def test_media_retries_on_format_error(self):
+        adapter = SanitizingAdapter()
+        adapter.queue_result(SendResult(success=False, error="format_error"))
+        adapter.queue_result(SendResult(success=True))
+        result = adapter.send_media("chat1", "/img.png", caption="hello")
+        assert result.success
+        assert len(adapter.media_calls) == 2
+        assert adapter.media_calls[0][1] == "HELLO"  # Sanitized caption
+        assert adapter.media_calls[1][1] == "hello"  # Original caption
+        assert adapter.media_calls[1][2] == "plain"  # Plain parse_mode
+
+    def test_retry_preserves_buttons(self):
+        adapter = SanitizingAdapter()
+        adapter.queue_result(SendResult(success=False, error="format_error"))
+        adapter.queue_result(SendResult(success=True))
+        buttons = [ButtonRow(buttons=[Button(label="OK", action="ok")])]
+        adapter.send_message("chat1", OutboundMessage(text="hi", buttons=buttons))
+        assert adapter.send_calls[1].buttons == buttons

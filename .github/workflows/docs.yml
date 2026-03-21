@@ -1,0 +1,52 @@
+name: Deploy docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "scripts/generate_cli_docs.py"
+      - "src/social_hook/cli/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[docs]"
+
+      - name: Regenerate CLI reference
+        run: python scripts/generate_cli_docs.py
+
+      - name: Deploy to gh-pages/docs
+        run: |
+          # Build MkDocs site
+          mkdocs build --strict
+
+          # Clone gh-pages branch
+          git clone --branch gh-pages --single-branch https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git gh-pages-branch
+
+          # Replace docs/ subdirectory, keep landing page
+          rm -rf gh-pages-branch/docs
+          cp -r site gh-pages-branch/docs
+
+          # Commit and push
+          cd gh-pages-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "No changes to deploy" && exit 0
+          git commit -m "docs: update documentation site"
+          git push

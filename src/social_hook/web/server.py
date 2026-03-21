@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import sqlite3
+import subprocess
 import threading
 import time
 import uuid as _uuid
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import Body, FastAPI, Header, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -43,6 +44,7 @@ _STALE_CHECK_INTERVAL_TICKS = 60  # every 60 bridge-loop ticks (60 × 0.5s = 30s
 # ---------------------------------------------------------------------------
 
 _hub = GatewayHub()
+_restore_lock = asyncio.Lock()
 
 
 @asynccontextmanager
@@ -137,6 +139,7 @@ def _get_adapter(scope_id: str | None = None):
 def _get_conn() -> sqlite3.Connection:
     """Get a SQLite connection to the main DB."""
     conn = sqlite3.connect(str(get_db_path()))
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -235,7 +238,11 @@ def _run_background_task(
     Args:
         task_type: Task category (e.g. "create_draft", "consolidate").
         ref_id: Reference key the frontend uses to find this task
-            (e.g. decision_id).
+            (e.g. decision_id).  Must be unique across concurrently
+            running tasks — ``useBackgroundTasks`` deduplicates by
+            ref_id and will silently drop collisions.  Prefix with
+            task_type when multiple task types target the same entity
+            (e.g. ``f"summary:{project_id}"`` vs bare ``project_id``).
         project_id: Project this task belongs to.
         fn: Zero-arg callable that returns a JSON-serialisable result dict.
         on_success: Optional callback receiving ``fn``'s return value,
@@ -413,7 +420,7 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    handle_command(msg, adapter, config)
+    await asyncio.to_thread(handle_command, msg, adapter, config)
 
     events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
@@ -422,8 +429,6 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
 @app.post("/api/callback")
 async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
     """Execute a button callback via the web adapter."""
-    import asyncio
-
     from social_hook.bot.buttons import handle_callback
 
     adapter = _get_adapter(scope_id=x_session_id)
@@ -466,7 +471,7 @@ async def api_message(body: MessageRequest, x_session_id: str = Header("web")):
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    handle_message(msg, adapter, config)
+    await asyncio.to_thread(handle_message, msg, adapter, config)
 
     events = _get_events_since(before_id, session_id=x_session_id)
     return {"events": events}
@@ -622,9 +627,15 @@ async def _event_bridge_loop():
 
     Broadcast events (session_id IS NULL) go to all connections.
     Scoped events go only to the connection with a matching session_id.
+
+    Detects DB file replacement (e.g. snapshot restore) via ResilientConnection
+    and reconnects automatically.
     """
-    bridge_conn = sqlite3.connect(str(get_db_path()))
-    bridge_conn.row_factory = sqlite3.Row
+    from social_hook.db.connection import ResilientConnection
+
+    db_path = get_db_path()
+    rc = ResilientConnection(db_path)
+    bridge_conn = rc.conn
     try:
         row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
         last_id = row[0] if row else 0
@@ -632,6 +643,14 @@ async def _event_bridge_loop():
         while True:
             await asyncio.sleep(0.5)
             tick_count += 1
+            # Check for DB file replacement (snapshot restore)
+            prev_conn = bridge_conn
+            bridge_conn = rc.check()
+            if bridge_conn is not prev_conn:
+                row = bridge_conn.execute("SELECT COALESCE(MAX(id), 0) FROM web_events").fetchone()
+                max_id = row[0] if row else 0
+                if max_id < last_id:
+                    last_id = max(0, max_id - 1)  # Re-read latest event after DB change
             if tick_count % _STALE_CHECK_INTERVAL_TICKS == 0:
                 _expire_hung_tasks(bridge_conn)
             if _hub.connection_count == 0:
@@ -663,7 +682,7 @@ async def _event_bridge_loop():
     except asyncio.CancelledError:
         pass
     finally:
-        bridge_conn.close()
+        rc.close()
 
 
 # ---------------------------------------------------------------------------
@@ -742,8 +761,9 @@ async def api_draft_detail(draft_id: str):
 
 @app.put("/api/drafts/{draft_id}/media-spec")
 async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body(...)):
-    """Update media_spec on a draft."""
+    """Update media_spec and optionally media_type on a draft."""
     media_spec = body.get("media_spec")
+    media_type = body.get("media_type")
     if media_spec is None:
         raise HTTPException(status_code=400, detail="media_spec is required")
     conn = _get_conn()
@@ -754,7 +774,10 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
             raise HTTPException(status_code=404, detail="Draft not found")
         old_spec = draft.media_spec
 
-        ops.update_draft(conn, draft_id, media_spec=media_spec)
+        update_kwargs: dict[str, Any] = {"media_spec": media_spec}
+        if media_type is not None:
+            update_kwargs["media_type"] = media_type
+        ops.update_draft(conn, draft_id, **update_kwargs)
 
         # Audit: create DraftChange record
         from social_hook.filesystem import generate_id
@@ -776,6 +799,336 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
         return {"status": "updated"}
     finally:
         conn.close()
+
+
+_ALLOWED_UPLOAD_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "svg"}
+_MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+@app.post("/api/drafts/{draft_id}/media-upload")
+async def api_upload_draft_media(draft_id: str, file: UploadFile):
+    """Upload a media file and attach it to a draft.
+
+    Accepts multipart/form-data with a 'file' field.
+    """
+    from social_hook.filesystem import generate_id, get_base_path
+    from social_hook.models import DraftChange
+
+    # Validate extension
+    ext = ""
+    if file.filename and "." in file.filename:
+        ext = file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Invalid file type: .{ext}")
+
+    # Read and validate size
+    content = await file.read()
+    if len(content) > _MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large ({len(content)} bytes). Max {_MAX_UPLOAD_SIZE} bytes.",
+        )
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.status not in ("draft", "deferred"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot upload media — draft is {draft.status}",
+            )
+
+        # Save uploaded file with UUID filename
+        upload_dir = get_base_path() / "media-cache" / "uploads" / draft_id
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"{_uuid.uuid4()}.{ext}"
+        dest = upload_dir / filename
+        dest.write_bytes(content)
+
+        file_path = str(dest)
+        old_paths = draft.media_paths
+
+        ops.update_draft(conn, draft_id, media_paths=[file_path], media_type="custom")
+        ops.insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft_id,
+                field="media_paths",
+                old_value=json.dumps(old_paths),
+                new_value=json.dumps([file_path]),
+                changed_by="human",
+            ),
+        )
+        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
+
+        return {"status": "uploaded", "file_path": file_path}
+    finally:
+        conn.close()
+
+
+@app.post("/api/drafts/{draft_id}/generate-spec")
+async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Generate a media spec from draft content using LLM. Returns 202 with task_id."""
+    tool_name = body.get("tool_name")
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="tool_name is required")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+
+        # Duplicate-task guard
+        existing = conn.execute(
+            "SELECT id FROM background_tasks"
+            " WHERE type='generate_spec' AND ref_id=? AND status='running'",
+            (draft_id,),
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="Spec generation already running")
+
+        from social_hook.adapters.registry import get_tool_spec_schema
+
+        schema = get_tool_spec_schema(tool_name)
+
+        # Capture values for the closure (conn can't be shared across threads)
+        draft_content = draft.content
+        draft_project_id = draft.project_id
+        old_spec = draft.media_spec
+    finally:
+        conn.close()
+
+    def _blocking_generate_spec() -> dict:
+        from social_hook.config.yaml import load_full_config
+        from social_hook.filesystem import generate_id
+        from social_hook.llm.base import extract_tool_call
+        from social_hook.llm.factory import create_client
+        from social_hook.llm.prompts import (
+            assemble_spec_generation_prompt,
+            build_spec_generation_tool,
+        )
+        from social_hook.models import DraftChange
+
+        config = load_full_config()
+        prompt = assemble_spec_generation_prompt(
+            tool_name=tool_name,
+            schema=schema,
+            draft_content=draft_content,
+        )
+        spec_tool = build_spec_generation_tool(tool_name, schema)
+        client = create_client(config.models.drafter, config)
+        response = client.complete(
+            messages=[{"role": "user", "content": prompt}],
+            tools=[spec_tool],
+        )
+        spec = extract_tool_call(response, "generate_media_spec")
+
+        # Persist to DB
+        conn2 = _get_conn()
+        try:
+            ops.update_draft(conn2, draft_id, media_spec=spec, media_type=tool_name)
+            ops.insert_draft_change(
+                conn2,
+                DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft_id,
+                    field="media_spec",
+                    old_value=json.dumps(old_spec)[:200] if old_spec else "null",
+                    new_value=json.dumps(spec)[:200],
+                    changed_by="human",
+                ),
+            )
+            ops.emit_data_event(conn2, "draft", "updated", draft_id, draft_project_id)
+        finally:
+            conn2.close()
+
+        return {"spec": spec, "tool_name": tool_name}
+
+    task_id = _run_background_task(
+        "generate_spec",
+        ref_id=draft_id,
+        project_id=draft_project_id,
+        fn=_blocking_generate_spec,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
+
+
+@app.post("/api/drafts/{draft_id}/resend-notification")
+async def api_resend_draft_notification(draft_id: str):
+    """Re-send a draft's review notification to all configured channels."""
+    from social_hook.bot.process import is_running
+    from social_hook.config.yaml import load_full_config
+    from social_hook.notifications import resend_draft_notification
+
+    if not is_running():
+        raise HTTPException(status_code=409, detail="Bot daemon is not running")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+    finally:
+        conn.close()
+
+    try:
+        config = load_full_config()
+        resend_draft_notification(config, draft_id)
+        return {"success": True, "message": "Notification resent"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from None
+
+
+@app.post("/api/drafts/{draft_id}/promote")
+async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Promote a preview draft to a real platform.
+
+    Creates a new draft for the target platform using the LLM drafter,
+    then marks the preview draft as superseded.
+
+    Body:
+        platform: Target platform name (e.g. "x", "linkedin")
+    """
+    platform = body.get("platform")
+    if not platform:
+        raise HTTPException(status_code=400, detail="Missing 'platform' in body")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.platform != "preview":
+            raise HTTPException(status_code=400, detail="Only preview drafts can be promoted")
+        if draft.status in ("posted", "rejected", "cancelled", "superseded"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot promote draft with status '{draft.status}'",
+            )
+
+        decision = ops.get_decision(conn, draft.decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="Decision not found")
+
+        project = ops.get_project(conn, decision.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    finally:
+        conn.close()
+
+    config = _get_config()
+
+    pcfg = config.platforms.get(platform)
+    if not pcfg or not pcfg.enabled:
+        raise HTTPException(status_code=400, detail=f"Platform '{platform}' is not enabled")
+
+    from social_hook.compat import evaluation_from_decision
+    from social_hook.config.project import ProjectConfig, load_project_config
+    from social_hook.models import CommitInfo
+
+    try:
+        project_config = load_project_config(project.repo_path)
+    except ConfigError:
+        project_config = ProjectConfig(repo_path=project.repo_path)
+
+    from social_hook.trigger import parse_commit_info
+
+    try:
+        commit = parse_commit_info(decision.commit_hash, project.repo_path)
+    except Exception:
+        commit = CommitInfo(
+            hash=decision.commit_hash,
+            message=decision.commit_message or "",
+            diff="",
+            files_changed=[],
+        )
+
+    evaluation = evaluation_from_decision(decision, "draft")
+
+    def _blocking_promote():
+        import sqlite3 as _sqlite3
+
+        from social_hook.drafting import draft_for_platforms
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.prompts import assemble_evaluator_context
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+        try:
+            context = assemble_evaluator_context(
+                db,
+                project.id,
+                project_config,
+                commit_timestamp=getattr(commit, "timestamp", None),
+                parent_timestamp=getattr(commit, "parent_timestamp", None),
+            )
+            db.emit_data_event("pipeline", "promoting", draft_id[:8], project.id)
+            results = draft_for_platforms(
+                config,
+                conn2,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                project_config=project_config,
+                target_platform_names=[platform],
+                skip_content_filter=True,
+            )
+            return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
+        finally:
+            conn2.close()
+
+    def _on_promote_done(result: dict) -> None:
+        conn2 = _get_conn()
+        try:
+            new_draft_ids = result.get("draft_ids", [])
+            if new_draft_ids:
+                ops.supersede_draft(conn2, draft_id, new_draft_ids[0])
+                ops.emit_data_event(conn2, "draft", "updated", draft_id, project.id)
+
+            from social_hook.drafting import DraftResult
+            from social_hook.scheduling import calculate_optimal_time
+
+            draft_results = []
+            for did in new_draft_ids:
+                d = ops.get_draft(conn2, did)
+                if d:
+                    sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_tweets=[]))
+            if draft_results:
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    commit_hash=commit.hash,
+                    commit_message=commit.message,
+                    draft_results=draft_results,
+                )
+        except Exception:
+            logger.debug("Promote notification failed", exc_info=True)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "promote_draft",
+        ref_id=draft_id,
+        project_id=project.id,
+        fn=_blocking_promote,
+        on_success=_on_promote_done,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
 
 
 @app.get("/api/projects")
@@ -1020,6 +1373,134 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
     )
 
 
+@app.post("/api/projects/{project_id}/summary-draft")
+async def api_summary_draft(project_id: str):
+    """Generate an introductory first draft from the project summary.
+
+    Creates a Decision with trigger_source="manual" and drafts for all
+    enabled platforms.  Uses the background-task pattern so the frontend
+    can track progress via WebSocket.
+    """
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+        repo_path = project["repo_path"]
+        pid = project["id"]
+        pname = project["name"]
+
+        # Prevent duplicate runs
+        running = conn.execute(
+            "SELECT id FROM background_tasks WHERE type = 'summary_draft'"
+            " AND project_id = ? AND status = 'running'",
+            (project_id,),
+        ).fetchone()
+        if running:
+            raise HTTPException(status_code=409, detail="Summary draft already in progress")
+    finally:
+        conn.close()
+
+    config = _get_config()
+
+    def _blocking_summary_draft():
+        import sqlite3 as _sqlite3
+
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.trigger import run_summary_trigger
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+        try:
+            # Run discovery first if no summary exists
+            proj = ops.get_project(conn2, pid)
+            proj_summary = proj.summary if proj else None
+            if not proj_summary:
+                from social_hook.config.project import load_project_config
+                from social_hook.llm.discovery import discover_project
+                from social_hook.llm.factory import create_client
+
+                project_config = load_project_config(repo_path)
+                client = create_client(config.models.evaluator, config)
+                ops.emit_data_event(conn2, "pipeline", "discovering", pid, pid)
+                disc_summary, disc_files, disc_file_summaries, disc_prompt_docs = discover_project(
+                    client=client,
+                    repo_path=repo_path,
+                    project_docs=project_config.context.project_docs,
+                    max_discovery_tokens=project_config.context.max_discovery_tokens,
+                    max_file_size=project_config.context.max_file_size,
+                    db=conn2,
+                    project_id=pid,
+                )
+                if disc_summary:
+                    ops.update_project_summary(conn2, pid, disc_summary)
+                    if disc_files:
+                        ops.update_discovery_files(conn2, pid, disc_files)
+                    if disc_file_summaries:
+                        ops.upsert_file_summaries(conn2, pid, disc_file_summaries)
+                    if disc_prompt_docs:
+                        ops.update_prompt_docs(conn2, pid, disc_prompt_docs)
+                    ops.emit_data_event(conn2, "project", "updated", pid, pid)
+                    proj_summary = disc_summary
+                    # Re-fetch project with updated summary
+                    proj = ops.get_project(conn2, pid)
+
+            if not proj_summary:
+                return {"draft_ids": [], "count": 0, "error": "Discovery produced no summary"}
+
+            result = run_summary_trigger(
+                config=config,
+                conn=conn2,
+                db=db,
+                project=proj,
+                summary=proj_summary,
+                repo_path=repo_path,
+            )
+            return result or {"draft_ids": [], "count": 0}
+        finally:
+            conn2.close()
+
+    def _on_summary_drafted(result: dict) -> None:
+        draft_id = result.get("draft_id")
+        if not draft_id:
+            return
+        conn2 = _get_conn()
+        try:
+            from social_hook.drafting import DraftResult
+            from social_hook.scheduling import calculate_optimal_time
+
+            d = ops.get_draft(conn2, draft_id)
+            if d:
+                sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=pname,
+                    project_id=pid,
+                    commit_hash="summary",
+                    commit_message="Project introduction",
+                    draft_results=[DraftResult(draft=d, schedule=sched, thread_tweets=[])],
+                )
+        except Exception:
+            logger.debug("Summary draft notification failed", exc_info=True)
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "summary_draft",
+        ref_id=f"summary:{project_id}",
+        project_id=pid,
+        fn=_blocking_summary_draft,
+        on_success=_on_summary_drafted,
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
+
+
 @app.get("/api/projects/{project_id}/posts")
 async def api_project_posts(
     project_id: str,
@@ -1119,25 +1600,12 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
     except ConfigError:
         project_config = ProjectConfig(repo_path=project.repo_path)
 
+    from social_hook.compat import evaluation_from_decision
     from social_hook.trigger import parse_commit_info
 
     commit = parse_commit_info(decision.commit_hash, project.repo_path)
 
-    from types import SimpleNamespace
-
-    evaluation = SimpleNamespace(
-        decision="draft",
-        reasoning=decision.reasoning,
-        angle=decision.angle,
-        episode_type=decision.episode_type,
-        post_category=decision.post_category,
-        arc_id=decision.arc_id,
-        new_arc_theme=None,
-        media_tool=decision.media_tool,
-        reference_posts=None,
-        include_project_docs=True,
-        commit_summary=decision.commit_summary,
-    )
+    evaluation = evaluation_from_decision(decision, "draft")
 
     def _blocking_create_draft():
         import sqlite3 as _sqlite3
@@ -1147,6 +1615,7 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
         from social_hook.llm.prompts import assemble_evaluator_context
 
         conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
         conn2.row_factory = _sqlite3.Row
         db = DryRunContext(conn2, dry_run=False)
         try:
@@ -1270,6 +1739,7 @@ async def api_retrigger_decision(decision_id: str):
         return run_trigger(
             commit_hash=commit_hash,
             repo_path=repo_path,
+            trigger_source="manual",
         )
 
     exit_code = await asyncio.to_thread(_blocking_retrigger)
@@ -1334,7 +1804,8 @@ async def api_enabled_platforms():
     for name, pcfg in config.platforms.items():
         if pcfg.enabled:
             enabled[name] = {"priority": pcfg.priority, "type": pcfg.type}
-    return {"platforms": enabled, "count": len(enabled)}
+    real_count = sum(1 for n in enabled if n != "preview")
+    return {"platforms": enabled, "count": len(enabled), "real_count": real_count}
 
 
 @app.post("/api/decisions/consolidate")
@@ -1388,21 +1859,10 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         files_changed=[],
     )
 
-    from types import SimpleNamespace
+    from social_hook.compat import evaluation_from_decision
 
     anchor = decisions[-1]
-    evaluation = SimpleNamespace(
-        decision="draft",
-        reasoning=anchor.reasoning,
-        angle=anchor.angle,
-        episode_type=anchor.episode_type,
-        post_category=anchor.post_category,
-        arc_id=anchor.arc_id,
-        media_tool=anchor.media_tool,
-        reference_posts=anchor.reference_posts,
-        include_project_docs=True,
-        commit_summary=anchor.commit_summary,
-    )
+    evaluation = evaluation_from_decision(anchor, "draft")
 
     def _blocking_consolidate():
         import sqlite3 as _sqlite3
@@ -1412,6 +1872,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         from social_hook.llm.prompts import assemble_evaluator_context
 
         conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
         conn2.row_factory = _sqlite3.Row
         db = DryRunContext(conn2, dry_run=False)
         try:
@@ -1478,6 +1939,95 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         status_code=202,
         content={"task_id": task_id, "status": "processing"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Rate Limits
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/snapshot/restore")
+async def api_snapshot_restore(body: dict[str, Any] = Body(default={})):
+    """Restore a snapshot while the server is running.
+
+    Uses SQLite's backup API to copy pages directly between connections,
+    avoiding file replacement and SHM corruption. Safe with concurrent
+    readers (bridge loop, background threads, other endpoints).
+    """
+    name = body.get("name")
+    if not name:
+        raise HTTPException(400, "Missing 'name' field")
+
+    if _restore_lock.locked():
+        raise HTTPException(409, "Another restore is already in progress")
+
+    snap_dir = get_db_path().parent / "snapshots"
+    src = snap_dir / f"{name}.db"
+    if not src.exists():
+        raise HTTPException(404, f"Snapshot not found: {name}")
+
+    db_path = get_db_path()
+    backup_path = snap_dir / "_pre_restore.db"
+
+    def _do_restore():
+        """Run the blocking backup operations in a thread."""
+        from social_hook.db.connection import get_connection, init_database
+
+        # 1. Pre-restore backup using backup API (consistent even with open connections)
+        if db_path.exists():
+            pre_src = sqlite3.connect(str(db_path))
+            pre_src.execute("PRAGMA busy_timeout = 5000")
+            pre_dst = sqlite3.connect(str(backup_path))
+            try:
+                pre_src.backup(pre_dst)
+            finally:
+                pre_src.close()
+                pre_dst.close()
+
+        # 2. Restore: copy snapshot pages into live DB
+        src_conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+        dst_conn = get_connection(db_path)  # WAL mode + busy_timeout
+        try:
+            dst_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            src_conn.backup(dst_conn)
+        finally:
+            src_conn.close()
+            dst_conn.close()
+
+        # 3. Apply migrations (snapshot may predate schema changes)
+        new_conn = init_database(db_path)
+        try:
+            new_conn.execute(
+                "INSERT INTO web_events (type, data) VALUES (?, ?)",
+                ("data_change", json.dumps({"entity": "system", "action": "db_restored"})),
+            )
+            new_conn.commit()
+            # 4. Checkpoint WAL to flush to main file — updates mtime so
+            #    bridge's ResilientConnection detects the change and resets last_id
+            new_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            new_conn.close()
+
+    async with _restore_lock:
+        try:
+            await asyncio.to_thread(_do_restore)
+        except Exception as e:
+            raise HTTPException(500, f"Restore failed: {e}") from e
+
+    return {"restored": True, "name": name, "backup": str(backup_path)}
+
+
+@app.get("/api/rate-limits/status")
+async def api_rate_limits_status():
+    """Return current rate limit state for the dashboard."""
+    from social_hook.rate_limits import get_rate_limit_status
+
+    config = _get_config()
+    conn = _get_conn()
+    try:
+        return get_rate_limit_status(conn, config.rate_limits)
+    finally:
+        conn.close()
 
 
 @app.get("/api/tasks")
@@ -1653,6 +2203,25 @@ async def api_media(file_path: str):
 # ---------------------------------------------------------------------------
 # Settings endpoints
 # ---------------------------------------------------------------------------
+
+
+@app.get("/api/wizard/templates")
+async def api_get_wizard_templates():
+    """Return content strategy templates for the setup wizard."""
+    from social_hook.setup.templates import templates_to_dicts
+
+    return {"templates": templates_to_dicts()}
+
+
+@app.get("/api/wizard/detect-providers")
+async def api_detect_providers():
+    """Detect available LLM providers for the setup wizard."""
+    import os
+
+    from social_hook.setup.wizard import discover_providers
+
+    providers = await asyncio.to_thread(discover_providers, dict(os.environ))
+    return {"providers": providers}
 
 
 @app.get("/api/settings/config")
@@ -2039,7 +2608,9 @@ async def api_regenerate_summary(project_id: str):
         from social_hook.config.project import load_project_config
 
         project_config = load_project_config(project.repo_path)
-        max_discovery_tokens = project_config.context.max_discovery_tokens if project_config else 60000
+        max_discovery_tokens = (
+            project_config.context.max_discovery_tokens if project_config else 60000
+        )
         max_file_size = project_config.context.max_file_size if project_config else 256000
         project_docs = project_config.context.project_docs if project_config else None
 
@@ -2052,7 +2623,9 @@ async def api_regenerate_summary(project_id: str):
             max_file_size=max_file_size,
             db=conn,
             project_id=project_id,
-            on_progress=lambda stage: ops.emit_data_event(conn, "pipeline", stage, project_id, project_id),
+            on_progress=lambda stage: ops.emit_data_event(
+                conn, "pipeline", stage, project_id, project_id
+            ),
         )
 
         if summary:
@@ -2114,6 +2687,10 @@ async def api_installations_status():
         check_narrative_hook_installed,
     )
 
+    # Reap zombie if needed before checking
+    if _bot_proc is not None:
+        _bot_proc.poll()
+
     return {
         "commit_hook": check_hook_installed(),
         "narrative_hook": check_narrative_hook_installed(),
@@ -2165,16 +2742,55 @@ async def api_uninstall_component(component: str):
     return {"success": success, "message": message}
 
 
+_bot_proc: "subprocess.Popen | None" = None  # Single-worker: safe as module state
+
+
 @app.post("/api/installations/bot_daemon/start")
 async def api_start_bot_daemon():
+    import shutil
     import subprocess as sp
+    import sys
 
-    from social_hook.bot.process import is_running
+    from social_hook.bot.process import get_pid_file, is_running, stop_bot
+    from social_hook.filesystem import get_base_path
 
+    global _bot_proc
+    # Reap any previous zombie
+    if _bot_proc is not None:
+        _bot_proc.poll()
+        _bot_proc = None
+
+    # Stop any existing daemon first — only one can poll a Telegram token.
+    # This handles the case where a daemon was started from a different
+    # worktree or the main branch and is now stale.
     if is_running():
-        return {"success": True, "message": "Bot daemon is already running"}
+        await asyncio.to_thread(stop_bot)
+        await asyncio.sleep(0.5)
     try:
-        sp.Popen([PROJECT_SLUG, "bot", "start", "--daemon"])
+        # Launch directly in foreground mode (no --daemon) with detached session.
+        # Avoids the double-Popen problem where --daemon spawns another child,
+        # leaving a gap where is_running() returns false.
+        binary = shutil.which(PROJECT_SLUG) or PROJECT_SLUG
+        log_path = get_base_path() / "logs" / "bot.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_fd = open(log_path, "a")  # noqa: SIM115
+
+        kwargs: dict = {"stdout": log_fd, "stderr": log_fd, "stdin": sp.DEVNULL}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = sp.DETACHED_PROCESS | sp.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+
+        proc = sp.Popen([binary, "bot", "start"], **kwargs)
+        log_fd.close()  # Child inherited the FD; parent doesn't need it
+        _bot_proc = proc
+
+        # Write PID eagerly so is_running() returns true immediately,
+        # preventing duplicate daemons from concurrent start requests.
+        pid_file = get_pid_file()
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(proc.pid))
+
         return {"success": True, "message": "Bot daemon starting"}
     except Exception as e:
         return {"success": False, "message": str(e)}
@@ -2184,9 +2800,14 @@ async def api_start_bot_daemon():
 async def api_stop_bot_daemon():
     from social_hook.bot.process import is_running, stop_bot
 
+    global _bot_proc
     if not is_running():
         return {"success": True, "message": "Bot daemon is not running"}
-    if stop_bot():
+    if await asyncio.to_thread(stop_bot):
+        # Reap after stopping
+        if _bot_proc is not None:
+            _bot_proc.poll()
+            _bot_proc = None
         return {"success": True, "message": "Bot daemon stopped"}
     return {"success": False, "message": "Failed to stop bot daemon"}
 
@@ -2204,6 +2825,10 @@ _CHANNEL_CREDENTIALS = {
 async def api_channels_status():
     """Return status of all known channels and daemon running state."""
     from social_hook.bot.process import is_running
+
+    # Reap zombie if needed before checking
+    if _bot_proc is not None:
+        _bot_proc.poll()
 
     config = _get_config()
     channels_status = {}
@@ -2295,6 +2920,7 @@ async def api_browse_directory(path: str = Query(default="~")):
     return {
         "current": str(resolved),
         "parent": str(resolved.parent) if resolved != home else str(home),
+        "is_git": (resolved / ".git").exists(),
         "directories": dirs,
     }
 
@@ -2406,5 +3032,66 @@ async def api_delete_project(project_id: str):
         ops.delete_project(conn, project_id)
         ops.emit_data_event(conn, "project", "deleted", project_id, project_id)
         return {"status": "deleted", "project_id": project_id}
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Platform Introduced (per-platform introduction tracking)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/introduced")
+async def api_project_introduced(project_id: str):
+    """Get per-platform introduction status for a project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        rows = conn.execute(
+            "SELECT platform, introduced, introduced_at FROM platform_introduced WHERE project_id = ?",
+            (project_id,),
+        ).fetchall()
+        platforms = {}
+        for row in rows:
+            platforms[row[0]] = {
+                "introduced": bool(row[1]),
+                "introduced_at": row[2],
+            }
+        return {"platforms": platforms}
+    finally:
+        conn.close()
+
+
+class IntroducedResetBody(BaseModel):
+    platform: str | None = None
+
+
+@app.post("/api/projects/{project_id}/introduced/reset")
+async def api_project_introduced_reset(project_id: str, body: IntroducedResetBody):
+    """Reset introduction status for a platform or all platforms."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        count = ops.reset_platform_introduced(conn, project_id, body.platform)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"reset": count, "platform": body.platform or "all"}
+    finally:
+        conn.close()
+
+
+class IntroducedSetBody(BaseModel):
+    platform: str
+    value: bool = True
+
+
+@app.post("/api/projects/{project_id}/introduced/set")
+async def api_project_introduced_set(project_id: str, body: IntroducedSetBody):
+    """Set introduction status for a specific platform."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        ops.set_platform_introduced(conn, project_id, body.platform, body.value)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"platform": body.platform, "introduced": body.value}
     finally:
         conn.close()

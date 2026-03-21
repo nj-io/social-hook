@@ -22,13 +22,31 @@ TIER_CHAR_LIMITS = {
     "premium_plus": 25_000,
 }
 
-# Default configuration values
-DEFAULT_CONFIG = {
-    "models": {
+
+def _detect_default_models() -> dict[str, str]:
+    """Detect best default models based on available providers.
+
+    If the Claude CLI is installed, use it (free via subscription).
+    Otherwise fall back to Anthropic API (requires API key).
+    """
+    import shutil
+
+    if shutil.which("claude"):
+        return {
+            "evaluator": "claude-cli/sonnet",
+            "drafter": "claude-cli/sonnet",
+            "gatekeeper": "claude-cli/haiku",
+        }
+    return {
         "evaluator": "anthropic/claude-opus-4-5",
         "drafter": "anthropic/claude-opus-4-5",
         "gatekeeper": "anthropic/claude-haiku-4-5",
-    },
+    }
+
+
+# Default configuration values
+DEFAULT_CONFIG = {
+    "models": _detect_default_models(),
     "platforms": {
         "x": {"enabled": True, "priority": "primary", "account_tier": "free"},
     },
@@ -56,6 +74,11 @@ DEFAULT_CONFIG = {
         "mode": "notify_only",
         "batch_size": 20,
     },
+    "rate_limits": {
+        "max_evaluations_per_day": 15,
+        "min_evaluation_gap_minutes": 10,
+        "batch_throttled": False,
+    },
     "channels": {
         "web": {"enabled": True},
     },
@@ -64,11 +87,15 @@ DEFAULT_CONFIG = {
 
 @dataclass
 class ModelsConfig:
-    """Model configuration."""
+    """Model configuration.
 
-    evaluator: str = "anthropic/claude-opus-4-5"
-    drafter: str = "anthropic/claude-opus-4-5"
-    gatekeeper: str = "anthropic/claude-haiku-4-5"
+    Defaults are resolved at import time by _detect_default_models():
+    claude-cli/ if Claude CLI is installed, anthropic/ otherwise.
+    """
+
+    evaluator: str = field(default_factory=lambda: DEFAULT_CONFIG["models"]["evaluator"])  # type: ignore[index]
+    drafter: str = field(default_factory=lambda: DEFAULT_CONFIG["models"]["drafter"])  # type: ignore[index]
+    gatekeeper: str = field(default_factory=lambda: DEFAULT_CONFIG["models"]["gatekeeper"])  # type: ignore[index]
 
 
 @dataclass
@@ -133,6 +160,35 @@ class ChannelConfig:
 
 
 @dataclass
+class RateLimitsConfig:
+    """Rate limiting configuration for evaluator calls."""
+
+    max_evaluations_per_day: int = 15
+    min_evaluation_gap_minutes: int = 10
+    batch_throttled: bool = False
+
+
+@dataclass
+class IdentityConfig:
+    """Named identity definition for content authorship."""
+
+    type: str = "myself"  # "myself" | "team" | "company" | "project" | "custom"
+    label: str = ""
+    description: str | None = None
+    intro_hook: str | None = None
+
+
+@dataclass
+class ContentStrategyConfig:
+    """Content strategy definition. Matches TARGETS_DESIGN.md strategy shape."""
+
+    audience: str | None = None
+    voice: str | None = None
+    post_when: str | None = None
+    avoid: str | None = None
+
+
+@dataclass
 class Config:
     """Main configuration object."""
 
@@ -148,11 +204,25 @@ class Config:
     scheduling: SchedulingConfig = field(default_factory=SchedulingConfig)
     journey_capture: JourneyCaptureConfig = field(default_factory=JourneyCaptureConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
+    rate_limits: RateLimitsConfig = field(default_factory=RateLimitsConfig)
     channels: dict[str, ChannelConfig] = field(default_factory=dict)
     notification_level: str = "all_decisions"  # "all_decisions" or "drafts_only"
+    identities: dict[str, IdentityConfig] = field(default_factory=dict)
+    default_identity: str | None = None
+    content_strategies: dict[str, ContentStrategyConfig] = field(default_factory=dict)
+    content_strategy: str | None = None  # Reference to active strategy name
 
     # Environment variables (populated by load_full_config)
     env: dict[str, str] = field(default_factory=dict)
+
+
+def resolve_identity(config: Config, platform_name: str) -> IdentityConfig | None:
+    """Resolve identity for a platform: platform.identity -> default_identity -> None."""
+    pcfg = config.platforms.get(platform_name)
+    identity_name = (pcfg.identity if pcfg else None) or config.default_identity
+    if identity_name and identity_name in config.identities:
+        return config.identities[identity_name]
+    return None
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
@@ -263,10 +333,11 @@ def _parse_config(data: dict[str, Any]) -> Config:
     """Parse raw config dict into Config object."""
     # Models
     models_data = data.get("models", {})
+    default_models: dict[str, str] = DEFAULT_CONFIG["models"]  # type: ignore[assignment]
     models = ModelsConfig(
-        evaluator=models_data.get("evaluator", "anthropic/claude-opus-4-5"),
-        drafter=models_data.get("drafter", "anthropic/claude-opus-4-5"),
-        gatekeeper=models_data.get("gatekeeper", "anthropic/claude-haiku-4-5"),
+        evaluator=models_data.get("evaluator", default_models["evaluator"]),
+        drafter=models_data.get("drafter", default_models["drafter"]),
+        gatekeeper=models_data.get("gatekeeper", default_models["gatekeeper"]),
     )
 
     # Validate model names (must use provider/model-id format)
@@ -332,6 +403,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
             filter=pfilter,
             frequency=freq,
             scheduling=pdata.get("scheduling"),
+            identity=pdata.get("identity"),
         )
 
     # Default: X enabled as primary if no platforms specified
@@ -408,6 +480,24 @@ def _parse_config(data: dict[str, Any]) -> Config:
         time_window_max_drafts=cons_data.get("time_window_max_drafts", 3),
     )
 
+    # Rate limits
+    rl_data = data.get("rate_limits", {})
+    rl_max_eval = rl_data.get("max_evaluations_per_day", 15)
+    if not isinstance(rl_max_eval, int) or rl_max_eval < 1:
+        raise ConfigError(
+            f"Invalid rate_limits.max_evaluations_per_day '{rl_max_eval}': must be positive integer"
+        )
+    rl_min_gap = rl_data.get("min_evaluation_gap_minutes", 10)
+    if not isinstance(rl_min_gap, int) or rl_min_gap < 0:
+        raise ConfigError(
+            f"Invalid rate_limits.min_evaluation_gap_minutes '{rl_min_gap}': must be non-negative integer"
+        )
+    rate_limits = RateLimitsConfig(
+        max_evaluations_per_day=rl_max_eval,
+        min_evaluation_gap_minutes=rl_min_gap,
+        batch_throttled=bool(rl_data.get("batch_throttled", False)),
+    )
+
     # Channels
     channels_data = data.get("channels", {})
     channels: dict[str, ChannelConfig] = {}
@@ -431,6 +521,41 @@ def _parse_config(data: dict[str, Any]) -> Config:
             f"Invalid notification_level '{notification_level}': must be 'all_decisions' or 'drafts_only'"
         )
 
+    # Identities
+    identities: dict[str, IdentityConfig] = {}
+    for id_name, id_data in data.get("identities", {}).items():
+        if not isinstance(id_data, dict):
+            raise ConfigError(f"Identity '{id_name}' config must be a dict")
+        identities[id_name] = IdentityConfig(
+            type=id_data.get("type", "myself"),
+            label=id_data.get("label", id_name),
+            description=id_data.get("description"),
+            intro_hook=id_data.get("intro_hook"),
+        )
+    default_identity = data.get("default_identity")
+
+    # Content strategies
+    content_strategies: dict[str, ContentStrategyConfig] = {}
+    for cs_name, cs_data in data.get("content_strategies", {}).items():
+        if not isinstance(cs_data, dict):
+            raise ConfigError(f"Content strategy '{cs_name}' config must be a dict")
+        content_strategies[cs_name] = ContentStrategyConfig(
+            audience=cs_data.get("audience"),
+            voice=cs_data.get("voice"),
+            post_when=cs_data.get("post_when"),
+            avoid=cs_data.get("avoid"),
+        )
+    content_strategy = data.get("content_strategy")
+
+    # Cross-reference validation
+    if default_identity and default_identity not in identities:
+        raise ConfigError(f"default_identity '{default_identity}' not found in identities")
+    if content_strategy and content_strategy not in content_strategies:
+        raise ConfigError(f"content_strategy '{content_strategy}' not found in content_strategies")
+    for pname, pcfg in platforms.items():
+        if pcfg.identity and pcfg.identity not in identities:
+            raise ConfigError(f"Platform '{pname}' references unknown identity '{pcfg.identity}'")
+
     return Config(
         models=models,
         platforms=platforms,
@@ -438,8 +563,13 @@ def _parse_config(data: dict[str, Any]) -> Config:
         scheduling=scheduling,
         journey_capture=journey_capture,
         consolidation=consolidation,
+        rate_limits=rate_limits,
         channels=channels,
         notification_level=notification_level,
+        identities=identities,
+        default_identity=default_identity,
+        content_strategies=content_strategies,
+        content_strategy=content_strategy,
     )
 
 

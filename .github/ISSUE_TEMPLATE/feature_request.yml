@@ -1,0 +1,49 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this solve? What's the use case?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How do you think this should work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any other approaches you've thought about?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of Social Hook is this related to?
+      options:
+        - CLI
+        - Web Dashboard
+        - Telegram Bot
+        - Evaluation Pipeline
+        - Draft Generation
+        - Media Generation
+        - Narrative / Arcs
+        - Configuration / Setup
+        - Database / Snapshots
+        - Scheduling
+        - New Platform Adapter
+        - New LLM Provider
+        - Other
+    validations:
+      required: true

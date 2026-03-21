@@ -3,14 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchDraft } from "@/lib/api";
+import { fetchChannelsStatus, fetchDraft, fetchEnabledPlatforms, generateMediaSpec, resendDraftNotification } from "@/lib/api";
+import { platformLabel } from "@/lib/platform";
 import type { Decision, Draft } from "@/lib/types";
-import { StatusBadge } from "@/components/status-badge";
-import { DecisionBadge } from "@/components/decision-badge";
-import { MediaPreview } from "@/components/media-preview";
-import { MediaSpecEditor } from "@/components/media-spec-editor";
+import { parseTags } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import { MediaSection } from "@/components/media-section";
 import { DraftActionPanel } from "@/components/draft-action-panel";
 import { useDataEvents } from "@/lib/use-data-events";
+import { useBackgroundTasks } from "@/lib/use-background-tasks";
 
 export default function DraftDetailPage() {
   const params = useParams();
@@ -20,10 +21,19 @@ export default function DraftDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [enabledPlatforms, setEnabledPlatforms] = useState<Record<string, { priority: string; type: string }>>({});
+  const [daemonRunning, setDaemonRunning] = useState(false);
+
   const reload = useCallback(async () => {
     try {
-      const result = await fetchDraft(id);
+      const [result, platRes, chanStatus] = await Promise.all([
+        fetchDraft(id),
+        fetchEnabledPlatforms(),
+        fetchChannelsStatus(),
+      ]);
       setDraft(result);
+      setEnabledPlatforms(platRes.platforms);
+      setDaemonRunning(!!chanStatus.daemon_running);
     } catch {
       // Silent refresh failure
     }
@@ -31,19 +41,33 @@ export default function DraftDetailPage() {
 
   useDataEvents(["draft"], reload);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const result = await fetchDraft(id);
-        setDraft(result);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load draft");
-      } finally {
-        setLoading(false);
-      }
+  const { trackTask, isRunning } = useBackgroundTasks(draft?.project_id ?? "");
+
+  const handleGenerateSpec = useCallback(async (draftId: string, mediaType: string) => {
+    const res = await generateMediaSpec(draftId, mediaType);
+    trackTask(res.task_id, draftId, "generate_spec");
+  }, [trackTask]);
+
+  const isGeneratingSpec = draft ? isRunning(draft.id) : false;
+
+  const [resending, setResending] = useState(false);
+  const handleResend = useCallback(async () => {
+    if (!draft) return;
+    setResending(true);
+    try {
+      await resendDraftNotification(draft.id);
+    } catch {
+      // Silent — user can retry
+    } finally {
+      setResending(false);
     }
-    load();
-  }, [id]);
+  }, [draft]);
+
+  useEffect(() => {
+    reload()
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load draft"))
+      .finally(() => setLoading(false));
+  }, [reload]);
 
   if (loading) {
     return <p className="text-center text-muted-foreground">Loading...</p>;
@@ -62,7 +86,7 @@ export default function DraftDetailPage() {
     );
   }
 
-  const platformLabel = draft.platform === "x" ? "X (Twitter)" : draft.platform === "linkedin" ? "LinkedIn" : draft.platform;
+  const platLabel = draft.platform === "preview" ? "Preview (not publishable)" : platformLabel(draft.platform);
 
   return (
     <div className="space-y-6">
@@ -72,13 +96,24 @@ export default function DraftDetailPage() {
 
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-bold">Draft Detail</h1>
-        <StatusBadge status={draft.status} />
+        <Badge value={draft.status} variant="status" />
+        {draft.is_intro && <Badge value="INTRO" variant="system" />}
+        {draft.platform === "preview" && <Badge value="Preview" variant="system" />}
         <code className="text-xs text-muted-foreground">{draft.id}</code>
+        {daemonRunning && (
+          <button
+            onClick={handleResend}
+            disabled={resending}
+            className="ml-auto rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            {resending ? "Sending..." : "Resend Notification"}
+          </button>
+        )}
       </div>
 
       {/* Meta info */}
       <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-        <span>Platform: <span className="font-medium text-foreground">{platformLabel}</span></span>
+        <span>Platform: <span className="font-medium text-foreground">{platLabel}</span></span>
         {draft.decision?.media_tool && (
           <span>Media: <span className="font-medium text-foreground">{draft.decision.media_tool}</span></span>
         )}
@@ -87,6 +122,25 @@ export default function DraftDetailPage() {
           <span>Scheduled: {new Date(draft.suggested_time).toLocaleString()}</span>
         )}
       </div>
+
+      {/* Metadata pills */}
+      {draft.decision && (
+        <div className="flex flex-wrap gap-1.5">
+          {draft.decision.episode_type && <Badge value={draft.decision.episode_type} variant="category" />}
+          {draft.decision.post_category && <Badge value={draft.decision.post_category} variant="category" />}
+          {parseTags(draft.decision.episode_tags).map((tag) => (
+            <Badge key={tag} value={tag} variant="default" />
+          ))}
+        </div>
+      )}
+
+      {/* Preview banner */}
+      {draft.platform === "preview" && draft.status !== "superseded" && (
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+          This is a preview draft — it shows what the system would generate, but cannot be
+          published directly. Use the Promote button below to create a platform-specific draft.
+        </div>
+      )}
 
       {/* Content */}
       <div className="rounded-lg border border-border p-4">
@@ -107,27 +161,8 @@ export default function DraftDetailPage() {
         </div>
       )}
 
-      {/* Media Spec Editor */}
-      <MediaSpecEditor
-        draftId={draft.id}
-        mediaSpec={draft.media_spec ? (typeof draft.media_spec === "string" ? JSON.parse(draft.media_spec) : draft.media_spec) : {}}
-        onUpdate={reload}
-      />
-
-      {/* Media error */}
-      {draft.last_error && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive break-words whitespace-pre-wrap">
-          {draft.last_error}
-        </div>
-      )}
-
-      {/* Media (generated result) */}
-      {draft.media_paths && (
-        <div>
-          <h2 className="mb-2 text-sm font-medium text-muted-foreground">Media</h2>
-          <MediaPreview paths={draft.media_paths} />
-        </div>
-      )}
+      {/* Media section: tool selector, spec form, upload, preview */}
+      <MediaSection draft={draft} onUpdate={reload} onGenerateSpec={handleGenerateSpec} isGeneratingSpec={isGeneratingSpec} />
 
       {/* Reasoning */}
       {draft.reasoning && (
@@ -141,7 +176,12 @@ export default function DraftDetailPage() {
       {draft.decision && <EvaluatorAnalysis decision={draft.decision} />}
 
       {/* Action buttons */}
-      <DraftActionPanel draft={draft} onUpdate={reload} />
+      <DraftActionPanel
+        draft={draft}
+        onUpdate={reload}
+        enabledPlatforms={enabledPlatforms}
+        onRefreshPlatforms={() => fetchEnabledPlatforms().then((res) => setEnabledPlatforms(res.platforms)).catch(() => {})}
+      />
 
       {/* Audit trail */}
       {draft.changes && draft.changes.length > 0 && (
@@ -178,7 +218,7 @@ function EvaluatorAnalysis({ decision }: { decision: Decision }) {
       >
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-medium text-muted-foreground">Evaluator Analysis</h2>
-          <DecisionBadge decision={decision.decision} />
+          <Badge value={decision.decision} variant="decision" />
         </div>
         <span className="text-xs text-muted-foreground">{open ? "Hide" : "Show"}</span>
       </button>

@@ -155,6 +155,18 @@ class NanaBananaAdapter(MediaAdapter):
                 error=f"Request failed: {e}",
             )
 
+    @classmethod
+    def spec_schema(cls) -> dict:
+        """Return spec schema for AI image generation."""
+        return {
+            "required": {"prompt": "Image description string"},
+            "optional": {},
+        }
+
+    def preview_text(self, spec: dict) -> str:
+        """Return human-readable preview of the image spec."""
+        return spec.get("prompt") or "No prompt specified"
+
     def supports(self, media_type: str) -> bool:
         """Check if adapter handles this media type.
 

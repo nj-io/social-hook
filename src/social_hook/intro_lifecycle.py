@@ -8,13 +8,17 @@ from social_hook.db import operations as ops
 logger = logging.getLogger(__name__)
 
 
-def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
+def on_intro_rejected(conn, draft, project_id, verbose=False, skip_intro=False) -> str:
     """Handle rejection of an intro draft.
 
-    When an intro draft is rejected:
-    1. Flip audience_introduced back to False
-    2. Find pending non-intro drafts for this project
-    3. Re-draft them with audience_introduced=False tone
+    When skip_intro=True:
+    - Mark platform as introduced (skip future intros)
+    - No cascade, no re-draft
+
+    When skip_intro=False (default):
+    1. Reset platform_introduced for this draft's platform
+    2. Find pending non-intro drafts for this platform
+    3. Re-draft them with platform_introduced=False tone
     4. Mark originals as superseded
 
     Returns summary message.
@@ -22,17 +26,26 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
     if not getattr(draft, "is_intro", False):
         return ""
 
-    # 1. Flip audience_introduced back
-    ops.set_audience_introduced(conn, project_id, False)
+    platform = draft.platform
 
-    # 2. Find pending non-intro drafts
+    # Skip intro: just mark as introduced and return
+    if skip_intro:
+        ops.set_platform_introduced(conn, project_id, platform, True)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return f"Intro skipped for {platform}. Platform marked as introduced."
+
+    # 1. Reset platform_introduced for this platform
+    ops.reset_platform_introduced(conn, project_id, platform)
+    ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+
+    # 2. Find pending non-intro drafts for this platform only
     pending = ops.get_pending_drafts(conn, project_id)
-    non_intro = [d for d in pending if not getattr(d, "is_intro", False)]
+    non_intro = [d for d in pending if not getattr(d, "is_intro", False) and d.platform == platform]
 
     if not non_intro:
         if verbose:
-            logger.info("Intro rejected, no pending non-intro drafts to cascade")
-        return "Intro rejected. audience_introduced reset. No pending drafts to re-draft."
+            logger.info("Intro rejected for %s, no pending non-intro drafts to cascade", platform)
+        return f"Intro rejected for {platform}. platform_introduced reset. No pending drafts to re-draft."
 
     # 3. Group by decision_id to avoid duplicate re-drafts
     by_decision = defaultdict(list)
@@ -44,8 +57,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
     replacement_count = 0
 
     try:
-        from types import SimpleNamespace
-
+        from social_hook.compat import evaluation_from_decision
         from social_hook.config.project import load_project_config
         from social_hook.config.yaml import load_full_config
         from social_hook.drafting import draft_for_platforms
@@ -61,19 +73,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
                 continue
 
             # Build minimal eval compat from decision fields
-            eval_compat = SimpleNamespace(
-                decision=decision.decision,
-                reasoning=decision.reasoning,
-                angle=decision.angle,
-                episode_type=decision.episode_type,
-                post_category=decision.post_category,
-                arc_id=decision.arc_id,
-                new_arc_theme=None,
-                media_tool=decision.media_tool,
-                reference_posts=None,
-                commit_summary=decision.commit_summary,
-                include_project_docs=True,
-            )
+            eval_compat = evaluation_from_decision(decision)
 
             commit = CommitInfo(
                 hash=decision.commit_hash,
@@ -88,13 +88,11 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
 
             project_config = load_project_config(project.repo_path)
 
-            # Rebuild context with audience_introduced=False
+            # Rebuild context with this platform not introduced
             from social_hook.llm.prompts import assemble_evaluator_context
 
             context = assemble_evaluator_context(db, project_id, project_config)
-            context.audience_introduced = False
-
-            target_platforms = list(set(d.platform for d in drafts_for_decision))
+            context.platform_introduced[platform] = False
 
             try:
                 new_results = draft_for_platforms(
@@ -109,7 +107,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
                     project_config=project_config,
                     dry_run=False,
                     verbose=verbose,
-                    target_platform_names=target_platforms,
+                    target_platform_names=[platform],
                 )
             except Exception as e:
                 logger.warning(f"Re-draft failed for decision {decision_id}: {e}")
@@ -122,10 +120,10 @@ def on_intro_rejected(conn, draft, project_id, verbose=False) -> str:
                 replacement_count += len(new_results)
     except Exception as e:
         logger.error(f"Intro cascade failed: {e}")
-        return f"Intro rejected. audience_introduced reset. Cascade error: {e}"
+        return f"Intro rejected for {platform}. platform_introduced reset. Cascade error: {e}"
 
     msg = (
-        f"Intro rejected. audience_introduced reset. "
+        f"Intro rejected for {platform}. platform_introduced reset. "
         f"Superseded {superseded_count} drafts, created {replacement_count} replacements."
     )
     if verbose:
