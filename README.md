@@ -4,107 +4,127 @@
 
 <h1 align="center">Social Hook</h1>
 
+<p align="center">The marketing engine built for devs.</p>
+
 [![CI](https://github.com/nj-io/social-hook/actions/workflows/ci.yml/badge.svg)](https://github.com/nj-io/social-hook/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/nj-io/social-hook/graph/badge.svg)](https://codecov.io/gh/nj-io/social-hook)
 [![PyPI](https://img.shields.io/pypi/v/social-hook)](https://pypi.org/project/social-hook/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Automated social media content from development activity.
+Social Hook watches your development, drafts what matters, and publishes where your audience lives. It evaluates every commit, decides what's post-worthy, drafts platform-native content in your voice, and routes it for approval — or runs fully autonomous.
 
-Social Hook is a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) hook that observes your git commits, evaluates which ones are interesting, drafts social media posts, and routes them through Telegram or a web dashboard for human approval before posting.
-
-## How It Works
-
-1. **Evaluate** — A `PostToolUse` hook fires on each git commit. An AI evaluator decides if the commit is post-worthy.
-2. **Draft** — Post-worthy commits get drafted into platform-specific content (X/Twitter, LinkedIn, etc.) using your voice and project context.
-3. **Approve** — Drafts surface in Telegram or the web dashboard. You edit, approve, reject, or schedule.
-4. **Post** — Approved drafts are posted to configured platforms via their APIs.
-
-## Agent-First Design
-
-Social Hook is built for both humans and AI agents:
-
-- `social-hook help --json` — full command tree as structured JSON for agent consumption
-- `social-hook help draft approve` — drill into any subcommand (human or `--json`)
-- Every CLI command has a corresponding web API endpoint (and vice versa)
-- All commands work non-interactively with `--json` output and `--yes`/`--force` flags
-
-## Quick Start
+## Try It Out
 
 ```bash
-# Install
-pip install -e .
+pip install social-hook
+social-hook quickstart /path/to/repo
+```
 
-# Initialize (creates config directory and database)
-social-hook init
+Quickstart auto-detects your LLM provider, registers your project, imports commit history, analyzes your repo, and generates your first draft. To evaluate your last few commits through the full pipeline:
 
-# Interactive setup wizard
-social-hook setup
+```bash
+social-hook quickstart /path/to/repo --evaluate-last 3
+```
 
-# Start the web dashboard
+To activate automatic triggers on every future commit:
+
+```bash
+social-hook project install-hook /path/to/repo
+```
+
+Then open the dashboard to see your drafts:
+
+```bash
 social-hook web
 ```
 
-### Claude Code Hook
+## For Humans
 
-Add to your Claude Code hooks configuration (`.claude/hooks.json`):
+### Web Dashboard
 
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "command": "social-hook trigger --tool-use \"$TOOL_USE\" --session-id \"$SESSION_ID\" --cwd \"$CWD\""
-      }
-    ]
-  }
-}
-```
-
-## CLI
-
-The CLI is self-documenting — `social-hook help` for humans, `social-hook help --json` for agents. Drill into any level: `social-hook help draft approve`.
-
-Core commands:
-
-```
-social-hook trigger        # Evaluate a commit (called by hook)
-social-hook web            # Start web dashboard (Next.js + FastAPI)
-social-hook bot start      # Start Telegram bot daemon
-social-hook setup          # Interactive configuration wizard
-social-hook project list   # List registered projects
-social-hook draft list     # List pending drafts
-social-hook arc list       # List narrative arcs
-social-hook snapshot save  # Save/restore/reset DB snapshots
-social-hook test evaluate  # Test commit evaluation
-```
-
-## E2E Testing
-
-The E2E test suite exercises full user workflows with real API calls. Entry point: `scripts/e2e_test.py`.
+The web dashboard is the primary interface for managing your content pipeline:
 
 ```bash
-python scripts/e2e_test.py --provider claude-cli                     # Full suite
-python scripts/e2e_test.py --only onboarding                         # Single section
-python scripts/e2e_test.py --only A1                                 # Single scenario
-python scripts/e2e_test.py --save-snapshots --provider claude-cli    # Save DB after each section
-python scripts/e2e_test.py --only draft --snapshot after-pipeline    # Load saved state, skip A+B
+social-hook web
 ```
 
-See `scripts/e2e_test.py --help` for all options.
+- Draft review — approve, reject, schedule, edit content and media
+- Setup wizard and quick preview mode for onboarding
+- Project management with commit history import
+- Real-time notifications via WebSocket
+- Media generation and preview
+- Settings across 14 configuration sections
+- Chat interface for bot commands
 
-## Web Dashboard
+### CLI Setup Wizard
+
+For terminal-based configuration:
 
 ```bash
-social-hook web                    # Start on default ports (3000 + 8741)
-social-hook web --port 4000        # Custom Next.js port
-social-hook web --api-port 9000    # Custom API port
-social-hook web --install          # Run npm install first
+social-hook setup                # Guided setup (strategy, identity, platforms, voice, audience, keys)
+social-hook setup --advanced     # Include scheduling, media, rate limits
+social-hook setup --only voice   # Configure a single section
 ```
 
-The dashboard provides draft review, project management, arc management, and real-time notifications via WebSocket.
+### Messaging Channels
+
+Social Hook separates notification channels (where you review drafts) from publishing platforms (where content gets posted). A platform-agnostic messaging adapter layer means channels are pluggable:
+
+- **Web** — built-in. Notifications appear in the dashboard via WebSocket. Always available.
+- **Telegram** — review and approve drafts from your phone. `social-hook bot start`
+
+The adapter abstraction (`MessagingAdapter`) makes adding new channels (Slack, Discord, etc.) straightforward — each adapter handles send, edit, and callback independently.
+
+## For Agents
+
+Social Hook is agent-first. Every capability is accessible programmatically:
+
+```bash
+social-hook help --json                    # Full command tree as structured JSON
+social-hook help draft approve --json      # Drill into any subcommand
+social-hook quickstart /path/to/repo --json  # Structured output from quickstart
+```
+
+- Every CLI command has a corresponding web API endpoint (and vice versa)
+- All commands work non-interactively with `--json` output and `--yes`/`--force` flags
+- Exit codes: 0 = success, 1 = user error, 2 = system error
+
+## How It Works
+
+1. **Detect** — A git post-commit hook fires on every commit (installed per-project, works with any editor or agent)
+2. **Evaluate** — An AI evaluator decides if the commit is post-worthy, assigns narrative arcs and episode types
+3. **Draft** — Platform-native content is drafted in your voice, with per-platform identity and optional media
+4. **Publish** — Drafts are scheduled, approved, or posted autonomously via platform adapters
+
+## Features
+
+- **Narrative Arcs** — groups commits into storylines so posts tell a coherent story over time
+- **Media Generation** — diagrams, code screenshots, diff images — generated and attached automatically
+- **Smart Scheduling** — rate limits, optimal timing, posting cadence
+- **Multi-Platform** — X, LinkedIn, Bluesky, Mastodon, custom platforms with per-platform identity
+- **Content Strategies** — bundled templates (Build in Public, Release Updates, Curated Technical, Custom)
+- **Brand Discovery** — AI analyzes your repo to understand what you're building and generate context
+- **Plugin System** — custom evaluators, drafters, media tools, platform adapters
+- **Decision Rewind** — undo a pipeline decision and all its downstream artifacts
+- **Batch Evaluate** — evaluate multiple commits holistically in one pass
+
+## Free for Claude Code Users
+
+If you have a Claude Code subscription, set your LLM provider to `claude-cli/sonnet` — zero additional API cost. Social Hook uses the Claude CLI as a backend, so your existing subscription covers all LLM calls.
+
+## Multi-Provider LLM
+
+Social Hook supports multiple LLM providers via a `provider/model-id` format:
+
+- `anthropic/claude-sonnet-4-5` — Anthropic API (default)
+- `claude-cli/sonnet` — Claude Code subprocess (free for subscribers)
+- `openrouter/anthropic/claude-sonnet-4.5` — OpenRouter
+- `ollama/llama3.3` — Local Ollama
+
+## Documentation
+
+Full documentation: [nj-io.github.io/social-hook/docs](https://nj-io.github.io/social-hook/docs/)
 
 ## Configuration
 
@@ -112,17 +132,6 @@ Social Hook uses a two-level config system:
 
 - **Global config** (`~/.social-hook/config.yaml`) — API keys, platform credentials, LLM provider settings
 - **Project config** (`.social-hook/` in your repo) — `social-context.md` (project voice/context), `content-config.yaml` (content rules)
-
-See `examples/` for config templates.
-
-## Multi-Provider LLM
-
-Social Hook supports multiple LLM providers via a `provider/model-id` format:
-
-- `anthropic/claude-sonnet-4-5` — Anthropic API (default)
-- `claude-cli/sonnet` — Claude Code subprocess
-- `openrouter/anthropic/claude-sonnet-4.5` — OpenRouter
-- `ollama/llama3.3` — Local Ollama
 
 ## Contributing
 
