@@ -149,6 +149,7 @@ def handle_callback(
     handlers: dict[str, Any] = {
         "approve": btn_approve,
         "quick_approve": btn_quick_approve,
+        "post_now": btn_post_now,
         "schedule": btn_schedule_submenu,
         "schedule_optimal": btn_schedule_optimal,
         "schedule_custom": btn_schedule_custom,
@@ -176,7 +177,6 @@ def handle_callback(
         "review": btn_review,
         "promote": btn_promote_submenu,
         "promote_to": btn_promote_to,
-        "post_now": btn_post_now,
     }
 
     handler = handlers.get(action)
@@ -479,6 +479,79 @@ def btn_quick_approve(
                 ),
                 exclude_chat=chat_id,
             )
+    finally:
+        conn.close()
+
+
+def btn_post_now(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    draft_id: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Handle post now button press."""
+    _answer_callback(adapter, callback_id, "Posting now...")
+
+    conn = _get_conn()
+    try:
+        from social_hook.bot.commands import set_chat_draft_context
+        from social_hook.db import get_draft, update_draft
+        from social_hook.db import operations as ops
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+
+        set_chat_draft_context(chat_id, draft_id, draft.project_id)
+
+        if draft.status not in ("draft", "approved", "deferred"):
+            _send(adapter, chat_id, f"Cannot post: draft status is {draft.status}")
+            return
+
+        if draft.platform == "preview":
+            _send(adapter, chat_id, "Cannot post preview drafts.")
+            return
+
+        # Check project is not paused
+        project = ops.get_project(conn, draft.project_id)
+        if project and project.paused:
+            _send(adapter, chat_id, "Project is paused. Unpause before posting.")
+            return
+
+        from datetime import datetime, timezone
+
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        update_draft(conn, draft_id, status="scheduled", scheduled_time=now_str)
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+    finally:
+        conn.close()
+
+    # Call scheduler_tick outside the conn block (it opens its own connection)
+    from social_hook.scheduler import scheduler_tick
+
+    scheduler_tick(draft_id=draft_id, dry_run=False)
+
+    # Re-open connection to check result
+    conn = _get_conn()
+    try:
+        from social_hook.db import get_draft
+
+        draft_after = get_draft(conn, draft_id)
+        if draft_after and draft_after.status == "posted":
+            _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "posted")
+            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` posted successfully!")
+        elif draft_after and draft_after.status == "scheduled":
+            _send(
+                adapter,
+                chat_id,
+                f"Post failed for draft `{draft_id[:12]}`. Check logs for details.",
+            )
+        else:
+            status = draft_after.status if draft_after else "unknown"
+            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` status: {status}")
     finally:
         conn.close()
 
@@ -1775,81 +1848,5 @@ def btn_promote_to(
     except Exception as e:
         logger.exception("Error promoting draft")
         _send(adapter, chat_id, f"Error promoting draft: {e}")
-    finally:
-        conn.close()
-
-
-def btn_post_now(
-    adapter: MessagingAdapter,
-    chat_id: str,
-    callback_id: str,
-    draft_id: str,
-    config: Any | None,
-    **kwargs: Any,
-) -> None:
-    """Post a draft immediately to its platform."""
-    _answer_callback(adapter, callback_id, "Posting...")
-
-    conn = _get_conn()
-    try:
-        from social_hook.bot.commands import set_chat_draft_context
-        from social_hook.db import get_draft
-        from social_hook.db import operations as ops
-
-        draft = get_draft(conn, draft_id)
-        if not draft:
-            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
-            return
-
-        set_chat_draft_context(chat_id, draft_id, draft.project_id)
-
-        if draft.platform == "preview":
-            _send(
-                adapter,
-                chat_id,
-                "Preview drafts cannot be posted directly. "
-                "Use the Promote button to redraft for a real platform.",
-            )
-            return
-
-        # Scheduled drafts go through the scheduler; use unschedule first
-        if draft.status not in ("draft", "approved", "deferred"):
-            _send(adapter, chat_id, f"Cannot post draft with status: {draft.status}")
-            return
-
-        if not config:
-            _send(adapter, chat_id, "Config not available.")
-            return
-
-        project = ops.get_project(conn, draft.project_id)
-        project_name = project.name if project else "Unknown"
-
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc).isoformat()
-        ops.update_draft(conn, draft_id, status="scheduled", scheduled_time=now)
-
-        from social_hook.scheduler import _handle_post_failure, _post_draft, record_post_success
-
-        result = _post_draft(conn, draft, config)
-
-        if result.success:
-            record_post_success(conn, draft, result, config, project_name)
-            _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "posted")
-            url_info = f"\nURL: {result.external_url}" if result.external_url else ""
-            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` posted successfully!{url_info}")
-            from social_hook.notifications import broadcast_notification
-
-            broadcast_notification(
-                config,
-                OutboundMessage(text=f"Draft `{draft_id[:12]}` posted ({draft.platform})"),
-                exclude_chat=chat_id,
-            )
-        else:
-            _handle_post_failure(conn, draft, result.error or "Unknown error", config, False)
-            _send(adapter, chat_id, f"Post failed: {result.error}")
-    except Exception as e:
-        logger.exception("Error posting draft")
-        _send(adapter, chat_id, f"Error posting draft: {e}")
     finally:
         conn.close()

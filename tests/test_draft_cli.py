@@ -635,6 +635,51 @@ class TestDeferredStatusAccepted:
             assert "approved and scheduled" in result.output
 
 
+class TestPostNow:
+    def test_post_now_not_found(self, db_env):
+        """post-now should exit 1 when draft not found."""
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "post-now", "draft_nonexistent", "--yes"])
+        assert result.exit_code == 1
+
+    def test_post_now_preview_blocked(self, db_env):
+        """post-now should reject preview platform."""
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "post-now", "draft_preview", "--yes"])
+        assert result.exit_code == 1
+        assert "preview" in result.output.lower() or "promote" in result.output.lower()
+
+    def test_post_now_terminal_status(self, db_env):
+        """post-now should reject terminal status drafts."""
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "post-now", "draft_posted", "--yes"])
+        assert result.exit_code == 1
+        assert "Cannot post" in result.output
+
+    def test_post_now_dry_run(self, db_env):
+        """--dry-run should skip posting."""
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["--dry-run", "draft", "post-now", "draft_draft"])
+        assert result.exit_code == 0
+        assert "dry run" in result.output.lower() or "dry_run" in result.output.lower()
+
+    def test_post_now_json_preview_blocked(self, db_env):
+        """--json should produce valid JSON on error."""
+        # Insert a second preview draft to avoid state issues
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.execute(
+            "INSERT OR IGNORE INTO drafts (id, project_id, decision_id, platform, status, content, media_paths) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("draft_preview2", "proj_test1", "dec_test1", "preview", "draft", "Preview", "[]"),
+        )
+        conn.commit()
+        conn.close()
+
+        with _patch_paths(db_env):
+            result = runner.invoke(app, ["draft", "post-now", "draft_preview2", "--yes", "--json"])
+        data = json.loads(result.output)
+        assert "error" in data
+
+
 class TestDraftPreviewGuards:
     def test_approve_preview_blocked(self, db_env):
         with _patch_paths(db_env):
@@ -705,17 +750,3 @@ class TestDraftPromote:
             result = runner.invoke(app, ["draft", "promote", "draft_preview", "--platform", "x"])
             assert result.exit_code == 1
             assert "not enabled" in result.output.lower()
-
-
-class TestDraftPostNow:
-    def test_post_now_preview_blocked(self, db_env):
-        with _patch_paths(db_env):
-            result = runner.invoke(app, ["draft", "post-now", "draft_preview"])
-            assert result.exit_code == 1
-            assert "promote" in result.output.lower()
-
-    def test_post_now_terminal_status_blocked(self, db_env):
-        with _patch_paths(db_env):
-            result = runner.invoke(app, ["draft", "post-now", "draft_posted"])
-            assert result.exit_code == 1
-            assert "Cannot post" in result.output

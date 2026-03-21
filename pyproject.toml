@@ -73,6 +73,7 @@ dev = [
     "pre-commit>=3.0",
     "types-PyYAML>=6.0",
     "types-requests>=2.28",
+    "vcrpy>=6.0",
 ]
 docs = [
     "mkdocs-material>=9.0",

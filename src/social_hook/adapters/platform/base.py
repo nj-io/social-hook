@@ -2,7 +2,13 @@
 
 from abc import ABC, abstractmethod
 
-from social_hook.adapters.models import PostReference, PostResult, ReferenceType, ThreadResult
+from social_hook.adapters.models import (
+    PostCapability,
+    PostReference,
+    PostResult,
+    ReferenceType,
+    ThreadResult,
+)
 
 
 class PlatformAdapter(ABC):
@@ -110,3 +116,17 @@ class PlatformAdapter(ABC):
             True if the platform supports this reference type
         """
         return ref_type == ReferenceType.LINK
+
+    def capabilities(self) -> list[PostCapability]:
+        """Return the list of posting capabilities this platform supports."""
+        from social_hook.adapters.models import SINGLE_POST
+
+        return [SINGLE_POST]
+
+    def supports_threads(self) -> bool:
+        """Whether this platform supports threaded posts."""
+        return False
+
+    def supports_media(self) -> bool:
+        """Whether this platform supports media attachments."""
+        return False

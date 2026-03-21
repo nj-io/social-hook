@@ -20,8 +20,9 @@ def main():
         "--only",
         type=str,
         default=None,
-        help="Run only a specific section (onboarding, pipeline, narrative, draft, "
-        "scheduler, bot, setup, cli, crosscutting, multiprovider, journey, web, queue, hooks) or scenario (A1, B1, etc.)",
+        help="Run only a specific section ("
+        + ", ".join(sorted(SECTION_MAP.keys()))
+        + ") or scenario (A1, B1, etc.)",
     )
     parser.add_argument(
         "--skip-telegram", action="store_true", help="Skip Telegram-dependent sections (F, G, H)"
@@ -57,7 +58,22 @@ def main():
         help="Build E2E fixtures for standalone scenario execution. "
         "Saves to ~/.social-hook/.e2e-fixtures/ (hidden from snapshot CLI).",
     )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Use real API calls instead of VCR cassettes for platform tests",
+    )
+    parser.add_argument(
+        "--pause",
+        action="store_true",
+        help="Pause after each live post so you can verify it on the platform before deletion. "
+        "Implies --live. Only affects Section U (Platform Posting).",
+    )
     args = parser.parse_args()
+
+    # --pause implies --live
+    if args.pause:
+        args.live = True
 
     # Determine provider
     provider = args.provider
@@ -178,13 +194,16 @@ def main():
                     sys.exit(1)
 
         # Run sections in order using the registry
-        for letter in "ABCDEFGHIJKLMNQRST":
+        for letter in "ABCDEFGHIJKLMNQRSTU":
             if letter not in sections_to_run:
                 continue
             info = SECTION_REGISTRY[letter]
             print(f"\n--- {letter}. {info['name']} ---")
             mod = importlib.import_module(f"e2e.sections.{info['module']}")
             kwargs = {"adapter": adapter} if info["needs_adapter"] else {}
+            if info.get("needs_live"):
+                kwargs["live"] = args.live
+                kwargs["pause"] = args.pause
             mod.run(harness, runner, **kwargs)
 
             # Auto-save base-project fixture after section A
