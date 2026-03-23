@@ -465,11 +465,10 @@ def run(harness, runner, live=False, pause=False):
         # U-{plat}-post-now
         def u_post_now(plat=platform):
             with snapshot_rollback(harness):
-                # Ensure audience_introduced >= 1
-                harness.conn.execute(
-                    "UPDATE projects SET audience_introduced = 1 WHERE id = ?",
-                    (harness.project_id,),
-                )
+                # Ensure platform is marked as introduced
+                from social_hook.db.operations import set_platform_introduced
+
+                set_platform_introduced(harness.conn, harness.project_id, plat, True)
                 harness.conn.commit()
 
                 draft = harness.seed_draft(
@@ -519,11 +518,10 @@ def run(harness, runner, live=False, pause=False):
 
     def u_full_flow():
         with snapshot_rollback(harness):
-            # Ensure audience_introduced >= 1
-            harness.conn.execute(
-                "UPDATE projects SET audience_introduced = 1 WHERE id = ?",
-                (harness.project_id,),
-            )
+            # Ensure first platform is marked as introduced
+            from social_hook.db.operations import set_platform_introduced
+
+            set_platform_introduced(harness.conn, harness.project_id, enabled[0], True)
             harness.conn.commit()
 
             from social_hook.trigger import run_trigger
