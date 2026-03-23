@@ -13,7 +13,7 @@ The script will:
     1. Start a local server on port 3000
     2. Print an authorization URL — open it in your browser
     3. After you authorize, capture the redirect and exchange for tokens
-    4. Save X_OAUTH2_ACCESS_TOKEN and X_OAUTH2_REFRESH_TOKEN to ~/.social-hook/.env
+    4. Save tokens to the social-hook database (oauth_tokens table)
 """
 
 import base64
@@ -24,9 +24,15 @@ import secrets
 import sys
 import threading
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 
 import requests
 from dotenv import load_dotenv
+
+from social_hook.adapters.auth import _DT_FORMAT
+from social_hook.adapters.auth import save_tokens as save_tokens_to_db
+from social_hook.db.connection import init_database
+from social_hook.filesystem import get_db_path
 
 ENV_PATH = os.path.expanduser("~/.social-hook/.env")
 load_dotenv(ENV_PATH)
@@ -84,30 +90,15 @@ def exchange_code(code, code_verifier):
     return resp
 
 
-def save_tokens(access_token, refresh_token=None):
-    """Append OAuth 2.0 tokens to .env file."""
-    # Read existing .env
-    existing = ""
-    if os.path.exists(ENV_PATH):
-        with open(ENV_PATH) as f:
-            existing = f.read()
+def save_tokens(access_token, refresh_token=None, expires_in=7200):
+    """Save OAuth 2.0 tokens to the social-hook database."""
+    db_path = get_db_path()
+    init_database(db_path)
 
-    # Remove old token lines
-    filtered = []
-    for line in existing.splitlines():
-        if not line.startswith("X_OAUTH2_ACCESS_TOKEN=") and not line.startswith(
-            "X_OAUTH2_REFRESH_TOKEN="
-        ):
-            filtered.append(line)
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).strftime(_DT_FORMAT)
+    save_tokens_to_db(str(db_path), "x", "x", access_token, refresh_token or "", expires_at)
 
-    filtered.append(f"X_OAUTH2_ACCESS_TOKEN={access_token}")
-    if refresh_token:
-        filtered.append(f"X_OAUTH2_REFRESH_TOKEN={refresh_token}")
-
-    with open(ENV_PATH, "w") as f:
-        f.write("\n".join(filtered) + "\n")
-
-    print(f"\nTokens saved to {ENV_PATH}")
+    print(f"\nTokens saved to database ({db_path})")
 
 
 class CallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -203,14 +194,15 @@ def main():
     tokens = resp.json()
     access_token = tokens.get("access_token")
     refresh_token = tokens.get("refresh_token")
+    expires_in = tokens.get("expires_in", 7200)
 
     print(f"Access token: {access_token[:20]}...")
     if refresh_token:
         print(f"Refresh token: {refresh_token[:20]}...")
-    print(f"Expires in: {tokens.get('expires_in')} seconds")
+    print(f"Expires in: {expires_in} seconds")
     print(f"Scopes: {tokens.get('scope')}")
 
-    save_tokens(access_token, refresh_token)
+    save_tokens(access_token, refresh_token, expires_in)
 
     # Quick verification
     print("\nVerifying token with /2/users/me ...")

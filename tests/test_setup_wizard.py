@@ -869,14 +869,12 @@ class TestModelSelection:
 class TestXTierSelection:
     @patch("social_hook.setup.wizard._prompt")
     @patch("social_hook.setup.wizard._select")
-    @patch("social_hook.setup.wizard._spinner")
     @patch("social_hook.setup.wizard._confirm")
-    def test_stores_free_tier(self, mock_confirm, mock_spinner, mock_select, mock_prompt):
+    def test_stores_free_tier(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
-        mock_confirm.side_effect = [True, True]
-        mock_prompt.side_effect = ["key", "secret", "token", "tsecret"]
-        mock_spinner.return_value = (True, "Authenticated")
+        mock_confirm.side_effect = [True]
+        mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "free (280 chars)"
 
         env_vars = {}
@@ -888,14 +886,12 @@ class TestXTierSelection:
 
     @patch("social_hook.setup.wizard._prompt")
     @patch("social_hook.setup.wizard._select")
-    @patch("social_hook.setup.wizard._spinner")
     @patch("social_hook.setup.wizard._confirm")
-    def test_stores_premium_tier(self, mock_confirm, mock_spinner, mock_select, mock_prompt):
+    def test_stores_premium_tier(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
         mock_confirm.side_effect = [True]
-        mock_prompt.side_effect = ["key", "secret", "token", "tsecret"]
-        mock_spinner.return_value = (True, "Authenticated")
+        mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "premium (25,000 chars)"
 
         env_vars = {}
@@ -906,14 +902,12 @@ class TestXTierSelection:
 
     @patch("social_hook.setup.wizard._prompt")
     @patch("social_hook.setup.wizard._select")
-    @patch("social_hook.setup.wizard._spinner")
     @patch("social_hook.setup.wizard._confirm")
-    def test_stores_basic_tier(self, mock_confirm, mock_spinner, mock_select, mock_prompt):
+    def test_stores_basic_tier(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
         mock_confirm.side_effect = [True]
-        mock_prompt.side_effect = ["key", "secret", "token", "tsecret"]
-        mock_spinner.return_value = (True, "Authenticated")
+        mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "basic (25,000 chars)"
 
         env_vars = {}
@@ -924,14 +918,12 @@ class TestXTierSelection:
 
     @patch("social_hook.setup.wizard._prompt")
     @patch("social_hook.setup.wizard._select")
-    @patch("social_hook.setup.wizard._spinner")
     @patch("social_hook.setup.wizard._confirm")
-    def test_stores_premium_plus_tier(self, mock_confirm, mock_spinner, mock_select, mock_prompt):
+    def test_stores_premium_plus_tier(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
         mock_confirm.side_effect = [True]
-        mock_prompt.side_effect = ["key", "secret", "token", "tsecret"]
-        mock_spinner.return_value = (True, "Authenticated")
+        mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "premium_plus (25,000 chars)"
 
         env_vars = {}
@@ -942,23 +934,21 @@ class TestXTierSelection:
 
     @patch("social_hook.setup.wizard._prompt")
     @patch("social_hook.setup.wizard._select")
-    @patch("social_hook.setup.wizard._spinner")
     @patch("social_hook.setup.wizard._confirm")
-    def test_x_credentials_collected(self, mock_confirm, mock_spinner, mock_select, mock_prompt):
+    def test_x_credentials_collected(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
         mock_confirm.side_effect = [True]
-        mock_prompt.side_effect = ["key", "secret", "token", "tsecret"]
-        mock_spinner.return_value = (True, "Authenticated")
+        mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "free (280 chars)"
 
         env_vars = {}
         yaml_config = {}
         _setup_x(env_vars, yaml_config, {}, {})
 
-        assert mock_prompt.call_count == 4
-        assert env_vars["X_API_KEY"] == "key"
-        assert env_vars["X_ACCESS_TOKEN_SECRET"] == "tsecret"
+        assert mock_prompt.call_count == 2
+        assert env_vars["X_CLIENT_ID"] == "client_id"
+        assert env_vars["X_CLIENT_SECRET"] == "client_secret"
 
     @patch("social_hook.setup.wizard._confirm")
     def test_skips_when_declined(self, mock_confirm):
@@ -970,40 +960,7 @@ class TestXTierSelection:
         _setup_x(env_vars, yaml_config, {}, {})
 
         assert "platforms" not in yaml_config
-        assert "X_API_KEY" not in env_vars
-
-    @patch("social_hook.setup.wizard._prompt")
-    @patch("social_hook.setup.wizard._select")
-    @patch("social_hook.setup.wizard._spinner")
-    @patch("social_hook.setup.wizard._confirm")
-    def test_retries_on_validation_failure(
-        self, mock_confirm, mock_spinner, mock_select, mock_prompt
-    ):
-        from social_hook.setup.wizard import _setup_x
-
-        mock_confirm.side_effect = [True, True]
-        mock_prompt.side_effect = [
-            "key1",
-            "secret1",
-            "token1",
-            "tsecret1",
-            "key2",
-            "secret2",
-            "token2",
-            "tsecret2",
-        ]
-        mock_spinner.side_effect = [
-            (False, "Auth failed"),
-            (True, "Authenticated"),
-        ]
-        mock_select.return_value = "free (280 chars)"
-
-        env_vars = {}
-        yaml_config = {}
-        _setup_x(env_vars, yaml_config, {}, {})
-
-        assert env_vars["X_API_KEY"] == "key2"
-        assert yaml_config["platforms"]["x"]["enabled"] is True
+        assert "X_CLIENT_ID" not in env_vars
 
 
 class TestMediaGenStep:

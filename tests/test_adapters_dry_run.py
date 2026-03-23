@@ -63,7 +63,7 @@ class TestDryRunPlatform:
         """XAdapter.post(dry_run=True) returns simulated success, no API call."""
         from social_hook.adapters.platform.x import XAdapter
 
-        adapter = XAdapter("k", "s", "t", "ts")
+        adapter = XAdapter("test-token")
         with patch("social_hook.adapters.platform.x.requests") as mock_req:
             result = adapter.post("test content", dry_run=True)
             mock_req.post.assert_not_called()
@@ -74,7 +74,7 @@ class TestDryRunPlatform:
         """XAdapter.post_thread(dry_run=True) returns simulated ThreadResult."""
         from social_hook.adapters.platform.x import XAdapter
 
-        adapter = XAdapter("k", "s", "t", "ts")
+        adapter = XAdapter("test-token")
         tweets = [{"content": f"Tweet {i}"} for i in range(4)]
 
         with patch("social_hook.adapters.platform.x.requests") as mock_req:

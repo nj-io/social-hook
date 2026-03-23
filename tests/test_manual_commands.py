@@ -252,7 +252,7 @@ class TestPostCommand:
             decision_id=decision.id,
             platform="x",
             content="Test",
-            status="draft",
+            status="posted",
         )
         insert_draft(conn, draft)
         conn.close()

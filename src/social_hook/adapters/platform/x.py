@@ -1,9 +1,9 @@
-"""X (Twitter) platform adapter using API v2."""
+"""X (Twitter) platform adapter using API v2 with OAuth 2.0 Bearer token."""
 
 import logging
+from collections.abc import Callable
 
 import requests
-from requests_oauthlib import OAuth1
 
 from social_hook.adapters.dry_run import dry_run_post_result, dry_run_thread_result
 from social_hook.adapters.models import (
@@ -31,45 +31,57 @@ X_CHAR_LIMIT = 280
 
 
 class XAdapter(PlatformAdapter):
-    """X (Twitter) API v2 adapter using OAuth 1.0a."""
+    """X (Twitter) API v2 adapter using OAuth 2.0 Bearer token."""
 
     def __init__(
         self,
-        api_key: str,
-        api_secret: str,
         access_token: str,
-        access_token_secret: str,
         *,
         tier: str = "free",
+        token_refresher: Callable[[], str] | None = None,
     ):
-        """Initialize X adapter with OAuth 1.0a credentials.
+        """Initialize X adapter with OAuth 2.0 Bearer token.
 
         Args:
-            api_key: X API key (consumer key)
-            api_secret: X API secret (consumer secret)
-            access_token: User access token
-            access_token_secret: User access token secret
-            tier: Account tier (free, basic, premium, premium_plus)
+            access_token: OAuth 2.0 Bearer token for all API calls.
+            tier: Account tier (free, basic, premium, premium_plus).
+            token_refresher: Optional callback that returns a fresh access token.
+                Called on 401 responses to attempt token refresh and retry.
 
         Raises:
-            ConfigError: If any credentials are missing or tier is invalid
+            ConfigError: If access_token is missing or tier is invalid.
         """
-        if not all([api_key, api_secret, access_token, access_token_secret]):
-            raise ConfigError("Missing required X API credentials")
+        if not access_token:
+            raise ConfigError("Missing X OAuth 2.0 access token")
 
         if tier not in VALID_TIERS:
             raise ConfigError(f"Invalid tier '{tier}', must be one of {VALID_TIERS}")
 
+        self.access_token = access_token
         self.tier = tier
         self.char_limit = TIER_CHAR_LIMITS[tier]
-        self.auth = OAuth1(
-            api_key,
-            client_secret=api_secret,
-            resource_owner_key=access_token,
-            resource_owner_secret=access_token_secret,
-        )
+        self._token_refresher = token_refresher
         self.rate_limit_state = RateLimitState()
         self._cached_username: str | None = None
+
+    def _auth_headers(self) -> dict:
+        """Return Authorization header with current Bearer token."""
+        return {"Authorization": f"Bearer {self.access_token}"}
+
+    def _try_refresh_on_401(self, response: requests.Response) -> bool:
+        """Attempt token refresh on 401 response.
+
+        Returns:
+            True if token was refreshed (caller should retry), False otherwise.
+        """
+        if response.status_code == 401 and self._token_refresher:
+            logger.info("Got 401, attempting token refresh...")
+            try:
+                self.access_token = self._token_refresher()
+                return True
+            except Exception as e:
+                logger.warning("Token refresh failed: %s", e)
+        return False
 
     def validate(self) -> tuple[bool, str]:
         """Validate credentials by fetching current user.
@@ -78,7 +90,11 @@ class XAdapter(PlatformAdapter):
             (True, "@username") on success, (False, error_message) on failure
         """
         try:
-            response = requests.get(X_USERS_ME_URL, auth=self.auth, timeout=10)
+            response = requests.get(X_USERS_ME_URL, headers=self._auth_headers(), timeout=10)
+
+            # Retry once on 401
+            if self._try_refresh_on_401(response):
+                response = requests.get(X_USERS_ME_URL, headers=self._auth_headers(), timeout=10)
 
             if response.status_code == 200:
                 data = response.json().get("data", {})
@@ -265,9 +281,18 @@ class XAdapter(PlatformAdapter):
         try:
             response = requests.delete(
                 f"{X_TWEETS_URL}/{external_id}",
-                auth=self.auth,
+                headers=self._auth_headers(),
                 timeout=10,
             )
+
+            # Retry once on 401
+            if self._try_refresh_on_401(response):
+                response = requests.delete(
+                    f"{X_TWEETS_URL}/{external_id}",
+                    headers=self._auth_headers(),
+                    timeout=10,
+                )
+
             return response.status_code == 200
         except requests.RequestException as e:
             logger.error(f"Delete request failed: {e}")
@@ -307,10 +332,19 @@ class XAdapter(PlatformAdapter):
         try:
             response = requests.post(
                 X_TWEETS_URL,
-                auth=self.auth,
+                headers=self._auth_headers(),
                 json=body,
                 timeout=30,
             )
+
+            # Retry once on 401
+            if self._try_refresh_on_401(response):
+                response = requests.post(
+                    X_TWEETS_URL,
+                    headers=self._auth_headers(),
+                    json=body,
+                    timeout=30,
+                )
 
             if response.status_code in (200, 201):
                 data = response.json().get("data", {})
@@ -362,11 +396,22 @@ class XAdapter(PlatformAdapter):
                     files = {"media": f}
                     response = requests.post(
                         X_MEDIA_UPLOAD_URL,
-                        auth=self.auth,
+                        headers=self._auth_headers(),
                         files=files,
                         data={"media_category": "tweet_image"},
                         timeout=60,
                     )
+
+                    # Retry once on 401
+                    if self._try_refresh_on_401(response):
+                        f.seek(0)
+                        response = requests.post(
+                            X_MEDIA_UPLOAD_URL,
+                            headers=self._auth_headers(),
+                            files={"media": f},
+                            data={"media_category": "tweet_image"},
+                            timeout=60,
+                        )
 
                     if response.status_code in (200, 201):
                         data = response.json().get("data", {})

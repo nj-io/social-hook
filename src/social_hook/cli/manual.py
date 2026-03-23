@@ -306,8 +306,9 @@ def post(
         project = ops.get_project(conn, draft_obj.project_id)
         project_name = project.name if project else "Unknown"
 
+        db_path = get_db_path()
         with spinner(f"Posting to {draft_obj.platform}..."):
-            result = _post_draft(conn, draft_obj, config)
+            result = _post_draft(conn, draft_obj, config, db_path=db_path)
         if result.success:
             record_post_success(conn, draft_obj, result, config, project_name, dry_run=dry_run)
             typer.echo("\nPosted successfully!")
