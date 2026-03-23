@@ -70,9 +70,9 @@ def _copy_real_tokens(harness):
     This copies them so the harness can create authenticated adapters.
     """
     import sqlite3
-    from pathlib import Path
 
-    real_db = Path.home() / ".social-hook" / "social-hook.db"
+    # Use harness.real_base (captured before HOME is overridden)
+    real_db = harness.real_base / "social-hook.db"
     if not real_db.exists():
         log.warning("Real DB not found at %s — skipping token copy", real_db)
         return
