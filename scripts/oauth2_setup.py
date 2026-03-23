@@ -6,11 +6,11 @@ Usage:
 
 Prerequisites:
     - X Developer App with OAuth 2.0 enabled
-    - Callback URL set to http://localhost:3000/callback in X Developer Portal
+    - Callback URL set to http://localhost:4000/callback in X Developer Portal
     - Client ID in ~/.social-hook/.env as X_CLIENT_ID
 
 The script will:
-    1. Start a local server on port 3000
+    1. Start a local server on port 4000
     2. Print an authorization URL — open it in your browser
     3. After you authorize, capture the redirect and exchange for tokens
     4. Save tokens to the social-hook database (oauth_tokens table)
@@ -39,8 +39,8 @@ load_dotenv(ENV_PATH)
 
 CLIENT_ID = os.environ.get("X_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("X_CLIENT_SECRET", "")
-REDIRECT_URI = "http://localhost:3000/callback"
-PORT = 3000
+REDIRECT_URI = "http://localhost:4000/callback"
+PORT = 4000
 
 SCOPES = "tweet.read tweet.write users.read media.write offline.access"
 
@@ -160,7 +160,7 @@ def main():
     print(f"   \033[4m{auth_url}\033[0m")
     print()
     print("2. Authorize the app when prompted")
-    print("3. You'll be redirected to localhost:3000 — the script will capture it")
+    print("3. You'll be redirected to localhost:4000 — the script will capture it")
     print()
     print(f"   Listening on http://localhost:{PORT}/callback ...")
     print()
