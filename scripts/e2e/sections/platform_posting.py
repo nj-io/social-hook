@@ -62,6 +62,53 @@ def _safe_delete(adapter, external_id, label="post"):
         log.warning("Failed to delete %s %s: %s", label, external_id, e)
 
 
+def _copy_real_tokens(harness):
+    """Copy oauth_tokens from the real DB into the harness's isolated DB.
+
+    In --live mode, the harness uses a temp directory with a fresh DB.
+    Tokens saved by oauth2_setup.py live in the user's real ~/.social-hook/ DB.
+    This copies them so the harness can create authenticated adapters.
+    """
+    import sqlite3
+    from pathlib import Path
+
+    real_db = Path.home() / ".social-hook" / "social-hook.db"
+    if not real_db.exists():
+        log.warning("Real DB not found at %s — skipping token copy", real_db)
+        return
+
+    try:
+        real_conn = sqlite3.connect(str(real_db))
+        real_conn.row_factory = sqlite3.Row
+        rows = real_conn.execute(
+            "SELECT account_name, platform, access_token, refresh_token, expires_at, updated_at FROM oauth_tokens"
+        ).fetchall()
+        real_conn.close()
+
+        if not rows:
+            log.warning("No tokens in real DB — run oauth2_setup.py first")
+            return
+
+        for row in rows:
+            harness.conn.execute(
+                """INSERT OR REPLACE INTO oauth_tokens
+                   (account_name, platform, access_token, refresh_token, expires_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    row["account_name"],
+                    row["platform"],
+                    row["access_token"],
+                    row["refresh_token"],
+                    row["expires_at"],
+                    row["updated_at"],
+                ),
+            )
+        harness.conn.commit()
+        print(f"       Copied {len(rows)} token(s) from real DB for live testing")
+    except Exception as e:
+        log.warning("Failed to copy tokens from real DB: %s", e)
+
+
 # ---------------------------------------------------------------------------
 # Platform discovery
 # ---------------------------------------------------------------------------
@@ -245,6 +292,12 @@ def run(harness, runner, live=False, pause=False):
 
     if not harness.project_id:
         harness.seed_project()
+
+    # For --live mode, copy OAuth tokens from the real DB into the harness DB.
+    # The harness creates an isolated temp environment, so tokens saved via
+    # oauth2_setup.py (in the real ~/.social-hook/) aren't available.
+    if live and harness.db_path and harness.conn:
+        _copy_real_tokens(harness)
 
     config = harness.load_config()
     db_path = str(harness.db_path) if harness.db_path else None
