@@ -750,3 +750,204 @@ class TestDraftPromote:
             result = runner.invoke(app, ["draft", "promote", "draft_preview", "--platform", "x"])
             assert result.exit_code == 1
             assert "not enabled" in result.output.lower()
+
+
+class TestDraftConnect:
+    """Tests for the draft connect command — link preview draft to account."""
+
+    def test_connect_not_preview(self, db_env):
+        """Non-preview draft is rejected."""
+        with _patch_paths(db_env):
+            result = runner.invoke(
+                app, ["draft", "connect", "draft_draft", "--account", "lead", "--yes"]
+            )
+            assert result.exit_code == 1
+            assert "not in preview mode" in result.output
+
+    def test_connect_not_preview_json(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(
+                app, ["draft", "connect", "draft_draft", "--account", "lead", "--yes", "--json"]
+            )
+            assert result.exit_code == 1
+            data = json.loads(result.output)
+            assert "error" in data
+            assert data["draft_id"] == "draft_draft"
+
+    def test_connect_terminal_status(self, db_env):
+        """Preview draft in terminal status is rejected."""
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.execute(
+            "UPDATE drafts SET status = 'cancelled', preview_mode = 1 WHERE id = 'draft_preview'"
+        )
+        conn.commit()
+        conn.close()
+
+        with _patch_paths(db_env):
+            result = runner.invoke(
+                app, ["draft", "connect", "draft_preview", "--account", "lead", "--yes"]
+            )
+            assert result.exit_code == 1
+            assert "Cannot connect" in result.output
+
+    def test_connect_terminal_json(self, db_env):
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.execute(
+            "UPDATE drafts SET status = 'rejected', preview_mode = 1 WHERE id = 'draft_preview'"
+        )
+        conn.commit()
+        conn.close()
+
+        with _patch_paths(db_env):
+            result = runner.invoke(
+                app, ["draft", "connect", "draft_preview", "--account", "lead", "--yes", "--json"]
+            )
+            assert result.exit_code == 1
+            data = json.loads(result.output)
+            assert "error" in data
+
+    def test_connect_account_not_found(self, db_env):
+        mock_config = MagicMock()
+        mock_config.accounts = {}
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config", return_value=mock_config),
+        ):
+            result = runner.invoke(
+                app, ["draft", "connect", "draft_preview", "--account", "missing", "--yes"]
+            )
+            assert result.exit_code == 1
+            assert "not found" in result.output
+
+    def test_connect_account_not_found_json(self, db_env):
+        mock_config = MagicMock()
+        mock_config.accounts = {}
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config", return_value=mock_config),
+        ):
+            result = runner.invoke(
+                app,
+                ["draft", "connect", "draft_preview", "--account", "missing", "--yes", "--json"],
+            )
+            assert result.exit_code == 1
+            data = json.loads(result.output)
+            assert "error" in data
+
+    def test_connect_platform_mismatch(self, db_env):
+        mock_acct = MagicMock()
+        mock_acct.platform = "linkedin"
+        mock_config = MagicMock()
+        mock_config.accounts = {"lead": mock_acct}
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config", return_value=mock_config),
+        ):
+            result = runner.invoke(
+                app, ["draft", "connect", "draft_preview", "--account", "lead", "--yes"]
+            )
+            assert result.exit_code == 1
+            assert "does not match" in result.output
+
+    def test_connect_platform_mismatch_json(self, db_env):
+        mock_acct = MagicMock()
+        mock_acct.platform = "linkedin"
+        mock_config = MagicMock()
+        mock_config.accounts = {"lead": mock_acct}
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config", return_value=mock_config),
+        ):
+            result = runner.invoke(
+                app,
+                ["draft", "connect", "draft_preview", "--account", "lead", "--yes", "--json"],
+            )
+            assert result.exit_code == 1
+            data = json.loads(result.output)
+            assert "error" in data
+
+    def test_connect_success(self, db_env):
+        """Successful connect clears preview mode."""
+        mock_acct = MagicMock()
+        mock_acct.platform = "x"
+        mock_config = MagicMock()
+        mock_config.accounts = {"lead": mock_acct}
+        mock_config.targets = {}
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config", return_value=mock_config),
+        ):
+            result = runner.invoke(
+                app, ["draft", "connect", "draft_preview", "--account", "lead", "--yes"]
+            )
+            assert result.exit_code == 0
+            assert "connected" in result.output
+            assert "Preview mode cleared" in result.output
+
+        # Verify preview_mode is cleared
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT preview_mode FROM drafts WHERE id = ?", ("draft_preview",)
+        ).fetchone()
+        conn.close()
+        assert row["preview_mode"] == 0
+
+    def test_connect_success_json(self, db_env):
+        mock_acct = MagicMock()
+        mock_acct.platform = "x"
+        mock_config = MagicMock()
+        mock_config.accounts = {"lead": mock_acct}
+        mock_config.targets = {}
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config", return_value=mock_config),
+        ):
+            result = runner.invoke(
+                app,
+                ["draft", "connect", "draft_preview", "--account", "lead", "--yes", "--json"],
+            )
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert data["status"] == "connected"
+            assert data["account"] == "lead"
+            assert data["platform"] == "x"
+
+    def test_connect_not_found(self, db_env):
+        with _patch_paths(db_env):
+            result = runner.invoke(
+                app, ["draft", "connect", "draft_missing", "--account", "lead", "--yes"]
+            )
+            assert result.exit_code == 1
+            assert "not found" in result.output
+
+    def test_connect_with_target_id(self, db_env):
+        """When draft has target_id and it's in config, persist account link."""
+        # Set target_id on the preview draft
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.execute("UPDATE drafts SET target_id = 'my-target' WHERE id = 'draft_preview'")
+        conn.commit()
+        conn.close()
+
+        mock_acct = MagicMock()
+        mock_acct.platform = "x"
+        mock_config = MagicMock()
+        mock_config.accounts = {"lead": mock_acct}
+        mock_config.targets = {"my-target": MagicMock()}
+
+        with (
+            _patch_paths(db_env),
+            patch("social_hook.config.yaml.load_full_config", return_value=mock_config),
+            patch("social_hook.config.yaml.save_config") as mock_save,
+        ):
+            result = runner.invoke(
+                app, ["draft", "connect", "draft_preview", "--account", "lead", "--yes"]
+            )
+            assert result.exit_code == 0
+            mock_save.assert_called_once()

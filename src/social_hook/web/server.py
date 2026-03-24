@@ -1010,9 +1010,13 @@ async def api_connect_draft(draft_id: str, body: dict[str, Any] = Body(...)):
         account: Account name to connect
     """
     from social_hook.config.yaml import load_full_config
+    from social_hook.errors import ConfigError
     from social_hook.parsing import check_unknown_keys
 
-    check_unknown_keys(body, {"account"}, "connect_draft", strict=True)
+    try:
+        check_unknown_keys(body, {"account"}, "connect_draft", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
 
     account_name = body.get("account")
     if not account_name:
