@@ -34,6 +34,7 @@ import { EvaluationCycles } from "@/components/evaluation-cycles";
 import { TopicQueue } from "@/components/topic-queue";
 import { BriefEditor } from "@/components/brief-editor";
 import { ContentSuggestions } from "@/components/content-suggestions";
+import { AsyncButton } from "@/components/async-button";
 
 const DECISIONS_PER_PAGE = 10;
 
@@ -67,6 +68,7 @@ export default function ProjectDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRetrigger, setConfirmRetrigger] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionStartTime, setActionStartTime] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [branchFilter, setBranchFilter] = useState<string>("");
   const [decisionBranches, setDecisionBranches] = useState<string[]>([]);
@@ -640,9 +642,13 @@ export default function ProjectDetailPage() {
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1.5">
                             {d.decision === "imported" ? (
-                              <button
+                              <AsyncButton
+                                loading={actionLoading}
+                                startTime={actionStartTime}
+                                loadingText="Evaluating"
                                 onClick={async () => {
                                   setActionLoading(true);
+                                  setActionStartTime(new Date().toISOString());
                                   setActionError(null);
                                   try {
                                     await retriggerDecision(d.id);
@@ -651,14 +657,14 @@ export default function ProjectDetailPage() {
                                     setActionError(err instanceof Error ? err.message : "Evaluate failed");
                                   } finally {
                                     setActionLoading(false);
+                                    setActionStartTime(null);
                                   }
                                 }}
                                 disabled={actionLoading}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950 disabled:opacity-70"
-                                title="Run evaluator on this imported commit"
                               >
                                 Evaluate
-                              </button>
+                              </AsyncButton>
                             ) : (
                               <button
                                 onClick={() => onCreateDraftClick(d.id, d.draft_count > 0)}

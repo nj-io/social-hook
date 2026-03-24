@@ -4419,12 +4419,86 @@ async def api_hero_launch(project_id: str):
 
 @app.get("/api/projects/{project_id}/cycles")
 async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100)):
-    """List recent evaluation cycles."""
+    """List recent evaluation cycles with enriched trigger, strategies, and status."""
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
         cycles = ops.get_recent_cycles(conn, project_id, limit=limit)
-        return {"cycles": [c.to_dict() for c in cycles]}
+        enriched = []
+        for c in cycles:
+            cd = c.to_dict()
+            # Build human-readable trigger
+            trigger_parts = [c.trigger_type or "unknown"]
+            if c.trigger_ref:
+                trigger_parts.append(c.trigger_ref[:8])
+            cd["trigger"] = " ".join(trigger_parts)
+
+            # Get drafts for this cycle to derive strategies and status
+            drafts = ops.get_drafts_by_cycle(conn, c.id)
+
+            # Get the decision for strategy info (via first draft's decision_id)
+            strategies: dict[str, dict] = {}
+            if drafts:
+                decision_id = drafts[0].decision_id
+                decision = ops.get_decision(conn, decision_id)
+                if decision and decision.targets:
+                    # targets is a dict of {strategy_name: {action, reason, ...}}
+                    from social_hook.parsing import safe_json_loads
+
+                    targets_data = decision.targets
+                    if isinstance(targets_data, str):
+                        targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
+                    for strat_name, strat_data in (targets_data or {}).items():
+                        action = (
+                            strat_data.get("action", "skip")
+                            if isinstance(strat_data, dict)
+                            else "skip"
+                        )
+                        if hasattr(action, "value"):
+                            action = action.value
+                        reasoning = (
+                            strat_data.get("reason", "") if isinstance(strat_data, dict) else ""
+                        )
+                        # Find a draft matching this strategy (by target_id or platform)
+                        strat_draft = None
+                        for d in drafts:
+                            strat_draft = d
+                            break
+                        strategies[strat_name] = {
+                            "decision": action,
+                            "reasoning": reasoning,
+                            "draft_id": strat_draft.id if strat_draft else None,
+                            "draft_status": strat_draft.status if strat_draft else None,
+                            "draft_content": strat_draft.content[:200] if strat_draft else None,
+                        }
+                elif decision:
+                    # Legacy: single "default" strategy
+                    strategies["default"] = {
+                        "decision": decision.decision,
+                        "reasoning": decision.reasoning[:200] if decision.reasoning else "",
+                        "draft_id": drafts[0].id if drafts else None,
+                        "draft_status": drafts[0].status if drafts else None,
+                        "draft_content": drafts[0].content[:200] if drafts else None,
+                    }
+
+            cd["strategies"] = strategies
+
+            # Derive overall status from draft statuses
+            if not drafts:
+                cd["status"] = "no drafts"
+            else:
+                statuses = {d.status for d in drafts}
+                if "posted" in statuses:
+                    cd["status"] = "posted"
+                elif "approved" in statuses or "scheduled" in statuses:
+                    cd["status"] = "pending"
+                elif "draft" in statuses:
+                    cd["status"] = "review"
+                else:
+                    cd["status"] = drafts[0].status
+
+            enriched.append(cd)
+        return {"cycles": enriched}
     finally:
         conn.close()
 
