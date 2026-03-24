@@ -370,6 +370,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
             "targets",
             "platform_settings",
             "max_targets",
+            "web",
         },
         "content-config",
     )

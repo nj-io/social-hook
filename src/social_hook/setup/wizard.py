@@ -2,6 +2,7 @@
 
 import contextlib
 import logging
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -353,20 +354,32 @@ def _select_arrows(text: str, choices: list[str], default: str | None = None) ->
                 break
 
     total = len(choices)
+    _prev_physical_lines = [0]  # mutable container for closure access
 
-    def _draw(sel: int) -> None:
-        """Draw the choice list. Clears each line and repositions cursor to top."""
+    def _physical_lines(text: str, prefix_len: int = 4) -> int:
+        """Count how many terminal rows a line occupies (accounting for wrap)."""
+        try:
+            cols = os.get_terminal_size().columns
+        except (AttributeError, ValueError, OSError):
+            cols = 80
+        visible_len = prefix_len + len(text)
+        return max(1, (visible_len + cols - 1) // cols)
+
+    def _draw(sel: int, *, first: bool = False) -> None:
+        """Draw the choice list. Moves up to erase previous draw, then redraws."""
+        # Move up to erase previous output (skip on first draw)
+        if not first and _prev_physical_lines[0] > 0:
+            sys.stdout.write(f"\033[{_prev_physical_lines[0]}A")
+        sys.stdout.write("\033[J")  # clear from cursor to end of screen
+
+        total_rows = 0
         for i, c in enumerate(choices):
-            sys.stdout.write("\033[2K\r")  # clear line, carriage return
             if i == sel:
-                sys.stdout.write(f"  \033[36m❯ {c}\033[0m")
+                sys.stdout.write(f"  \033[36m❯ {c}\033[0m\n")
             else:
-                sys.stdout.write(f"    {c}")
-            if i < total - 1:
-                sys.stdout.write("\n")
-        # Move cursor back to first choice line
-        if total > 1:
-            sys.stdout.write(f"\033[{total - 1}A\r")
+                sys.stdout.write(f"    {c}\n")
+            total_rows += _physical_lines(c)
+        _prev_physical_lines[0] = total_rows
         sys.stdout.flush()
 
     def _read_key() -> str:
@@ -394,7 +407,7 @@ def _select_arrows(text: str, choices: list[str], default: str | None = None) ->
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
     print(f"\n{text}  (↑/↓ to move, Enter to select)")
-    _draw(selected)
+    _draw(selected, first=True)
 
     while True:
         key = _read_key()
@@ -405,11 +418,6 @@ def _select_arrows(text: str, choices: list[str], default: str | None = None) ->
             selected += 1
             _draw(selected)
         elif key == "enter":
-            # Move cursor past the list before returning
-            if total > 1:
-                sys.stdout.write(f"\033[{total - 1}B")
-            sys.stdout.write("\n")
-            sys.stdout.flush()
             return choices[selected]
 
 
@@ -1477,24 +1485,37 @@ def _setup_x(
     env_vars["X_CLIENT_ID"] = client_id
     env_vars["X_CLIENT_SECRET"] = client_secret
 
-    # Inform user about PKCE flow
-    try:
-        from rich.console import Console
-        from rich.panel import Panel
+    # Offer inline PKCE flow
+    if _confirm("Run OAuth authorization now?", default=True):
+        from social_hook.setup.oauth import run_x_pkce_flow
 
-        Console().print(
-            Panel(
-                "To complete X setup, run the OAuth 2.0 PKCE flow:\n"
-                "[bold]python scripts/oauth2_setup.py[/bold]\n\n"
-                "[dim]This will open a browser to authorize your app and\n"
-                "save the access/refresh tokens automatically.[/dim]",
-                border_style="yellow",
+        try:
+            result = run_x_pkce_flow(client_id, client_secret)
+            _success(f"Authenticated as @{result['username']}")
+        except RuntimeError as exc:
+            _warn(f"OAuth flow failed: {exc}")
+            typer.echo("  You can retry later with: python scripts/oauth2_setup.py")
+    else:
+        # Fallback for headless environments
+        try:
+            from rich.console import Console
+            from rich.panel import Panel
+
+            Console().print(
+                Panel(
+                    "To complete X setup, run the OAuth 2.0 PKCE flow:\n"
+                    "[bold]python scripts/oauth2_setup.py[/bold]\n\n"
+                    "[dim]This will open a browser to authorize your app and\n"
+                    "save the access/refresh tokens automatically.[/dim]",
+                    border_style="yellow",
+                )
             )
-        )
-    except Exception:
-        typer.echo("")
-        typer.echo("  Next step: run 'python scripts/oauth2_setup.py' to complete the PKCE flow.")
-        typer.echo("  This will open a browser to authorize your app.")
+        except Exception:
+            typer.echo("")
+            typer.echo(
+                "  Next step: run 'python scripts/oauth2_setup.py' to complete the PKCE flow."
+            )
+            typer.echo("  This will open a browser to authorize your app.")
 
     if progress:
         progress.advance()
@@ -1593,9 +1614,19 @@ def _setup_platforms(
             env_vars["X_CLIENT_ID"] = client_id
             env_vars["X_CLIENT_SECRET"] = client_secret
 
-            typer.echo(
-                "  Next step: run 'python scripts/oauth2_setup.py' to complete the PKCE flow."
-            )
+            if _confirm("Run OAuth authorization now?", default=True):
+                from social_hook.setup.oauth import run_x_pkce_flow
+
+                try:
+                    result = run_x_pkce_flow(client_id, client_secret)
+                    _success(f"Authenticated as @{result['username']}")
+                except RuntimeError as exc:
+                    _warn(f"OAuth flow failed: {exc}")
+                    typer.echo("  You can retry later with: python scripts/oauth2_setup.py")
+            else:
+                typer.echo(
+                    "  Next step: run 'python scripts/oauth2_setup.py' to complete the PKCE flow."
+                )
 
     if progress:
         progress.advance()

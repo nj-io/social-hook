@@ -25,6 +25,7 @@ class E2ERunner:
         self.start_time = 0.0
         self._harness = None
         self._only_scenario: str | None = None  # e.g. "C13" to run only that scenario
+        self._scenario_filter: set[str] | None = None  # e.g. {"U-x-post-media", "U-x-quote"}
         self._fixture_loaded: str | None = None  # Name of auto-loaded fixture
 
     def run_scenario(
@@ -39,6 +40,8 @@ class E2ERunner:
     ):
         """Run a single scenario, catching exceptions."""
         if self._only_scenario and scenario_id.upper() != self._only_scenario.upper():
+            return
+        if self._scenario_filter and scenario_id not in self._scenario_filter:
             return
         if isolate and self._harness:
             self._harness.clean_scenario_state()

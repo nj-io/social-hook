@@ -10,6 +10,7 @@ import requests as requests_lib
 from social_hook.adapters.auth import (
     _DT_FORMAT,
     TokenRefreshError,
+    delete_tokens,
     get_tokens,
     is_expired,
     refresh_and_get_token,
@@ -88,6 +89,17 @@ class TestSaveAndGetTokens:
         ).fetchone()
         conn.close()
         assert row["platform"] == "linkedin"
+
+    def test_delete_tokens(self, db_path):
+        save_tokens(db_path, "x", "x", "access123", "refresh456", "2026-03-23T15:00:00Z")
+        assert get_tokens(db_path, "x") is not None
+        result = delete_tokens(db_path, "x")
+        assert result is True
+        assert get_tokens(db_path, "x") is None
+
+    def test_delete_tokens_nonexistent(self, db_path):
+        result = delete_tokens(db_path, "no-such-account")
+        assert result is False
 
 
 class TestIsExpired:
@@ -231,63 +243,3 @@ class TestRefreshAndGetToken:
 
         # Tokens should NOT be deleted
         assert get_tokens(db_path, "x") is not None
-
-    def test_on_error_called_on_no_tokens(self, db_path):
-        """on_error callback fires before raising TokenRefreshError."""
-        on_error = MagicMock()
-
-        with pytest.raises(TokenRefreshError):
-            refresh_and_get_token(
-                db_path,
-                "x",
-                "x",
-                client_id="cid",
-                client_secret="csec",
-                token_url="https://example.com/token",
-                on_error=on_error,
-            )
-
-        on_error.assert_called_once()
-        assert "No tokens found" in on_error.call_args[0][0]
-
-    @patch("social_hook.adapters.auth.requests.post")
-    def test_on_error_called_on_http_failure(self, mock_post, db_path):
-        """on_error fires on HTTP refresh failure."""
-        save_tokens(db_path, "x", "x", "old_token", "refresh_tok", _past(3600))
-        mock_post.return_value = MagicMock(
-            status_code=500,
-            text="Internal Server Error",
-        )
-        on_error = MagicMock()
-
-        with pytest.raises(TokenRefreshError):
-            refresh_and_get_token(
-                db_path,
-                "x",
-                "x",
-                client_id="cid",
-                client_secret="csec",
-                token_url="https://example.com/token",
-                on_error=on_error,
-            )
-
-        on_error.assert_called_once()
-        assert "HTTP 500" in on_error.call_args[0][0]
-
-    def test_on_error_not_called_on_success(self, db_path):
-        """on_error is NOT called when token is valid."""
-        save_tokens(db_path, "x", "x", "valid_token", "refresh_tok", _future(3600))
-        on_error = MagicMock()
-
-        token = refresh_and_get_token(
-            db_path,
-            "x",
-            "x",
-            client_id="cid",
-            client_secret="csec",
-            token_url="https://example.com/token",
-            on_error=on_error,
-        )
-
-        assert token == "valid_token"
-        on_error.assert_not_called()

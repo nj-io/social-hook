@@ -6,6 +6,7 @@ create external posts support --pause for manual verification before cleanup.
 """
 
 import logging
+import time
 from pathlib import Path
 
 from e2e.constants import COMMITS
@@ -43,14 +44,12 @@ def _post_detail(result, platform):
 
 
 def _pause_before_delete(pause, url=None):
-    """If --pause is set, wait for user confirmation before deleting."""
+    """If --pause is set, pause with option to copy URL before deleting."""
     if not pause:
         return
-    msg = "       Press Enter to delete"
-    if url:
-        msg += f" ({url})"
-    msg += "..."
-    input(msg)
+    from social_hook.terminal import pause_with_url
+
+    pause_with_url(url=url, action="delete")
 
 
 def _safe_delete(adapter, external_id, label="post"):
@@ -155,11 +154,12 @@ def _exercise_thread(adapter, plat, runner, harness, live, pause):
     log_path = harness.base / "e2e-platform-posts.log"
 
     def _run(plat=plat, adapter=adapter):
+        ts = int(time.time())
         with vcr_context(plat, f"U-{plat}-thread", live=live):
             thread_result = adapter.post_thread(
                 [
-                    {"content": f"E2E thread part 1 ({plat}). Safe to delete. #{plat}test"},
-                    {"content": f"E2E thread part 2 ({plat}). Safe to delete. #{plat}test"},
+                    {"content": f"E2E thread part 1 ({plat}) {ts}. Safe to delete. #{plat}test"},
+                    {"content": f"E2E thread part 2 ({plat}) {ts}. Safe to delete. #{plat}test"},
                 ],
                 dry_run=not live,
             )
@@ -209,10 +209,11 @@ def _exercise_quote(adapter, plat, runner, harness, live, pause):
     log_path = harness.base / "e2e-platform-posts.log"
 
     def _run(plat=plat, adapter=adapter):
+        ts = int(time.time())
         with vcr_context(plat, f"U-{plat}-quote", live=live):
             # Step 1: create seed post
             seed = adapter.post(
-                f"E2E seed for quote test ({plat}). Safe to delete. #{plat}test",
+                f"E2E seed for quote test ({plat}) {ts}. Safe to delete. #{plat}test",
                 dry_run=not live,
             )
             assert seed.success, f"Seed post failed: {seed.error}"
@@ -229,7 +230,7 @@ def _exercise_quote(adapter, plat, runner, harness, live, pause):
                     reference_type=ReferenceType.QUOTE,
                 )
                 quote_result = adapter.post_with_reference(
-                    f"E2E quote test ({plat}). Safe to delete. #{plat}test",
+                    f"E2E quote of {seed.external_id} ({plat}) {ts}. Safe to delete. #{plat}test",
                     ref,
                     dry_run=not live,
                 )
@@ -264,12 +265,81 @@ def _exercise_quote(adapter, plat, runner, harness, live, pause):
     )
 
 
+def _exercise_reply(adapter, plat, runner, harness, live, pause):
+    """U-{plat}-reply: Create seed post, reply to it, verify, clean up."""
+    from social_hook.adapters.models import PostReference, ReferenceType
+
+    if not adapter.supports_reference_type(ReferenceType.REPLY):
+        return None  # skip — not supported
+
+    from e2e.vcr_config import vcr_context
+
+    log_path = harness.base / "e2e-platform-posts.log"
+
+    def _run(plat=plat, adapter=adapter):
+        ts = int(time.time())
+        with vcr_context(plat, f"U-{plat}-reply", live=live):
+            # Step 1: create seed post
+            seed = adapter.post(
+                f"E2E seed for reply test ({plat}) {ts}. Safe to delete. #{plat}test",
+                dry_run=not live,
+            )
+            assert seed.success, f"Seed post failed: {seed.error}"
+            assert seed.external_id, "Seed missing external_id"
+
+            with open(log_path, "a") as f:
+                f.write(f"{plat}\t{seed.external_id}\t{seed.external_url}\n")
+
+            # Step 2: reply to the seed
+            try:
+                ref = PostReference(
+                    external_id=seed.external_id,
+                    external_url=seed.external_url or "",
+                    reference_type=ReferenceType.REPLY,
+                )
+                reply_result = adapter.post_with_reference(
+                    f"E2E reply to {seed.external_id} ({plat}) {ts}. Safe to delete. #{plat}test",
+                    ref,
+                    dry_run=not live,
+                )
+                assert reply_result.success, f"Reply failed: {reply_result.error}"
+                assert reply_result.external_id, "Reply missing external_id"
+
+                with open(log_path, "a") as f:
+                    f.write(f"{plat}\t{reply_result.external_id}\t{reply_result.external_url}\n")
+
+                runner.add_review_item(
+                    f"U-{plat}-reply",
+                    title=f"Reply: {plat}",
+                    review_question=f"Reply posted: {reply_result.external_url} (replies to {seed.external_url})",
+                )
+
+                # Cleanup: pause, then delete reply first, then seed
+                if live:
+                    _pause_before_delete(pause, reply_result.external_url)
+                    if reply_result.external_id:
+                        _safe_delete(adapter, reply_result.external_id, label="reply")
+            finally:
+                # Always clean up seed, even if reply assertion fails
+                if live and seed.external_id:
+                    _safe_delete(adapter, seed.external_id, label="seed")
+
+            return f"Replied: {reply_result.external_id}"
+
+    runner.run_scenario(
+        f"U-{plat}-reply",
+        f"Reply on {plat}",
+        _run,
+    )
+
+
 # Capability exercise registry — maps capability name to exercise function.
 # Adding a new capability exercise = one function + one dict entry.
 CAPABILITY_EXERCISES: dict[str, callable] = {
     "thread": _exercise_thread,
     "quote": _exercise_quote,
-    # Future: "reply": _exercise_reply, "poll": _exercise_poll
+    "reply": _exercise_reply,
+    # Future: "poll": _exercise_poll
 }
 
 
@@ -344,9 +414,10 @@ def run(harness, runner, live=False, pause=False):
 
             log_path = harness.base / "e2e-platform-posts.log"
 
+            ts = int(time.time())
             with vcr_context(plat, f"U-{plat}-post-text", live=live):
                 result = adapter.post(
-                    f"E2E test post from social-hook ({plat}). Safe to delete. #{plat}test",
+                    f"E2E test post from social-hook ({plat}) {ts}. Safe to delete. #{plat}test",
                     dry_run=not live,
                 )
                 assert result.success, f"Post failed: {result.error}"
@@ -389,9 +460,10 @@ def run(harness, runner, live=False, pause=False):
             fixture_path = str(_FIXTURES_DIR / MEDIA_FIXTURES["single_image"][0])
             log_path = harness.base / "e2e-platform-posts.log"
 
+            ts = int(time.time())
             with vcr_context(plat, f"U-{plat}-post-media", live=live):
                 result = adapter.post(
-                    f"E2E media test from social-hook ({plat}). Safe to delete. #{plat}test",
+                    f"E2E media test from social-hook ({plat}) {ts}. Safe to delete. #{plat}test",
                     media_paths=[fixture_path],
                     dry_run=not live,
                 )

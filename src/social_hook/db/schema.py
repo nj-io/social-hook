@@ -297,6 +297,7 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     updated_at   TEXT NOT NULL
 );
 
+
 -- Content topic queue
 CREATE TABLE IF NOT EXISTS content_topics (
     id TEXT PRIMARY KEY,

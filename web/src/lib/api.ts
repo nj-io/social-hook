@@ -766,3 +766,20 @@ export async function updatePlatformSettings(platform: string, data: { cross_acc
     body: JSON.stringify(data),
   });
 }
+
+// OAuth 2.0 — multi-platform
+export async function fetchOAuthAuthorize(platform: string): Promise<{ auth_url: string; state: string; callback_url: string; note: string }> {
+  return apiFetch(`/api/oauth/${encodeURIComponent(platform)}/authorize`);
+}
+
+export async function fetchOAuthStatus(platform: string): Promise<{ connected: boolean; username: string; callback_url: string }> {
+  return apiFetch(`/api/oauth/${encodeURIComponent(platform)}/status`);
+}
+
+export async function fetchOAuthDisconnect(platform: string): Promise<{ disconnected: boolean; error?: string }> {
+  return apiFetch(`/api/oauth/${encodeURIComponent(platform)}/disconnect`, { method: "DELETE" });
+}
+
+// Backward-compat aliases
+export const fetchXOAuthAuthorize = () => fetchOAuthAuthorize("x");
+export const fetchXOAuthStatus = () => fetchOAuthStatus("x");

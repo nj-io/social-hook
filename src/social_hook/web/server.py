@@ -15,9 +15,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import Body, FastAPI, Header, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -90,6 +90,11 @@ def get_branding():
 
 _config: Config | None = None
 _adapter = None  # Lazy WebAdapter singleton
+
+# OAuth 2.0 PKCE state store — maps (platform, state) to (verifier, redirect_uri, created_at)
+# Entries older than _OAUTH_STATE_TTL_SECONDS are cleaned up on each new authorize request.
+_OAUTH_STATE_TTL_SECONDS = 600  # 10 minutes
+_oauth_pending: dict[tuple[str, str], tuple[str, str, float]] = {}
 
 
 def _get_config() -> Config:
@@ -2374,6 +2379,196 @@ async def api_update_env(body: EnvUpdate):
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# OAuth 2.0 PKCE endpoints — multi-platform
+# ---------------------------------------------------------------------------
+# NOTE: The callback URL (http://localhost:<port>/api/oauth/{platform}/callback)
+# must be registered in the platform's developer portal as a Redirect URI.
+
+
+def _cleanup_expired_oauth_states() -> None:
+    """Remove PKCE state entries older than _OAUTH_STATE_TTL_SECONDS."""
+    now = time.time()
+    expired = [k for k, (_, _, t) in _oauth_pending.items() if now - t > _OAUTH_STATE_TTL_SECONDS]
+    for k in expired:
+        del _oauth_pending[k]
+
+
+def _get_oauth_credentials(platform: str) -> tuple[str, str]:
+    """Read {PLATFORM}_CLIENT_ID and {PLATFORM}_CLIENT_SECRET from .env / environment.
+
+    Returns:
+        (client_id, client_secret)
+
+    Raises:
+        HTTPException 400 if client_id is missing.
+    """
+    from social_hook.config.env import load_env
+
+    env = load_env()
+    prefix = platform.upper()
+    client_id = env.get(f"{prefix}_CLIENT_ID", "")
+    client_secret = env.get(f"{prefix}_CLIENT_SECRET", "")
+    if not client_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{prefix}_CLIENT_ID is not configured. Set it in Settings > API Keys first.",
+        )
+    return client_id, client_secret
+
+
+def _validate_oauth_platform(platform: str) -> None:
+    """Raise HTTPException 400 if platform is not in OAUTH_PLATFORMS."""
+    from social_hook.setup.oauth import OAUTH_PLATFORMS
+
+    if platform not in OAUTH_PLATFORMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown OAuth platform: '{platform}'. Supported: {', '.join(sorted(OAUTH_PLATFORMS))}",
+        )
+
+
+@app.get("/api/oauth/{platform}/authorize")
+async def api_oauth_authorize(platform: str, request: Request):
+    """Initiate OAuth 2.0 PKCE flow for any supported platform.
+
+    Generates a PKCE verifier/challenge and state, stores them server-side,
+    builds the authorization URL, and returns it as JSON.
+    """
+    import secrets as _secrets
+
+    from social_hook.setup.oauth import _build_auth_url, _generate_pkce
+
+    _validate_oauth_platform(platform)
+    _cleanup_expired_oauth_states()
+
+    client_id, _client_secret = _get_oauth_credentials(platform)
+    code_verifier, code_challenge = _generate_pkce()
+    state = _secrets.token_urlsafe(32)
+
+    # Determine redirect_uri from the current request so the port is correct.
+    # Normalize 127.0.0.1 to localhost — OAuth providers treat them as different
+    # redirect URIs, and developers typically register localhost.
+    base_url = str(request.base_url).rstrip("/").replace("://127.0.0.1", "://localhost")
+    redirect_uri = f"{base_url}/api/oauth/{platform}/callback"
+
+    _oauth_pending[(platform, state)] = (code_verifier, redirect_uri, time.time())
+
+    auth_url = _build_auth_url(client_id, state, code_challenge, redirect_uri, platform=platform)
+
+    return {
+        "auth_url": auth_url,
+        "state": state,
+        "callback_url": redirect_uri,
+        "note": f"Ensure {redirect_uri} is registered as a Redirect URI in your {platform} developer portal.",
+    }
+
+
+@app.get("/api/oauth/{platform}/callback")
+async def api_oauth_callback(platform: str, code: str = Query(...), state: str = Query(...)):
+    """Handle the OAuth 2.0 callback after user authorizes.
+
+    Exchanges the authorization code for tokens, saves them to the DB,
+    validates with the platform's user-info endpoint, and returns a success HTML page.
+    """
+    from social_hook.setup.oauth import _exchange_code, _save_tokens, validate_token
+
+    _validate_oauth_platform(platform)
+
+    # Look up PKCE verifier from stored state (keyed by platform + state)
+    pending = _oauth_pending.pop((platform, state), None)
+    if pending is None:
+        return HTMLResponse(
+            "<h1>Authorization failed</h1>"
+            "<p>Invalid or expired state parameter. Please try again.</p>",
+            status_code=400,
+        )
+
+    code_verifier, redirect_uri, _ = pending
+
+    client_id, client_secret = _get_oauth_credentials(platform)
+
+    # Exchange authorization code for tokens
+    resp = _exchange_code(
+        code,
+        code_verifier,
+        client_id,
+        client_secret,
+        redirect_uri,
+        platform=platform,
+    )
+    if resp.status_code != 200:
+        return HTMLResponse(
+            f"<h1>Token exchange failed</h1><p>HTTP {resp.status_code}: {resp.text[:300]}</p>",
+            status_code=502,
+        )
+
+    tokens = resp.json()
+    access_token = tokens.get("access_token", "")
+    refresh_token = tokens.get("refresh_token")
+    expires_in = tokens.get("expires_in", 7200)
+
+    # Save tokens to DB
+    _save_tokens(access_token, refresh_token, expires_in, platform=platform)
+
+    # Validate token
+    username = validate_token(platform, access_token)
+    greeting = f" as <strong>@{username}</strong>" if username else ""
+
+    return HTMLResponse(
+        f"<html><body style='font-family:system-ui,sans-serif;text-align:center;padding:60px 20px'>"
+        f"<h1>Authorization successful{greeting}!</h1>"
+        f"<p>You can close this tab and return to the dashboard.</p>"
+        f"<script>window.opener && window.opener.postMessage('oauth_complete','*');</script>"
+        f"</body></html>"
+    )
+
+
+@app.get("/api/oauth/{platform}/status")
+async def api_oauth_status(platform: str, request: Request):
+    """Check if OAuth tokens exist in the DB for this platform.
+
+    Returns:
+        JSON with connected (bool), username (str), and callback_url (str).
+    """
+    from social_hook.adapters.auth import get_tokens
+    from social_hook.setup.oauth import validate_token
+
+    _validate_oauth_platform(platform)
+
+    # Always include the correct callback URL (derived from server, not frontend)
+    base_url = str(request.base_url).rstrip("/").replace("://127.0.0.1", "://localhost")
+    callback_url = f"{base_url}/api/oauth/{platform}/callback"
+
+    db_path = str(get_db_path())
+    tokens = get_tokens(db_path, platform)
+    if not tokens or not tokens.get("access_token"):
+        return {"connected": False, "username": "", "callback_url": callback_url}
+
+    # Validate and get username
+    username = validate_token(platform, tokens["access_token"])
+
+    return {"connected": True, "username": username, "callback_url": callback_url}
+
+
+@app.delete("/api/oauth/{platform}/disconnect")
+async def api_oauth_disconnect(platform: str):
+    """Remove OAuth tokens from the DB for this platform."""
+    from social_hook.adapters.auth import delete_tokens
+
+    _validate_oauth_platform(platform)
+
+    db_path = str(get_db_path())
+    deleted = delete_tokens(db_path, platform)
+    if deleted:
+        # Clear cached adapter so next creation picks up the missing token
+        from social_hook.scheduler import _registry
+
+        _registry.invalidate(platform)
+        return {"disconnected": True}
+    return {"disconnected": False, "error": "No tokens found"}
+
+
 @app.get("/api/settings/social-context")
 async def api_get_social_context(project_path: str | None = None):
     """Read social-context.md content."""
@@ -3372,26 +3567,6 @@ async def api_add_account(body: dict[str, Any] = Body(...)):
     if auth_url:
         result["auth_url"] = auth_url
     return result
-
-
-@app.get("/api/accounts/oauth-callback")
-async def api_oauth_callback(code: str = Query(""), state: str = Query(""), error: str = Query("")):
-    """OAuth callback endpoint. Receives auth code, exchanges for tokens.
-
-    Note: The PKCE token exchange (exchange_code_for_token) is not yet
-    implemented in adapters/auth.py. This endpoint is wired up for when
-    the auth module is extended.
-    """
-    if error:
-        raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing 'code' parameter")
-
-    # TODO: implement token exchange once adapters/auth.py has exchange_code_for_token
-    return {
-        "status": "ok",
-        "message": "OAuth callback received (token exchange not yet implemented)",
-    }
 
 
 @app.delete("/api/accounts/{name}")

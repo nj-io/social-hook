@@ -125,7 +125,8 @@ def create_adapter_from_account(
         platform_creds: PlatformCredentialConfig with client_id/secret.
         env: Environment variables dict (unused for now, reserved for future).
         db_path: Path to SQLite database for token storage.
-        on_error: Optional callback for error reporting.
+        on_error: Optional callback for error reporting (currently unused,
+            reserved for future auth.py integration).
 
     Returns:
         Configured PlatformAdapter instance.
@@ -148,7 +149,6 @@ def create_adapter_from_account(
             client_id=platform_creds.client_id,
             client_secret=platform_creds.client_secret,
             token_url=refresh_url,
-            on_error=on_error,
         )
         access_token = auth.refresh_and_get_token(db_path, account_name, "x", **token_kwargs)
 
@@ -170,7 +170,6 @@ def create_adapter_from_account(
             client_id=platform_creds.client_id,
             client_secret=platform_creds.client_secret,
             token_url=refresh_url,
-            on_error=on_error,
         )
         access_token = auth.refresh_and_get_token(db_path, account_name, "linkedin", **token_kwargs)
 

@@ -547,7 +547,7 @@ def post_now(
         draft_after = ops.get_draft(conn, draft_id)
         if draft_after and draft_after.status == "posted":
             post = conn.execute(
-                "SELECT external_id, external_url FROM posts WHERE draft_id = ? ORDER BY created_at DESC LIMIT 1",
+                "SELECT external_id, external_url FROM posts WHERE draft_id = ? ORDER BY posted_at DESC LIMIT 1",
                 (draft_id,),
             ).fetchone()
 

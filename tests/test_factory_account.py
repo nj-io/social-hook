@@ -151,8 +151,8 @@ class TestCreateAdapterFromAccount:
         with pytest.raises(ConfigError, match="Unknown platform"):
             create_adapter_from_account("my-mastodon", account, creds, {}, db_path)
 
-    def test_on_error_passed_to_auth(self, db_path):
-        """on_error callback is forwarded to auth.refresh_and_get_token."""
+    def test_on_error_accepted_without_error(self, db_path):
+        """on_error callback is accepted by create_adapter_from_account (reserved for future use)."""
         save_tokens(db_path, "my-x", "x", "access_tok", "refresh_tok", _future())
         account = AccountConfig(platform="x", tier="free")
         creds = PlatformCredentialConfig(platform="x", client_id="cid", client_secret="csec")
@@ -162,8 +162,9 @@ class TestCreateAdapterFromAccount:
             "social_hook.adapters.platform.factory.auth.refresh_and_get_token",
             return_value="mocked_token",
         ) as mock_refresh:
-            create_adapter_from_account("my-x", account, creds, {}, db_path, on_error=error_cb)
+            adapter = create_adapter_from_account(
+                "my-x", account, creds, {}, db_path, on_error=error_cb
+            )
 
             mock_refresh.assert_called_once()
-            call_kwargs = mock_refresh.call_args
-            assert call_kwargs[1]["on_error"] is error_cb
+            assert adapter is not None

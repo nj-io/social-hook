@@ -321,7 +321,7 @@ def web(
         typer.echo("The web dashboard may not be installed.")
         raise typer.Exit(1)
 
-    if install:
+    if install or not (web_dir / "node_modules").exists():
         typer.echo("Running npm install...")
         result = sp.run(["npm", "install"], cwd=str(web_dir))
         if result.returncode != 0:

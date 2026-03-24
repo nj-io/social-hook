@@ -13,7 +13,6 @@ given the 5s busy_timeout and infrequent refreshes (~every 2 hours).
 
 import logging
 import sqlite3
-from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -34,7 +33,7 @@ def get_tokens(db_path: str, account_name: str) -> dict | None:
     Returns:
         Dict with access_token, refresh_token, expires_at keys, or None if not found.
     """
-    conn = sqlite3.connect(db_path, timeout=5)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(
@@ -66,7 +65,7 @@ def save_tokens(
     (INSERT OR REPLACE does not trigger DEFAULT clauses).
     """
     now = datetime.now(timezone.utc).strftime(_DT_FORMAT)
-    conn = sqlite3.connect(db_path, timeout=5)
+    conn = sqlite3.connect(db_path)
     try:
         conn.execute(
             """INSERT OR REPLACE INTO oauth_tokens
@@ -75,6 +74,20 @@ def save_tokens(
             (account_name, platform, access_token, refresh_token, expires_at, now),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_tokens(db_path: str, account_name: str) -> bool:
+    """Delete tokens for an account. Returns True if a row was deleted."""
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.execute(
+            "DELETE FROM oauth_tokens WHERE account_name = ?",
+            (account_name,),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()
 
@@ -104,7 +117,6 @@ def refresh_and_get_token(
     client_id: str,
     client_secret: str,
     token_url: str,
-    on_error: Callable[[str], None] | None = None,
 ) -> str:
     """Get a valid access token, refreshing if expired.
 
@@ -118,8 +130,6 @@ def refresh_and_get_token(
         client_id: OAuth 2.0 client ID (app credential).
         client_secret: OAuth 2.0 client secret (app credential).
         token_url: Token endpoint URL for refresh.
-        on_error: Optional callback invoked with error message before raising
-            TokenRefreshError. Decouples from error feed (no import needed).
 
     Returns:
         Valid access token string.
@@ -136,14 +146,11 @@ def refresh_and_get_token(
             (account_name,),
         ).fetchone()
         if row is None:
-            msg = (
+            raise TokenRefreshError(
                 f"No tokens found for account '{account_name}'. Run: python scripts/oauth2_setup.py"
             )
-            if on_error:
-                on_error(msg)
-            raise TokenRefreshError(msg)
         if not is_expired(row["expires_at"]):
-            return row["access_token"]
+            return str(row["access_token"])
     finally:
         conn.close()
 
@@ -162,9 +169,9 @@ def refresh_and_get_token(
         ).fetchone()
         if row is not None and not is_expired(row["expires_at"]):
             conn.execute("COMMIT")
-            return row["access_token"]
+            return str(row["access_token"])
 
-        current_refresh_token = row["refresh_token"] if row else ""
+        current_refresh_token = str(row["refresh_token"]) if row else ""
 
         logger.info("Token expired for %s, refreshing...", account_name)
         try:
@@ -180,28 +187,27 @@ def refresh_and_get_token(
             )
         except requests.RequestException as e:
             conn.execute("COMMIT")
-            msg = f"Network error refreshing token for '{account_name}': {e}"
-            if on_error:
-                on_error(msg)
-            raise TokenRefreshError(msg) from e
+            raise TokenRefreshError(
+                f"Network error refreshing token for '{account_name}': {e}"
+            ) from e
 
         if response.status_code == 200:
             try:
                 data = response.json()
             except ValueError as e:
                 conn.execute("COMMIT")
-                msg = f"Invalid JSON in refresh response for '{account_name}'"
-                if on_error:
-                    on_error(msg)
-                raise TokenRefreshError(msg) from e
+                raise TokenRefreshError(
+                    f"Invalid JSON in refresh response for '{account_name}'"
+                ) from e
 
-            new_access_token = data.get("access_token", "")
-            new_refresh_token = data.get("refresh_token", current_refresh_token)
-            expires_in = data.get("expires_in", 7200)
+            new_access_token: str = data.get("access_token", "")
+            new_refresh_token: str = data.get("refresh_token", current_refresh_token)
+            expires_in: int = data.get("expires_in", 7200)
 
-            now = datetime.now(timezone.utc)
-            new_expires_at = (now + timedelta(seconds=expires_in)).strftime(_DT_FORMAT)
-            now = now.strftime(_DT_FORMAT)
+            new_expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).strftime(
+                _DT_FORMAT
+            )
+            now = datetime.now(timezone.utc).strftime(_DT_FORMAT)
 
             conn.execute(
                 """UPDATE oauth_tokens
@@ -227,23 +233,17 @@ def refresh_and_get_token(
                     (account_name,),
                 )
                 conn.execute("COMMIT")
-                msg = (
+                raise TokenRefreshError(
                     f"Token revoked for account '{account_name}'. "
                     f"Re-run: python scripts/oauth2_setup.py"
                 )
-                if on_error:
-                    on_error(msg)
-                raise TokenRefreshError(msg)
 
         # Other HTTP errors — don't delete tokens (may be transient)
         conn.execute("COMMIT")
-        msg = (
+        raise TokenRefreshError(
             f"Token refresh failed for '{account_name}': "
             f"HTTP {response.status_code} — {response.text[:200]}"
         )
-        if on_error:
-            on_error(msg)
-        raise TokenRefreshError(msg)
 
     except TokenRefreshError:
         raise
@@ -252,9 +252,8 @@ def refresh_and_get_token(
 
         with contextlib.suppress(Exception):
             conn.execute("ROLLBACK")
-        msg = f"Unexpected error refreshing token for '{account_name}': {e}"
-        if on_error:
-            on_error(msg)
-        raise TokenRefreshError(msg) from e
+        raise TokenRefreshError(
+            f"Unexpected error refreshing token for '{account_name}': {e}"
+        ) from e
     finally:
         conn.close()

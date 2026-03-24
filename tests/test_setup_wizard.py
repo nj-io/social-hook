@@ -873,7 +873,7 @@ class TestXTierSelection:
     def test_stores_free_tier(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
-        mock_confirm.side_effect = [True]
+        mock_confirm.side_effect = [True, False]  # setup=yes, oauth_now=no
         mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "free (280 chars)"
 
@@ -890,7 +890,7 @@ class TestXTierSelection:
     def test_stores_premium_tier(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
-        mock_confirm.side_effect = [True]
+        mock_confirm.side_effect = [True, False]  # setup=yes, oauth_now=no
         mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "premium (25,000 chars)"
 
@@ -906,7 +906,7 @@ class TestXTierSelection:
     def test_stores_basic_tier(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
-        mock_confirm.side_effect = [True]
+        mock_confirm.side_effect = [True, False]  # setup=yes, oauth_now=no
         mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "basic (25,000 chars)"
 
@@ -922,7 +922,7 @@ class TestXTierSelection:
     def test_stores_premium_plus_tier(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
-        mock_confirm.side_effect = [True]
+        mock_confirm.side_effect = [True, False]  # setup=yes, oauth_now=no
         mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "premium_plus (25,000 chars)"
 
@@ -938,7 +938,7 @@ class TestXTierSelection:
     def test_x_credentials_collected(self, mock_confirm, mock_select, mock_prompt):
         from social_hook.setup.wizard import _setup_x
 
-        mock_confirm.side_effect = [True]
+        mock_confirm.side_effect = [True, False]  # setup=yes, oauth_now=no
         mock_prompt.side_effect = ["client_id", "client_secret"]
         mock_select.return_value = "free (280 chars)"
 
@@ -949,6 +949,52 @@ class TestXTierSelection:
         assert mock_prompt.call_count == 2
         assert env_vars["X_CLIENT_ID"] == "client_id"
         assert env_vars["X_CLIENT_SECRET"] == "client_secret"
+
+    @patch("social_hook.setup.oauth.run_x_pkce_flow")
+    @patch("social_hook.setup.wizard._prompt")
+    @patch("social_hook.setup.wizard._select")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_inline_pkce_flow_called(self, mock_confirm, mock_select, mock_prompt, mock_pkce):
+        from social_hook.setup.wizard import _setup_x
+
+        mock_confirm.side_effect = [True, True]  # setup=yes, oauth_now=yes
+        mock_prompt.side_effect = ["my_client_id", "my_client_secret"]
+        mock_select.return_value = "free (280 chars)"
+        mock_pkce.return_value = {
+            "access_token": "tok_abc",
+            "refresh_token": "ref_xyz",
+            "expires_in": 7200,
+            "username": "testuser",
+        }
+
+        env_vars = {}
+        yaml_config = {}
+        _setup_x(env_vars, yaml_config, {}, {})
+
+        mock_pkce.assert_called_once_with("my_client_id", "my_client_secret")
+        assert env_vars["X_CLIENT_ID"] == "my_client_id"
+
+    @patch("social_hook.setup.oauth.run_x_pkce_flow")
+    @patch("social_hook.setup.wizard._prompt")
+    @patch("social_hook.setup.wizard._select")
+    @patch("social_hook.setup.wizard._confirm")
+    def test_inline_pkce_flow_failure_shows_fallback(
+        self, mock_confirm, mock_select, mock_prompt, mock_pkce
+    ):
+        from social_hook.setup.wizard import _setup_x
+
+        mock_confirm.side_effect = [True, True]  # setup=yes, oauth_now=yes
+        mock_prompt.side_effect = ["my_client_id", "my_client_secret"]
+        mock_select.return_value = "free (280 chars)"
+        mock_pkce.side_effect = RuntimeError("Connection refused")
+
+        env_vars = {}
+        yaml_config = {}
+        _setup_x(env_vars, yaml_config, {}, {})
+
+        # Should still complete without raising
+        assert yaml_config["platforms"]["x"]["enabled"] is True
+        assert env_vars["X_CLIENT_ID"] == "my_client_id"
 
     @patch("social_hook.setup.wizard._confirm")
     def test_skips_when_declined(self, mock_confirm):
