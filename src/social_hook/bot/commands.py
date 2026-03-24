@@ -1410,7 +1410,6 @@ def cmd_review(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
             char_count=len(draft.content),
             is_thread=is_thread,
             tweet_count=tweet_count,
-            episode_type=decision.episode_type if decision else None,
             post_category=decision.post_category if decision else None,
             angle=decision.angle if decision else None,
             evaluator_reasoning=decision.reasoning if decision else None,

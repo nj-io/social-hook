@@ -2140,6 +2140,23 @@ def update_topic_priority(conn: sqlite3.Connection, topic_id: str, priority_rank
     return cursor.rowcount > 0
 
 
+def get_topics_matching_tag(
+    conn: sqlite3.Connection, project_id: str, tag: str
+) -> list[ContentTopic]:
+    """Get content topics whose topic name matches a tag (case-insensitive substring).
+
+    Used by the pipeline to increment commit counts when episode tags match topics.
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM content_topics
+        WHERE project_id = ? AND LOWER(topic) LIKE '%' || LOWER(?) || '%'
+        """,
+        (project_id, tag),
+    ).fetchall()
+    return [ContentTopic.from_dict(dict(row)) for row in rows]
+
+
 def increment_topic_commit_count(conn: sqlite3.Connection, topic_id: str) -> bool:
     """Increment a topic's commit count and update last_commit_at. Returns True if updated."""
     cursor = conn.execute(

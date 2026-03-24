@@ -231,19 +231,17 @@ class TestDecisionModel:
 
         assert "Invalid decision" in str(exc_info.value)
 
-    def test_decision_with_invalid_episode_type_raises(self):
-        """Create Decision with invalid episode_type raises ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            Decision(
-                id="decision_123",
-                project_id="project_123",
-                commit_hash="abc123",
-                decision="draft",
-                reasoning="Test",
-                episode_type="invalid_episode",
-            )
-
-        assert "Invalid episode_type" in str(exc_info.value)
+    def test_decision_with_unknown_episode_type_accepted(self):
+        """Decision with any episode_type value is accepted (no validation)."""
+        d = Decision(
+            id="decision_123",
+            project_id="project_123",
+            commit_hash="abc123",
+            decision="draft",
+            reasoning="Test",
+            episode_type="anything_goes",
+        )
+        assert d.episode_type == "anything_goes"
 
     def test_decision_to_dict_with_platforms(self):
         """Serialize Decision with platforms dict."""

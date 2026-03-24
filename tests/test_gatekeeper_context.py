@@ -95,7 +95,6 @@ def sample_linked_decision():
         decision="draft",
         reasoning="First commit on registered project with substantial WebSocket feature",
         angle="Introducing Social Hook",
-        episode_type="launch",
     )
 
 
@@ -261,7 +260,6 @@ class TestGatekeeperLinkedDecision:
         assert "## Linked Decision (for current draft)" in result
         assert "Reasoning: First commit on registered project" in result
         assert "Angle: Introducing Social Hook" in result
-        assert "Episode type: launch" in result
 
     def test_linked_decision_no_angle(self, sample_draft):
         decision = Decision(

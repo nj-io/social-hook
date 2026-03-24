@@ -833,8 +833,6 @@ def list_cmd(
             try:
                 dec = ops.get_decision(conn, d.decision_id)
                 if dec:
-                    if dec.episode_type:
-                        tags.append(f"[{dec.episode_type}]")
                     if dec.post_category:
                         tags.append(f"[{dec.post_category}]")
                     if dec.episode_tags:
@@ -1025,7 +1023,6 @@ def promote(
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform],
-                skip_content_filter=True,
             )
 
         if not results:

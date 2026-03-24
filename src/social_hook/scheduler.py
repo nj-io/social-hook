@@ -404,51 +404,103 @@ def _run_batch_evaluation(conn, config, project, commit, deferred):
         logger.error("LLM API error during drain batch evaluation: %s", e)
         return
 
-    target = evaluation.targets.get("default")
-    if not target:
-        logger.info("Drain batch re-evaluation for %s: no default target", project.name)
-        return
-
     def _val(x):
         return x.value if hasattr(x, "value") else x
 
-    if _val(target.action) != "draft":
-        logger.info("Drain batch re-evaluation for %s: %s", project.name, _val(target.action))
-        return
+    # --- New targets path ---
+    if getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets:
+        from social_hook.trigger import _combine_strategy_reasoning, _determine_overall_decision
 
-    # Insert a decision for the batch result
-    decision = Decision(
-        id=generate_id("decision"),
-        project_id=project.id,
-        commit_hash=commit.hash,
-        decision="draft",
-        reasoning=target.reason,
-        angle=target.angle,
-        episode_type=_val(target.episode_type),
-        post_category=_val(target.post_category),
-        media_tool=_val(target.media_tool),
-        trigger_source="drain",
-    )
-    ops.insert_decision(conn, decision)
-    ops.emit_data_event(conn, "decision", "created", decision.id, project.id)
+        decision_type = _determine_overall_decision(evaluation.strategies)
+        if decision_type != "draft":
+            logger.info("Drain batch re-evaluation for %s: %s", project.name, decision_type)
+            return
 
-    # Create drafts per platform via shared pipeline
-    from social_hook.compat import make_eval_compat
-    from social_hook.drafting import draft_for_platforms
+        representative = next(
+            (sd for sd in evaluation.strategies.values() if _val(sd.action) == "draft"),
+            next(iter(evaluation.strategies.values())),
+        )
 
-    eval_compat = make_eval_compat(evaluation, "draft")
-    draft_for_platforms(
-        config,
-        conn,
-        db,
-        project,
-        decision_id=decision.id,
-        evaluation=eval_compat,
-        context=context,
-        commit=commit,
-        project_config=project_config,
-        dry_run=False,
-    )
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash=commit.hash,
+            decision="draft",
+            reasoning=_combine_strategy_reasoning(evaluation.strategies),
+            angle=representative.angle,
+            episode_type=None,
+            post_category=_val(representative.post_category),
+            media_tool=_val(representative.media_tool),
+            targets={k: v.model_dump() for k, v in evaluation.strategies.items()},
+            trigger_source="drain",
+        )
+        ops.insert_decision(conn, decision)
+        ops.emit_data_event(conn, "decision", "created", decision.id, project.id)
+
+        from social_hook.content_sources import content_sources
+        from social_hook.drafting import draft_for_targets
+        from social_hook.routing import route_to_targets
+
+        target_actions = route_to_targets(evaluation.strategies, config, conn)
+        draftable_actions = [a for a in target_actions if a.action == "draft"]
+
+        if draftable_actions:
+            draft_for_targets(
+                draftable_actions,
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                content_source_registry=content_sources,
+                project_config=project_config,
+                dry_run=False,
+            )
+    else:
+        # --- Legacy path ---
+        target = evaluation.strategies.get("default")
+        if not target:
+            logger.info("Drain batch re-evaluation for %s: no default target", project.name)
+            return
+
+        if _val(target.action) != "draft":
+            logger.info("Drain batch re-evaluation for %s: %s", project.name, _val(target.action))
+            return
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash=commit.hash,
+            decision="draft",
+            reasoning=target.reason,
+            angle=target.angle,
+            episode_type=None,
+            post_category=_val(target.post_category),
+            media_tool=_val(target.media_tool),
+            trigger_source="drain",
+        )
+        ops.insert_decision(conn, decision)
+        ops.emit_data_event(conn, "decision", "created", decision.id, project.id)
+
+        from social_hook.compat import make_eval_compat
+        from social_hook.drafting import draft_for_platforms
+
+        eval_compat = make_eval_compat(evaluation, "draft")
+        draft_for_platforms(
+            config,
+            conn,
+            db,
+            project,
+            decision_id=decision.id,
+            evaluation=eval_compat,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            dry_run=False,
+        )
 
 
 def scheduler_tick(

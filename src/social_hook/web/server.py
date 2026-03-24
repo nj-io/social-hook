@@ -1091,7 +1091,6 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform],
-                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
@@ -1647,7 +1646,6 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform] if platform else None,
-                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
@@ -1901,7 +1899,6 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 context=context,
                 commit=commit,
                 project_config=project_config,
-                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:

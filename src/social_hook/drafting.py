@@ -8,7 +8,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from social_hook.config.platforms import passes_content_filter, resolve_platform
+from social_hook.config.platforms import resolve_platform
 from social_hook.config.yaml import TIER_CHAR_LIMITS
 from social_hook.filesystem import generate_id, get_base_path
 from social_hook.models import Draft, DraftTweet
@@ -24,7 +24,6 @@ class DraftResult:
     draft: Draft
     schedule: ScheduleResult
     thread_tweets: list[str]
-    episode_type: str | None = None
     post_category: str | None = None
     angle: str | None = None
     episode_tags: list[str] | None = None
@@ -43,7 +42,6 @@ def draft_for_platforms(
     target_platform_names: list[str] | None = None,
     dry_run: bool = False,
     verbose: bool = False,
-    skip_content_filter: bool = False,
 ) -> list[DraftResult]:
     """Run the per-platform drafting pipeline: resolve, filter, draft, insert.
 
@@ -64,16 +62,12 @@ def draft_for_platforms(
             None means all enabled platforms.
         dry_run: If True, skip DB writes and real API calls.
         verbose: If True, print detailed output.
-        skip_content_filter: If True, bypass episode_type content filtering.
-            Used when the user explicitly requests a draft (manual override).
 
     Returns:
         List of DraftResult for each successfully created draft.
         Empty list if no platforms resolve or all are filtered.
     """
-    resolved = _resolve_and_filter_platforms(
-        config, evaluation, target_platform_names, skip_content_filter, verbose
-    )
+    resolved = _resolve_and_filter_platforms(config, target_platform_names, verbose)
     if not resolved:
         return []
     return _draft_for_resolved_platforms(
@@ -92,13 +86,11 @@ def draft_for_platforms(
     )
 
 
-def _resolve_and_filter_platforms(
-    config, evaluation, target_platform_names, skip_content_filter, verbose
-):
-    """Resolve enabled platforms and apply content filter.
+def _resolve_and_filter_platforms(config, target_platform_names, verbose):
+    """Resolve enabled platforms.
 
     Returns:
-        Dict of platform_name -> ResolvedPlatformConfig, or empty dict if none pass.
+        Dict of platform_name -> ResolvedPlatformConfig, or empty dict if none resolve.
     """
     # 1. Resolve enabled platforms
     resolved_platforms = {}
@@ -145,34 +137,7 @@ def _resolve_and_filter_platforms(
             print("No matching platforms. Skipping draft creation.")
         return {}
 
-    # 2. Apply content filter per platform (skipped for manual overrides)
-    ep_type = getattr(evaluation, "episode_type", None)
-    if ep_type is not None and hasattr(ep_type, "value"):
-        ep_type = ep_type.value
-    if skip_content_filter:
-        return dict(resolved_platforms)
-
-    target_platforms = {}
-    for pname, rpcfg in resolved_platforms.items():
-        if passes_content_filter(rpcfg.filter, ep_type):
-            target_platforms[pname] = rpcfg
-        else:
-            logger.info(
-                "Platform %s: filtered (filter=%s, episode_type=%s)",
-                pname,
-                rpcfg.filter,
-                ep_type,
-            )
-            if verbose:
-                print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
-
-    if not target_platforms:
-        logger.info("All platforms filtered out (episode_type=%s). No drafts created.", ep_type)
-        if verbose:
-            print("All platforms filtered this commit.")
-        return {}
-
-    return target_platforms
+    return dict(resolved_platforms)
 
 
 def _draft_for_resolved_platforms(
@@ -433,9 +398,6 @@ def _draft_for_resolved_platforms(
                 continue
 
             # Extract metadata from evaluation for notification pass-through
-            _ep_type = getattr(evaluation, "episode_type", None)
-            if _ep_type is not None and hasattr(_ep_type, "value"):
-                _ep_type = _ep_type.value
             _post_cat = getattr(evaluation, "post_category", None)
             if _post_cat is not None and hasattr(_post_cat, "value"):
                 _post_cat = _post_cat.value
@@ -447,7 +409,6 @@ def _draft_for_resolved_platforms(
                     draft=draft,
                     schedule=schedule,
                     thread_tweets=thread_tweets,
-                    episode_type=_ep_type,
                     post_category=_post_cat,
                     angle=_angle,
                     episode_tags=_ep_tags,
@@ -468,6 +429,116 @@ def _draft_for_resolved_platforms(
             # Continue with other platforms
 
     return results
+
+
+def draft_for_targets(
+    target_actions: list,  # list[RoutedTarget] — imported lazily
+    config,
+    conn: sqlite3.Connection,
+    db,
+    project,
+    decision_id: str,
+    evaluation,
+    context,
+    commit,
+    content_source_registry=None,
+    project_config=None,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> list[DraftResult]:
+    """Draft for resolved target actions.
+
+    Replaces draft_for_platforms() when targets config exists.
+    Groups targets by draft_group for draft sharing.
+    Assembles per-target context via ContentSource registry.
+    """
+    from social_hook.content_sources import content_sources as default_registry
+
+    registry = content_source_registry or default_registry
+
+    # Only process targets with "draft" action
+    draft_actions = [ta for ta in target_actions if ta.action == "draft"]
+    if not draft_actions:
+        if verbose:
+            print("No targets with 'draft' action.")
+        return []
+
+    # Group by draft_group for draft sharing
+    groups: dict[str, list] = {}
+    ungrouped: list = []
+    for ta in draft_actions:
+        if ta.draft_group:
+            groups.setdefault(ta.draft_group, []).append(ta)
+        else:
+            ungrouped.append(ta)
+
+    # Resolve content sources for each strategy decision
+    resolved_context: dict[str, dict[str, str]] = {}
+    for ta in draft_actions:
+        strategy_name = ta.target_config.strategy
+        if strategy_name in resolved_context:
+            continue
+        # Get context source spec from the strategy decision
+        spec = getattr(ta.strategy_decision, "context_source", None)
+        if spec and hasattr(spec, "types") and spec.types:
+            kwargs: dict[str, Any] = {
+                "conn": conn,
+                "project_id": project.id,
+            }
+            if hasattr(spec, "topic_id") and spec.topic_id:
+                kwargs["topic_id"] = spec.topic_id
+            if hasattr(spec, "suggestion_id") and spec.suggestion_id:
+                kwargs["suggestion_id"] = spec.suggestion_id
+            resolved_context[strategy_name] = registry.resolve(source_types=spec.types, **kwargs)
+        else:
+            resolved_context[strategy_name] = {}
+
+    all_results: list[DraftResult] = []
+
+    def _resolve_target_platform(ta):
+        """Resolve a ResolvedPlatformConfig for a target action."""
+        account = ta.account_config
+        platform_name = account.platform
+        pcfg = config.platforms.get(platform_name)
+        if pcfg:
+            return resolve_platform(platform_name, pcfg, config.scheduling)
+        from social_hook.config.platforms import OutputPlatformConfig
+
+        raw = OutputPlatformConfig(
+            enabled=True,
+            priority="primary" if ta.target_config.primary else "secondary",
+            type="builtin" if platform_name in ("x", "linkedin") else "custom",
+            account_tier=account.tier,
+        )
+        return resolve_platform(platform_name, raw, config.scheduling)
+
+    def _draft_batch(platforms_map):
+        """Run _draft_for_resolved_platforms with shared kwargs."""
+        return _draft_for_resolved_platforms(
+            platforms_map,
+            config,
+            conn,
+            db,
+            project,
+            decision_id=decision_id,
+            evaluation=evaluation,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+
+    # Process grouped targets (shared draft per group)
+    for _group_name, group_targets in groups.items():
+        platforms_for_group = {ta.target_name: _resolve_target_platform(ta) for ta in group_targets}
+        all_results.extend(_draft_batch(platforms_for_group))
+
+    # Process ungrouped targets individually
+    for ta in ungrouped:
+        all_results.extend(_draft_batch({ta.target_name: _resolve_target_platform(ta)}))
+
+    return all_results
 
 
 def _generate_media(

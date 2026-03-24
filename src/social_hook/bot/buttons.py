@@ -1822,7 +1822,6 @@ def btn_promote_to(
             commit=commit,
             project_config=project_config,
             target_platform_names=[platform],
-            skip_content_filter=True,
         )
 
         if not results:

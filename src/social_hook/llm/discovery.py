@@ -359,7 +359,23 @@ def discover_project(
     file_summaries = summary_input.get("file_summaries", [])
     prompt_docs = summary_input.get("prompt_docs", [])[:5]
 
+    # Generate structured brief from discovery summary
+    project_summary = summary_input["project_summary"]
+    try:
+        from social_hook.llm.brief import generate_initial_brief
+
+        brief = generate_initial_brief(
+            discovery_summary=project_summary,
+            client=client,
+            db=db,
+            project_id=project_id,
+        )
+        if brief:
+            project_summary = brief
+    except Exception:
+        logger.warning("Brief generation failed, using raw summary", exc_info=True)
+
     if on_progress:
         on_progress("discovered")
 
-    return summary_input["project_summary"], files_loaded, file_summaries, prompt_docs
+    return project_summary, files_loaded, file_summaries, prompt_docs

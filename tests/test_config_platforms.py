@@ -3,11 +3,9 @@
 import pytest
 
 from social_hook.config.platforms import (
-    FILTER_EPISODE_TYPES,
     FREQUENCY_PARAMS,
     FREQUENCY_PRESETS,
     OutputPlatformConfig,
-    passes_content_filter,
     resolve_platform,
 )
 from social_hook.config.yaml import SchedulingConfig
@@ -150,14 +148,6 @@ class TestConstants:
             assert isinstance(params["max_posts_per_day"], int)
             assert isinstance(params["min_gap_minutes"], int)
 
-    def test_filter_episode_types_mapping(self):
-        """All filters have correct episode sets."""
-        assert FILTER_EPISODE_TYPES["all"] is None
-        assert "milestone" in FILTER_EPISODE_TYPES["notable"]
-        assert "launch" in FILTER_EPISODE_TYPES["notable"]
-        assert "decision" not in FILTER_EPISODE_TYPES["notable"]
-        assert FILTER_EPISODE_TYPES["significant"] == {"milestone", "launch", "synthesis"}
-
 
 class TestValidation:
     """Test validation errors for invalid values."""
@@ -176,33 +166,3 @@ class TestValidation:
         raw = OutputPlatformConfig(enabled=True, priority="primary", frequency="ultra")
         with pytest.raises(ConfigError, match="Invalid frequency 'ultra'"):
             resolve_platform("x", raw, global_scheduling)
-
-
-class TestPassesContentFilter:
-    """Test passes_content_filter() function."""
-
-    def test_passes_content_filter(self):
-        # "all" filter passes everything
-        assert passes_content_filter("all", "decision") is True
-        assert passes_content_filter("all", "milestone") is True
-        assert passes_content_filter("all", None) is True
-
-        # "notable" filter
-        assert passes_content_filter("notable", "milestone") is True
-        assert passes_content_filter("notable", "launch") is True
-        assert passes_content_filter("notable", "synthesis") is True
-        assert passes_content_filter("notable", "demo_proof") is True
-        assert passes_content_filter("notable", "before_after") is True
-        assert passes_content_filter("notable", "postmortem") is True
-        assert passes_content_filter("notable", "decision") is False
-
-        # "significant" filter
-        assert passes_content_filter("significant", "milestone") is True
-        assert passes_content_filter("significant", "launch") is True
-        assert passes_content_filter("significant", "synthesis") is True
-        assert passes_content_filter("significant", "demo_proof") is False
-        assert passes_content_filter("significant", "decision") is False
-
-        # None episode_type
-        assert passes_content_filter("notable", None) is False
-        assert passes_content_filter("significant", None) is False

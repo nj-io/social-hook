@@ -249,14 +249,6 @@ class Decision:
                 f"Invalid decision '{self.decision}', must be one of {valid_decisions}"
             )
 
-        # Validate episode_type if provided
-        if self.episode_type:
-            valid_episodes = [e.value for e in EpisodeType]
-            if self.episode_type not in valid_episodes:
-                raise ValueError(
-                    f"Invalid episode_type '{self.episode_type}', must be one of {valid_episodes}"
-                )
-
         # Validate post_category if provided
         if self.post_category:
             valid_categories = [c.value for c in PostCategory]

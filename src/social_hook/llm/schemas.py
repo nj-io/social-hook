@@ -3,25 +3,13 @@
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from social_hook.errors import MalformedResponseError
 
 # =============================================================================
 # Schema-specific Enums (str enums for Pydantic JSON serialization)
 # =============================================================================
-
-
-class EpisodeTypeSchema(str, Enum):
-    """Post structural categories."""
-
-    decision = "decision"
-    before_after = "before_after"
-    demo_proof = "demo_proof"
-    milestone = "milestone"
-    postmortem = "postmortem"
-    launch = "launch"
-    synthesis = "synthesis"
 
 
 class PostCategorySchema(str, Enum):
@@ -89,8 +77,18 @@ class CommitAnalysis(BaseModel):
     episode_tags: list[str] = []
 
 
-class TargetDecisionInput(BaseModel):
-    """Per-target decision from the evaluator."""
+class ContextSourceSpec(BaseModel):
+    """Specifies what context the drafter should receive."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    types: list[str]  # "brief", "commits", "topic", "operator_suggestion"
+    topic_id: str | None = None
+    suggestion_id: str | None = None
+
+
+class StrategyDecisionInput(BaseModel):
+    """Per-strategy decision from the evaluator."""
 
     action: TargetAction
     reason: str
@@ -99,10 +97,11 @@ class TargetDecisionInput(BaseModel):
     new_arc_theme: str | None = None
     reference_posts: list[str] | None = None
     angle: str | None = None
-    episode_type: EpisodeTypeSchema | None = None
     post_category: PostCategorySchema | None = None
     media_tool: MediaTool | None = None
     include_project_docs: bool | None = None
+    topic_id: str | None = None
+    context_source: ContextSourceSpec | None = None
 
 
 class QueueAction(BaseModel):
@@ -119,8 +118,15 @@ class LogEvaluationInput(BaseModel):
     """Evaluator tool call: log_evaluation (multi-target format)."""
 
     commit_analysis: CommitAnalysis
-    targets: dict[str, TargetDecisionInput]
+    strategies: dict[str, StrategyDecisionInput]
     queue_actions: dict[str, list[QueueAction]] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remap_targets_key(cls, data: dict) -> dict:
+        if isinstance(data, dict) and "targets" in data and "strategies" not in data:
+            data["strategies"] = data.pop("targets")
+        return data
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -188,10 +194,6 @@ class LogEvaluationInput(BaseModel):
                                     "type": "string",
                                     "description": "The hook/angle for the post",
                                 },
-                                "episode_type": {
-                                    "type": "string",
-                                    "enum": [e.value for e in EpisodeTypeSchema],
-                                },
                                 "post_category": {
                                     "type": "string",
                                     "enum": [e.value for e in PostCategorySchema],
@@ -203,6 +205,30 @@ class LogEvaluationInput(BaseModel):
                                 "include_project_docs": {
                                     "type": "boolean",
                                     "description": "Set true when the Drafter needs project-level documentation",
+                                },
+                                "topic_id": {
+                                    "type": "string",
+                                    "description": "ID of the content topic this relates to",
+                                },
+                                "context_source": {
+                                    "type": "object",
+                                    "description": "What context the drafter should receive",
+                                    "properties": {
+                                        "types": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "description": "Context types: brief, commits, topic, operator_suggestion",
+                                        },
+                                        "topic_id": {
+                                            "type": "string",
+                                            "description": "Topic ID for topic context",
+                                        },
+                                        "suggestion_id": {
+                                            "type": "string",
+                                            "description": "Suggestion ID for operator suggestion context",
+                                        },
+                                    },
+                                    "required": ["types"],
                                 },
                             },
                             "required": ["action", "reason"],

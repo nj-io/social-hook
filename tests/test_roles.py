@@ -150,7 +150,6 @@ class TestEvaluator:
                     "default": {
                         "action": "draft",
                         "reason": "Major new feature",
-                        "episode_type": "milestone",
                         "post_category": "opportunistic",
                         "media_tool": "ray_so",
                     },
@@ -163,9 +162,8 @@ class TestEvaluator:
             result = evaluator.evaluate(sample_commit, sample_context, mock_db)
 
         assert isinstance(result, LogEvaluationInput)
-        assert result.targets["default"].action.value == "draft"
-        assert result.targets["default"].episode_type.value == "milestone"
-        assert result.targets["default"].post_category.value == "opportunistic"
+        assert result.strategies["default"].action.value == "draft"
+        assert result.strategies["default"].post_category.value == "opportunistic"
         mock_client.complete.assert_called_once()
 
     def test_evaluate_not_post_worthy(
@@ -188,8 +186,8 @@ class TestEvaluator:
             evaluator = Evaluator(mock_client)
             result = evaluator.evaluate(sample_commit, sample_context, mock_db)
 
-        assert result.targets["default"].action.value == "skip"
-        assert "formatting" in result.targets["default"].reason
+        assert result.strategies["default"].action.value == "skip"
+        assert "formatting" in result.strategies["default"].reason
 
     def test_evaluate_consolidate(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
@@ -211,7 +209,7 @@ class TestEvaluator:
             evaluator = Evaluator(mock_client)
             result = evaluator.evaluate(sample_commit, sample_context, mock_db)
 
-        assert result.targets["default"].action.value == "hold"
+        assert result.strategies["default"].action.value == "hold"
 
     def test_evaluate_no_tool_call_raises(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
