@@ -121,10 +121,9 @@ Example: social-hook draft media-remove draft-abc123
 
 Post a draft immediately to its platform.
 
-Approves and posts the draft in one step, bypassing the scheduler queue.
-The draft must be in draft, approved, or deferred status.
+Requires platform credentials in ~/.social-hook/.env.
 
-Example: social-hook draft post-now draft-abc123
+Example: social-hook draft post-now draft_abc123
 
 **Arguments:**
 
@@ -136,6 +135,7 @@ Example: social-hook draft post-now draft-abc123
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `--yes`, `-y` | boolean | false | Skip confirmation prompt |
 | `--json` | boolean | false | Output as JSON |
 
 ---
