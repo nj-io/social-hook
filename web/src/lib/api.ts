@@ -402,7 +402,7 @@ export async function deleteDecision(
 
 export async function retriggerDecision(
   decisionId: string,
-): Promise<{ status: string; exit_code: number }> {
+): Promise<{ task_id: string; status: string }> {
   return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}/retrigger`, {
     method: "POST",
   });

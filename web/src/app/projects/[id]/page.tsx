@@ -68,7 +68,8 @@ export default function ProjectDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRetrigger, setConfirmRetrigger] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const [actionStartTime, setActionStartTime] = useState<string | null>(null);
+  const [evaluatingId, setEvaluatingId] = useState<string | null>(null);
+  const [evaluateStartTime, setEvaluateStartTime] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [branchFilter, setBranchFilter] = useState<string>("");
   const [decisionBranches, setDecisionBranches] = useState<string[]>([]);
@@ -643,24 +644,26 @@ export default function ProjectDetailPage() {
                           <div className="flex items-center gap-1.5">
                             {d.decision === "imported" ? (
                               <AsyncButton
-                                loading={actionLoading}
-                                startTime={actionStartTime}
+                                loading={evaluatingId === d.id || isTaskRunning(`retrigger-${d.id}`)}
+                                startTime={evaluatingId === d.id ? evaluateStartTime : null}
                                 loadingText="Evaluating"
                                 onClick={async () => {
-                                  setActionLoading(true);
-                                  setActionStartTime(new Date().toISOString());
+                                  setEvaluatingId(d.id);
+                                  setEvaluateStartTime(new Date().toISOString());
                                   setActionError(null);
                                   try {
-                                    await retriggerDecision(d.id);
-                                    reload();
+                                    const res = await retriggerDecision(d.id);
+                                    if (res.task_id) {
+                                      trackTask(res.task_id, `retrigger-${d.id}`, "retrigger");
+                                    }
                                   } catch (err) {
                                     setActionError(err instanceof Error ? err.message : "Evaluate failed");
                                   } finally {
-                                    setActionLoading(false);
-                                    setActionStartTime(null);
+                                    setEvaluatingId(null);
+                                    setEvaluateStartTime(null);
                                   }
                                 }}
-                                disabled={actionLoading}
+                                disabled={!!evaluatingId || isTaskRunning(`retrigger-${d.id}`)}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950 disabled:opacity-70"
                               >
                                 Evaluate
@@ -825,9 +828,13 @@ export default function ProjectDetailPage() {
           .reduce((sum, d) => sum + d.draft_count, 0);
         return (
           <Modal open={true} onClose={() => !actionLoading && setConfirmDelete(false)} maxWidth="max-w-sm">
-            <h3 className="text-sm font-semibold">Delete {ids.length === 1 ? "decision" : `${ids.length} decisions`}?</h3>
+            <h3 className="text-sm font-semibold">
+              {decisions.filter((d) => ids.includes(d.id)).every((d) => d.decision === "imported")
+                ? `Remove ${ids.length === 1 ? "import" : `${ids.length} imports`}?`
+                : `Delete ${ids.length === 1 ? "decision" : `${ids.length} decisions`}?`}
+            </h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              This will permanently delete {ids.length} decision{ids.length !== 1 ? "s" : ""}{totalDrafts > 0 ? ` and ${totalDrafts} associated draft${totalDrafts !== 1 ? "s" : ""}` : ""}.
+              This will permanently remove {ids.length} record{ids.length !== 1 ? "s" : ""}{totalDrafts > 0 ? ` and ${totalDrafts} associated draft${totalDrafts !== 1 ? "s" : ""}` : ""}.
             </p>
             {actionError && (
               <p className="mt-2 text-sm text-destructive">{actionError}</p>
@@ -892,13 +899,11 @@ export default function ProjectDetailPage() {
                   setActionError(null);
                   try {
                     const res = await retriggerDecision(did);
-                    if (res.status === "retriggered") {
-                      setSelectedDecisions(new Set());
-                      setConfirmRetrigger(false);
-                      reload();
-                    } else {
-                      setActionError(`Re-evaluation failed (exit code ${res.exit_code})`);
+                    if (res.task_id) {
+                      trackTask(res.task_id, `retrigger-${did}`, "retrigger");
                     }
+                    setSelectedDecisions(new Set());
+                    setConfirmRetrigger(false);
                   } catch (err) {
                     setActionError(err instanceof Error ? err.message : "Retrigger failed");
                   } finally {
@@ -1026,7 +1031,9 @@ export default function ProjectDetailPage() {
                       onClick={() => { setActionError(null); setConfirmDelete(true); }}
                       className="rounded-md border border-destructive/50 px-4 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
                     >
-                      Delete {selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}
+                      {allImported
+                        ? `Remove ${selectedDecisions.size === 1 ? "import" : `${selectedDecisions.size} imports`}`
+                        : `Delete ${selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}`}
                     </button>
                     {allImported && selectedDecisions.size >= 1 && (
                       <button
@@ -1036,15 +1043,13 @@ export default function ProjectDetailPage() {
                           try {
                             for (const did of Array.from(selectedDecisions)) {
                               const res = await retriggerDecision(did);
-                              if (res.status !== "retriggered") {
-                                setActionError(`Evaluate failed for ${did.slice(0, 8)} (exit code ${res.exit_code})`);
-                                break;
+                              if (res.task_id) {
+                                trackTask(res.task_id, `retrigger-${did}`, "retrigger");
                               }
                             }
                             setSelectedDecisions(new Set());
-                            reload();
                           } catch (err) {
-                            setActionError(err instanceof Error ? err.message : "Batch evaluate failed");
+                            setActionError(err instanceof Error ? err.message : "Evaluate failed");
                           } finally {
                             setActionLoading(false);
                           }
@@ -1054,7 +1059,7 @@ export default function ProjectDetailPage() {
                       >
                         {actionLoading
                           ? "Evaluating..."
-                          : `Batch evaluate (${selectedDecisions.size})`}
+                          : `Evaluate (${selectedDecisions.size})`}
                       </button>
                     )}
                     {allEvaluated && selectedDecisions.size >= 2 && (

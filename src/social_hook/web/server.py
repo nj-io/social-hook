@@ -1793,8 +1793,9 @@ async def api_delete_decision(decision_id: str):
 async def api_retrigger_decision(decision_id: str):
     """Delete a decision and re-evaluate the commit from scratch.
 
-    Re-runs the full evaluator pipeline, which may produce a different
-    decision, angle, episode type, or skip the commit entirely.
+    Re-runs the full evaluator pipeline via background task, which may produce
+    a different decision, angle, episode type, or skip the commit entirely.
+    Returns 202 with task_id for frontend tracking via useBackgroundTasks.
     """
     conn = _get_conn()
     try:
@@ -1808,24 +1809,33 @@ async def api_retrigger_decision(decision_id: str):
 
         commit_hash = decision.commit_hash
         repo_path = project.repo_path
+        project_id = decision.project_id
 
         ops.delete_decision(conn, decision_id)
-        ops.emit_data_event(conn, "decision", "deleted", decision_id, decision.project_id)
+        ops.emit_data_event(conn, "decision", "deleted", decision_id, project_id)
     finally:
         conn.close()
 
     def _blocking_retrigger():
         from social_hook.trigger import run_trigger
 
-        return run_trigger(
+        exit_code = run_trigger(
             commit_hash=commit_hash,
             repo_path=repo_path,
             trigger_source="manual",
         )
+        return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
-    exit_code = await asyncio.to_thread(_blocking_retrigger)
-
-    return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
+    task_id = _run_background_task(
+        "retrigger",
+        ref_id=f"retrigger-{decision_id}",
+        project_id=project_id,
+        fn=_blocking_retrigger,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
 
 
 @app.post("/api/decisions/{decision_id}/rewind")
