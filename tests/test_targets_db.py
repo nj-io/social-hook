@@ -211,12 +211,11 @@ class TestMigrations:
         """)
         conn.commit()
 
-        # Use the actual migrations dir from the worktree
+        # Use the actual migrations dir (relative to package)
         from pathlib import Path
 
-        actual_migrations = Path(
-            "/Users/neil/dev/social-media-auto-hook/.claude/worktrees/targets"
-            "/src/social_hook/db/migrations"
+        actual_migrations = (
+            Path(__file__).resolve().parent.parent / "src" / "social_hook" / "db" / "migrations"
         )
         apply_migrations(conn, actual_migrations)
 

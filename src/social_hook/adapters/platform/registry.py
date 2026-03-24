@@ -26,7 +26,7 @@ class AdapterRegistry:
     """Process-scoped cache — one adapter instance per platform or account."""
 
     def __init__(self):
-        self._adapters: dict = {}
+        self._adapters: dict[str, PlatformAdapter] = {}
 
     def get_for_account(
         self,
