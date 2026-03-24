@@ -10,14 +10,20 @@ logger = logging.getLogger(__name__)
 
 from social_hook.models import (
     Arc,
+    ContentSuggestion,
+    ContentTopic,
     Decision,
     Draft,
     DraftChange,
+    DraftPattern,
     DraftTweet,
+    EvaluationCycle,
     Lifecycle,
     NarrativeDebt,
+    OAuthToken,
     Post,
     Project,
+    SystemErrorRecord,
     UsageLog,
 )
 
@@ -712,8 +718,9 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
         """
         INSERT INTO drafts (id, project_id, decision_id, platform, status, content,
             media_paths, media_type, media_spec, media_spec_used, suggested_time, scheduled_time,
-            reasoning, superseded_by, retry_count, last_error, is_intro, post_format, reference_post_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reasoning, superseded_by, retry_count, last_error, is_intro, post_format,
+            reference_post_id, target_id, evaluation_cycle_id, topic_id, suggestion_id, pattern_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         draft.to_row(),
     )
@@ -1113,8 +1120,9 @@ def insert_post(conn: sqlite3.Connection, post: Post) -> str:
     """
     conn.execute(
         """
-        INSERT INTO posts (id, draft_id, project_id, platform, external_id, external_url, content)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO posts (id, draft_id, project_id, platform, external_id, external_url,
+            content, target_id, topic_tags, feature_tags, is_thread_head)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         post.to_row(),
     )
@@ -2027,3 +2035,283 @@ def emit_data_event(
         conn.commit()
     except Exception:
         logger.debug("Failed to emit data event", exc_info=True)
+
+
+# =============================================================================
+# OAuth Tokens
+# =============================================================================
+
+
+def upsert_oauth_token(conn: sqlite3.Connection, token: OAuthToken) -> None:
+    """Insert or update an OAuth token."""
+    conn.execute(
+        """
+        INSERT INTO oauth_tokens (account_name, platform, access_token, refresh_token,
+            expires_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(account_name) DO UPDATE SET
+            platform = excluded.platform,
+            access_token = excluded.access_token,
+            refresh_token = excluded.refresh_token,
+            expires_at = excluded.expires_at,
+            updated_at = excluded.updated_at
+        """,
+        token.to_row(),
+    )
+    conn.commit()
+
+
+def get_oauth_token(conn: sqlite3.Connection, account_name: str) -> OAuthToken | None:
+    """Get an OAuth token by account name."""
+    row = conn.execute(
+        "SELECT * FROM oauth_tokens WHERE account_name = ?", (account_name,)
+    ).fetchone()
+    if row:
+        return OAuthToken.from_dict(dict(row))
+    return None
+
+
+def delete_oauth_token(conn: sqlite3.Connection, account_name: str) -> bool:
+    """Delete an OAuth token. Returns True if a row was deleted."""
+    cursor = conn.execute("DELETE FROM oauth_tokens WHERE account_name = ?", (account_name,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+# =============================================================================
+# Content Topics
+# =============================================================================
+
+
+def insert_content_topic(conn: sqlite3.Connection, topic: ContentTopic) -> str:
+    """Insert a content topic. Returns the topic ID."""
+    conn.execute(
+        """
+        INSERT INTO content_topics (id, project_id, strategy, topic, description,
+            priority_rank, status, commit_count, last_commit_at, last_posted_at, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        topic.to_row(),
+    )
+    conn.commit()
+    return topic.id
+
+
+def get_topics_by_strategy(
+    conn: sqlite3.Connection, project_id: str, strategy: str
+) -> list[ContentTopic]:
+    """Get all topics for a project+strategy, ordered by priority."""
+    rows = conn.execute(
+        """
+        SELECT * FROM content_topics
+        WHERE project_id = ? AND strategy = ?
+        ORDER BY priority_rank DESC, created_at ASC
+        """,
+        (project_id, strategy),
+    ).fetchall()
+    return [ContentTopic.from_dict(dict(row)) for row in rows]
+
+
+def get_topic(conn: sqlite3.Connection, topic_id: str) -> ContentTopic | None:
+    """Get a content topic by ID."""
+    row = conn.execute("SELECT * FROM content_topics WHERE id = ?", (topic_id,)).fetchone()
+    if row:
+        return ContentTopic.from_dict(dict(row))
+    return None
+
+
+def update_topic_status(conn: sqlite3.Connection, topic_id: str, status: str) -> bool:
+    """Update a topic's status. Returns True if a row was updated."""
+    cursor = conn.execute(
+        "UPDATE content_topics SET status = ? WHERE id = ?",
+        (status, topic_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def update_topic_priority(conn: sqlite3.Connection, topic_id: str, priority_rank: int) -> bool:
+    """Update a topic's priority rank. Returns True if a row was updated."""
+    cursor = conn.execute(
+        "UPDATE content_topics SET priority_rank = ? WHERE id = ?",
+        (priority_rank, topic_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def increment_topic_commit_count(conn: sqlite3.Connection, topic_id: str) -> bool:
+    """Increment a topic's commit count and update last_commit_at. Returns True if updated."""
+    cursor = conn.execute(
+        """
+        UPDATE content_topics
+        SET commit_count = commit_count + 1,
+            last_commit_at = datetime('now')
+        WHERE id = ?
+        """,
+        (topic_id,),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+# =============================================================================
+# Content Suggestions
+# =============================================================================
+
+
+def insert_content_suggestion(conn: sqlite3.Connection, suggestion: ContentSuggestion) -> str:
+    """Insert a content suggestion. Returns the suggestion ID."""
+    conn.execute(
+        """
+        INSERT INTO content_suggestions (id, project_id, strategy, idea, media_refs,
+            status, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        suggestion.to_row(),
+    )
+    conn.commit()
+    return suggestion.id
+
+
+def get_suggestions_by_project(
+    conn: sqlite3.Connection, project_id: str
+) -> list[ContentSuggestion]:
+    """Get all suggestions for a project, newest first."""
+    rows = conn.execute(
+        """
+        SELECT * FROM content_suggestions
+        WHERE project_id = ?
+        ORDER BY created_at DESC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [ContentSuggestion.from_dict(dict(row)) for row in rows]
+
+
+def update_suggestion_status(conn: sqlite3.Connection, suggestion_id: str, status: str) -> bool:
+    """Update a suggestion's status. Returns True if a row was updated."""
+    updates = "status = ?"
+    params: list[Any] = [status]
+    if status == "evaluated":
+        updates += ", evaluated_at = datetime('now')"
+    cursor = conn.execute(
+        f"UPDATE content_suggestions SET {updates} WHERE id = ?",
+        params + [suggestion_id],
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+# =============================================================================
+# Evaluation Cycles
+# =============================================================================
+
+
+def insert_evaluation_cycle(conn: sqlite3.Connection, cycle: EvaluationCycle) -> str:
+    """Insert an evaluation cycle. Returns the cycle ID."""
+    conn.execute(
+        """
+        INSERT INTO evaluation_cycles (id, project_id, trigger_type, trigger_ref,
+            commit_analysis_id)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        cycle.to_row(),
+    )
+    conn.commit()
+    return cycle.id
+
+
+def get_recent_cycles(
+    conn: sqlite3.Connection, project_id: str, limit: int = 20
+) -> list[EvaluationCycle]:
+    """Get recent evaluation cycles for a project."""
+    rows = conn.execute(
+        """
+        SELECT * FROM evaluation_cycles
+        WHERE project_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (project_id, limit),
+    ).fetchall()
+    return [EvaluationCycle.from_dict(dict(row)) for row in rows]
+
+
+# =============================================================================
+# Draft Patterns
+# =============================================================================
+
+
+def insert_draft_pattern(conn: sqlite3.Connection, pattern: DraftPattern) -> str:
+    """Insert a draft pattern. Returns the pattern ID."""
+    conn.execute(
+        """
+        INSERT INTO draft_patterns (id, project_id, pattern_name, description,
+            example_draft_id, created_by)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        pattern.to_row(),
+    )
+    conn.commit()
+    return pattern.id
+
+
+def get_patterns_by_project(conn: sqlite3.Connection, project_id: str) -> list[DraftPattern]:
+    """Get all draft patterns for a project."""
+    rows = conn.execute(
+        """
+        SELECT * FROM draft_patterns
+        WHERE project_id = ?
+        ORDER BY created_at DESC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [DraftPattern.from_dict(dict(row)) for row in rows]
+
+
+# =============================================================================
+# System Errors
+# =============================================================================
+
+
+def insert_system_error(conn: sqlite3.Connection, error: SystemErrorRecord) -> str:
+    """Insert a system error record. Returns the error ID."""
+    conn.execute(
+        """
+        INSERT INTO system_errors (id, severity, message, context, source)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        error.to_row(),
+    )
+    conn.commit()
+    return error.id
+
+
+def get_recent_system_errors(conn: sqlite3.Connection, limit: int = 50) -> list[SystemErrorRecord]:
+    """Get recent system errors, newest first."""
+    rows = conn.execute(
+        """
+        SELECT * FROM system_errors
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [SystemErrorRecord.from_dict(dict(row)) for row in rows]
+
+
+def get_error_health_status(conn: sqlite3.Connection) -> dict:
+    """Get error counts by severity in last 24h."""
+    rows = conn.execute(
+        """
+        SELECT severity, COUNT(*) as count
+        FROM system_errors
+        WHERE created_at >= datetime('now', '-1 day')
+        GROUP BY severity
+        """
+    ).fetchall()
+    result = {"info": 0, "warning": 0, "error": 0, "critical": 0}
+    for row in rows:
+        result[row[0]] = row[1]
+    return result

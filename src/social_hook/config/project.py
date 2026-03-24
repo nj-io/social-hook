@@ -32,6 +32,7 @@ class ContextConfig:
     arc_context_chars: int = 500
     pending_drafts_cap: int = 10
     max_hold_count: int = 5
+    commit_analysis_interval: int = 1
 
 
 @dataclass
@@ -216,6 +217,7 @@ def _parse_context_config(data: dict) -> ContextConfig:
             "max_hold_count",
             "include_readme",
             "include_claude_md",
+            "commit_analysis_interval",
         },
         "context",
     )
@@ -233,6 +235,7 @@ def _parse_context_config(data: dict) -> ContextConfig:
         arc_context_chars=data.get("arc_context_chars", 500),
         pending_drafts_cap=data.get("pending_drafts_cap", 10),
         max_hold_count=data.get("max_hold_count", 5),
+        commit_analysis_interval=data.get("commit_analysis_interval", 1),
     )
 
 

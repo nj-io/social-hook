@@ -4,10 +4,12 @@ import logging
 import os
 from pathlib import Path
 
+from social_hook.adapters.platform.factory import resolve_platform_creds
 from social_hook.adapters.platform.registry import AdapterRegistry
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
+from social_hook.error_feed import ErrorSeverity, error_feed
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id, get_base_path, get_db_path
 from social_hook.models import CommitInfo, Decision, Post
@@ -19,8 +21,21 @@ from social_hook.trigger import parse_commit_info, run_trigger
 logger = logging.getLogger(__name__)
 
 # Process-scoped adapter cache — persists rate limit state and token refreshers across ticks.
-# Clears on process restart. When targets lands, key changes from platform to account name.
+# Clears on process restart. Keyed by account name (targets) or platform name (legacy).
 _registry = AdapterRegistry()
+
+# Error feed wiring guard — set_db_path/set_sender once per process
+_error_feed_wired = False
+
+
+def _ensure_error_feed(config, db_path: str) -> None:
+    """Wire the error feed singleton once per process."""
+    global _error_feed_wired
+    if _error_feed_wired:
+        return
+    error_feed.set_db_path(db_path)
+    error_feed.set_sender(lambda sev, msg: send_notification(config, f"[{sev}] {msg}"))
+    _error_feed_wired = True
 
 
 def record_post_success(conn, draft, result, config, project_name: str, dry_run: bool = False):
@@ -35,6 +50,7 @@ def record_post_success(conn, draft, result, config, project_name: str, dry_run:
         external_id=result.external_id,
         external_url=result.external_url,
         content=draft.content,
+        target_id=draft.target_id,
     )
     ops.insert_post(conn, post)
     ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
@@ -473,6 +489,9 @@ def scheduler_tick(
         db_path = get_db_path()
         conn = init_database(db_path)
 
+        # Wire error feed once per process
+        _ensure_error_feed(config, str(db_path))
+
         try:
             # --- Post-now mode: single draft, no promote/drain ---
             if draft_id:
@@ -580,29 +599,7 @@ def _tick_single_draft(conn, config, draft_id, dry_run, db_path=None) -> int:
             result = _post_draft(conn, draft, config, db_path=db_path)
 
         if result.success:
-            ops.update_draft(conn, draft.id, status="posted")
-            ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
-            post = Post(
-                id=generate_id("post"),
-                draft_id=draft.id,
-                project_id=draft.project_id,
-                platform=draft.platform,
-                external_id=result.external_id,
-                external_url=result.external_url,
-                content=draft.content,
-            )
-            ops.insert_post(conn, post)
-            ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
-
-            send_notification(
-                config,
-                f"*Posted successfully*\n\n"
-                f"Project: {project.name}\n"
-                f"Platform: {draft.platform}\n"
-                f"URL: {result.external_url or 'N/A'}\n\n"
-                f"```\n{draft.content[:300]}\n```",
-                dry_run=dry_run,
-            )
+            record_post_success(conn, draft, result, config, project.name, dry_run=dry_run)
         else:
             _handle_post_failure(conn, draft, result.error or "Unknown error", config, dry_run)
 
@@ -634,9 +631,40 @@ def _post_draft(conn, draft, config, db_path=None):
             error="Preview drafts cannot be posted. Promote to a real platform first.",
         )
 
-    # Get adapter from registry (cached per platform, shares rate limit state)
+    # Get adapter: targets path (draft.target_id set) or legacy path
+    db_path_str = str(db_path) if db_path else None
     try:
-        adapter = _registry.get(draft.platform, config, db_path=db_path)
+        target_id = draft.target_id
+        if target_id is not None and target_id in config.targets:
+            target = config.targets[target_id]
+            account_name = target.account
+            account = config.accounts.get(account_name)
+            if not account:
+                return PostResult(
+                    success=False,
+                    error=f"Account '{account_name}' not found for target '{target_id}'",
+                )
+            platform_creds = resolve_platform_creds(account, config.platform_credentials)
+
+            def on_error(msg, _acct=account_name):
+                error_feed.emit(
+                    ErrorSeverity.ERROR,
+                    msg,
+                    context={"account_name": _acct},
+                    source="auth",
+                )
+
+            adapter = _registry.get_for_account(
+                account_name,
+                account,
+                platform_creds,
+                config.env,
+                db_path_str or "",
+                on_error=on_error,
+            )
+        else:
+            # Legacy path: no target_id or target_id not in config
+            adapter = _registry.get(draft.platform, config, db_path=db_path_str)
     except ConfigError as e:
         return PostResult(success=False, error=str(e))
 
@@ -646,10 +674,10 @@ def _post_draft(conn, draft, config, db_path=None):
         decision = ops.get_decision(conn, draft.decision_id)
 
     if decision and decision.arc_id and not draft.post_format:
-        prior = ops.get_most_recent_posted_for_arc(conn, decision.arc_id, draft.platform)
+        all_arc_posts = ops.get_arc_posts(conn, decision.arc_id)
+        platform_posts = [p for p in all_arc_posts if p.platform == draft.platform]
+        prior = platform_posts[0] if platform_posts else None
         if prior:
-            all_arc_posts = ops.get_arc_posts(conn, decision.arc_id)
-            platform_posts = [p for p in all_arc_posts if p.platform == draft.platform]
             if len(platform_posts) <= 1:
                 draft.post_format = "quote"
             else:

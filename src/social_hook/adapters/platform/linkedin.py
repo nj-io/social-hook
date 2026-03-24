@@ -1,6 +1,7 @@
 """LinkedIn platform adapter using REST API."""
 
 import logging
+from collections.abc import Callable
 from urllib.parse import urlencode
 
 import requests
@@ -35,15 +36,38 @@ LINKEDIN_CHAR_LIMIT = 3000
 class LinkedInAdapter(PlatformAdapter):
     """LinkedIn API adapter using OAuth 2.0."""
 
-    def __init__(self, access_token: str):
+    def __init__(
+        self,
+        access_token: str,
+        *,
+        token_refresher: Callable[[], str] | None = None,
+    ):
         """Initialize LinkedIn adapter with access token.
 
         Args:
             access_token: OAuth 2.0 access token
+            token_refresher: Optional callback that returns a fresh access token.
+                Called on 401 responses to attempt token refresh and retry.
         """
         self.access_token = access_token
+        self._token_refresher = token_refresher
         self.author_urn: str | None = None
         self.rate_limit_state = RateLimitState()
+
+    def _try_refresh_on_401(self, response: requests.Response) -> bool:
+        """Attempt token refresh on 401 response.
+
+        Returns:
+            True if token was refreshed (caller should retry), False otherwise.
+        """
+        if response.status_code == 401 and self._token_refresher:
+            logger.info("LinkedIn got 401, attempting token refresh...")
+            try:
+                self.access_token = self._token_refresher()
+                return True
+            except Exception as e:
+                logger.warning("LinkedIn token refresh failed: %s", e)
+        return False
 
     @staticmethod
     def get_auth_url(
@@ -122,6 +146,14 @@ class LinkedInAdapter(PlatformAdapter):
                 headers=self._auth_headers(),
                 timeout=10,
             )
+
+            # Retry once on 401
+            if self._try_refresh_on_401(response):
+                response = requests.get(
+                    LINKEDIN_USERINFO_URL,
+                    headers=self._auth_headers(),
+                    timeout=10,
+                )
 
             if response.status_code == 200:
                 data = response.json()
@@ -290,6 +322,15 @@ class LinkedInAdapter(PlatformAdapter):
                 headers=self._post_headers(),
                 timeout=10,
             )
+
+            # Retry once on 401
+            if self._try_refresh_on_401(response):
+                response = requests.delete(
+                    f"{LINKEDIN_POSTS_URL}/{external_id}",
+                    headers=self._post_headers(),
+                    timeout=10,
+                )
+
             return response.status_code in (200, 204)
         except requests.RequestException as e:
             logger.error(f"LinkedIn delete request failed: {e}")
@@ -319,6 +360,15 @@ class LinkedInAdapter(PlatformAdapter):
                 json=body,
                 timeout=30,
             )
+
+            # Retry once on 401
+            if self._try_refresh_on_401(response):
+                response = requests.post(
+                    LINKEDIN_POSTS_URL,
+                    headers=self._post_headers(),
+                    json=body,
+                    timeout=30,
+                )
 
             if response.status_code in (200, 201):
                 post_id = response.headers.get("x-restli-id", "")

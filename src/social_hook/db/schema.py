@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260323142446
+SCHEMA_VERSION = 20260323154202
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS projects (
     discovery_files       TEXT DEFAULT NULL,
     prompt_docs           TEXT DEFAULT NULL,
     trigger_branch        TEXT DEFAULT NULL,
+    brief_section_metadata TEXT DEFAULT '{}',
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -100,6 +101,11 @@ CREATE TABLE IF NOT EXISTS drafts (
     is_intro        INTEGER NOT NULL DEFAULT 0,
     post_format     TEXT DEFAULT NULL CHECK (post_format IN ('single', 'thread', 'quote', 'reply')),
     reference_post_id TEXT DEFAULT NULL REFERENCES posts(id),
+    target_id       TEXT,
+    evaluation_cycle_id TEXT,
+    topic_id        TEXT,
+    suggestion_id   TEXT,
+    pattern_id      TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -108,6 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_drafts_scheduled ON drafts(status, scheduled_time) WHERE status = 'scheduled';
 CREATE INDEX IF NOT EXISTS idx_drafts_intro ON drafts(project_id) WHERE is_intro = 1;
 CREATE INDEX IF NOT EXISTS idx_drafts_reference_post ON drafts(reference_post_id) WHERE reference_post_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_drafts_target ON drafts(target_id) WHERE target_id IS NOT NULL;
 
 -- Draft Tweets (Thread Support)
 CREATE TABLE IF NOT EXISTS draft_tweets (
@@ -148,10 +155,15 @@ CREATE TABLE IF NOT EXISTS posts (
     external_id  TEXT,
     external_url TEXT,
     content      TEXT NOT NULL,
+    target_id    TEXT,
+    topic_tags   TEXT DEFAULT '[]',
+    feature_tags TEXT DEFAULT '[]',
+    is_thread_head INTEGER DEFAULT 0,
     posted_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_posts_project_time ON posts(project_id, posted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_target ON posts(target_id) WHERE target_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_posts_draft_id ON posts(draft_id);
 
 -- Lifecycles
@@ -280,6 +292,68 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     refresh_token TEXT NOT NULL,
     expires_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
+);
+
+-- Content topic queue
+CREATE TABLE IF NOT EXISTS content_topics (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    strategy TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    description TEXT,
+    priority_rank INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'uncovered'
+        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered')),
+    commit_count INTEGER NOT NULL DEFAULT 0,
+    last_commit_at TEXT,
+    last_posted_at TEXT,
+    created_by TEXT NOT NULL DEFAULT 'user',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Operator content suggestions
+CREATE TABLE IF NOT EXISTS content_suggestions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    strategy TEXT,
+    idea TEXT NOT NULL,
+    media_refs TEXT DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'evaluated', 'drafted', 'dismissed')),
+    source TEXT NOT NULL DEFAULT 'operator',
+    created_at TEXT DEFAULT (datetime('now')),
+    evaluated_at TEXT
+);
+
+-- Evaluation cycle grouping
+CREATE TABLE IF NOT EXISTS evaluation_cycles (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    trigger_type TEXT NOT NULL,
+    trigger_ref TEXT,
+    commit_analysis_id TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Observational content format patterns
+CREATE TABLE IF NOT EXISTS draft_patterns (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    pattern_name TEXT NOT NULL,
+    description TEXT,
+    example_draft_id TEXT,
+    created_by TEXT NOT NULL DEFAULT 'operator',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- System error persistence
+CREATE TABLE IF NOT EXISTS system_errors (
+    id TEXT PRIMARY KEY,
+    severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'error', 'critical')),
+    message TEXT NOT NULL,
+    context TEXT DEFAULT '{}',
+    source TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
 );
 """
 
