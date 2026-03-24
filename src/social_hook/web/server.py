@@ -161,6 +161,7 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
 
     After a restart, daemon threads from the previous process are dead,
     so any task still marked 'running' will never complete.
+    Also resets any decisions stuck in 'evaluating' state back to 'imported'.
     No data events are emitted — no WebSocket clients exist at startup.
 
     Returns the number of tasks cleaned up.
@@ -178,7 +179,19 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
         count = cursor.rowcount
         if count:
             logger.info("Marked %d stale background task(s) as failed on startup", count)
-        return count
+
+        # Reset decisions stuck in 'evaluating' (retrigger was interrupted)
+        eval_cursor = conn.execute(
+            "UPDATE decisions SET decision = 'imported' WHERE decision = 'evaluating'"
+        )
+        conn.commit()
+        eval_count = eval_cursor.rowcount
+        if eval_count:
+            logger.info(
+                "Reset %d 'evaluating' decision(s) back to 'imported' on startup", eval_count
+            )
+
+        return count + eval_count
     finally:
         conn.close()
 
@@ -1791,10 +1804,11 @@ async def api_delete_decision(decision_id: str):
 
 @app.post("/api/decisions/{decision_id}/retrigger")
 async def api_retrigger_decision(decision_id: str):
-    """Delete a decision and re-evaluate the commit from scratch.
+    """Re-evaluate a commit in-place, reusing the same decision ID.
 
-    Re-runs the full evaluator pipeline via background task, which may produce
-    a different decision, angle, episode type, or skip the commit entirely.
+    Cleans up old drafts, marks the decision as 'evaluating', then re-runs
+    the full evaluator pipeline via background task. The decision row stays
+    visible in the UI throughout (no delete/re-create gap).
     Returns 202 with task_id for frontend tracking via useBackgroundTasks.
     """
     conn = _get_conn()
@@ -1811,8 +1825,23 @@ async def api_retrigger_decision(decision_id: str):
         repo_path = project.repo_path
         project_id = decision.project_id
 
-        ops.delete_decision(conn, decision_id)
-        ops.emit_data_event(conn, "decision", "deleted", decision_id, project_id)
+        # Clean up old drafts (no-op for imported commits with no drafts)
+        conn.execute(
+            "DELETE FROM draft_changes WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
+            (decision_id,),
+        )
+        conn.execute(
+            "DELETE FROM draft_tweets WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
+            (decision_id,),
+        )
+        conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
+        # Mark as evaluating — row stays visible in the UI
+        conn.execute(
+            "UPDATE decisions SET decision = 'evaluating', reasoning = 'Re-evaluating...' WHERE id = ?",
+            (decision_id,),
+        )
+        conn.commit()
+        ops.emit_data_event(conn, "decision", "updated", decision_id, project_id)
     finally:
         conn.close()
 
@@ -1823,6 +1852,7 @@ async def api_retrigger_decision(decision_id: str):
             commit_hash=commit_hash,
             repo_path=repo_path,
             trigger_source="manual",
+            existing_decision_id=decision_id,
         )
         return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
@@ -2163,8 +2193,12 @@ async def api_tasks(
                     if r["result"]
                     else None,
                     "error": r["error"],
-                    "created_at": r["created_at"],
-                    "updated_at": r["updated_at"],
+                    "created_at": (r["created_at"] + "Z")
+                    if r["created_at"] and not r["created_at"].endswith("Z")
+                    else r["created_at"],
+                    "updated_at": (r["updated_at"] + "Z")
+                    if r["updated_at"] and not r["updated_at"].endswith("Z")
+                    else r["updated_at"],
                 }
                 for r in rows
             ]

@@ -68,8 +68,6 @@ export default function ProjectDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRetrigger, setConfirmRetrigger] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const [evaluatingId, setEvaluatingId] = useState<string | null>(null);
-  const [evaluateStartTime, setEvaluateStartTime] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [branchFilter, setBranchFilter] = useState<string>("");
   const [decisionBranches, setDecisionBranches] = useState<string[]>([]);
@@ -119,7 +117,7 @@ export default function ProjectDetailPage() {
     }
   }, []);
 
-  const { trackTask, isRunning: isTaskRunning } = useBackgroundTasks(id, onTaskCompleted);
+  const { trackTask, isRunning: isTaskRunning, getTask } = useBackgroundTasks(id, onTaskCompleted);
 
   const loadMemories = useCallback(async (repoPath: string) => {
     try {
@@ -548,6 +546,8 @@ export default function ProjectDetailPage() {
                   {decisions.map((d) => {
                     const isExpanded = expandedDecisions.has(d.id);
                     const isCreating = isTaskRunning(d.id);
+                    const isEvaluating = isTaskRunning(`retrigger-${d.id}`) || d.decision === "evaluating";
+                    const evalTask = getTask(`retrigger-${d.id}`);
                     const result = draftResult[d.id];
                     return (
                       <tr
@@ -645,14 +645,12 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1.5">
-                            {d.decision === "imported" ? (
+                            {(d.decision === "imported" || d.decision === "evaluating") ? (
                               <AsyncButton
-                                loading={evaluatingId === d.id || isTaskRunning(`retrigger-${d.id}`)}
-                                startTime={evaluatingId === d.id ? evaluateStartTime : null}
+                                loading={isEvaluating}
+                                startTime={evalTask?.created_at}
                                 loadingText="Evaluating"
                                 onClick={async () => {
-                                  setEvaluatingId(d.id);
-                                  setEvaluateStartTime(new Date().toISOString());
                                   setActionError(null);
                                   try {
                                     const res = await retriggerDecision(d.id);
@@ -661,18 +659,9 @@ export default function ProjectDetailPage() {
                                     }
                                   } catch (err) {
                                     setActionError(err instanceof Error ? err.message : "Evaluate failed");
-                                    setEvaluatingId(null);
-                                    setEvaluateStartTime(null);
                                   }
-                                  // Don't clear evaluatingId in finally — let isTaskRunning
-                                  // take over from trackTask. Clear after a short delay to
-                                  // give React time to batch the trackTask state update.
-                                  setTimeout(() => {
-                                    setEvaluatingId(null);
-                                    setEvaluateStartTime(null);
-                                  }, 500);
                                 }}
-                                disabled={!!evaluatingId || isTaskRunning(`retrigger-${d.id}`)}
+                                disabled={isEvaluating}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950 disabled:opacity-70"
                               >
                                 Evaluate

@@ -453,6 +453,28 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
     return decision.id
 
 
+def upsert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
+    """Insert or replace a decision, keeping the same ID.
+
+    Used by retrigger: the existing row (e.g. 'imported' or 'evaluating') is
+    replaced in-place so the decision_id stays stable and the frontend row
+    doesn't disappear during re-evaluation.
+    """
+    conn.execute("DELETE FROM decisions WHERE id = ?", (decision.id,))
+    conn.execute(
+        """
+        INSERT INTO decisions (id, project_id, commit_hash, commit_message,
+            decision, reasoning, angle, episode_type, episode_tags, post_category,
+            arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
+            reference_posts, branch, trigger_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        decision.to_row(),
+    )
+    conn.commit()
+    return decision.id
+
+
 def get_decision(conn: sqlite3.Connection, decision_id: str) -> Decision | None:
     """Get a decision by ID."""
     row = conn.execute("SELECT * FROM decisions WHERE id = ?", (decision_id,)).fetchone()

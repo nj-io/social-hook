@@ -160,6 +160,7 @@ def run_trigger(
     verbose: bool = False,
     show_prompt: bool = False,
     trigger_source: str = "commit",
+    existing_decision_id: str | None = None,
 ) -> int:
     """Run the commit-to-draft trigger pipeline.
 
@@ -176,6 +177,8 @@ def run_trigger(
         dry_run: If True, skip DB writes and real API calls
         config_path: Optional override for config location
         verbose: If True, print detailed output
+        existing_decision_id: If provided, reuse this ID instead of generating
+            a new one. Used by retrigger to update in-place (upsert).
 
     Returns:
         Exit code (0-4)
@@ -244,7 +247,7 @@ def run_trigger(
         gate_result = check_rate_limit(conn, config.rate_limits)
         if gate_result.blocked:
             decision = Decision(
-                id=generate_id("decision"),
+                id=existing_decision_id or generate_id("decision"),
                 project_id=project.id,
                 commit_hash=commit_hash,
                 decision="deferred_eval",
@@ -253,7 +256,12 @@ def run_trigger(
                 trigger_source=trigger_source,
                 branch=current_branch,
             )
-            db.insert_decision(decision)
+            if existing_decision_id:
+                from social_hook.db import operations as _ops
+
+                _ops.upsert_decision(conn, decision)
+            else:
+                db.insert_decision(decision)
             db.emit_data_event("decision", "created", decision.id, project.id)
             if verbose:
                 print(f"Evaluation deferred: {gate_result.reason}")
@@ -445,6 +453,7 @@ def run_trigger(
             evaluator_client=evaluator_client,
             dry_run=dry_run,
             verbose=verbose,
+            existing_decision_id=existing_decision_id,
         )
         conn.close()
         return result
@@ -465,7 +474,7 @@ def run_trigger(
     decision_type = _val(target.action)  # "draft", "hold", or "skip"
 
     decision = Decision(
-        id=generate_id("decision"),
+        id=existing_decision_id or generate_id("decision"),
         project_id=project.id,
         commit_hash=commit_hash,
         decision=decision_type,
@@ -493,7 +502,10 @@ def run_trigger(
             decision.decision = "skip"
             decision_type = "skip"
 
-    db.insert_decision(decision)
+    if existing_decision_id:
+        ops.upsert_decision(conn, decision)
+    else:
+        db.insert_decision(decision)
     db.emit_data_event("decision", "created", decision.id, project.id)
 
     # 8b. Arc activation: create new arc or link to existing
@@ -682,6 +694,7 @@ def _run_targets_path(
     evaluator_client,
     dry_run: bool,
     verbose: bool,
+    existing_decision_id: str | None = None,
 ) -> int:
     """New targets pipeline path: multi-strategy -> multi-target routing."""
     from social_hook.models import EvaluationCycle
@@ -734,7 +747,7 @@ def _run_targets_path(
     representative = first_draft_strategy or next(iter(evaluation.strategies.values()))
 
     decision = Decision(
-        id=generate_id("decision"),
+        id=existing_decision_id or generate_id("decision"),
         project_id=project.id,
         commit_hash=commit_hash,
         decision=decision_type,
@@ -762,7 +775,10 @@ def _run_targets_path(
             decision.decision = "skip"
             decision_type = "skip"
 
-    db.insert_decision(decision)
+    if existing_decision_id:
+        ops.upsert_decision(conn, decision)
+    else:
+        db.insert_decision(decision)
     db.emit_data_event("decision", "created", decision.id, project.id)
 
     # Arc activation for draftable strategies
