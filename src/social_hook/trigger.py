@@ -416,6 +416,7 @@ def run_trigger(
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
             scheduling_state=scheduling_state,
+            strategies=config.content_strategies or None,
         )
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
@@ -449,6 +450,7 @@ def run_trigger(
         return result
 
     # --- Legacy path: single "default" target ---
+    logger.warning("No targets configured. Using legacy platform-based drafting.")
     target = evaluation.strategies.get("default")
     if target is None:
         logger.error("Evaluation missing 'default' target")

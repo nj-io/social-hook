@@ -1442,10 +1442,8 @@ class TestPerPlatformPipeline:
         with patch("social_hook.trigger.DryRunContext", side_effect=CaptureDryRun):
             exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
         assert exit_code == 0
-        # Preview fallback: drafter is called for the auto-injected preview platform
-        mock_drafter_cls.return_value.create_draft.assert_called_once()
-        assert len(saved_drafts) == 1
-        assert saved_drafts[0].platform == "preview"
+        # No enabled platforms and no targets config = no drafts created
+        assert len(saved_drafts) == 0
 
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.llm.drafter.Drafter")

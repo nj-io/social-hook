@@ -270,6 +270,7 @@ def force_draft_topic(
             db,
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
+            strategies=config.content_strategies or None,
         )
 
         # Route and draft if targets config exists

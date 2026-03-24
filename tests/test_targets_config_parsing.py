@@ -316,7 +316,7 @@ class TestParsingErrors:
         with pytest.raises(ConfigError, match="missing required field 'platform'"):
             load_config(config_path)
 
-    def test_target_missing_account(self, tmp_path):
+    def test_target_missing_account_and_platform(self, tmp_path):
         config_data = {
             "models": {
                 "evaluator": "anthropic/claude-opus-4-5",
@@ -326,7 +326,7 @@ class TestParsingErrors:
             "targets": {"bad": {"strategy": "bp"}},
         }
         config_path = _write_config(tmp_path, config_data)
-        with pytest.raises(ConfigError, match="missing required field 'account'"):
+        with pytest.raises(ConfigError, match="must have either 'account' or 'platform'"):
             load_config(config_path)
 
     def test_credential_missing_platform(self, tmp_path):

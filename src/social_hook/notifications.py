@@ -144,6 +144,7 @@ def notify_draft_review(
             draft.id,
             platform=draft.platform,
             is_intro=getattr(draft, "is_intro", False),
+            preview_mode=getattr(draft, "preview_mode", False),
         )
         msg = OutboundMessage(text=msg_text, buttons=buttons)
         broadcast_notification(
@@ -206,6 +207,7 @@ def resend_draft_notification(
             draft.id,
             platform=draft.platform,
             is_intro=getattr(draft, "is_intro", False),
+            preview_mode=getattr(draft, "preview_mode", False),
         )
         msg = OutboundMessage(text=msg_text, buttons=buttons)
         broadcast_notification(

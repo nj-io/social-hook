@@ -383,6 +383,7 @@ class Draft:
     topic_id: str | None = None
     suggestion_id: str | None = None
     pattern_id: str | None = None
+    preview_mode: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -417,6 +418,7 @@ class Draft:
             "topic_id": self.topic_id,
             "suggestion_id": self.suggestion_id,
             "pattern_id": self.pattern_id,
+            "preview_mode": self.preview_mode,
             "created_at": _to_iso(self.created_at),
             "updated_at": _to_iso(self.updated_at),
         }
@@ -463,12 +465,13 @@ class Draft:
             topic_id=d.get("topic_id"),
             suggestion_id=d.get("suggestion_id"),
             pattern_id=d.get("pattern_id"),
+            preview_mode=bool(d.get("preview_mode", False)),
             created_at=_from_iso(d.get("created_at")),
             updated_at=_from_iso(d.get("updated_at")),
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (24 columns)."""
+        """Return tuple for INSERT (25 columns)."""
         import json
 
         return (
@@ -496,6 +499,7 @@ class Draft:
             self.topic_id,
             self.suggestion_id,
             self.pattern_id,
+            1 if self.preview_mode else 0,
         )
 
 

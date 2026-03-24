@@ -636,7 +636,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
 
     # Backward compatibility: auto-migrate platforms -> accounts/targets
     if not has_explicit_targets_config and platforms:
-        platform_credentials, accounts, targets = _auto_migrate_platforms(
+        platform_credentials, accounts, targets, content_strategy = _auto_migrate_platforms(
             platforms, content_strategy, content_strategies
         )
 
@@ -744,6 +744,7 @@ def _parse_targets(data: dict[str, Any]) -> dict[str, TargetConfig]:
             tgt_data,
             {
                 "account",
+                "platform",
                 "destination",
                 "strategy",
                 "primary",
@@ -755,13 +756,17 @@ def _parse_targets(data: dict[str, Any]) -> dict[str, TargetConfig]:
             },
             f"targets.{name}",
         )
-        account = tgt_data.get("account")
-        if not account:
-            raise ConfigError(f"Target '{name}' missing required field 'account'")
-        if not isinstance(account, str):
+        account = tgt_data.get("account", "")
+        platform = tgt_data.get("platform", "")
+        if not account and not platform:
+            raise ConfigError(f"Target '{name}' must have either 'account' or 'platform' specified")
+        if account and not isinstance(account, str):
             raise ConfigError(f"Target '{name}' account must be a string")
+        if platform and not isinstance(platform, str):
+            raise ConfigError(f"Target '{name}' platform must be a string")
         result[name] = TargetConfig(
-            account=account,
+            account=str(account) if account else "",
+            platform=str(platform) if platform else "",
             destination=tgt_data.get("destination", "timeline"),
             strategy=tgt_data.get("strategy", ""),
             primary=bool(tgt_data.get("primary", False)),
@@ -804,11 +809,15 @@ def _auto_migrate_platforms(
     dict[str, PlatformCredentialConfig],
     dict[str, AccountConfig],
     dict[str, TargetConfig],
+    str | None,
 ]:
     """Auto-migrate legacy platforms config to accounts/targets format.
 
     When platforms: exists but accounts:/targets: don't, generate
     equivalent new-format entries for backward compatibility.
+
+    Preview platforms are special-cased: they produce accountless targets
+    with a real platform (defaulting to "x") instead of AccountConfig entries.
     """
     import logging
 
@@ -822,9 +831,22 @@ def _auto_migrate_platforms(
     accts: dict[str, AccountConfig] = {}
     tgts: dict[str, TargetConfig] = {}
 
+    # Default strategy fallback: when no strategies exist, create a minimal default
+    if not content_strategy and not content_strategies:
+        content_strategies["default"] = ContentStrategyConfig(post_when="notable changes")
+        content_strategy = "default"
+
+    has_preview_only = True  # Track if preview is the only enabled platform
+
     for pname, pcfg in platforms.items():
         if not pcfg.enabled:
             continue
+
+        # Skip preview — it's not a real platform
+        if pname == "preview":
+            continue
+
+        has_preview_only = False
 
         # One PlatformCredentialConfig per platform (empty creds — legacy uses env vars)
         creds[pname] = PlatformCredentialConfig(platform=pname)
@@ -849,7 +871,22 @@ def _auto_migrate_platforms(
             primary=pcfg.priority == "primary",
         )
 
-    return creds, accts, tgts
+    # If preview was the only enabled platform, generate an accountless target
+    if has_preview_only and any(
+        pcfg.enabled and pname == "preview" for pname, pcfg in platforms.items()
+    ):
+        strategy = ""
+        if content_strategy and content_strategy in content_strategies:
+            strategy = content_strategy
+        tgts["x"] = TargetConfig(
+            account="",
+            platform="x",
+            destination="timeline",
+            strategy=strategy,
+            primary=True,
+        )
+
+    return creds, accts, tgts, content_strategy
 
 
 def validate_config(data: dict[str, Any]) -> Config:

@@ -512,9 +512,9 @@ class TestDraftNewFields:
     """Tests for evaluator rework Draft fields."""
 
     def test_draft_to_row_column_count(self):
-        """Draft.to_row() returns 24-element tuple."""
+        """Draft.to_row() returns 25-element tuple."""
         d = Draft(id="test", project_id="p", decision_id="d", platform="x", content="hello")
-        assert len(d.to_row()) == 24
+        assert len(d.to_row()) == 25
 
     def test_draft_intro_flag(self):
         """is_intro flag serializes correctly."""

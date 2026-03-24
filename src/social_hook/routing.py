@@ -10,7 +10,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from social_hook.config.platforms import FREQUENCY_PARAMS
-from social_hook.config.targets import AccountConfig, TargetConfig
+from social_hook.config.targets import AccountConfig, TargetConfig, resolve_target_platform
 from social_hook.config.yaml import Config
 
 # Import with fallback for Chunk 1 compatibility
@@ -94,9 +94,17 @@ def route_to_targets(
         tcfg = config.targets[tname]
         # Check source dependency: if source didn't fire, skip
         if tcfg.source and tcfg.source not in draft_targets:
-            account = config.accounts.get(tcfg.account)
-            if not account:
-                logger.warning("Target '%s' references unknown account '%s'", tname, tcfg.account)
+            if tcfg.account:
+                account = config.accounts.get(tcfg.account)
+                if not account:
+                    logger.warning(
+                        "Target '%s' references unknown account '%s'", tname, tcfg.account
+                    )
+                    continue
+            elif tcfg.platform:
+                account = AccountConfig(platform=tcfg.platform)
+            else:
+                logger.warning("Target '%s' has neither account nor platform", tname)
                 continue
             strategy_name = tcfg.strategy
             decision = strategy_decisions.get(strategy_name)
@@ -139,18 +147,37 @@ def _route_single_target(
 ) -> RoutedTarget:
     """Route a single target based on its strategy decision and scheduling."""
     tcfg = config.targets[target_name]
-    account = config.accounts.get(tcfg.account)
 
-    if not account:
-        logger.warning("Target '%s' references unknown account '%s'", target_name, tcfg.account)
-        # Return a skip with a clear reason
+    if tcfg.account:
+        account = config.accounts.get(tcfg.account)
+        if not account:
+            logger.warning("Target '%s' references unknown account '%s'", target_name, tcfg.account)
+            # Return a skip with a clear reason
+            return RoutedTarget(
+                target_name=target_name,
+                target_config=tcfg,
+                account_config=AccountConfig(platform="unknown"),
+                strategy_decision=StrategyDecisionInput(action="skip", reason="Unknown account"),
+                action="skip",
+                skip_reason=f"Unknown account '{tcfg.account}'",
+            )
+    elif tcfg.platform:
+        # Accountless target: construct synthetic AccountConfig from target.platform
+        logger.info(
+            "Target '%s' is accountless (platform=%s), using synthetic account",
+            target_name,
+            tcfg.platform,
+        )
+        account = AccountConfig(platform=tcfg.platform)
+    else:
+        logger.warning("Target '%s' has neither account nor platform", target_name)
         return RoutedTarget(
             target_name=target_name,
             target_config=tcfg,
             account_config=AccountConfig(platform="unknown"),
-            strategy_decision=StrategyDecisionInput(action="skip", reason="Unknown account"),
+            strategy_decision=StrategyDecisionInput(action="skip", reason="No account or platform"),
             action="skip",
-            skip_reason=f"Unknown account '{tcfg.account}'",
+            skip_reason="Target has neither account nor platform configured",
         )
 
     strategy_name = tcfg.strategy
@@ -249,8 +276,7 @@ def _check_scheduling_constraints(
 
     # Use calculate_optimal_time to check slot availability
     # We don't use the result for actual scheduling -- just check if it defers
-    account = config.accounts.get(tcfg.account)
-    platform = account.platform if account else "unknown"
+    platform = resolve_target_platform(tcfg, config) or "unknown"
 
     # Get a project_id from existing drafts context -- routing is called
     # per-evaluation so the project context is available to the caller.

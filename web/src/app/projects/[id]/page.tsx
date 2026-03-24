@@ -668,7 +668,7 @@ export default function ProjectDetailPage() {
                                     ? "border border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
                                     : "bg-accent text-accent-foreground hover:bg-accent/80"
                                 }`}
-                                title={platformCount === 0 ? "Uses preview mode" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
+                                title={platformCount === 0 ? "No platforms configured" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
                               >
                                 {isCreating && (
                                   <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">

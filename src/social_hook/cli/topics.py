@@ -358,16 +358,24 @@ def draft_now(
         )
         ops.insert_decision(conn, decision)
 
-        # Create draft
+        # Create draft — resolve real platform from targets config
+        from social_hook.config.targets import is_default_target_preview, resolve_default_platform
+        from social_hook.config.yaml import load_full_config
+
+        config_path = ctx.obj.get("config") if ctx.obj else None
+        _config = load_full_config(str(config_path) if config_path else None)
+        default_platform = resolve_default_platform(_config)
+
         draft_id = generate_id("draft")
         draft = Draft(
             id=draft_id,
             project_id=proj.id,
             decision_id=decision_id,
-            platform="preview",
+            platform=default_platform,
             content=context,
             status="draft",
             evaluation_cycle_id=cycle_id,
+            preview_mode=is_default_target_preview(_config),
         )
         ops.insert_draft(conn, draft)
 

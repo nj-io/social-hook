@@ -540,12 +540,11 @@ def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
-        if draft.platform == "preview":
+        if draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be scheduled. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
 
@@ -866,7 +865,9 @@ def _save_angle(adapter, chat_id, draft_id, text):
             if result.refined_media_spec:
                 parts.append("Media spec updated. Run `media-regen` to regenerate media.")
             msg = "\n".join(parts)
-            buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
+            buttons = get_review_buttons_normalized(
+                draft.id, platform=draft.platform, preview_mode=draft.preview_mode
+            )
             adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
         else:
             _send(
@@ -936,7 +937,7 @@ def _save_edit(
             adapter,
             chat_id,
             f"Draft `{draft_id[:12]}` updated.\n\n```\n{new_content}\n```",
-            buttons=get_review_buttons_normalized(draft_id),
+            buttons=get_review_buttons_normalized(draft_id, preview_mode=draft.preview_mode),
         )
     finally:
         conn.close()
@@ -1122,7 +1123,9 @@ def _handle_expert_escalation(
                         f"Media spec updated: {json_mod.dumps(result.refined_media_spec)[:200]}"
                     )
                 msg = f"Draft `{draft.id[:12]}` updated by Expert.\n\n" + "\n".join(parts)
-                buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
+                buttons = get_review_buttons_normalized(
+                    draft.id, platform=draft.platform, preview_mode=draft.preview_mode
+                )
                 adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
                 return msg
             finally:
@@ -1141,7 +1144,9 @@ def _handle_expert_escalation(
             adapter,
             chat_id,
             msg,
-            buttons=get_review_buttons_normalized(draft.id) if draft else None,
+            buttons=get_review_buttons_normalized(draft.id, preview_mode=draft.preview_mode)
+            if draft
+            else None,
         )
         return msg
 
@@ -1414,7 +1419,9 @@ def cmd_review(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
             angle=decision.angle if decision else None,
             evaluator_reasoning=decision.reasoning if decision else None,
         )
-        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
+        buttons = get_review_buttons_normalized(
+            draft.id, platform=draft.platform, preview_mode=draft.preview_mode
+        )
         adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
     finally:
         conn.close()

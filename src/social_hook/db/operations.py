@@ -719,13 +719,20 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
         INSERT INTO drafts (id, project_id, decision_id, platform, status, content,
             media_paths, media_type, media_spec, media_spec_used, suggested_time, scheduled_time,
             reasoning, superseded_by, retry_count, last_error, is_intro, post_format,
-            reference_post_id, target_id, evaluation_cycle_id, topic_id, suggestion_id, pattern_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_post_id, target_id, evaluation_cycle_id, topic_id, suggestion_id, pattern_id,
+            preview_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         draft.to_row(),
     )
     conn.commit()
     return draft.id
+
+
+def clear_draft_preview_mode(conn: sqlite3.Connection, draft_id: str) -> None:
+    """Clear preview_mode flag on a draft (e.g. after connecting an account)."""
+    conn.execute("UPDATE drafts SET preview_mode = 0 WHERE id = ?", (draft_id,))
+    conn.commit()
 
 
 def get_draft(conn: sqlite3.Connection, draft_id: str) -> Draft | None:

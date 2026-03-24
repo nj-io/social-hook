@@ -186,6 +186,7 @@ class TestSchedulerPostDraftTargetBranching:
 
         mock_draft = MagicMock()
         mock_draft.platform = "x"
+        mock_draft.preview_mode = False
         mock_draft.target_id = None
         mock_draft.content = "test content"
         mock_draft.decision_id = None
@@ -213,6 +214,7 @@ class TestSchedulerPostDraftTargetBranching:
 
         mock_draft = MagicMock()
         mock_draft.platform = "x"
+        mock_draft.preview_mode = False
         mock_draft.target_id = "main-feed"
         mock_draft.content = "test content"
         mock_draft.decision_id = None
@@ -403,19 +405,20 @@ class TestEnsureErrorFeed:
 
 
 class TestPreviewDraftBlocked:
-    """Preview platform drafts cannot be posted."""
+    """Preview-mode drafts cannot be posted."""
 
     def test_preview_returns_failure(self):
-        """_post_draft returns error for preview platform."""
+        """_post_draft returns error for preview-mode draft."""
         from social_hook.scheduler import _post_draft
 
         mock_draft = MagicMock()
-        mock_draft.platform = "preview"
+        mock_draft.platform = "x"
+        mock_draft.preview_mode = True
         mock_draft.target_id = None
 
         result = _post_draft(MagicMock(), mock_draft, MagicMock(), db_path=None)
         assert result.success is False
-        assert "Preview" in result.error
+        assert "account" in result.error.lower()
 
 
 class TestMissingAccountInTargetPath:
@@ -427,6 +430,7 @@ class TestMissingAccountInTargetPath:
 
         mock_draft = MagicMock()
         mock_draft.platform = "x"
+        mock_draft.preview_mode = False
         mock_draft.target_id = "my-target"
 
         mock_config = MagicMock()

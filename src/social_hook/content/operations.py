@@ -80,15 +80,19 @@ def combine_candidates(
     ops.insert_decision(conn, decision)
 
     # Create draft
+    from social_hook.config.targets import is_default_target_preview, resolve_default_platform
+
+    default_platform = resolve_default_platform(config)
     draft_id = generate_id("draft")
     draft = Draft(
         id=draft_id,
         project_id=project_id,
         decision_id=decision_id,
-        platform="preview",
+        platform=default_platform,
         content=combined_context,
         status="draft",
         evaluation_cycle_id=cycle_id,
+        preview_mode=is_default_target_preview(config),
     )
     ops.insert_draft(conn, draft)
 
@@ -167,15 +171,19 @@ def trigger_hero_launch(
     ops.insert_decision(conn, decision)
 
     # Create draft
+    from social_hook.config.targets import is_default_target_preview, resolve_default_platform
+
+    default_platform = resolve_default_platform(config)
     draft_id = generate_id("draft")
     draft = Draft(
         id=draft_id,
         project_id=project_id,
         decision_id=decision_id,
-        platform="preview",
+        platform=default_platform,
         content=hero_context,
         status="draft",
         evaluation_cycle_id=cycle_id,
+        preview_mode=is_default_target_preview(config),
     )
     ops.insert_draft(conn, draft)
 

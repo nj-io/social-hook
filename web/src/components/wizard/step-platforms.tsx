@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { Note } from "@/components/ui/note";
 import type { PlatformEntry } from "./use-wizard-state";
 
 interface StepPlatformsProps {
@@ -8,14 +10,12 @@ interface StepPlatformsProps {
 }
 
 const BUILT_IN_PLATFORMS = [
-  { name: "preview", label: "Preview", description: "Test draft generation without posting anywhere", tiers: [] },
   { name: "x", label: "X (Twitter)", description: "Short-form posts and threads", tiers: ["free", "basic", "premium", "premium+"] },
   { name: "linkedin", label: "LinkedIn", description: "Professional long-form posts", tiers: [] },
 ];
 
 export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
-  const hasRealPlatform = platforms.some((p) => p.name !== "preview" && p.enabled);
-  const hasPreview = platforms.some((p) => p.name === "preview" && p.enabled);
+  const [validationError, setValidationError] = useState("");
 
   function togglePlatform(name: string) {
     let next = platforms.map((p) => ({ ...p }));
@@ -26,23 +26,9 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
     }
 
     const target = next.find((p) => p.name === name)!;
-    const enabling = !target.enabled;
+    next = next.map((p) => p.name === name ? { ...p, enabled: !target.enabled } : p);
 
-    if (enabling) {
-      // Mutual exclusivity: enabling preview disables real platforms, and vice versa
-      if (name === "preview") {
-        next = next.map((p) => p.name === "preview" ? { ...p, enabled: true } : { ...p, enabled: false });
-      } else {
-        next = next.map((p) =>
-          p.name === name ? { ...p, enabled: true }
-            : p.name === "preview" ? { ...p, enabled: false }
-              : p,
-        );
-      }
-    } else {
-      next = next.map((p) => p.name === name ? { ...p, enabled: false } : p);
-    }
-
+    setValidationError("");
     onChange(next);
   }
 
@@ -55,26 +41,24 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
       <div>
         <h3 className="text-lg font-semibold">Platforms</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Select which platforms to generate content for. Preview and publishing platforms are separate modes.
+          Select which platforms to generate content for.
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <Note variant="info">
+        Platforms start in preview mode. Connect an account when you&#39;re ready to post.
+      </Note>
+
+      <div className="grid gap-3 sm:grid-cols-2">
         {BUILT_IN_PLATFORMS.map((bp) => {
           const platform = platforms.find((p) => p.name === bp.name);
           const enabled = platform?.enabled ?? false;
-          const isRealPlatform = bp.name !== "preview";
-          const greyed = (isRealPlatform && hasPreview) || (!isRealPlatform && hasRealPlatform);
 
           return (
             <div
               key={bp.name}
               className={`rounded-lg border-2 p-4 transition-colors ${
-                enabled
-                  ? "border-accent bg-accent/5"
-                  : greyed
-                    ? "border-border opacity-40"
-                    : "border-border"
+                enabled ? "border-accent bg-accent/5" : "border-border"
               }`}
             >
               <label className="flex cursor-pointer items-center gap-2">
@@ -90,19 +74,17 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
 
               {enabled && platform && (
                 <div className="mt-3 space-y-2">
-                  {bp.name !== "preview" && (
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">Priority</label>
-                      <select
-                        value={platform.priority}
-                        onChange={(e) => updatePlatform(bp.name, { priority: e.target.value as "primary" | "secondary" })}
-                        className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
-                      >
-                        <option value="primary">Primary</option>
-                        <option value="secondary">Secondary</option>
-                      </select>
-                    </div>
-                  )}
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Priority</label>
+                    <select
+                      value={platform.priority}
+                      onChange={(e) => updatePlatform(bp.name, { priority: e.target.value as "primary" | "secondary" })}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+                    >
+                      <option value="primary">Primary</option>
+                      <option value="secondary">Secondary</option>
+                    </select>
+                  </div>
 
                   {bp.tiers.length > 0 && (
                     <div>
@@ -119,17 +101,15 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
                     </div>
                   )}
 
-                  {isRealPlatform && (
-                    <label className="flex items-center gap-2 text-xs">
-                      <input
-                        type="checkbox"
-                        checked={platform.introduce}
-                        onChange={(e) => updatePlatform(bp.name, { introduce: e.target.checked })}
-                        className="rounded border-border"
-                      />
-                      Introduce project to this audience
-                    </label>
-                  )}
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={platform.introduce}
+                      onChange={(e) => updatePlatform(bp.name, { introduce: e.target.checked })}
+                      className="rounded border-border"
+                    />
+                    Introduce project to this audience
+                  </label>
                 </div>
               )}
             </div>
@@ -137,10 +117,10 @@ export function StepPlatforms({ platforms, onChange }: StepPlatformsProps) {
         })}
       </div>
 
-      {hasPreview && (
-        <p className="text-xs text-muted-foreground">
-          Preview mode generates drafts you can review without publishing. You can switch to real platforms later in Settings.
-        </p>
+      {validationError && (
+        <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+          {validationError}
+        </div>
       )}
     </div>
   );

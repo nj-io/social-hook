@@ -995,6 +995,71 @@ async def api_resend_draft_notification(draft_id: str):
         raise HTTPException(status_code=500, detail=str(e)) from None
 
 
+@app.post("/api/drafts/{draft_id}/connect")
+async def api_connect_draft(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Connect a preview-mode draft to an account.
+
+    Clears preview_mode and optionally persists the target-to-account link.
+
+    Body:
+        account: Account name to connect
+    """
+    from social_hook.config.yaml import load_full_config
+    from social_hook.parsing import check_unknown_keys
+
+    check_unknown_keys(body, {"account"}, "connect_draft", strict=True)
+
+    account_name = body.get("account")
+    if not account_name:
+        raise HTTPException(status_code=400, detail="Missing 'account' in body")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if not draft.preview_mode:
+            raise HTTPException(status_code=400, detail="Draft is not in preview mode")
+        if draft.status in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot connect draft with status '{draft.status}'",
+            )
+
+        config = load_full_config()
+        acct = config.accounts.get(account_name)
+        if not acct:
+            raise HTTPException(status_code=400, detail=f"Account '{account_name}' not found")
+        if acct.platform != draft.platform:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Account platform '{acct.platform}' does not match draft platform '{draft.platform}'",
+            )
+
+        ops.clear_draft_preview_mode(conn, draft_id)
+
+        # Persist target -> account link
+        target_name = draft.target_id
+        if target_name and target_name in config.targets:
+            from social_hook.config.yaml import save_config
+
+            save_config(
+                {"targets": {target_name: {"account": account_name}}},
+                config_path=get_config_path(),
+                deep_merge=True,
+            )
+
+        ops.emit_data_event(conn, "draft", "connected", draft_id, draft.project_id)
+        return {
+            "status": "connected",
+            "draft_id": draft_id,
+            "account": account_name,
+            "platform": draft.platform,
+        }
+    finally:
+        conn.close()
+
+
 @app.post("/api/drafts/{draft_id}/promote")
 async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
     """Promote a preview draft to a real platform.
@@ -1014,8 +1079,8 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
         draft = ops.get_draft(conn, draft_id)
         if not draft:
             raise HTTPException(status_code=404, detail="Draft not found")
-        if draft.platform != "preview":
-            raise HTTPException(status_code=400, detail="Only preview drafts can be promoted")
+        if not draft.preview_mode:
+            raise HTTPException(status_code=400, detail="Only preview-mode drafts can be promoted")
         if draft.status in TERMINAL_STATUSES:
             raise HTTPException(
                 status_code=400,
@@ -1811,7 +1876,7 @@ async def api_enabled_platforms():
     for name, pcfg in config.platforms.items():
         if pcfg.enabled:
             enabled[name] = {"priority": pcfg.priority, "type": pcfg.type}
-    real_count = sum(1 for n in enabled if n != "preview")
+    real_count = len(enabled)
     return {"platforms": enabled, "count": len(enabled), "real_count": real_count}
 
 

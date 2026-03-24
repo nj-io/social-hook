@@ -188,6 +188,7 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
             media_guidance=project_config.media_guidance if project_config else None,
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
+            strategies=config.content_strategies or None,
         )
     except Exception as e:
         logger.error(f"LLM API error during consolidation re-evaluation: {e}")

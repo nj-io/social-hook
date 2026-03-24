@@ -6,14 +6,20 @@ PlatformSettingsConfig, and the validate_targets_config() function.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from social_hook.config.platforms import FREQUENCY_PRESETS
+from social_hook.config.platforms import FREQUENCY_PRESETS, SMART_DEFAULTS
 from social_hook.errors import ConfigError
 
 if TYPE_CHECKING:
     from social_hook.config.yaml import Config
+
+logger = logging.getLogger(__name__)
+
+# Known builtin platforms (platforms with SMART_DEFAULTS entries, excluding _custom)
+KNOWN_BUILTIN_PLATFORMS = {k for k in SMART_DEFAULTS if k != "_custom"}
 
 # Valid destinations for targets
 VALID_DESTINATIONS = {"timeline", "community", "quote-retweet"}
@@ -43,7 +49,8 @@ class AccountConfig:
 class TargetConfig:
     """A specific content flow -- the pipeline unit."""
 
-    account: str  # ref to accounts entry
+    account: str = ""  # ref to accounts entry (empty for accountless/preview-mode targets)
+    platform: str = ""  # direct platform name (used when account is empty)
     destination: str = "timeline"  # "timeline", "community", "quote-retweet"
     strategy: str = ""  # ref to content_strategies entry
     primary: bool = False
@@ -63,6 +70,59 @@ class PlatformSettingsConfig:
     """
 
     cross_account_gap_minutes: int = 0  # 0 = disabled
+
+
+def resolve_target_platform(target: TargetConfig, config: Config) -> str:
+    """Return the platform name for a target.
+
+    If the target has an account, look up the account's platform.
+    If the target has no account, use target.platform directly.
+    """
+    if target.account:
+        account = config.accounts.get(target.account)
+        if account:
+            return account.platform
+        else:
+            logger.warning(
+                "Target references unknown account '%s', falling back to target.platform",
+                target.account,
+            )
+            return target.platform
+    else:
+        return target.platform
+
+
+def resolve_default_platform(config: Config) -> str:
+    """Find the default platform from configured targets.
+
+    Priority: primary target's platform > first target's platform > "x".
+    """
+    targets = getattr(config, "targets", None) or {}
+    for _name, target in targets.items():
+        if target.primary:
+            return resolve_target_platform(target, config)
+    # Fall back to first target
+    for _name, target in targets.items():
+        platform = resolve_target_platform(target, config)
+        if platform:
+            return platform
+    return "x"
+
+
+def is_default_target_preview(config: Config) -> bool:
+    """Check whether the default target is in preview mode (no account connected).
+
+    Returns True if the primary target (or first target) has no account,
+    or if no targets are configured.
+    """
+    targets = getattr(config, "targets", None) or {}
+    for _name, target in targets.items():
+        if target.primary:
+            return not bool(target.account)
+    # Fall back to first target
+    for _name, target in targets.items():
+        return not bool(target.account)
+    return True
 
 
 def validate_targets_config(config: Config) -> None:
@@ -92,11 +152,25 @@ def validate_targets_config(config: Config) -> None:
     if not config.accounts and not config.targets:
         return
 
-    # --- Account reference validation ---
+    # --- Account / platform reference validation ---
     for target_name, target in config.targets.items():
-        if target.account not in config.accounts:
+        if target.account:
+            # Account-linked target: account must resolve
+            if target.account not in config.accounts:
+                raise ConfigError(
+                    f"Target '{target_name}' references unknown account '{target.account}'"
+                )
+        elif target.platform:
+            # Accountless target: platform must be a known builtin platform
+            if target.platform not in KNOWN_BUILTIN_PLATFORMS:
+                raise ConfigError(
+                    f"Target '{target_name}' has unknown platform '{target.platform}': "
+                    f"must be one of {sorted(KNOWN_BUILTIN_PLATFORMS)}"
+                )
+        else:
+            # Neither account nor platform specified
             raise ConfigError(
-                f"Target '{target_name}' references unknown account '{target.account}'"
+                f"Target '{target_name}' must have either 'account' or 'platform' specified"
             )
 
     # --- Identity reference validation ---
@@ -139,15 +213,16 @@ def validate_targets_config(config: Config) -> None:
     primary_by_platform: dict[str, str] = {}  # platform -> first primary target name
     for target_name, target in config.targets.items():
         if target.primary:
-            account = config.accounts.get(target.account)
-            if account:
-                platform = account.platform
+            platform = resolve_target_platform(target, config)
+            if platform:
                 if platform in primary_by_platform:
                     raise ConfigError(
                         f"Multiple primary targets for platform '{platform}': "
                         f"'{primary_by_platform[platform]}' and '{target_name}'"
                     )
                 primary_by_platform[platform] = target_name
+            else:
+                logger.warning("Target '%s' is primary but has no resolvable platform", target_name)
 
     # --- community_id required when destination=community ---
     for target_name, target in config.targets.items():

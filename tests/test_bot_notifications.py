@@ -215,7 +215,7 @@ class TestGetReviewButtonsNormalized:
         assert b1[0].buttons[0].payload != b2[0].buttons[0].payload
 
     def test_preview_buttons(self):
-        buttons = get_review_buttons_normalized("draft_abc", platform="preview")
+        buttons = get_review_buttons_normalized("draft_abc", platform="x", preview_mode=True)
         labels = [btn.label for row in buttons for btn in row.buttons]
         assert labels == ["Edit", "Reject", "Promote"]
         actions = [btn.action for row in buttons for btn in row.buttons]

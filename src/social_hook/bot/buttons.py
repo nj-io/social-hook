@@ -217,12 +217,11 @@ def btn_approve(
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.platform == "preview":
+        if draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be posted directly. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
 
@@ -272,12 +271,11 @@ def btn_schedule_optimal(
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.platform == "preview":
+        if draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be scheduled. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
 
@@ -439,12 +437,11 @@ def btn_quick_approve(
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.platform == "preview":
+        if draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be posted directly. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
 
@@ -516,8 +513,12 @@ def btn_post_now(
             _send(adapter, chat_id, f"Cannot post: draft status is {draft.status}")
             return
 
-        if draft.platform == "preview":
-            _send(adapter, chat_id, "Cannot post preview drafts.")
+        if draft.preview_mode:
+            _send(
+                adapter,
+                chat_id,
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
+            )
             return
 
         # Check project is not paused
@@ -599,12 +600,11 @@ def btn_schedule_custom(
         from social_hook.db import get_draft
 
         draft = get_draft(conn, draft_id)
-        if draft and draft.platform == "preview":
+        if draft and draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be scheduled. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
     finally:
@@ -1690,8 +1690,8 @@ def btn_promote_submenu(
         if not draft:
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
-        if draft.platform != "preview":
-            _send(adapter, chat_id, "Only preview drafts can be promoted.")
+        if not draft.preview_mode:
+            _send(adapter, chat_id, "Only preview-mode drafts can be promoted.")
             return
         if draft.status in TERMINAL_STATUSES:
             _send(adapter, chat_id, f"Cannot promote: draft status is '{draft.status}'")
@@ -1703,9 +1703,7 @@ def btn_promote_submenu(
         _send(adapter, chat_id, "Config not available.")
         return
 
-    real_platforms = [
-        name for name, pcfg in config.platforms.items() if pcfg.enabled and name != "preview"
-    ]
+    real_platforms = [name for name, pcfg in config.platforms.items() if pcfg.enabled]
 
     if not real_platforms:
         _send(
@@ -1754,8 +1752,8 @@ def btn_promote_to(
         if not draft:
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
-        if draft.platform != "preview":
-            _send(adapter, chat_id, "Only preview drafts can be promoted.")
+        if not draft.preview_mode:
+            _send(adapter, chat_id, "Only preview-mode drafts can be promoted.")
             return
         if draft.status in TERMINAL_STATUSES:
             _send(adapter, chat_id, f"Cannot promote: draft status is '{draft.status}'")
@@ -1840,7 +1838,9 @@ def btn_promote_to(
         # Send review with buttons for the new draft
         from social_hook.bot.notifications import get_review_buttons_normalized
 
-        buttons = get_review_buttons_normalized(new_draft.id, platform=new_draft.platform)
+        buttons = get_review_buttons_normalized(
+            new_draft.id, platform=new_draft.platform, preview_mode=new_draft.preview_mode
+        )
         _send_with_buttons(
             adapter,
             chat_id,
@@ -1963,7 +1963,9 @@ def handle_cycle_view(
 
         strategy = getattr(draft, "strategy", None) or draft.platform
         text = f"*{strategy}* — `{draft.id[:12]}` ({draft.status})\n\n```\n{draft.content}\n```"
-        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
+        buttons = get_review_buttons_normalized(
+            draft.id, platform=draft.platform, preview_mode=draft.preview_mode
+        )
         _send_with_buttons(adapter, chat_id, text, buttons)
     finally:
         conn.close()

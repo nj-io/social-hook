@@ -146,6 +146,7 @@ export interface Draft {
   last_error?: string;
   retry_count?: number;
   is_intro: boolean;
+  preview_mode: boolean;
   post_format: string | null;
   reference_post_id: string | null;
   created_at: string;

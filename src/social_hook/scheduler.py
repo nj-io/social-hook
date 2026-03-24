@@ -438,6 +438,7 @@ def _run_batch_evaluation(conn, config, project, commit, deferred):
             media_guidance=project_config.media_guidance if project_config else None,
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
+            strategies=config.content_strategies or None,
         )
     except Exception as e:
         logger.error("LLM API error during drain batch evaluation: %s", e)
@@ -725,10 +726,10 @@ def _post_draft(conn, draft, config, db_path=None):
     """
     from social_hook.adapters.models import PostResult
 
-    if draft.platform == "preview":
+    if draft.preview_mode:
         return PostResult(
             success=False,
-            error="Preview drafts cannot be posted. Promote to a real platform first.",
+            error="No account connected. Run 'social-hook account add' to connect and enable posting.",
         )
 
     # Get adapter: targets path (draft.target_id set) or legacy path

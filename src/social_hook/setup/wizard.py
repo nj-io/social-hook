@@ -1636,6 +1636,11 @@ def _setup_platforms(
         yaml_config.setdefault("platforms", {})[name] = pcfg
         _success(f"Added {name} ({pcfg['priority']})")
 
+    _info(
+        "Platforms start in preview mode. "
+        "Run 'social-hook account add' to connect and enable posting."
+    )
+
     if progress:
         progress.advance()
 

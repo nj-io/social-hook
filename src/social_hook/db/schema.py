@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260323154202
+SCHEMA_VERSION = 20260324093540
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     topic_id        TEXT,
     suggestion_id   TEXT,
     pattern_id      TEXT,
+    preview_mode    INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

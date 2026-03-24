@@ -44,12 +44,12 @@ export function StepCredentials({
   hasClaudeCli,
 }: StepCredentialsProps) {
   const [expanded, setExpanded] = useState(!templatePreFilled);
-  const realPlatforms = enabledPlatforms.filter((p) => p !== "preview" && PLATFORM_CREDENTIAL_KEYS[p]);
-  const previewOnly = enabledPlatforms.length === 0 || (enabledPlatforms.length === 1 && enabledPlatforms[0] === "preview");
+  const realPlatforms = enabledPlatforms.filter((p) => PLATFORM_CREDENTIAL_KEYS[p]);
+  const noAccountsConfigured = realPlatforms.length === 0;
   const needsLlmKey = !hasClaudeCli;
 
-  // Nothing needed: Claude CLI detected + preview only
-  if (hasClaudeCli && previewOnly && !expanded) {
+  // Nothing needed: Claude CLI detected + no accounts configured
+  if (hasClaudeCli && noAccountsConfigured && !expanded) {
     return (
       <div className="animate-wizard-dissolve space-y-4">
         <div>
@@ -57,7 +57,7 @@ export function StepCredentials({
         </div>
         <div className="rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300">
           <span className="font-medium">Claude Code detected</span> — content generation will use your existing Claude subscription at no extra cost.
-          No additional API keys are needed for preview mode.
+          No API keys needed. Connect an account when you&#39;re ready to post.
         </div>
         <button
           onClick={() => setExpanded(true)}
@@ -131,7 +131,7 @@ export function StepCredentials({
 
       {realPlatforms.length === 0 && needsLlmKey && (
         <p className="text-xs text-muted-foreground">
-          No platform API keys needed — preview mode does not require publishing credentials.
+          No API keys needed. Connect an account when you&#39;re ready to post.
           You can add platform keys later in Settings.
         </p>
       )}
