@@ -227,10 +227,10 @@ def validate(
     if json_output:
         typer.echo(json_mod.dumps({"valid": all_valid, "platforms": results}, indent=2))
     else:
-        for r in results:
-            missing_keys = r["missing_keys"]  # type: ignore[assignment]
-            status = "valid" if r["valid"] else f"missing: {', '.join(missing_keys)}"
-            typer.echo(f"  {r['platform']:<12} {status}")
+        for platform, keys in platform_keys.items():
+            missing = [k for k in keys if not env_vars.get(k)]
+            status = "valid" if not missing else f"missing: {', '.join(missing)}"
+            typer.echo(f"  {platform:<12} {status}")
         if all_valid:
             typer.echo("\nAll credentials valid.")
         else:
