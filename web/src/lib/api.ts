@@ -735,6 +735,16 @@ export async function fetchCycleDetail(projectId: string, cycleId: string): Prom
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/cycles/${encodeURIComponent(cycleId)}`);
 }
 
+export async function approveAllCycleDrafts(
+  projectId: string,
+  cycleId: string,
+): Promise<{ status: string; approved_count: number; draft_ids?: string[] }> {
+  return apiFetch(
+    `/api/projects/${encodeURIComponent(projectId)}/cycles/${encodeURIComponent(cycleId)}/approve-all`,
+    { method: "POST" },
+  );
+}
+
 // System
 export async function fetchSystemErrors(): Promise<{ errors: SystemError[] }> {
   return apiFetch("/api/system/errors");

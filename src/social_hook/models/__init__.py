@@ -65,18 +65,6 @@ class DecisionType(Enum):
     DEFERRED_EVAL = "deferred_eval"
 
 
-class EpisodeType(Enum):
-    """Post structural categories (vocabulary for angle selection)."""
-
-    DECISION = "decision"  # Why we chose X over Y
-    BEFORE_AFTER = "before_after"  # Measurable change with proof
-    DEMO_PROOF = "demo_proof"  # Show the working thing
-    MILESTONE = "milestone"  # Checkpoint - what changed, what's next
-    POSTMORTEM = "postmortem"  # Issue -> fix -> learnings
-    LAUNCH = "launch"  # Value prop + who it's for + CTA
-    SYNTHESIS = "synthesis"  # Frames overall story, pays narrative debt
-
-
 class PostCategory(Enum):
     """How each post relates to ongoing narrative."""
 
@@ -111,6 +99,9 @@ class ArcStatus(Enum):
     ACTIVE = "active"
     COMPLETED = "completed"
     ABANDONED = "abandoned"
+
+
+ARC_STATUSES = frozenset(s.value for s in ArcStatus)
 
 
 # =============================================================================
@@ -984,6 +975,12 @@ class ContentTopic:
     created_by: str = "user"
     created_at: str | None = None
 
+    def __post_init__(self):
+        if self.status not in TOPIC_STATUSES:
+            raise ValueError(
+                f"Invalid status '{self.status}', must be one of {sorted(TOPIC_STATUSES)}"
+            )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -1047,6 +1044,12 @@ class ContentSuggestion:
     source: str = "operator"
     created_at: str | None = None
     evaluated_at: str | None = None
+
+    def __post_init__(self):
+        if self.status not in SUGGESTION_STATUSES:
+            raise ValueError(
+                f"Invalid status '{self.status}', must be one of {sorted(SUGGESTION_STATUSES)}"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {

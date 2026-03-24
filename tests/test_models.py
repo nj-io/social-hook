@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 
 from social_hook.models import (
+    ARC_STATUSES,
     EDITABLE_STATUSES,
     PENDING_STATUSES,
     TERMINAL_STATUSES,
@@ -14,7 +15,6 @@ from social_hook.models import (
     DecisionType,
     Draft,
     DraftStatus,
-    EpisodeType,
     Lifecycle,
     LifecyclePhase,
     PostCategory,
@@ -60,15 +60,9 @@ class TestEnums:
         assert PostFormat.QUOTE.value == "quote"
         assert PostFormat.REPLY.value == "reply"
 
-    def test_episode_type_values(self):
-        """EpisodeType values are correct."""
-        assert EpisodeType.DECISION.value == "decision"
-        assert EpisodeType.BEFORE_AFTER.value == "before_after"
-        assert EpisodeType.DEMO_PROOF.value == "demo_proof"
-        assert EpisodeType.MILESTONE.value == "milestone"
-        assert EpisodeType.POSTMORTEM.value == "postmortem"
-        assert EpisodeType.LAUNCH.value == "launch"
-        assert EpisodeType.SYNTHESIS.value == "synthesis"
+    def test_arc_statuses_frozenset(self):
+        """ARC_STATUSES matches ArcStatus enum values."""
+        assert frozenset({"proposed", "active", "completed", "abandoned"}) == ARC_STATUSES
 
     def test_post_category_values(self):
         """PostCategory values are correct."""

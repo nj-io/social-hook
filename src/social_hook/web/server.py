@@ -3888,12 +3888,20 @@ async def api_draft_now_topic(project_id: str, topic_id: str):
     finally:
         conn.close()
 
+    strategy = topic.strategy
+    t_id = topic_id
+
     def _blocking_draft_topic():
-        # TODO: Phase 4 backend — implement topic-based drafting trigger
-        # For now, return a placeholder result. The background task infrastructure
-        # is wired up and ready; the actual LLM drafting logic will be plumbed
-        # once the topic trigger function is added to trigger.py.
-        return {"topic_id": topic_id, "status": "not_implemented"}
+        from social_hook.config.yaml import load_full_config
+        from social_hook.topics import force_draft_topic
+
+        config = load_full_config()
+        c = _get_conn()
+        try:
+            cycle_id = force_draft_topic(c, config, pid, t_id, strategy)
+            return {"topic_id": t_id, "cycle_id": cycle_id, "status": "completed"}
+        finally:
+            c.close()
 
     task_id = _run_background_task(
         "draft_topic",
@@ -4084,9 +4092,19 @@ async def api_combine_topics(project_id: str, body: dict[str, Any] = Body(...)):
     finally:
         conn.close()
 
+    t_ids = topic_ids
+
     def _blocking_combine():
-        # TODO: Phase 4 backend — implement topic combination drafting
-        return {"topic_ids": topic_ids, "status": "not_implemented"}
+        from social_hook.config.yaml import load_full_config
+        from social_hook.content.operations import combine_candidates
+
+        config = load_full_config()
+        c = _get_conn()
+        try:
+            draft_id = combine_candidates(c, config, t_ids, pid)
+            return {"topic_ids": t_ids, "draft_id": draft_id, "status": "completed"}
+        finally:
+            c.close()
 
     task_id = _run_background_task(
         "combine_topics",
@@ -4113,12 +4131,21 @@ async def api_hero_launch(project_id: str):
             raise HTTPException(status_code=409, detail="Hero launch already in progress")
 
         pid = project["id"]
+        project_path = project["repo_path"]
     finally:
         conn.close()
 
     def _blocking_hero_launch():
-        # TODO: Phase 4 backend — implement hero launch drafting
-        return {"project_id": pid, "status": "not_implemented"}
+        from social_hook.config.yaml import load_full_config
+        from social_hook.content.operations import trigger_hero_launch
+
+        config = load_full_config()
+        c = _get_conn()
+        try:
+            draft_id = trigger_hero_launch(c, config, pid, project_path)
+            return {"project_id": pid, "draft_id": draft_id, "status": "completed"}
+        finally:
+            c.close()
 
     task_id = _run_background_task(
         "hero_launch",
@@ -4171,6 +4198,43 @@ async def api_get_cycle_detail(project_id: str, cycle_id: str):
         cycle_dict["drafts"] = [d.to_dict() for d in drafts]
 
         return cycle_dict
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/cycles/{cycle_id}/approve-all")
+async def api_approve_all_cycle_drafts(project_id: str, cycle_id: str):
+    """Batch-approve all drafts in an evaluation cycle."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        # Verify cycle exists
+        row = conn.execute(
+            "SELECT id FROM evaluation_cycles WHERE id = ? AND project_id = ?",
+            (cycle_id, project_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Cycle not found")
+
+        # Get all drafts in this cycle that are in "draft" status
+        drafts = ops.get_drafts_by_cycle(conn, cycle_id)
+        approvable = [d for d in drafts if d.status == "draft"]
+
+        if not approvable:
+            return {"status": "no_drafts", "approved_count": 0}
+
+        approved_ids = []
+        for draft in approvable:
+            ops.update_draft(conn, draft.id, status="approved")
+            ops.emit_data_event(conn, "draft", "updated", draft.id, project_id)
+            approved_ids.append(draft.id)
+
+        return {
+            "status": "approved",
+            "approved_count": len(approved_ids),
+            "draft_ids": approved_ids,
+        }
     finally:
         conn.close()
 

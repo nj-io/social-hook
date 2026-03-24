@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { EvaluationCycle, CycleStrategyOutcome } from "@/lib/types";
-import { fetchCycles } from "@/lib/api";
+import { fetchCycles, approveAllCycleDrafts } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
 import { Badge } from "@/components/ui/badge";
 
@@ -12,6 +12,7 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true);
   const [expandedCycles, setExpandedCycles] = useState<Set<string>>(new Set());
   const [expandAll, setExpandAll] = useState(false);
+  const [approvingCycle, setApprovingCycle] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -44,6 +45,18 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
     setExpandAll(!expandAll);
   }
 
+  async function handleApproveAll(cycleId: string) {
+    setApprovingCycle(cycleId);
+    try {
+      await approveAllCycleDrafts(projectId, cycleId);
+      await load();
+    } catch {
+      // silent — data events will refresh
+    } finally {
+      setApprovingCycle(null);
+    }
+  }
+
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading evaluation cycles...</p>;
   }
@@ -56,12 +69,14 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
     <div>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Evaluation Cycles</h2>
-        <button
-          onClick={handleExpandAll}
-          className="text-xs text-accent hover:underline"
-        >
-          {expandAll ? "Collapse All" : "Expand All"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleExpandAll}
+            className="text-xs text-accent hover:underline"
+          >
+            {expandAll ? "Collapse All" : "Expand All"}
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -96,6 +111,18 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                             projectId={projectId}
                           />
                         ))}
+                        {strategyEntries.some(([, o]) => o.draft_id && o.draft_status === "draft") && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleApproveAll(cycle.id);
+                            }}
+                            disabled={approvingCycle === cycle.id}
+                            className="mt-2 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            {approvingCycle === cycle.id ? "Approving..." : "Approve All"}
+                          </button>
+                        )}
                       </div>
                     )}
                   </td>
