@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.11.0](https://github.com/nj-io/social-hook/compare/v0.10.0...v0.11.0) (2026-03-24)
+
+
+### Features
+
+* ✨ defensive programming — structural fixes and prevention utilities ([5934202](https://github.com/nj-io/social-hook/commit/59342021735e305027ed73d795b13e4d5d828081))
+* add --pause flag to E2E platform posting tests ([9e25d38](https://github.com/nj-io/social-hook/commit/9e25d387675483823adc21f20ec0e83b0d0da904))
+* add MkDocs hook to inject version from pyproject.toml ([c11dae5](https://github.com/nj-io/social-hook/commit/c11dae5aa364bbc00eb2501c56aaf19cb334ece2))
+* defensive programming — structural fixes and prevention utilities ([856eb81](https://github.com/nj-io/social-hook/commit/856eb81ef2479bbb8a947f8a8e71c47e7a076613))
+* dynamic version in docs site via MkDocs hook ([21c6a1f](https://github.com/nj-io/social-hook/commit/21c6a1ffe50cdf762497b4b5c0b0879ddc1fdc56))
+* platform posting capabilities, E2E harness, and post-now action ([a87fa62](https://github.com/nj-io/social-hook/commit/a87fa627754c276ace0c14463f5b7c28a249f2d6))
+
+
+### Bug Fixes
+
+* 🐛 background task race condition and client-side timeout ([72b9903](https://github.com/nj-io/social-hook/commit/72b9903fea6bd3ca5cc628ec6535f7fe78d0ca65))
+* 🐛 mypy errors in consolidation return type and scheduling variable shadow ([3892f88](https://github.com/nj-io/social-hook/commit/3892f88062355c14204e5858216581ef55b9111c))
+* add return type annotation to _tick_single_draft ([b84a040](https://github.com/nj-io/social-hook/commit/b84a0404c410fe2d2c55fe01925eed60bb945acd))
+
+
+### Documentation
+
+* regenerate CLI docs to match current commands ([04d954c](https://github.com/nj-io/social-hook/commit/04d954ce6b40343356a96446e638701a9cf36a4e))
+
 ## [0.10.0](https://github.com/nj-io/social-hook/compare/v0.9.0...v0.10.0) (2026-03-21)
 
 
