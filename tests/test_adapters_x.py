@@ -10,7 +10,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from social_hook.adapters.models import PostReference, ReferenceType
+from social_hook.adapters.models import (
+    QUOTE,
+    REPLY,
+    SINGLE_POST,
+    THREAD,
+    PostReference,
+    ReferenceType,
+)
 from social_hook.adapters.platform.x import XAdapter
 from social_hook.errors import ConfigError, ErrorType, classify_x_error
 
@@ -551,3 +558,36 @@ class TestXAdapterSupportsReferenceType:
     def test_supports_link(self):
         adapter = XAdapter("k", "s", "t", "ts")
         assert adapter.supports_reference_type(ReferenceType.LINK) is True
+
+
+# =============================================================================
+# XAdapter - Capability Registry
+# =============================================================================
+
+
+class TestXAdapterCapabilities:
+    """XAdapter capability registry methods."""
+
+    def test_capabilities_contains_expected(self):
+        """XAdapter.capabilities() returns SINGLE_POST, THREAD, QUOTE, REPLY."""
+        adapter = XAdapter("k", "s", "t", "ts")
+        caps = adapter.capabilities()
+        assert SINGLE_POST in caps
+        assert THREAD in caps
+        assert QUOTE in caps
+        assert REPLY in caps
+
+    def test_capabilities_returns_list(self):
+        """XAdapter.capabilities() returns a list."""
+        adapter = XAdapter("k", "s", "t", "ts")
+        assert isinstance(adapter.capabilities(), list)
+
+    def test_supports_threads(self):
+        """XAdapter.supports_threads() returns True."""
+        adapter = XAdapter("k", "s", "t", "ts")
+        assert adapter.supports_threads() is True
+
+    def test_supports_media(self):
+        """XAdapter.supports_media() returns True."""
+        adapter = XAdapter("k", "s", "t", "ts")
+        assert adapter.supports_media() is True

@@ -41,6 +41,9 @@ theme:
 extra:
   homepage: https://nj-io.github.io/social-hook/
 
+hooks:
+  - scripts/mkdocs_hooks.py
+
 plugins:
   - search
 

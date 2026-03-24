@@ -1,9 +1,12 @@
 """Rate limiting utilities with exponential backoff."""
 
 import random
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
+
+from social_hook.parsing import safe_int
 
 
 @dataclass
@@ -67,11 +70,13 @@ def handle_rate_limit(
 
     if platform == "x" and "x-rate-limit-reset" in headers:
         # X API uses Unix timestamp
-        reset_timestamp = int(headers["x-rate-limit-reset"])
+        reset_timestamp = safe_int(
+            headers["x-rate-limit-reset"], int(time.time()) + 60, "x-rate-limit-reset header"
+        )
         state.backoff_until = datetime.fromtimestamp(reset_timestamp)
     elif "retry-after" in headers:
         # Standard retry-after header (LinkedIn, others)
-        wait_seconds = int(headers["retry-after"])
+        wait_seconds = safe_int(headers["retry-after"], 60, "retry-after header")
         state.backoff_until = datetime.now() + timedelta(seconds=wait_seconds)
     else:
         # Fall back to exponential backoff

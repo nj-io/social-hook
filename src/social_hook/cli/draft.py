@@ -7,9 +7,9 @@ from urllib.parse import quote
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+from social_hook.models import PENDING_STATUSES, TERMINAL_STATUSES
 
-TERMINAL_STATUSES = {"posted", "rejected", "cancelled", "superseded"}
+app = typer.Typer(no_args_is_help=True)
 
 
 def _get_conn():
@@ -162,7 +162,7 @@ def schedule(
                 "<id> --platform <name>' to create a platform-specific draft."
             )
             raise typer.Exit(1)
-        if draft.status not in ("draft", "approved", "scheduled", "deferred"):
+        if draft.status not in PENDING_STATUSES:
             typer.echo(f"Cannot schedule: draft status is '{draft.status}'")
             raise typer.Exit(1)
 
@@ -474,6 +474,114 @@ def redraft(
         conn.close()
 
 
+@app.command("post-now")
+def post_now(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Draft ID to post immediately"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Post a draft immediately to its platform.
+
+    Requires platform credentials in ~/.social-hook/.env.
+
+    Example: social-hook draft post-now draft_abc123
+    """
+    from social_hook.db import operations as ops
+
+    # Merge with global --json flag
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+    dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+
+        if draft.status in TERMINAL_STATUSES:
+            msg = f"Cannot post: draft status is '{draft.status}'"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if draft.platform == "preview":
+            msg = "Cannot post preview drafts"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if dry_run:
+            if json_output:
+                typer.echo(
+                    json_mod.dumps(
+                        {"status": "dry_run", "draft_id": draft_id, "platform": draft.platform}
+                    )
+                )
+            else:
+                typer.echo(f"Dry run: would post draft {draft_id} to {draft.platform}")
+            return
+
+        if not yes:
+            confirm = typer.confirm(f"Post draft {draft_id} to {draft.platform} now?")
+            if not confirm:
+                raise typer.Exit(0)
+
+        from datetime import datetime as dt_cls
+        from datetime import timezone
+
+        now_str = dt_cls.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        ops.update_draft(conn, draft_id, status="scheduled", scheduled_time=now_str)
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+    finally:
+        conn.close()
+
+    from social_hook.scheduler import scheduler_tick
+
+    scheduler_tick(draft_id=draft_id, dry_run=False)
+
+    conn = _get_conn()
+    try:
+        draft_after = ops.get_draft(conn, draft_id)
+        if draft_after and draft_after.status == "posted":
+            post = conn.execute(
+                "SELECT external_id, external_url FROM posts WHERE draft_id = ? ORDER BY created_at DESC LIMIT 1",
+                (draft_id,),
+            ).fetchone()
+
+            if json_output:
+                typer.echo(
+                    json_mod.dumps(
+                        {
+                            "status": "posted",
+                            "draft_id": draft_id,
+                            "platform": draft_after.platform,
+                            "external_id": post[0] if post else None,
+                            "external_url": post[1] if post else None,
+                        }
+                    )
+                )
+            else:
+                typer.echo(f"Posted draft {draft_id} to {draft_after.platform}.")
+                if post and post[1]:
+                    typer.echo(f"URL: {post[1]}")
+        else:
+            status = draft_after.status if draft_after else "unknown"
+            error = draft_after.last_error if draft_after else None
+            msg = f"Post failed: draft status is '{status}'"
+            if error:
+                msg += f" ({error})"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(2)
+    finally:
+        conn.close()
+
+
 @app.command("quick-approve")
 def quick_approve(
     ctx: typer.Context,
@@ -493,6 +601,7 @@ def quick_approve(
                 "<id> --platform <name>' to create a platform-specific draft."
             )
             raise typer.Exit(1)
+        # Scheduled drafts go through the scheduler; use unschedule first
         if draft.status not in ("draft", "approved", "deferred"):
             typer.echo(f"Cannot quick-approve: draft status is '{draft.status}'")
             raise typer.Exit(1)
@@ -696,9 +805,7 @@ def list_cmd(
             commit_hash=commit,
         )
         if pending:
-            drafts = [
-                d for d in drafts if d.status in ("draft", "approved", "scheduled", "deferred")
-            ]
+            drafts = [d for d in drafts if d.status in PENDING_STATUSES]
         json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
         if json_output:
@@ -945,89 +1052,5 @@ def promote(
             typer.echo(f"Preview draft {draft_id} promoted to {platform}.")
             typer.echo(f"New draft: {new_draft.id}")
             typer.echo(f"Content: {new_draft.content}")
-    finally:
-        conn.close()
-
-
-@app.command(name="post-now")
-def post_now(
-    ctx: typer.Context,
-    draft_id: str = typer.Argument(..., help="Draft ID to post immediately"),
-    json: bool = typer.Option(False, "--json", help="Output as JSON"),
-):
-    """Post a draft immediately to its platform.
-
-    Approves and posts the draft in one step, bypassing the scheduler queue.
-    The draft must be in draft, approved, or deferred status.
-
-    Example: social-hook draft post-now draft-abc123
-    """
-    from social_hook.config.yaml import load_full_config
-    from social_hook.db import operations as ops
-    from social_hook.scheduler import _handle_post_failure, _post_draft, record_post_success
-
-    use_json = json or (ctx.obj.get("json", False) if ctx.obj else False)
-
-    conn = _get_conn()
-    try:
-        draft = _get_draft_or_exit(conn, draft_id)
-
-        if draft.platform == "preview":
-            typer.echo(
-                "Preview drafts cannot be posted. Use 'social-hook draft promote "
-                "<id> --platform <name>' to create a platform-specific draft."
-            )
-            raise typer.Exit(1)
-
-        if draft.status not in ("draft", "approved", "deferred"):
-            typer.echo(f"Cannot post: draft status is '{draft.status}'")
-            raise typer.Exit(1)
-
-        config_path = ctx.obj.get("config") if ctx.obj else None
-        config = load_full_config(str(config_path) if config_path else None)
-        dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
-
-        project = ops.get_project(conn, draft.project_id)
-        project_name = project.name if project else "Unknown"
-
-        # Mark as scheduled so the posting pipeline sees it correctly
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc).isoformat()
-        ops.update_draft(conn, draft_id, status="scheduled", scheduled_time=now)
-
-        from social_hook.cli._spinner import spinner
-
-        if dry_run:
-            from social_hook.adapters.dry_run import dry_run_post_result
-
-            result = dry_run_post_result()
-        else:
-            with spinner(f"Posting to {draft.platform}..."):
-                result = _post_draft(conn, draft, config)
-
-        if result.success:
-            post = record_post_success(conn, draft, result, config, project_name, dry_run=dry_run)
-            if use_json:
-                typer.echo(
-                    json_mod.dumps(
-                        {
-                            "draft_id": draft_id,
-                            "post_id": post.id,
-                            "status": "posted",
-                            "external_url": result.external_url,
-                        },
-                        indent=2,
-                        default=str,
-                    )
-                )
-            else:
-                typer.echo(f"Draft {draft_id} posted successfully!")
-                if result.external_url:
-                    typer.echo(f"URL: {result.external_url}")
-        else:
-            _handle_post_failure(conn, draft, result.error or "Unknown error", config, dry_run)
-            typer.echo(f"Post failed: {result.error}")
-            raise typer.Exit(1)
     finally:
         conn.close()

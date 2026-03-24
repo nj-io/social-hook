@@ -2,6 +2,8 @@
 
 import typer
 
+from social_hook.models import PENDING_STATUSES
+
 app = typer.Typer()
 
 
@@ -283,7 +285,7 @@ def post(
             )
             raise typer.Exit(1)
 
-        if draft_obj.status not in ("draft", "approved", "scheduled", "deferred"):
+        if draft_obj.status not in PENDING_STATUSES:
             typer.echo(
                 f"Draft status is '{draft_obj.status}'. Must be 'draft', 'approved', 'scheduled', or 'deferred' to post."
             )

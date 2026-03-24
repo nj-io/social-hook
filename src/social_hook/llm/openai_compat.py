@@ -1,10 +1,10 @@
 """OpenAI-compatible provider client for OpenAI, OpenRouter, Ollama."""
 
-import json
 from typing import Any
 
 from social_hook.errors import ConfigError, MalformedResponseError
 from social_hook.llm.base import LLMClient, NormalizedResponse, NormalizedToolCall, NormalizedUsage
+from social_hook.parsing import safe_json_loads
 
 try:
     from openai import OpenAI
@@ -80,7 +80,9 @@ class OpenAICompatClient(LLMClient):
             tool_calls.append(
                 NormalizedToolCall(
                     name=tc.function.name,
-                    input=json.loads(tc.function.arguments),
+                    input=safe_json_loads(
+                        tc.function.arguments, f"tool_call {tc.function.name} arguments", default={}
+                    ),
                 )
             )
 

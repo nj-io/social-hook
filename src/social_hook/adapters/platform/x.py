@@ -6,7 +6,13 @@ import requests
 from requests_oauthlib import OAuth1
 
 from social_hook.adapters.dry_run import dry_run_post_result, dry_run_thread_result
-from social_hook.adapters.models import PostReference, PostResult, ReferenceType, ThreadResult
+from social_hook.adapters.models import (
+    PostCapability,
+    PostReference,
+    PostResult,
+    ReferenceType,
+    ThreadResult,
+)
 from social_hook.adapters.platform.base import PlatformAdapter
 from social_hook.adapters.rate_limit import RateLimitState, handle_rate_limit
 from social_hook.config.yaml import TIER_CHAR_LIMITS, VALID_TIERS
@@ -235,6 +241,17 @@ class XAdapter(PlatformAdapter):
     def supports_reference_type(self, ref_type: ReferenceType) -> bool:
         """X supports all reference types natively."""
         return ref_type in (ReferenceType.REPLY, ReferenceType.QUOTE, ReferenceType.LINK)
+
+    def capabilities(self) -> list[PostCapability]:
+        from social_hook.adapters.models import QUOTE, REPLY, SINGLE_POST, THREAD
+
+        return [SINGLE_POST, THREAD, QUOTE, REPLY]
+
+    def supports_threads(self) -> bool:
+        return True
+
+    def supports_media(self) -> bool:
+        return True
 
     def delete(self, external_id: str) -> bool:
         """Delete a tweet by ID.

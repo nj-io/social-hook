@@ -32,6 +32,8 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
+from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES
+from social_hook.parsing import safe_json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -385,17 +387,20 @@ def _get_events_since(last_id: int, session_id: str | None = None) -> list[dict]
                 "SELECT id, type, data, created_at FROM web_events WHERE id > ? ORDER BY id ASC",
                 (last_id,),
             ).fetchall()
-        return [
-            {
-                "id": row["id"],
-                "type": row["type"],
-                "data": json.loads(row["data"]),
-                "created_at": row["created_at"],
-            }
-            for row in rows
-        ]
-    except Exception:
-        return []
+        results = []
+        for row in rows:
+            parsed = safe_json_loads(row["data"], "web_events.data")
+            if parsed is None:
+                continue
+            results.append(
+                {
+                    "id": row["id"],
+                    "type": row["type"],
+                    "data": parsed,
+                    "created_at": row["created_at"],
+                }
+            )
+        return results
     finally:
         conn.close()
 
@@ -600,6 +605,8 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
 
                 msg = InboundMessage(chat_id=chat_id, text=text, message_id="web_0")
                 await asyncio.to_thread(handle_message, msg, adapter, _get_config())
+            else:
+                logger.warning("Unknown WS command type: %s from %s", command_type, client_id)
         except Exception as e:
             await _hub.send(
                 client_id,
@@ -620,6 +627,8 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
     elif envelope.type == "unsubscribe":
         channel = envelope.payload.get("channel", "web")
         _hub.unsubscribe(client_id, channel)
+    else:
+        logger.warning("Unknown WS envelope type: %s from %s", envelope.type, client_id)
 
 
 async def _event_bridge_loop():
@@ -662,10 +671,14 @@ async def _event_bridge_loop():
                 (last_id,),
             ).fetchall()
             for r in rows:
+                parsed = safe_json_loads(r["data"], "web_events.data (ws bridge)")
+                if parsed is None:
+                    last_id = r["id"]
+                    continue
                 ev = {
                     "id": r["id"],
                     "type": r["type"],
-                    "data": json.loads(r["data"]),
+                    "data": parsed,
                     "created_at": r["created_at"],
                 }
                 envelope = GatewayEnvelope(type="event", channel="web", payload=ev)
@@ -712,11 +725,7 @@ async def api_drafts(
         )
         drafts = [d.to_dict() for d in draft_models]
         if pending:
-            drafts = [
-                d
-                for d in drafts
-                if d.get("status") in ("draft", "approved", "scheduled", "deferred")
-            ]
+            drafts = [d for d in drafts if d.get("status") in PENDING_STATUSES]
         return {"drafts": drafts}
     finally:
         conn.close()
@@ -834,7 +843,7 @@ async def api_upload_draft_media(draft_id: str, file: UploadFile):
         draft = ops.get_draft(conn, draft_id)
         if not draft:
             raise HTTPException(status_code=404, detail="Draft not found")
-        if draft.status not in ("draft", "deferred"):
+        if draft.status not in EDITABLE_STATUSES:
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot upload media — draft is {draft.status}",
@@ -1007,7 +1016,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
             raise HTTPException(status_code=404, detail="Draft not found")
         if draft.platform != "preview":
             raise HTTPException(status_code=400, detail="Only preview drafts can be promoted")
-        if draft.status in ("posted", "rejected", "cancelled", "superseded"):
+        if draft.status in TERMINAL_STATUSES:
             raise HTTPException(
                 status_code=400,
                 detail=f"Cannot promote draft with status '{draft.status}'",
@@ -2069,7 +2078,9 @@ async def api_tasks(
                     "ref_id": r["ref_id"],
                     "project_id": r["project_id"],
                     "status": r["status"],
-                    "result": json.loads(r["result"]) if r["result"] else None,
+                    "result": safe_json_loads(r["result"], "background_tasks.result")
+                    if r["result"]
+                    else None,
                     "error": r["error"],
                     "created_at": r["created_at"],
                     "updated_at": r["updated_at"],

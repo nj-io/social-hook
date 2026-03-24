@@ -1,11 +1,14 @@
 """Scheduling algorithm for optimal post timing."""
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from social_hook.db import operations as ops
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -155,6 +158,13 @@ def calculate_optimal_time(
                 st = st.replace(tzinfo=timezone.utc)
             scheduled_times.append(st)
 
+    for day_name in optimal_days:
+        if day_name not in _DAY_MAP:
+            logger.warning(
+                "Unrecognized day name in optimal_days: %r (expected: %s)",
+                day_name,
+                list(_DAY_MAP.keys()),
+            )
     optimal_day_nums = [_DAY_MAP[d] for d in optimal_days if d in _DAY_MAP]
 
     # Try to find a slot, starting from now, up to 7 days out

@@ -21,6 +21,7 @@ FIXTURE_REQUIREMENTS = {
     "R": None,  # Creates own temp repos
     "S": "base-project",
     "T": "base-project",
+    "U": "base-project",
 }
 
 SECTION_REGISTRY = {
@@ -46,4 +47,10 @@ SECTION_REGISTRY = {
     "R": {"name": "Git Hooks & Web Registration", "module": "git_hooks", "needs_adapter": False},
     "S": {"name": "Cross-Post References", "module": "crosspost", "needs_adapter": False},
     "T": {"name": "Rate Limits & Merge", "module": "rate_limits", "needs_adapter": False},
+    "U": {
+        "name": "Platform Posting",
+        "module": "platform_posting",
+        "needs_adapter": False,
+        "needs_live": True,
+    },
 }

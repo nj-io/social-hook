@@ -13,10 +13,10 @@ from social_hook.messaging.base import (
     MessagingAdapter,
     OutboundMessage,
 )
+from social_hook.models import TERMINAL_STATUSES
+from social_hook.parsing import safe_int
 
 logger = logging.getLogger(__name__)
-
-_TERMINAL_STATUSES = {"posted", "rejected", "cancelled", "superseded"}
 
 # Chat draft context: chat_id → (draft_id, project_id, timestamp)
 _chat_draft_context: dict[str, tuple[str, str, float]] = {}
@@ -522,6 +522,8 @@ def _handle_pending_reply(adapter, chat_id, pending, text, config):
         _save_media_spec(adapter, chat_id, pending.draft_id, text, config)
     elif pending.type == "media_upload":
         _save_media_upload(adapter, chat_id, pending.draft_id, text)
+    else:
+        logger.warning("Unknown pending reply type: %s (draft %s)", pending.type, pending.draft_id)
 
 
 def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
@@ -827,7 +829,7 @@ def _save_angle(adapter, chat_id, draft_id, text):
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
-        if draft.status in _TERMINAL_STATUSES:
+        if draft.status in TERMINAL_STATUSES:
             _send(adapter, chat_id, f"Cannot redraft: draft is '{draft.status}'")
             return
 
@@ -1321,7 +1323,7 @@ def cmd_usage(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -
             from social_hook.db import get_recent_usage
 
             parts = arg.split()
-            limit = int(parts[1]) if len(parts) > 1 else 10
+            limit = safe_int(parts[1], 10, "usage limit argument") if len(parts) > 1 else 10
             entries = get_recent_usage(conn, limit=limit)
             if not entries:
                 _send(adapter, chat_id, "No usage data found.")
@@ -1448,7 +1450,8 @@ def cmd_approve(adapter: MessagingAdapter, chat_id: str, args: str, config: Any)
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.status not in ("draft", "approved"):
+        # Scheduled drafts go through the scheduler; use unschedule first
+        if draft.status not in ("draft", "approved", "deferred"):
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 

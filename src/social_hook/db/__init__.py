@@ -26,6 +26,7 @@ from social_hook.db.operations import (
     get_drafts_filtered,
     get_drafts_in_time_window,
     get_due_drafts,
+    get_file_summaries,
     get_first_post_date,
     get_held_decisions,
     get_intro_draft,
@@ -77,10 +78,13 @@ from social_hook.db.operations import (
     supersede_draft,
     update_arc,
     update_decision,
+    update_discovery_files,
     update_draft,
     update_draft_tweet,
     update_lifecycle,
     update_project_summary,
+    update_prompt_docs,
+    upsert_file_summaries,
 )
 from social_hook.db.schema import SCHEMA_VERSION, apply_migrations, create_schema
 
@@ -177,4 +181,9 @@ __all__ = [
     "emit_data_event",
     # Evaluator Rework
     "execute_queue_action",
+    # Discovery
+    "get_file_summaries",
+    "update_discovery_files",
+    "update_prompt_docs",
+    "upsert_file_summaries",
 ]
