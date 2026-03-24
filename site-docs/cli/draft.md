@@ -28,6 +28,31 @@ Cancel a draft.
 
 ---
 
+### `social-hook draft connect`
+
+Connect a preview-mode draft to an account.
+
+Links the draft's target to an existing OAuth account, clearing preview mode.
+The account's platform must match the draft's platform.
+
+Example: social-hook draft connect draft-abc123 --account my-x-account
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Preview-mode draft ID to connect |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--account`, `-a` | string |  | Account name to connect (must match draft platform) |
+| `--json` | boolean | false | Output as JSON |
+| `--yes`, `-y` | boolean | false | Skip confirmation |
+
+---
+
 ### `social-hook draft edit`
 
 Edit draft content.
@@ -121,10 +146,9 @@ Example: social-hook draft media-remove draft-abc123
 
 Post a draft immediately to its platform.
 
-Approves and posts the draft in one step, bypassing the scheduler queue.
-The draft must be in draft, approved, or deferred status.
+Requires platform credentials in ~/.social-hook/.env.
 
-Example: social-hook draft post-now draft-abc123
+Example: social-hook draft post-now draft_abc123
 
 **Arguments:**
 
@@ -136,6 +160,7 @@ Example: social-hook draft post-now draft-abc123
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `--yes`, `-y` | boolean | false | Skip confirmation prompt |
 | `--json` | boolean | false | Output as JSON |
 
 ---

@@ -22,7 +22,7 @@ _REFRESH_URLS: dict[str, str] = {
 }
 
 
-def create_adapter(platform: str, config, db_path: str | None = None):
+def create_adapter(platform: str, config, db_path: str | None = None) -> PlatformAdapter:
     """Create a platform adapter by name (legacy interface).
 
     Args:

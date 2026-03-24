@@ -62,7 +62,7 @@ class AdapterRegistry:
             )
         return self._adapters[account_name]
 
-    def get(self, platform: str, config, db_path: str | None = None):
+    def get(self, platform: str, config, db_path: str | None = None) -> PlatformAdapter:
         """Legacy interface — routes to create_adapter() for backward compat.
 
         Used when no targets config exists (old-style config.platforms).

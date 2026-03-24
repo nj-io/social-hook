@@ -3971,13 +3971,13 @@ async def api_list_topics(project_id: str, strategy: str | None = Query(None)):
         if strategy:
             topics = ops.get_topics_by_strategy(conn, project_id, strategy)
         else:
-            topics = conn.execute(
+            from social_hook.models import ContentTopic
+
+            rows = conn.execute(
                 "SELECT * FROM content_topics WHERE project_id = ? ORDER BY strategy, priority_rank DESC, created_at ASC",
                 (project_id,),
             ).fetchall()
-            from social_hook.models import ContentTopic
-
-            topics = [ContentTopic.from_dict(dict(row)) for row in topics]
+            topics = [ContentTopic.from_dict(dict(row)) for row in rows]
         return {"topics": [t.to_dict() for t in topics]}
     finally:
         conn.close()

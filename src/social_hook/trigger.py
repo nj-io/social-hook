@@ -1209,7 +1209,6 @@ def run_summary_trigger(
                 action=TargetAction.draft,
                 reason="Summary-based introduction",
                 angle="Introduce the project and what it does",
-                episode_type=None,
                 post_category=PostCategorySchema.opportunistic,
             ),
         },

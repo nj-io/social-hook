@@ -85,8 +85,10 @@ def list_cmd(
 
     typer.echo(f"{'Platform':<15} {'Status':<16} {'Keys'}")
     typer.echo("-" * 45)
-    for e in entries:
-        typer.echo(f"{e['label']:<15} {e['status']:<16} {e['configured_keys']}/{e['total_keys']}")
+    for entry in entries:
+        typer.echo(
+            f"{entry['label']:<15} {entry['status']:<16} {entry['configured_keys']}/{entry['total_keys']}"
+        )
 
 
 @app.command()
@@ -226,7 +228,8 @@ def validate(
         typer.echo(json_mod.dumps({"valid": all_valid, "platforms": results}, indent=2))
     else:
         for r in results:
-            status = "valid" if r["valid"] else f"missing: {', '.join(r['missing_keys'])}"
+            missing: list[str] = r["missing_keys"]
+            status = "valid" if r["valid"] else f"missing: {', '.join(missing)}"
             typer.echo(f"  {r['platform']:<12} {status}")
         if all_valid:
             typer.echo("\nAll credentials valid.")

@@ -198,7 +198,7 @@ def validate_targets_config(config: Config) -> None:
                 )
             # DFS cycle detection: walk source chain
             visited: set[str] = set()
-            current = target_name
+            current: str | None = target_name
             while current is not None:
                 if current in visited:
                     raise ConfigError(

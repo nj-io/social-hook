@@ -14,7 +14,7 @@ from social_hook.config.targets import AccountConfig, TargetConfig, resolve_targ
 from social_hook.config.yaml import Config
 
 # Import with fallback for Chunk 1 compatibility
-from social_hook.llm.schemas import StrategyDecisionInput
+from social_hook.llm.schemas import StrategyDecisionInput, TargetAction
 from social_hook.scheduling import calculate_optimal_time
 
 logger = logging.getLogger(__name__)
@@ -157,7 +157,9 @@ def _route_single_target(
                 target_name=target_name,
                 target_config=tcfg,
                 account_config=AccountConfig(platform="unknown"),
-                strategy_decision=StrategyDecisionInput(action="skip", reason="Unknown account"),
+                strategy_decision=StrategyDecisionInput(
+                    action=TargetAction.skip, reason="Unknown account"
+                ),
                 action="skip",
                 skip_reason=f"Unknown account '{tcfg.account}'",
             )
@@ -175,7 +177,9 @@ def _route_single_target(
             target_name=target_name,
             target_config=tcfg,
             account_config=AccountConfig(platform="unknown"),
-            strategy_decision=StrategyDecisionInput(action="skip", reason="No account or platform"),
+            strategy_decision=StrategyDecisionInput(
+                action=TargetAction.skip, reason="No account or platform"
+            ),
             action="skip",
             skip_reason="Target has neither account nor platform configured",
         )
@@ -191,14 +195,16 @@ def _route_single_target(
             target_name=target_name,
             target_config=tcfg,
             account_config=account,
-            strategy_decision=StrategyDecisionInput(action="skip", reason="No strategy decision"),
+            strategy_decision=StrategyDecisionInput(
+                action=TargetAction.skip, reason="No strategy decision"
+            ),
             action="skip",
             skip_reason=f"No decision for strategy '{strategy_name}'",
         )
 
-    action_str = decision.action
-    if hasattr(action_str, "value"):
-        action_str = action_str.value
+    action_str: str = (
+        decision.action.value if hasattr(decision.action, "value") else str(decision.action)
+    )
 
     if action_str == "skip":
         return RoutedTarget(

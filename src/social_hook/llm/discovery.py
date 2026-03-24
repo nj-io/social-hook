@@ -384,8 +384,9 @@ def discover_project(
             from social_hook.topics import seed_topics_from_brief
 
             # Extract connection from db (may be a DryRunContext or raw connection)
-            conn = getattr(db, "conn", db) if not isinstance(db, sqlite3.Connection) else db
-            seed_topics_from_brief(conn, project_id, project_summary, strategies)
+            raw_conn = getattr(db, "conn", db) if not isinstance(db, sqlite3.Connection) else db
+            if isinstance(raw_conn, sqlite3.Connection):
+                seed_topics_from_brief(raw_conn, project_id, project_summary, strategies)
         except Exception:
             logger.warning("Topic seeding from brief failed", exc_info=True)
 
