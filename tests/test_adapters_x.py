@@ -157,6 +157,66 @@ class TestXAdapter401Retry:
         assert "auth_expired" in result.error
         refresher.assert_called_once()
 
+    @patch("social_hook.adapters.platform.x.requests.get")
+    def test_validate_401_refresh_success(self, mock_get):
+        """Validate: 401 triggers refresh, retry succeeds."""
+        first_resp = _x_error_response(401, title="Unauthorized")
+        second_resp = MagicMock()
+        second_resp.status_code = 200
+        second_resp.json.return_value = {"data": {"username": "refreshed_user"}}
+        mock_get.side_effect = [first_resp, second_resp]
+
+        refresher = MagicMock(return_value="fresh-token")
+        adapter = XAdapter("stale-token", token_refresher=refresher)
+        success, info = adapter.validate()
+
+        assert success is True
+        assert info == "@refreshed_user"
+        refresher.assert_called_once()
+        assert adapter.access_token == "fresh-token"
+        assert mock_get.call_count == 2
+
+    @patch("social_hook.adapters.platform.x.requests.delete")
+    def test_delete_401_refresh_success(self, mock_delete):
+        """Delete: 401 triggers refresh, retry succeeds."""
+        first_resp = _x_error_response(401, title="Unauthorized")
+        second_resp = MagicMock()
+        second_resp.status_code = 200
+        mock_delete.side_effect = [first_resp, second_resp]
+
+        refresher = MagicMock(return_value="fresh-token")
+        adapter = XAdapter("stale-token", token_refresher=refresher)
+        result = adapter.delete("tweet_999")
+
+        assert result is True
+        refresher.assert_called_once()
+        assert adapter.access_token == "fresh-token"
+        assert mock_delete.call_count == 2
+
+    @patch("social_hook.adapters.platform.x.requests.post")
+    def test_upload_media_401_refresh_success(self, mock_post, tmp_path):
+        """Media upload: 401 triggers refresh, retry succeeds."""
+        img_file = tmp_path / "test.png"
+        img_file.write_bytes(b"\x89PNG" + b"\x00" * 50)
+
+        upload_401 = _x_error_response(401, title="Unauthorized")
+        upload_ok = MagicMock()
+        upload_ok.status_code = 200
+        upload_ok.json.return_value = {"data": {"id": "media_refreshed"}}
+
+        tweet_ok = _x_success_response("tweet_after_refresh")
+
+        mock_post.side_effect = [upload_401, upload_ok, tweet_ok]
+
+        refresher = MagicMock(return_value="fresh-token")
+        adapter = XAdapter("stale-token", token_refresher=refresher)
+        result = adapter.post("hello media", media_paths=[str(img_file)])
+
+        assert result.success is True
+        refresher.assert_called_once()
+        # 3 calls: first upload (401), retry upload (200), tweet post
+        assert mock_post.call_count == 3
+
 
 # =============================================================================
 # T3: XAdapter - Single Post
