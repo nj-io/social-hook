@@ -255,8 +255,14 @@ class TestTargets:
         resp = client.get("/api/projects/proj-1/targets")
         assert resp.status_code == 200
         data = resp.json()
-        assert "product-news" in data["targets"]
+        target_ids = [t["id"] for t in data["targets"]]
+        assert "product-news" in target_ids
         assert data["project_id"] == "proj-1"
+        # Verify target structure
+        target = data["targets"][0]
+        assert "account_name" in target
+        assert "enabled" in target
+        assert "platform" in target
 
     def test_list_targets_project_not_found(self, client):
         resp = client.get("/api/projects/nonexistent/targets")

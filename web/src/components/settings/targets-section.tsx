@@ -154,7 +154,7 @@ export function TargetsSection() {
             <div key={target.id} className="flex items-center justify-between rounded-lg border border-border p-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">{target.account_name}</span>
+                  <span className="font-medium">{target.id}</span>
                   <span className="text-muted-foreground">/</span>
                   <span className="text-sm">{target.destination}</span>
                   {target.primary && (
@@ -169,20 +169,20 @@ export function TargetsSection() {
                   )}
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Strategy: {target.strategy}
+                  Account: {target.account_name} | Strategy: {target.strategy}
                   {target.frequency && ` | Frequency: ${target.frequency}`}
                 </p>
               </div>
               <button
-                onClick={() => handleToggle(target.account_name + "-" + target.destination, target.enabled)}
-                disabled={toggling === target.account_name + "-" + target.destination}
+                onClick={() => handleToggle(target.id, target.enabled)}
+                disabled={toggling === target.id}
                 className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
                   target.enabled
                     ? "border-yellow-300 text-yellow-700 hover:bg-yellow-50 dark:border-yellow-700 dark:text-yellow-400 dark:hover:bg-yellow-950"
                     : "border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
                 }`}
               >
-                {toggling === target.account_name + "-" + target.destination ? "..." : target.enabled ? "Disable" : "Enable"}
+                {toggling === target.id ? "..." : target.enabled ? "Disable" : "Enable"}
               </button>
             </div>
           ))}
@@ -214,7 +214,8 @@ export function TargetsSection() {
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
             >
               <option value="timeline">Timeline</option>
-              <option value="thread">Thread</option>
+              <option value="community">Community</option>
+              <option value="quote-retweet">Quote Retweet</option>
             </select>
           </div>
           <div>

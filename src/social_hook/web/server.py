@@ -3400,18 +3400,26 @@ async def api_list_targets(project_id: str):
         conn.close()
 
     config = _get_config()
-    targets_list = {}
+    targets_list = []
     for name, tgt in config.targets.items():
-        targets_list[name] = {
-            "account": tgt.account,
-            "destination": tgt.destination,
-            "strategy": tgt.strategy,
-            "primary": tgt.primary,
-            "source": tgt.source,
-            "community_id": tgt.community_id,
-            "share_with_followers": tgt.share_with_followers,
-            "frequency": tgt.frequency,
-        }
+        account = config.accounts.get(tgt.account)
+        targets_list.append(
+            {
+                "id": name,
+                "project_id": project_id,
+                "account_name": tgt.account,
+                "destination": tgt.destination,
+                "strategy": tgt.strategy,
+                "primary": tgt.primary,
+                "source": tgt.source,
+                "community_id": tgt.community_id,
+                "share_with_followers": tgt.share_with_followers,
+                "frequency": tgt.frequency,
+                "enabled": True,  # All config-defined targets are enabled
+                "platform": account.platform if account else "unknown",
+                "created_at": None,
+            }
+        )
     return {"targets": targets_list, "project_id": project_id}
 
 
@@ -3447,10 +3455,14 @@ async def api_add_target(project_id: str, body: dict[str, Any] = Body(...)):
     except ConfigError as e:
         raise HTTPException(status_code=422, detail=str(e)) from None
 
-    name = body.get("name")
     account = body.get("account")
-    if not name or not account:
-        raise HTTPException(status_code=400, detail="'name' and 'account' are required")
+    if not account:
+        raise HTTPException(status_code=400, detail="'account' is required")
+    name = body.get("name")
+    if not name:
+        # Auto-generate name from account + destination
+        destination = body.get("destination", "timeline")
+        name = f"{account}-{destination}"
 
     tgt_data: dict[str, Any] = {"account": account}
     for field in (

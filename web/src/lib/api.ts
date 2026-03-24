@@ -605,7 +605,7 @@ export async function fetchTargets(projectId: string): Promise<{ targets: Target
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets`);
 }
 
-export async function addTarget(projectId: string, data: { account: string; destination: string; strategy: string; frequency?: string }): Promise<{ status: string; target: Target }> {
+export async function addTarget(projectId: string, data: { account: string; destination: string; strategy: string; frequency?: string }): Promise<{ status: string; name: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

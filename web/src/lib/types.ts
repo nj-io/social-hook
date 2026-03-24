@@ -351,7 +351,11 @@ export interface Target {
   frequency?: string;
   enabled: boolean;
   primary: boolean;
-  created_at: string;
+  platform: string;
+  source?: string | null;
+  community_id?: string | null;
+  share_with_followers?: boolean;
+  created_at: string | null;
 }
 
 export interface Strategy {
