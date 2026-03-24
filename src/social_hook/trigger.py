@@ -1256,6 +1256,99 @@ def run_summary_trigger(
     }
 
 
+def run_suggestion_trigger(
+    suggestion_id: str,
+    project_id: str,
+    config_path: str | None = None,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> int:
+    """Trigger evaluation from an operator content suggestion.
+
+    Similar to run_trigger() but:
+    - No commit analysis stage (no commit)
+    - Trigger content is the suggestion idea
+    - trigger_type = 'operator_suggestion'
+
+    Returns:
+        Exit code: 0 = success, 1 = error
+    """
+    # 1. Load config
+    try:
+        config = load_full_config(
+            yaml_path=config_path if config_path else None,
+        )
+    except ConfigError as e:
+        logger.error("Config error: %s", e)
+        if verbose:
+            print(f"Config error: {e}", file=sys.stderr)
+        return 1
+
+    # 2. Initialize DB
+    try:
+        db_path = get_db_path()
+        conn = init_database(db_path)
+    except DatabaseError as e:
+        logger.error("Database error: %s", e)
+        if verbose:
+            print(f"Database error: {e}", file=sys.stderr)
+        return 1
+
+    # 3. Validate project exists
+    project = ops.get_project(conn, project_id)
+    if project is None:
+        logger.error("Project '%s' not found", project_id)
+        if verbose:
+            print(f"Project '{project_id}' not found", file=sys.stderr)
+        conn.close()
+        return 1
+
+    # 4. Validate suggestion exists and is pending
+    suggestions = ops.get_suggestions_by_project(conn, project_id)
+    suggestion = None
+    for s in suggestions:
+        if s.id == suggestion_id:
+            suggestion = s
+            break
+
+    if suggestion is None:
+        raise ConfigError(f"Suggestion '{suggestion_id}' not found in project '{project_id}'")
+
+    if suggestion.status != "pending":
+        raise ConfigError(
+            f"Suggestion '{suggestion_id}' has status '{suggestion.status}', expected 'pending'"
+        )
+
+    # 5. Evaluate suggestion
+    from social_hook.suggestions import evaluate_suggestion
+
+    try:
+        cycle_id = evaluate_suggestion(
+            conn,
+            config,
+            project_id,
+            suggestion_id,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        logger.error("Suggestion evaluation failed: %s", e)
+        if verbose:
+            print(f"Suggestion evaluation failed: {e}", file=sys.stderr)
+        conn.close()
+        return 1
+
+    if cycle_id is None:
+        logger.error("Suggestion evaluation returned no cycle for %s", suggestion_id)
+        conn.close()
+        return 1
+
+    if verbose:
+        print(f"Suggestion {suggestion_id} evaluated, cycle: {cycle_id}")
+
+    conn.close()
+    return 0
+
+
 # Backward-compatible re-exports — tests import these from trigger.py
 from social_hook.drafting import (  # noqa: E402, F401
     _generate_media,

@@ -107,6 +107,7 @@ class LifecyclePhase(Enum):
 class ArcStatus(Enum):
     """Status of a narrative arc."""
 
+    PROPOSED = "proposed"
     ACTIVE = "active"
     COMPLETED = "completed"
     ABANDONED = "abandoned"
@@ -755,7 +756,9 @@ class Arc:
     id: str
     project_id: str
     theme: str
+    strategy: str = ""
     status: str = "active"  # ArcStatus value
+    reasoning: str | None = None
     post_count: int = 0
     last_post_at: datetime | None = None
     notes: str | None = None
@@ -773,7 +776,9 @@ class Arc:
             "id": self.id,
             "project_id": self.project_id,
             "theme": self.theme,
+            "strategy": self.strategy,
             "status": self.status,
+            "reasoning": self.reasoning,
             "post_count": self.post_count,
             "last_post_at": _to_iso(self.last_post_at),
             "notes": self.notes,
@@ -788,7 +793,9 @@ class Arc:
             id=d["id"],
             project_id=d["project_id"],
             theme=d["theme"],
+            strategy=d.get("strategy", ""),
             status=d.get("status", "active"),
+            reasoning=d.get("reasoning"),
             post_count=d.get("post_count", 0),
             last_post_at=_from_iso(d.get("last_post_at")),
             notes=d.get("notes"),
@@ -798,12 +805,14 @@ class Arc:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT."""
+        """Return tuple for INSERT (id, project_id, theme, strategy, status, reasoning, post_count, last_post_at, notes)."""
         return (
             self.id,
             self.project_id,
             self.theme,
+            self.strategy,
             self.status,
+            self.reasoning,
             self.post_count,
             _to_iso(self.last_post_at),
             self.notes,

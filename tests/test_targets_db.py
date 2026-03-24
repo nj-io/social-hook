@@ -185,6 +185,21 @@ class TestMigrations:
                 posted_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE arcs (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                theme TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'abandoned')),
+                post_count INTEGER NOT NULL DEFAULT 0,
+                last_post_at TEXT,
+                notes TEXT,
+                started_at TEXT NOT NULL DEFAULT (datetime('now')),
+                ended_at TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_arcs_project_status ON arcs(project_id, status);
+
             CREATE TABLE oauth_tokens (
                 account_name TEXT PRIMARY KEY,
                 platform TEXT NOT NULL,
@@ -227,6 +242,12 @@ class TestMigrations:
         info = conn.execute("PRAGMA table_info(projects)").fetchall()
         col_names = {row[1] for row in info}
         assert "brief_section_metadata" in col_names
+
+        # Verify arc strategy columns after migration
+        info = conn.execute("PRAGMA table_info(arcs)").fetchall()
+        col_names = {row[1] for row in info}
+        assert "strategy" in col_names
+        assert "reasoning" in col_names
 
         conn.close()
 

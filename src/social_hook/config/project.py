@@ -9,7 +9,7 @@ import yaml
 
 from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
-from social_hook.parsing import check_unknown_keys
+from social_hook.parsing import check_unknown_keys, safe_int
 
 if TYPE_CHECKING:
     from social_hook.config.yaml import IdentityConfig
@@ -77,6 +77,7 @@ class StrategyConfig:
     arc_stagnation_days: int = 14
     strategy_moment_max_gap_days: int = 7
     portfolio_window: int = 10
+    max_arcs_per_strategy: int = 3
     episode_preferences: EpisodePreferences = field(default_factory=EpisodePreferences)
 
 
@@ -250,6 +251,7 @@ def _parse_strategy_config(data: dict) -> StrategyConfig:
             "arc_stagnation_days",
             "strategy_moment_max_gap_days",
             "portfolio_window",
+            "max_arcs_per_strategy",
             "episode_preferences",
         },
         "strategy",
@@ -268,6 +270,9 @@ def _parse_strategy_config(data: dict) -> StrategyConfig:
         arc_stagnation_days=data.get("arc_stagnation_days", 14),
         strategy_moment_max_gap_days=data.get("strategy_moment_max_gap_days", 7),
         portfolio_window=data.get("portfolio_window", 10),
+        max_arcs_per_strategy=safe_int(
+            data.get("max_arcs_per_strategy", 3), 3, "strategy.max_arcs_per_strategy"
+        ),
         episode_preferences=episode_preferences,
     )
 

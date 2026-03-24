@@ -1287,8 +1287,8 @@ def insert_arc(conn: sqlite3.Connection, arc: Arc) -> str:
     """
     conn.execute(
         """
-        INSERT INTO arcs (id, project_id, theme, status, post_count, last_post_at, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO arcs (id, project_id, theme, strategy, status, reasoning, post_count, last_post_at, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         arc.to_row(),
     )
@@ -1303,6 +1303,8 @@ def update_arc(
     post_count: int | None = None,
     last_post_at: str | None = None,
     notes: str | None = None,
+    strategy: str | None = None,
+    reasoning: str | None = None,
 ) -> bool:
     """Update an arc.
 
@@ -1319,6 +1321,10 @@ def update_arc(
             updates.append("ended_at = datetime('now')")
         elif status == "active":
             updates.append("ended_at = NULL")
+        elif status == "proposed":
+            logger.debug("Arc %s set to proposed — no ended_at change", arc_id)
+        else:
+            logger.warning("Arc %s: unrecognized status %r", arc_id, status)
     if post_count is not None:
         updates.append("post_count = ?")
         params.append(post_count)
@@ -1328,6 +1334,12 @@ def update_arc(
     if notes is not None:
         updates.append("notes = ?")
         params.append(notes)
+    if strategy is not None:
+        updates.append("strategy = ?")
+        params.append(strategy)
+    if reasoning is not None:
+        updates.append("reasoning = ?")
+        params.append(reasoning)
 
     if not updates:
         return False
@@ -1343,17 +1355,32 @@ def update_arc(
     return cursor.rowcount > 0
 
 
-def get_active_arcs(conn: sqlite3.Connection, project_id: str) -> list[Arc]:
-    """Get active arcs for a project (max 3)."""
-    rows = conn.execute(
-        """
-        SELECT * FROM arcs
-        WHERE project_id = ? AND status = 'active'
-        ORDER BY started_at DESC
-        LIMIT 3
-        """,
-        (project_id,),
-    ).fetchall()
+def get_active_arcs(
+    conn: sqlite3.Connection, project_id: str, strategy: str | None = None
+) -> list[Arc]:
+    """Get active arcs for a project, optionally filtered by strategy.
+
+    When strategy is None (default), filters arcs where strategy='' (legacy behavior).
+    When strategy is a non-empty string, filters arcs for that specific strategy.
+    """
+    if strategy is None:
+        rows = conn.execute(
+            """
+            SELECT * FROM arcs
+            WHERE project_id = ? AND status = 'active' AND strategy = ''
+            ORDER BY started_at DESC
+            """,
+            (project_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT * FROM arcs
+            WHERE project_id = ? AND status = 'active' AND strategy = ?
+            ORDER BY started_at DESC
+            """,
+            (project_id, strategy),
+        ).fetchall()
     return [Arc.from_dict(dict(row)) for row in rows]
 
 
@@ -1366,27 +1393,34 @@ def get_arc(conn: sqlite3.Connection, arc_id: str) -> Arc | None:
 
 
 def get_arcs_by_project(
-    conn: sqlite3.Connection, project_id: str, status: str | None = None
+    conn: sqlite3.Connection,
+    project_id: str,
+    status: str | None = None,
+    strategy: str | None = None,
 ) -> list[Arc]:
-    """Get arcs for a project, optionally filtered by status.
-
-    Unlike get_active_arcs(), this returns all arcs without a LIMIT.
+    """Get arcs for a project, optionally filtered by status and/or strategy.
 
     Args:
         conn: Database connection
         project_id: Project to query
-        status: Filter by status ('active', 'completed', 'abandoned'), or None for all
+        status: Filter by status ('proposed', 'active', 'completed', 'abandoned'), or None for all
+        strategy: Filter by strategy, or None for all strategies
     """
-    if status:
-        rows = conn.execute(
-            "SELECT * FROM arcs WHERE project_id = ? AND status = ? ORDER BY started_at DESC",
-            (project_id, status),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM arcs WHERE project_id = ? ORDER BY started_at DESC",
-            (project_id,),
-        ).fetchall()
+    conditions = ["project_id = ?"]
+    params: list[Any] = [project_id]
+
+    if status is not None:
+        conditions.append("status = ?")
+        params.append(status)
+    if strategy is not None:
+        conditions.append("strategy = ?")
+        params.append(strategy)
+
+    where = " AND ".join(conditions)
+    rows = conn.execute(
+        f"SELECT * FROM arcs WHERE {where} ORDER BY started_at DESC",
+        params,
+    ).fetchall()
     return [Arc.from_dict(dict(row)) for row in rows]
 
 

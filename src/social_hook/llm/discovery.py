@@ -214,6 +214,7 @@ def discover_project(
     db: object | None = None,
     project_id: str | None = None,
     on_progress: Callable | None = None,
+    strategies: list[str] | None = None,
 ) -> tuple[str | None, list[str], list[dict[str, str]], list[str]]:
     """Two-pass project discovery: select files then generate summary.
 
@@ -374,6 +375,19 @@ def discover_project(
             project_summary = brief
     except Exception:
         logger.warning("Brief generation failed, using raw summary", exc_info=True)
+
+    # Seed topics from the brief's Key Capabilities section
+    if strategies and project_id and db is not None:
+        try:
+            import sqlite3
+
+            from social_hook.topics import seed_topics_from_brief
+
+            # Extract connection from db (may be a DryRunContext or raw connection)
+            conn = getattr(db, "conn", db) if not isinstance(db, sqlite3.Connection) else db
+            seed_topics_from_brief(conn, project_id, project_summary, strategies)
+        except Exception:
+            logger.warning("Topic seeding from brief failed", exc_info=True)
 
     if on_progress:
         on_progress("discovered")
