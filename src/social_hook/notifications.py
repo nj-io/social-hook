@@ -218,6 +218,58 @@ def resend_draft_notification(
         conn.close()
 
 
+def notify_evaluation_cycle(
+    config: Config,
+    project_name: str,
+    project_id: str,
+    cycle_id: str,
+    trigger_description: str,
+    strategy_outcomes: dict[str, dict],
+    drafts: list,
+    arc_info: dict | None = None,
+    queue_actions: list[dict[str, str]] | None = None,
+    dry_run: bool = False,
+) -> None:
+    """Send grouped notification for an evaluation cycle.
+
+    Receives pre-fetched data — no DB access. Formats via format_evaluation_cycle(),
+    constructs OutboundMessage with ButtonRow, and calls broadcast_notification().
+
+    Args:
+        config: Full config object.
+        project_name: Project display name.
+        project_id: Project ID.
+        cycle_id: Evaluation cycle ID.
+        trigger_description: Human-readable trigger (e.g. 'Topic "auth" matured (5 commits)').
+        strategy_outcomes: Dict mapping strategy name to decision dict.
+            Expected keys per entry: {"action", "reason", "arc_id", "topic_id"}.
+        drafts: List of Draft model instances already fetched by the caller.
+        arc_info: Optional arc proposal dict (arc_id, theme, parts, reasoning).
+        queue_actions: Optional list of queue action dicts (type, draft_id, reason).
+        dry_run: If True, skip all sends.
+    """
+    if dry_run:
+        return
+
+    from social_hook.bot.notifications import format_evaluation_cycle, get_cycle_buttons
+
+    msg_text = format_evaluation_cycle(
+        project_name=project_name,
+        trigger_description=trigger_description,
+        strategy_outcomes=strategy_outcomes,
+        drafts=drafts,
+        arc_info=arc_info,
+        queue_actions=queue_actions,
+    )
+    buttons = get_cycle_buttons(
+        cycle_id=cycle_id,
+        drafts=drafts,
+        arc_info=arc_info,
+    )
+    msg = OutboundMessage(text=msg_text, buttons=buttons)
+    broadcast_notification(config, msg)
+
+
 def send_notification(
     config: Config,
     message: str,

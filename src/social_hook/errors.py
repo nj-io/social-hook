@@ -28,7 +28,7 @@ class DatabaseError(Exception):
 
 
 class AuthError(Exception):
-    """Raised when Claude API authentication fails."""
+    """Raised when authentication/authorization fails (LLM or platform)."""
 
     pass
 

@@ -177,6 +177,11 @@ def handle_callback(
         "review": btn_review,
         "promote": btn_promote_submenu,
         "promote_to": btn_promote_to,
+        "cycle_expand": handle_cycle_expand,
+        "cycle_approve": handle_cycle_approve,
+        "cycle_view": handle_cycle_view,
+        "arc_approve": handle_arc_approve,
+        "arc_dismiss": handle_arc_dismiss,
     }
 
     handler = handlers.get(action)
@@ -1847,5 +1852,168 @@ def btn_promote_to(
     except Exception as e:
         logger.exception("Error promoting draft")
         _send(adapter, chat_id, f"Error promoting draft: {e}")
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Cycle-level callback handlers
+# =============================================================================
+
+
+def handle_cycle_expand(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Expand all drafts in a cycle. Payload is cycle_id."""
+    _answer_callback(adapter, callback_id, "Expanding...")
+
+    cycle_id = payload
+    conn = _get_conn()
+    try:
+        from social_hook.db import operations as ops
+
+        drafts = ops.get_drafts_by_cycle(conn, cycle_id)
+        if not drafts:
+            _send(adapter, chat_id, f"No drafts found for cycle `{cycle_id[:12]}`.")
+            return
+
+        lines = [f"*Cycle* `{cycle_id[:12]}` — {len(drafts)} draft(s)"]
+        for draft in drafts:
+            strategy = getattr(draft, "strategy", None) or draft.platform
+            lines.append(f"\n*{strategy}* (`{draft.id[:12]}`) — {draft.status}")
+            lines.append(f"```\n{draft.content}\n```")
+        _send(adapter, chat_id, "\n".join(lines))
+    finally:
+        conn.close()
+
+
+def handle_cycle_approve(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Approve all editable drafts in a cycle. Payload is cycle_id."""
+    _answer_callback(adapter, callback_id, "Approving all...")
+
+    cycle_id = payload
+    conn = _get_conn()
+    try:
+        from social_hook.db import operations as ops
+
+        drafts = ops.get_drafts_by_cycle(conn, cycle_id)
+        if not drafts:
+            _send(adapter, chat_id, f"No drafts found for cycle `{cycle_id[:12]}`.")
+            return
+
+        approved = already = terminal = 0
+        for draft in drafts:
+            if draft.status in EDITABLE_STATUSES:
+                ops.update_draft(conn, draft.id, status="approved")
+                ops.emit_data_event(conn, "draft", "approved", draft.id, draft.project_id)
+                approved += 1
+            elif draft.status in TERMINAL_STATUSES:
+                terminal += 1
+            else:
+                already += 1  # approved, scheduled — already processed
+
+        parts = [f"Approved {approved}."]
+        if already:
+            parts.append(f"Already processed: {already}.")
+        if terminal:
+            parts.append(f"Skipped (terminal): {terminal}.")
+        _send(adapter, chat_id, " ".join(parts))
+    finally:
+        conn.close()
+
+
+def handle_cycle_view(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """View a single draft from a cycle. Payload is 'cycle_id:draft_id'."""
+    _answer_callback(adapter, callback_id, "Loading...")
+
+    parts = payload.split(":", 1)
+    if len(parts) != 2:
+        _send(adapter, chat_id, "Invalid cycle view payload.")
+        return
+    _cycle_id, draft_id = parts
+
+    conn = _get_conn()
+    try:
+        from social_hook.bot.notifications import get_review_buttons_normalized
+        from social_hook.db import operations as ops
+
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` not found.")
+            return
+
+        strategy = getattr(draft, "strategy", None) or draft.platform
+        text = f"*{strategy}* — `{draft.id[:12]}` ({draft.status})\n\n```\n{draft.content}\n```"
+        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
+        _send_with_buttons(adapter, chat_id, text, buttons)
+    finally:
+        conn.close()
+
+
+def handle_arc_approve(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Approve a proposed arc. Payload is arc_id."""
+    arc_id = payload
+    conn = _get_conn()
+    try:
+        from social_hook.db import operations as ops
+
+        updated = ops.update_arc(conn, arc_id, status="active")
+        if updated:
+            _answer_callback(adapter, callback_id, "Arc approved")
+            _send(adapter, chat_id, f"Arc `{arc_id[:12]}` approved.")
+        else:
+            _answer_callback(adapter, callback_id, "Arc not found")
+            _send(adapter, chat_id, f"Arc `{arc_id[:12]}` not found.")
+    finally:
+        conn.close()
+
+
+def handle_arc_dismiss(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Dismiss a proposed arc. Payload is arc_id."""
+    arc_id = payload
+    conn = _get_conn()
+    try:
+        from social_hook.db import operations as ops
+
+        updated = ops.update_arc(conn, arc_id, status="abandoned")
+        if updated:
+            _answer_callback(adapter, callback_id, "Arc dismissed")
+            _send(adapter, chat_id, f"Arc `{arc_id[:12]}` dismissed.")
+        else:
+            _answer_callback(adapter, callback_id, "Arc not found")
+            _send(adapter, chat_id, f"Arc `{arc_id[:12]}` not found.")
     finally:
         conn.close()

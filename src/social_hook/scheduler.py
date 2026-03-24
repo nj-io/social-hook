@@ -2,6 +2,8 @@
 
 import logging
 import os
+import random
+from datetime import datetime, timezone
 from pathlib import Path
 
 from social_hook.adapters.platform.factory import resolve_platform_creds
@@ -36,6 +38,43 @@ def _ensure_error_feed(config, db_path: str) -> None:
     error_feed.set_db_path(db_path)
     error_feed.set_sender(lambda sev, msg: send_notification(config, f"[{sev}] {msg}"))
     _error_feed_wired = True
+
+
+def _check_cross_account_gap(conn, config, draft) -> bool:
+    """Check if posting this draft would violate the cross-account platform gap.
+
+    Reads platform_settings.cross_account_gap_minutes for the draft's platform.
+    Checks last post time across ALL accounts on this platform (not just this account).
+    Applies fixed jitter: ~33% of gap value, random per check.
+    Returns True if gap is satisfied (OK to post), False if too soon.
+    """
+    platform = draft.platform
+    platform_settings = getattr(config, "platform_settings", None)
+    if not platform_settings or not isinstance(platform_settings, dict):
+        return True  # no platform_settings configured
+    gap_config = platform_settings.get(platform)
+    if not gap_config or gap_config.cross_account_gap_minutes <= 0:
+        return True  # disabled
+
+    base_gap = gap_config.cross_account_gap_minutes
+    jitter = random.randint(0, int(base_gap * 0.33))
+    effective_gap = base_gap + jitter
+
+    last_post_time = ops.get_last_post_time_by_platform(conn, platform)
+    if last_post_time is None:
+        return True
+
+    elapsed = (datetime.now(timezone.utc) - last_post_time).total_seconds() / 60
+    if elapsed >= effective_gap:
+        return True
+    else:
+        logger.info(
+            "Cross-account gap not met for %s: %.0f min elapsed, need %d min",
+            platform,
+            elapsed,
+            effective_gap,
+        )
+        return False
 
 
 def record_post_success(conn, draft, result, config, project_name: str, dry_run: bool = False):
@@ -581,6 +620,10 @@ def scheduler_tick(
                         logger.info(f"Skipping draft {draft.id}: project {project.name} is paused")
                         continue
 
+                    # Cross-account gap check: skip if too soon after last post on this platform
+                    if not _check_cross_account_gap(conn, config, draft):
+                        continue
+
                     if dry_run:
                         # Simulate success
                         from social_hook.adapters.dry_run import dry_run_post_result
@@ -640,6 +683,11 @@ def _tick_single_draft(conn, config, draft_id, dry_run, db_path=None) -> int:
 
     if project.paused:
         logger.info(f"Post-now: skipping draft {draft_id}, project {project.name} is paused")
+        return 0
+
+    # Cross-account gap check: post-now still checks because automated cross-posting can trigger it
+    if not _check_cross_account_gap(conn, config, draft):
+        logger.info(f"Post-now: draft {draft_id} deferred by cross-account gap")
         return 0
 
     try:

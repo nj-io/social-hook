@@ -25,6 +25,7 @@ LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 LINKEDIN_USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
 LINKEDIN_POSTS_URL = "https://api.linkedin.com/rest/posts"
+LINKEDIN_ORG_ACLS_URL = "https://api.linkedin.com/rest/organizationalEntityAcls"
 
 # LinkedIn API version header
 LINKEDIN_VERSION = "202501"
@@ -40,19 +41,25 @@ class LinkedInAdapter(PlatformAdapter):
         self,
         access_token: str,
         *,
+        entity: str | None = None,
         token_refresher: Callable[[], str] | None = None,
     ):
         """Initialize LinkedIn adapter with access token.
 
         Args:
             access_token: OAuth 2.0 access token
+            entity: Posting entity — "personal" (default) or an org URN
+                    like "urn:li:organization:12345"
             token_refresher: Optional callback that returns a fresh access token.
                 Called on 401 responses to attempt token refresh and retry.
         """
         self.access_token = access_token
+        self.entity = entity or "personal"
         self._token_refresher = token_refresher
         self.author_urn: str | None = None
+        self._org_validated: bool = False
         self.rate_limit_state = RateLimitState()
+        logger.info("LinkedIn adapter: posting as %s", self.entity)
 
     def _try_refresh_on_401(self, response: requests.Response) -> bool:
         """Attempt token refresh on 401 response.
@@ -75,6 +82,8 @@ class LinkedInAdapter(PlatformAdapter):
         redirect_uri: str,
         state: str,
         scope: str = "w_member_social openid profile",
+        *,
+        entity: str | None = None,
     ) -> str:
         """Generate OAuth authorization URL.
 
@@ -85,10 +94,19 @@ class LinkedInAdapter(PlatformAdapter):
             redirect_uri: HTTPS redirect URI (no localhost)
             state: CSRF protection state parameter
             scope: OAuth scopes (default includes posting permission)
+            entity: If an org URN, w_organization_social is added to scope
 
         Returns:
             Authorization URL for user to visit
         """
+        # Add org scope when posting as an organization
+        if (
+            entity
+            and entity.startswith("urn:li:organization:")
+            and "w_organization_social" not in scope
+        ):
+            scope = f"{scope} w_organization_social"
+
         params = {
             "response_type": "code",
             "client_id": client_id,
@@ -137,10 +155,14 @@ class LinkedInAdapter(PlatformAdapter):
     def validate(self) -> tuple[bool, str]:
         """Validate credentials and fetch author URN.
 
+        For personal entity: fetches /userinfo to resolve person URN.
+        For org entity: also verifies admin access to the organization.
+
         Returns:
-            (True, profile_name) on success, (False, error_message) on failure
+            (True, identity_info) on success, (False, error_message) on failure
         """
         try:
+            # Always fetch userinfo to validate the token and get person identity
             response = requests.get(
                 LINKEDIN_USERINFO_URL,
                 headers=self._auth_headers(),
@@ -155,24 +177,96 @@ class LinkedInAdapter(PlatformAdapter):
                     timeout=10,
                 )
 
-            if response.status_code == 200:
-                data = response.json()
-                # Construct author URN from 'sub' field
-                sub = data.get("sub")
-                if sub:
-                    self.author_urn = f"urn:li:person:{sub}"
-
-                name = data.get("name", data.get("sub", "unknown"))
-                return (True, name)
-            else:
+            if response.status_code != 200:
                 error_type = classify_error(response)
                 error_msg = response.json().get("message", response.text)
                 logger.warning(f"LinkedIn validation failed: {error_type} - {error_msg}")
                 return (False, f"{error_type.value}: {error_msg}")
 
+            data = response.json()
+            sub = data.get("sub")
+            name = data.get("name", data.get("sub", "unknown"))
+
+            if self.entity == "personal":
+                # Personal posting — use person URN
+                if sub:
+                    self.author_urn = f"urn:li:person:{sub}"
+                return (True, f"Personal: {name}")
+            elif self.entity.startswith("urn:li:organization:"):
+                # Org posting — set author URN to org, then verify admin access
+                self.author_urn = self.entity
+                if sub:
+                    self._person_urn = f"urn:li:person:{sub}"
+
+                ok, err = self._validate_org_admin()
+                if not ok:
+                    return (False, err)
+                self._org_validated = True
+                return (True, f"Org: {name}")
+            else:
+                logger.warning("LinkedIn: unknown entity format '%s'", self.entity)
+                return (False, f"Invalid entity format: {self.entity}")
+
         except requests.RequestException as e:
             logger.error(f"LinkedIn validation request failed: {e}")
             return (False, f"Request failed: {e}")
+
+    def _validate_org_admin(self) -> tuple[bool, str]:
+        """Verify the token has admin access to the configured org entity.
+
+        Returns:
+            (True, "") on success, (False, error_message) on failure.
+        """
+        try:
+            response = requests.get(
+                LINKEDIN_ORG_ACLS_URL,
+                params={
+                    "q": "roleAssignee",
+                    "role": "ADMINISTRATOR",
+                    "projection": "(elements*(organizationalTarget))",
+                },
+                headers=self._post_headers(),
+                timeout=10,
+            )
+
+            # Retry once on 401
+            if self._try_refresh_on_401(response):
+                response = requests.get(
+                    LINKEDIN_ORG_ACLS_URL,
+                    params={
+                        "q": "roleAssignee",
+                        "role": "ADMINISTRATOR",
+                        "projection": "(elements*(organizationalTarget))",
+                    },
+                    headers=self._post_headers(),
+                    timeout=10,
+                )
+
+            if response.status_code != 200:
+                error_type = classify_error(response)
+                error_msg = response.json().get("message", response.text)
+                logger.warning("LinkedIn org admin check failed: %s - %s", error_type, error_msg)
+                return (False, f"Org admin check failed: {error_type.value}: {error_msg}")
+
+            data = response.json()
+            elements = data.get("elements", [])
+
+            # Check if user is admin of the configured org
+            for element in elements:
+                org_target = element.get("organizationalTarget", "")
+                if org_target == self.entity:
+                    return (True, "")
+
+            logger.warning(
+                "LinkedIn: user is not admin of org %s (found: %s)",
+                self.entity,
+                [e.get("organizationalTarget", "") for e in elements],
+            )
+            return (False, f"Not an admin of organization {self.entity}")
+
+        except requests.RequestException as e:
+            logger.error("LinkedIn org admin check request failed: %s", e)
+            return (False, f"Org admin check request failed: {e}")
 
     def post(
         self,
@@ -200,11 +294,15 @@ class LinkedInAdapter(PlatformAdapter):
                 error=f"Content exceeds {LINKEDIN_CHAR_LIMIT} character limit ({len(content)} chars)",
             )
 
-        # Ensure we have author URN
+        # Ensure we have author URN (resolved via validate or set from org entity)
         if not self.author_urn:
-            valid, info = self.validate()
-            if not valid:
-                return PostResult(success=False, error=f"Failed to get author URN: {info}")
+            if self.entity != "personal" and self.entity.startswith("urn:li:organization:"):
+                # Org entity — use the org URN directly as author
+                self.author_urn = self.entity
+            else:
+                valid, info = self.validate()
+                if not valid:
+                    return PostResult(success=False, error=f"Failed to get author URN: {info}")
 
         # Build request body
         body = {
@@ -264,9 +362,12 @@ class LinkedInAdapter(PlatformAdapter):
         ):
             # Native reshare for LinkedIn-to-LinkedIn references
             if not self.author_urn:
-                valid, info = self.validate()
-                if not valid:
-                    return PostResult(success=False, error=f"Failed to get author URN: {info}")
+                if self.entity != "personal" and self.entity.startswith("urn:li:organization:"):
+                    self.author_urn = self.entity
+                else:
+                    valid, info = self.validate()
+                    if not valid:
+                        return PostResult(success=False, error=f"Failed to get author URN: {info}")
 
             body = {
                 "author": self.author_urn,

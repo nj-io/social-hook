@@ -177,8 +177,13 @@ def create_adapter_from_account(
         def linkedin_refresher():
             return auth.refresh_and_get_token(db_path, account_name, "linkedin", **token_kwargs)
 
-        logger.info("Created LinkedIn adapter for account '%s'", account_name)
-        return LinkedInAdapter(access_token, token_refresher=linkedin_refresher)
+        entity = account.entity
+        logger.info(
+            "Created LinkedIn adapter for account '%s' (entity=%s)",
+            account_name,
+            entity or "personal",
+        )
+        return LinkedInAdapter(access_token, entity=entity, token_refresher=linkedin_refresher)
 
     else:
         logger.warning("Unknown platform '%s' for account '%s'", platform, account_name)

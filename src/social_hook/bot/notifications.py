@@ -1,8 +1,165 @@
 """Notification formatting helpers."""
 
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# --- Action/status emoji mapping ---
+_ACTION_EMOJI = {
+    "draft": "\u270f\ufe0f",
+    "skip": "\u23ed\ufe0f",
+    "holding": "\u23f8\ufe0f",
+}
+
+
+def format_evaluation_cycle(
+    project_name: str,
+    trigger_description: str,
+    strategy_outcomes: dict[str, dict[str, Any]],
+    drafts: list,
+    arc_info: dict[str, Any] | None = None,
+    queue_actions: list[dict[str, str]] | None = None,
+) -> str:
+    """Format a grouped evaluation cycle notification.
+
+    Args:
+        project_name: Project name.
+        trigger_description: Human-readable description of what triggered the cycle.
+        strategy_outcomes: Dict mapping strategy name to its decision dict.
+            Expected keys per entry: {"action", "reason", "arc_id", "topic_id"}.
+        drafts: List of Draft model instances.
+        arc_info: Optional dict with arc proposal info.
+            Expected keys: {"arc_id", "theme", "parts", "reasoning"}.
+        queue_actions: Optional list of queue action dicts.
+            Expected keys per entry: {"type", "draft_id", "reason"}.
+
+    Returns:
+        Formatted Markdown message.
+    """
+    lines = [
+        f"*Evaluation cycle* — {trigger_description}",
+        "",
+        f"Project: {project_name}",
+    ]
+
+    # Build a lookup of drafts by strategy for content preview
+    drafts_by_strategy: dict[str, Any] = {}
+    for draft in drafts:
+        strategy = getattr(draft, "strategy", None) or ""
+        if strategy:
+            drafts_by_strategy[strategy] = draft
+
+    # Strategy outcomes
+    for strategy_name, outcome in strategy_outcomes.items():
+        action = outcome.get("action", "unknown")
+        reason = outcome.get("reason", "")
+        emoji = _ACTION_EMOJI.get(action, "")
+        line = f"\n{strategy_name}: {action} {emoji}".rstrip()
+        lines.append(line)
+
+        if reason:
+            lines.append(f"  \u2192 {reason}")
+
+        # Show draft content preview if action produced a draft
+        draft = drafts_by_strategy.get(strategy_name)
+        if draft and action == "draft":
+            content_preview = (draft.content or "")[:80]
+            if len(draft.content or "") > 80:
+                content_preview += "\u2026"
+            lines.append(f'  \u2192 "{content_preview}"')
+
+        # Arc info per strategy outcome
+        arc_id = outcome.get("arc_id")
+        arc_theme = outcome.get("arc_theme", "")
+        arc_post_number = outcome.get("arc_post_number")
+        arc_reasoning = outcome.get("arc_reasoning", "")
+        if arc_id and arc_theme:
+            arc_label = f'Arc: "{arc_theme}"'
+            if arc_post_number:
+                arc_label += f" (post {arc_post_number} of ongoing)"
+            lines.append(f"  \u2192 {arc_label}")
+        if arc_reasoning:
+            lines.append(f'  \u2192 Arc reasoning: "{arc_reasoning}"')
+
+    # Queue actions (superseded, dropped)
+    if queue_actions:
+        lines.append("")
+        lines.append("Queue actions:")
+        for qa in queue_actions:
+            qa_type = qa.get("type", "")
+            qa_draft_id = qa.get("draft_id", "")
+            qa_reason = qa.get("reason", "")
+            label = f"  \u2192 {qa_type.capitalize()} {qa_draft_id}"
+            if qa_reason:
+                label += f': "{qa_reason}"'
+            lines.append(label)
+
+    # Arc proposal
+    if arc_info:
+        arc_id = arc_info.get("arc_id", "")
+        theme = arc_info.get("theme", "")
+        parts = arc_info.get("parts", 0)
+        reasoning = arc_info.get("reasoning", "")
+        lines.append("")
+        lines.append(f'\U0001f517 Arc proposed: "{theme}" ({parts} parts)')
+        if reasoning:
+            lines.append(f'  \u2192 Reasoning: "{reasoning}"')
+
+    return "\n".join(lines)
+
+
+def get_cycle_buttons(
+    cycle_id: str,
+    drafts: list,
+    arc_info: dict[str, Any] | None = None,
+) -> list:
+    """Get buttons for an evaluation cycle notification.
+
+    Args:
+        cycle_id: Evaluation cycle ID.
+        drafts: List of Draft model instances in this cycle.
+        arc_info: Optional arc proposal info dict.
+
+    Returns:
+        List of ButtonRow instances.
+    """
+    from social_hook.messaging.base import Button, ButtonRow
+
+    rows: list[ButtonRow] = []
+
+    # Arc proposal buttons (if present)
+    if arc_info:
+        arc_id = arc_info.get("arc_id", "")
+        rows.append(
+            ButtonRow(
+                buttons=[
+                    Button(label="Approve Arc", action="arc_approve", payload=arc_id),
+                    Button(label="Dismiss Arc", action="arc_dismiss", payload=arc_id),
+                ]
+            )
+        )
+
+    # Cycle-level action buttons
+    action_buttons = [
+        Button(label="Expand All", action="cycle_expand", payload=cycle_id),
+        Button(label="Approve All", action="cycle_approve", payload=cycle_id),
+    ]
+    rows.append(ButtonRow(buttons=action_buttons))
+
+    # Per-draft view buttons
+    view_buttons = []
+    for draft in drafts:
+        strategy = getattr(draft, "strategy", None) or draft.platform
+        label = f"View {strategy}"
+        # payload format: cycle_id:draft_id
+        payload = f"{cycle_id}:{draft.id}"
+        view_buttons.append(Button(label=label, action="cycle_view", payload=payload))
+    if view_buttons:
+        rows.append(ButtonRow(buttons=view_buttons))
+
+    return rows
 
 
 def format_draft_review(

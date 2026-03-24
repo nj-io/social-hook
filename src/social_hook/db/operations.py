@@ -1130,6 +1130,47 @@ def insert_post(conn: sqlite3.Connection, post: Post) -> str:
     return post.id
 
 
+def get_last_post_time_by_platform(conn: sqlite3.Connection, platform: str):
+    """Get the most recent post time across all projects for a platform.
+
+    Used by cross-account scheduling gap check. Returns None if no posts exist.
+    Note: posted_at is stored as TEXT in SQLite — parse to datetime before returning.
+
+    Returns:
+        datetime or None
+    """
+    from datetime import datetime, timezone
+
+    row = conn.execute(
+        "SELECT posted_at FROM posts WHERE platform = ? ORDER BY posted_at DESC LIMIT 1",
+        (platform,),
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+
+    raw = row[0]
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def get_drafts_by_cycle(conn: sqlite3.Connection, cycle_id: str) -> list[Draft]:
+    """Get all drafts produced in an evaluation cycle.
+
+    Used by notification callback handlers for Expand All / Approve All.
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM drafts
+        WHERE evaluation_cycle_id = ?
+        ORDER BY created_at ASC
+        """,
+        (cycle_id,),
+    ).fetchall()
+    return [Draft.from_dict(dict(row)) for row in rows]
+
+
 def get_recent_posts(conn: sqlite3.Connection, project_id: str, days: int = 7) -> list[Post]:
     """Get recent posts for a project within a time window.
 
