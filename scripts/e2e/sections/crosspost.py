@@ -347,7 +347,7 @@ def run(harness, runner):
         config = harness.load_config()
 
         with patch(
-            "social_hook.scheduler.create_adapter",
+            "social_hook.adapters.platform.factory.create_adapter",
             return_value=mock_adapter,
         ):
             result = _post_draft(harness.conn, draft, config)
@@ -457,7 +457,7 @@ def run(harness, runner):
         config = harness.load_config()
 
         with patch(
-            "social_hook.scheduler.create_adapter",
+            "social_hook.adapters.platform.factory.create_adapter",
             return_value=mock_adapter,
         ):
             result = _post_draft(harness.conn, second_draft, config)

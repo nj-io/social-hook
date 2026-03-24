@@ -56,7 +56,7 @@ class TestCredentialFilter:
     def test_get_record_mode(self):
         from scripts.e2e.vcr_config import get_record_mode
 
-        assert get_record_mode(live=True) == "new_episodes"
+        assert get_record_mode(live=True) == "all"
         assert get_record_mode(live=False) == "none"
 
     def test_test_png_exists(self):

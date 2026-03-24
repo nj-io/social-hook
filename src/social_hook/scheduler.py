@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 
+from social_hook.adapters.platform.registry import AdapterRegistry
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
@@ -16,6 +17,10 @@ from social_hook.scheduling import calculate_optimal_time
 from social_hook.trigger import parse_commit_info, run_trigger
 
 logger = logging.getLogger(__name__)
+
+# Process-scoped adapter cache — persists rate limit state and token refreshers across ticks.
+# Clears on process restart. When targets lands, key changes from platform to account name.
+_registry = AdapterRegistry()
 
 
 def record_post_success(conn, draft, result, config, project_name: str, dry_run: bool = False):
@@ -471,7 +476,7 @@ def scheduler_tick(
         try:
             # --- Post-now mode: single draft, no promote/drain ---
             if draft_id:
-                return _tick_single_draft(conn, config, draft_id, dry_run)
+                return _tick_single_draft(conn, config, draft_id, dry_run, db_path=db_path)
 
             # --- Normal mode ---
             # Promote deferred drafts before checking for due drafts
@@ -512,7 +517,7 @@ def scheduler_tick(
                         result = dry_run_post_result()
                     else:
                         # Post via adapter
-                        result = _post_draft(conn, draft, config)
+                        result = _post_draft(conn, draft, config, db_path=db_path)
 
                     if result.success:
                         record_post_success(
@@ -539,7 +544,7 @@ def scheduler_tick(
         release_lock(effective_lock)
 
 
-def _tick_single_draft(conn, config, draft_id, dry_run) -> int:
+def _tick_single_draft(conn, config, draft_id, dry_run, db_path=None) -> int:
     """Post a single draft by ID (post-now mode).
 
     Skips promote_deferred_drafts and _drain_deferred_evaluations.
@@ -572,7 +577,7 @@ def _tick_single_draft(conn, config, draft_id, dry_run) -> int:
 
             result = dry_run_post_result()
         else:
-            result = _post_draft(conn, draft, config)
+            result = _post_draft(conn, draft, config, db_path=db_path)
 
         if result.success:
             ops.update_draft(conn, draft.id, status="posted")
@@ -609,19 +614,19 @@ def _tick_single_draft(conn, config, draft_id, dry_run) -> int:
         return 1
 
 
-def _post_draft(conn, draft, config):
+def _post_draft(conn, draft, config, db_path=None):
     """Post a draft using the appropriate platform adapter.
 
     Args:
         conn: Database connection (for thread tweet lookup)
         draft: Draft object to post
         config: Full config object
+        db_path: Path to SQLite database (for OAuth 2.0 token refresh)
 
     Returns:
         PostResult or ThreadResult
     """
     from social_hook.adapters.models import PostResult
-    from social_hook.adapters.platform.factory import create_adapter
 
     if draft.platform == "preview":
         return PostResult(
@@ -629,9 +634,9 @@ def _post_draft(conn, draft, config):
             error="Preview drafts cannot be posted. Promote to a real platform first.",
         )
 
-    # Create adapter via factory
+    # Get adapter from registry (cached per platform, shares rate limit state)
     try:
-        adapter = create_adapter(draft.platform, config)
+        adapter = _registry.get(draft.platform, config, db_path=db_path)
     except ConfigError as e:
         return PostResult(success=False, error=str(e))
 

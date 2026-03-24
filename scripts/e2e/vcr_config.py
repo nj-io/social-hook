@@ -104,7 +104,7 @@ def get_record_mode(live: bool) -> str:
         VCR record mode string.
     """
     if live:
-        return "new_episodes"
+        return "all"  # always re-record (never replay stale cassettes)
     return "none"
 
 

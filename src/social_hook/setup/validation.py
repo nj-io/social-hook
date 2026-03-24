@@ -59,24 +59,16 @@ def validate_telegram_bot(token: str) -> tuple[bool, str]:
         return False, f"Connection error: {e}"
 
 
-def validate_x_api(
-    api_key: str,
-    api_secret: str,
-    access_token: str,
-    access_secret: str,
-) -> tuple[bool, str]:
-    """Validate X (Twitter) API credentials.
+def validate_x_api(access_token: str) -> tuple[bool, str]:
+    """Validate X (Twitter) API credentials using OAuth 2.0 Bearer token.
 
     Returns:
         (success, message) tuple
     """
     try:
-        from requests_oauthlib import OAuth1
-
-        auth = OAuth1(api_key, api_secret, access_token, access_secret)
         response = requests.get(
             "https://api.x.com/2/users/me",
-            auth=auth,
+            headers={"Authorization": f"Bearer {access_token}"},
             timeout=10,
         )
         if response.status_code == 200:
@@ -87,8 +79,6 @@ def validate_x_api(
             return False, "Invalid X API credentials"
         else:
             return False, f"X API returned status {response.status_code}"
-    except ImportError:
-        return False, "requests-oauthlib not installed"
     except requests.RequestException as e:
         return False, f"Connection error: {e}"
 

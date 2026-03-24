@@ -22,7 +22,7 @@ def main():
         default=None,
         help="Run only a specific section ("
         + ", ".join(sorted(SECTION_MAP.keys()))
-        + ") or scenario (A1, B1, etc.)",
+        + "), scenario (A1, B1), or comma-separated scenario IDs (U-x-post-media,U-x-quote)",
     )
     parser.add_argument(
         "--skip-telegram", action="store_true", help="Skip Telegram-dependent sections (F, G, H)"
@@ -105,18 +105,31 @@ def main():
     # Determine which sections to run
     sections_to_run = set(SECTION_REGISTRY.keys())
     only_scenario = None
+    scenario_filter = None
     if args.only:
         only = args.only
         if only.lower() in SECTION_MAP:
             sections_to_run = set(SECTION_MAP[only.lower()])
-        elif only.upper()[0] in SECTION_REGISTRY:
+        elif only.upper()[0] in SECTION_REGISTRY and len(only) <= 4:
             # Single scenario (e.g. "C13") — run the section, skip non-matching scenarios
             sections_to_run = {only.upper()[0]}
             if any(c.isdigit() for c in only):
                 only_scenario = only.upper()
         else:
-            print(f"Unknown section: {args.only}")
-            sys.exit(1)
+            # Treat as comma-separated scenario IDs (e.g. "U-x-post-media,U-x-quote")
+            scenario_ids = [s.strip() for s in only.split(",") if s.strip()]
+            # Derive section letters from scenario IDs
+            # Convention: first character is the section letter (e.g. U-x-post-media → U)
+            derived_sections = set()
+            for sid in scenario_ids:
+                letter = sid[0].upper()
+                if letter in SECTION_REGISTRY:
+                    derived_sections.add(letter)
+            if not derived_sections:
+                print(f"Unknown section: {args.only}")
+                sys.exit(1)
+            sections_to_run = derived_sections
+            scenario_filter = set(scenario_ids)
 
     if args.skip_telegram:
         sections_to_run -= {"F", "G", "H"}
@@ -129,6 +142,8 @@ def main():
     print(f"  Sections: {', '.join(sorted(sections_to_run))}")
     if only_scenario:
         print(f"  Scenario: {only_scenario}")
+    if scenario_filter:
+        print(f"  Scenarios: {', '.join(sorted(scenario_filter))}")
     if args.snapshot:
         print(f"  Snapshot: {args.snapshot} (loading saved DB state)")
     if args.save_snapshots:
@@ -138,6 +153,7 @@ def main():
     runner = E2ERunner(verbose=args.verbose)
     runner.start_time = time.time()
     runner._only_scenario = only_scenario
+    runner._scenario_filter = scenario_filter
 
     # Resolve real base path before patching HOME
     real_home = os.environ.get("HOME", str(Path.home()))
@@ -174,14 +190,22 @@ def main():
             sys.exit(0)
 
         # Auto-load fixture when running a single scenario without --snapshot
-        if only_scenario and not args.snapshot and not harness.project_id:
-            letter = only_scenario[0]
+        _auto_load_letter = None
+        if only_scenario:
+            _auto_load_letter = only_scenario[0]
+        elif scenario_filter:
+            # Derive letter from first scenario ID in the filter
+            _auto_load_letter = next(iter(sorted(scenario_filter)))[0].upper()
+
+        if _auto_load_letter and not args.snapshot and not harness.project_id:
+            letter = _auto_load_letter
             fixture = FIXTURE_REQUIREMENTS.get(letter)
 
-            if letter == "A" and only_scenario != "A1":
+            if letter == "A" and (only_scenario and only_scenario != "A1"):
                 # Section A scenarios (except A1) just need a seeded project
                 harness.seed_project()
-                print(f"  Seeded project for standalone {only_scenario}: {harness.project_id}")
+                label = only_scenario or ", ".join(sorted(scenario_filter))
+                print(f"  Seeded project for standalone {label}: {harness.project_id}")
             elif fixture:
                 if harness.load_fixture(fixture):
                     print(f"  Auto-loaded fixture: {fixture} (project_id={harness.project_id})")

@@ -1,0 +1,166 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.32.3
+    method: GET
+    uri: https://api.x.com/2/users/me
+  response:
+    body:
+      string: "{\"data\":{\"id\":\"149464644\",\"name\":\"NJ \u2699\uFE0F\",\"username\":\"fitdegen\"}}"
+    headers:
+      CF-RAY:
+      - 9e0e81f70d6cd034-BKK
+      Cache-Control:
+      - no-cache, no-store, max-age=0
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Length:
+      - '86'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Mon, 23 Mar 2026 15:35:44 GMT
+      Server:
+      - cloudflare envoy
+      Set-Cookie:
+      - guest_id_marketing=v1%3A177428014460532284; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:35:44 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177428014460532284; Max-Age=63072000; Expires=Wed, 22 Mar
+        2028 15:35:44 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_qUsFGaKYSe9YJa7QswN9/A=="; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:35:44 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177428014460532284; Max-Age=63072000; Expires=Wed, 22 Mar 2028
+        15:35:44 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - __cf_bm=OXTksViSjaMRvkbXz_gZqGmE0O.R5ImjN9DSiQdaZZM-1774280144.4877727-1.0.1.1-v5.QvXBU793PH6yxTHzG1ajsLJZ8r5fjI0w1orz9G1NFKGh3hxraT9zK0b0IclXzumrPGOEdFS3PnJ8IVg1QZYn2ctSIIZwpBQAZLH.KyBL9rgp3Ff1_QI8dOwGYorAV;
+        HttpOnly; Secure; Path=/; Domain=x.com; Expires=Mon, 23 Mar 2026 16:05:44
+        GMT
+      api-version:
+      - '2.160'
+      cf-cache-status:
+      - DYNAMIC
+      content-disposition:
+      - attachment; filename=json.json
+      origin-cf-ray:
+      - 9e0e81f70d6cd034-SEA
+      perf:
+      - '7402827104'
+      strict-transport-security:
+      - max-age=631138519; includeSubdomains
+      vary:
+      - accept-encoding
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '75'
+      x-rate-limit-remaining:
+      - '74'
+      x-rate-limit-reset:
+      - '1774281044'
+      x-response-time:
+      - '45'
+      x-served-by:
+      - t4_p
+      x-transaction-id:
+      - 841539511375febe
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.32.3
+    method: GET
+    uri: https://api.x.com/2/users/me
+  response:
+    body:
+      string: "{\"data\":{\"id\":\"149464644\",\"name\":\"NJ \u2699\uFE0F\",\"username\":\"fitdegen\"}}"
+    headers:
+      CF-RAY:
+      - 9e0e869b0b0c2725-BKK
+      Cache-Control:
+      - no-cache, no-store, max-age=0
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Length:
+      - '86'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Mon, 23 Mar 2026 15:38:54 GMT
+      Server:
+      - cloudflare envoy
+      Set-Cookie:
+      - guest_id_marketing=v1%3A177428033467726926; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:38:54 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177428033467726926; Max-Age=63072000; Expires=Wed, 22 Mar
+        2028 15:38:54 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_1EAHmq653fXpv5IX6ByhnA=="; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:38:54 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177428033467726926; Max-Age=63072000; Expires=Wed, 22 Mar 2028
+        15:38:54 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - __cf_bm=808KmbRZuMVodohhv5ESzrI4KYR07PjUh6hGwc5ApS8-1774280334.5688784-1.0.1.1-80pXi.UDxSpLf15ol9Hls9ljW8w7l98oLjsECLZHG8rJi79tLHLC50r7nkhFz9Meei331ACI7MzF.BzEgVuuqqYLqmVklMe_SqDXwwevdvEqRcp4S_ILIaWG9XLb_p2P;
+        HttpOnly; Secure; Path=/; Domain=x.com; Expires=Mon, 23 Mar 2026 16:08:54
+        GMT
+      api-version:
+      - '2.160'
+      cf-cache-status:
+      - DYNAMIC
+      content-disposition:
+      - attachment; filename=json.json
+      origin-cf-ray:
+      - 9e0e869b0b0c2725-SEA
+      perf:
+      - '7402827104'
+      strict-transport-security:
+      - max-age=631138519; includeSubdomains
+      vary:
+      - accept-encoding
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '75'
+      x-rate-limit-remaining:
+      - '73'
+      x-rate-limit-reset:
+      - '1774281044'
+      x-response-time:
+      - '38'
+      x-served-by:
+      - t4_p
+      x-transaction-id:
+      - fd282d1f84c5a009
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1
