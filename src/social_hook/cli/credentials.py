@@ -228,7 +228,7 @@ def validate(
         typer.echo(json_mod.dumps({"valid": all_valid, "platforms": results}, indent=2))
     else:
         for r in results:
-            missing_keys = list(r["missing_keys"])  # type: ignore[arg-type]
+            missing_keys = r["missing_keys"]  # type: ignore[assignment]
             status = "valid" if r["valid"] else f"missing: {', '.join(missing_keys)}"
             typer.echo(f"  {r['platform']:<12} {status}")
         if all_valid:
