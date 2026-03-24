@@ -44,6 +44,26 @@ export function PipelineToasts() {
         }
       } else if (data.entity === "decision") {
         addToast(`Decision: ${data.action}`, { detail: data.entity_id });
+      } else if (data.entity === "target") {
+        const actionLabels: Record<string, string> = {
+          created: "Target added", disabled: "Target disabled", enabled: "Target enabled",
+        };
+        const msg = actionLabels[data.action] ?? `Target ${data.action}`;
+        addToast(msg, { detail: data.entity_id });
+      } else if (data.entity === "topic") {
+        const actionLabels: Record<string, string> = {
+          created: "Topic added", updated: "Topic updated", reordered: "Topics reordered",
+        };
+        const msg = actionLabels[data.action] ?? `Topic ${data.action}`;
+        addToast(msg, { detail: data.entity_id });
+      } else if (data.entity === "suggestion") {
+        const actionLabels: Record<string, string> = {
+          created: "Suggestion submitted", dismissed: "Suggestion dismissed",
+        };
+        const msg = actionLabels[data.action] ?? `Suggestion ${data.action}`;
+        addToast(msg, { detail: data.entity_id });
+      } else if (data.entity === "cycle") {
+        addToast("Evaluation cycle completed", { detail: data.entity_id });
       }
     };
 

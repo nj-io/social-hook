@@ -30,6 +30,10 @@ import { ArcsSection } from "@/components/arcs-section";
 import { RateLimitCard } from "@/components/rate-limit-card";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { EvaluationCycles } from "@/components/evaluation-cycles";
+import { TopicQueue } from "@/components/topic-queue";
+import { BriefEditor } from "@/components/brief-editor";
+import { ContentSuggestions } from "@/components/content-suggestions";
 
 const DECISIONS_PER_PAGE = 10;
 
@@ -71,6 +75,7 @@ export default function ProjectDetailPage() {
   const [importBranch, setImportBranch] = useState<string>("");
   const [importLoading, setImportLoading] = useState(false);
   const [importRefreshKey, setImportRefreshKey] = useState(0);
+  const [activeTab, setActiveTab] = useState<"cycles" | "commits" | "topics" | "brief">("cycles");
   // Consolidate uses a special ref_id key since it spans multiple decisions
   const CONSOLIDATE_REF = "__consolidate__";
 
@@ -428,8 +433,50 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Evaluator Decisions */}
-      <div>
+      {/* Content Suggestions */}
+      <ContentSuggestions projectId={id} />
+
+      {/* Tab bar */}
+      <div className="border-b border-border">
+        <div className="flex gap-0">
+          {([
+            { key: "cycles", label: "Evaluation Cycles" },
+            { key: "commits", label: "Commit Log" },
+            { key: "topics", label: "Topic Queue" },
+            { key: "brief", label: "Brief" },
+          ] as const).map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.key
+                  ? "border-accent text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Evaluation Cycles tab */}
+      {activeTab === "cycles" && (
+        <EvaluationCycles projectId={id} />
+      )}
+
+      {/* Topic Queue tab */}
+      {activeTab === "topics" && (
+        <TopicQueue projectId={id} />
+      )}
+
+      {/* Brief tab */}
+      {activeTab === "brief" && (
+        <BriefEditor projectId={id} />
+      )}
+
+      {/* Commit Log tab (existing Evaluator Decisions) */}
+      {activeTab === "commits" && <div>
         <div className="mb-3 flex items-center gap-3">
           <h2 className="text-lg font-semibold">Evaluator Decisions</h2>
           <select
@@ -677,7 +724,7 @@ export default function ProjectDetailPage() {
             </div>
           </>
         )}
-      </div>
+      </div>}
 
       {/* Arcs */}
       <ArcsSection

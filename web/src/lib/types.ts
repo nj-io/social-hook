@@ -324,6 +324,113 @@ export interface ProjectDetail extends Project {
   journey_capture_enabled?: boolean;
 }
 
+// --- Targets types ---
+
+export interface PlatformCredential {
+  name: string;
+  platform: string;
+  created_at: string;
+  valid?: boolean;
+}
+
+export interface Account {
+  name: string;
+  platform: string;
+  tier: string;
+  identity?: string;
+  created_at: string;
+  target_count?: number;
+}
+
+export interface Target {
+  id: string;
+  project_id: string;
+  account_name: string;
+  destination: string;
+  strategy: string;
+  frequency?: string;
+  enabled: boolean;
+  primary: boolean;
+  created_at: string;
+}
+
+export interface Strategy {
+  name: string;
+  template: boolean;
+  audience?: string;
+  voice?: string;
+  angle?: string;
+  post_when?: string;
+  avoid?: string;
+  format_preference?: string;
+  media_preference?: string;
+}
+
+export interface Topic {
+  id: string;
+  project_id: string;
+  strategy: string;
+  topic: string;
+  description?: string;
+  status: string;
+  priority_rank: number;
+  commit_count?: number;
+  last_posted_at?: string;
+  created_at: string;
+}
+
+export interface Brief {
+  sections: Record<string, string>;
+}
+
+export interface ContentSuggestion {
+  id: string;
+  project_id: string;
+  strategy?: string;
+  idea: string;
+  status: string;
+  created_at: string;
+}
+
+export interface EvaluationCycle {
+  id: string;
+  project_id: string;
+  trigger: string;
+  status: string;
+  strategies: Record<string, CycleStrategyOutcome>;
+  created_at: string;
+}
+
+export interface CycleStrategyOutcome {
+  decision: string;
+  reasoning?: string;
+  topic_matched?: string;
+  arc_reference?: string;
+  content_source?: string;
+  draft_id?: string;
+  draft_content?: string;
+  draft_status?: string;
+}
+
+export interface SystemError {
+  id: string;
+  severity: string;
+  message: string;
+  source?: string;
+  created_at: string;
+}
+
+export interface SystemHealth {
+  status: string;
+  error_count: number;
+  recent_errors: SystemError[];
+}
+
+export interface PlatformSettings {
+  platform: string;
+  cross_account_gap_minutes: number;
+}
+
 /** Parse episode_tags which may arrive as a JSON string or an array. */
 export function parseTags(tags: string | string[] | undefined | null): string[] {
   if (Array.isArray(tags)) return tags;

@@ -1,4 +1,4 @@
-import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent } from "./types";
+import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent, PlatformCredential, Account, Target, Strategy, Topic, Brief, ContentSuggestion, EvaluationCycle, SystemError, SystemHealth, PlatformSettings } from "./types";
 import { getSessionId } from "./session";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -553,5 +553,206 @@ export async function createSummaryDraft(
 ): Promise<{ task_id: string; status: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/summary-draft`, {
     method: "POST",
+  });
+}
+
+// --- Targets API ---
+
+// Platform Credentials
+export async function fetchPlatformCredentials(): Promise<{ credentials: PlatformCredential[] }> {
+  return apiFetch("/api/platform-credentials");
+}
+
+export async function addPlatformCredential(data: { platform: string; name: string; credentials?: Record<string, string> }): Promise<{ status: string }> {
+  return apiFetch("/api/platform-credentials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePlatformCredential(name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/platform-credentials/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function validatePlatformCredential(name: string): Promise<{ valid: boolean; error?: string }> {
+  return apiFetch(`/api/platform-credentials/${encodeURIComponent(name)}/validate`, { method: "POST" });
+}
+
+// Accounts
+export async function fetchAccounts(): Promise<{ accounts: Account[] }> {
+  return apiFetch("/api/accounts");
+}
+
+export async function addAccount(data: { platform: string; name: string }): Promise<{ auth_url?: string; status: string }> {
+  return apiFetch("/api/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAccount(name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/accounts/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function validateAccounts(): Promise<{ results: Record<string, { valid: boolean; error?: string }> }> {
+  return apiFetch("/api/accounts/validate", { method: "POST" });
+}
+
+// Targets
+export async function fetchTargets(projectId: string): Promise<{ targets: Target[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets`);
+}
+
+export async function addTarget(projectId: string, data: { account: string; destination: string; strategy: string; frequency?: string }): Promise<{ status: string; target: Target }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function disableTarget(projectId: string, name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets/${encodeURIComponent(name)}/disable`, { method: "PUT" });
+}
+
+export async function enableTarget(projectId: string, name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets/${encodeURIComponent(name)}/enable`, { method: "PUT" });
+}
+
+// Strategies
+export async function fetchStrategies(projectId: string): Promise<{ strategies: Strategy[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies`);
+}
+
+export async function fetchStrategy(projectId: string, name: string): Promise<Strategy> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`);
+}
+
+export async function updateStrategy(projectId: string, name: string, data: Partial<Strategy>): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function resetStrategy(projectId: string, name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}/reset`, { method: "POST" });
+}
+
+// Topics
+export async function fetchTopics(projectId: string, strategy?: string): Promise<{ topics: Topic[] }> {
+  const params = strategy ? `?strategy=${encodeURIComponent(strategy)}` : "";
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics${params}`);
+}
+
+export async function addTopic(projectId: string, data: { strategy: string; topic: string; description?: string }): Promise<{ status: string; topic: Topic }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateTopic(projectId: string, topicId: string, data: { description?: string; priority_rank?: number }): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function setTopicStatus(projectId: string, topicId: string, status: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function reorderTopics(projectId: string, topicIds: string[]): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/reorder`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topic_ids: topicIds }),
+  });
+}
+
+export async function draftNowTopic(projectId: string, topicId: string): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}/draft-now`, { method: "POST" });
+}
+
+// Brief
+export async function fetchBrief(projectId: string): Promise<Brief> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/brief`);
+}
+
+export async function updateBrief(projectId: string, sections: Record<string, string>): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/brief`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sections }),
+  });
+}
+
+// Content Suggestions
+export async function fetchSuggestions(projectId: string): Promise<{ suggestions: ContentSuggestion[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions`);
+}
+
+export async function createSuggestion(projectId: string, data: { idea: string; strategy?: string }): Promise<{ status: string; task_id?: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function dismissSuggestion(projectId: string, suggestionId: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(suggestionId)}/dismiss`, { method: "PUT" });
+}
+
+export async function combineTopics(projectId: string, topicIds: string[]): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/content/combine`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topic_ids: topicIds }),
+  });
+}
+
+export async function heroLaunch(projectId: string): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/content/hero-launch`, { method: "POST" });
+}
+
+// Evaluation Cycles
+export async function fetchCycles(projectId: string): Promise<{ cycles: EvaluationCycle[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/cycles`);
+}
+
+export async function fetchCycleDetail(projectId: string, cycleId: string): Promise<EvaluationCycle> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/cycles/${encodeURIComponent(cycleId)}`);
+}
+
+// System
+export async function fetchSystemErrors(): Promise<{ errors: SystemError[] }> {
+  return apiFetch("/api/system/errors");
+}
+
+export async function fetchSystemHealth(): Promise<SystemHealth> {
+  return apiFetch("/api/system/health");
+}
+
+// Platform Settings
+export async function fetchPlatformSettings(): Promise<{ settings: PlatformSettings[] }> {
+  return apiFetch("/api/platform-settings");
+}
+
+export async function updatePlatformSettings(platform: string, data: { cross_account_gap_minutes: number }): Promise<{ status: string }> {
+  return apiFetch(`/api/platform-settings/${encodeURIComponent(platform)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
   });
 }
