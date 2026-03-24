@@ -101,8 +101,9 @@ export default function ProjectDetailPage() {
       } else if (task.type === "import_commits") {
         setImportModalOpen(false);
         setImportLoading(false);
-        // Trigger re-fetch by bumping a counter
         setImportRefreshKey((k) => k + 1);
+      } else if (task.type === "retrigger") {
+        reload();
       }
     } else if (task.status === "failed") {
       const error = task.error ?? "Task failed";
@@ -112,6 +113,8 @@ export default function ProjectDetailPage() {
         setConsolidateResult({ error });
       } else if (task.type === "import_commits") {
         setImportLoading(false);
+      } else if (task.type === "retrigger") {
+        setActionError(error);
       }
     }
   }, []);
@@ -658,10 +661,16 @@ export default function ProjectDetailPage() {
                                     }
                                   } catch (err) {
                                     setActionError(err instanceof Error ? err.message : "Evaluate failed");
-                                  } finally {
                                     setEvaluatingId(null);
                                     setEvaluateStartTime(null);
                                   }
+                                  // Don't clear evaluatingId in finally — let isTaskRunning
+                                  // take over from trackTask. Clear after a short delay to
+                                  // give React time to batch the trackTask state update.
+                                  setTimeout(() => {
+                                    setEvaluatingId(null);
+                                    setEvaluateStartTime(null);
+                                  }, 500);
                                 }}
                                 disabled={!!evaluatingId || isTaskRunning(`retrigger-${d.id}`)}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950 disabled:opacity-70"
