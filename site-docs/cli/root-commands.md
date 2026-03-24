@@ -4,13 +4,32 @@ Top-level commands that are not part of a command group.
 
 ### `social-hook consolidation-tick`
 
-Run one consolidation tick: process batched decisions.
+Process held decisions — commits not post-worthy alone but interesting together.
+
+When the evaluator marks a commit as 'hold', it means the commit isn't worth
+a standalone post but could be combined with others. This command batches
+those held decisions and either sends a summary notification (notify_only mode)
+or re-evaluates the batch as a group (re_evaluate mode).
+
+Typically run on a cron (e.g. every few hours) or by the bot daemon.
+
+Example: social-hook consolidation-tick
 
 ---
 
 ### `social-hook discover`
 
-Run two-pass project discovery and print results.
+Analyse your repo with LLM-powered two-pass discovery.
+
+Pass 1: the AI selects the most important files from your repo listing.
+Pass 2: reads those files and generates a project summary, per-file
+summaries, and identifies key documentation. This context is used by
+the evaluator and drafter in all future pipeline runs.
+
+Usually run automatically by quickstart, but can be re-run to refresh
+the project summary after significant changes.
+
+Example: social-hook discover my-project-id
 
 **Arguments:**
 
@@ -64,6 +83,10 @@ For guided setup with platform credentials, use 'social-hook setup' instead.
 
 Run the quickstart flow.
 
+Zero-to-first-draft onboarding. Auto-detects your LLM provider,
+registers your repo, imports commit history, runs AI project discovery,
+and generates an introductory draft — all in one command.
+
 **Arguments:**
 
 | Name | Required | Description |
@@ -98,7 +121,16 @@ Example: social-hook --json rate-limits
 
 ### `social-hook scheduler-tick`
 
-Run one scheduler tick: post all due drafts.
+Post scheduled drafts whose time has arrived and promote deferred drafts.
+
+Checks for drafts with status 'scheduled' past their scheduled time and
+posts them to their platform. Also promotes deferred drafts when scheduling
+slots open up, and drains rate-limited evaluations.
+
+Typically run on a cron (e.g. every minute) or by the bot daemon.
+
+Example: social-hook scheduler-tick
+Example: social-hook --dry-run scheduler-tick
 
 ---
 
@@ -137,7 +169,12 @@ Test commit evaluation.
 
 ### `social-hook trigger`
 
-Evaluate a commit and create draft if post-worthy (called by hook).
+Run the full evaluation-to-draft pipeline for a single commit.
+
+Evaluates the commit with the LLM, records a decision, and creates
+drafts for each enabled platform if the commit is post-worthy.
+This is the same pipeline the git post-commit hook runs automatically.
+Use 'social-hook test' for dry-run evaluation without database writes.
 
 **Options:**
 
@@ -156,7 +193,16 @@ Show version information.
 
 ### `social-hook web`
 
-Start the web dashboard (Next.js + FastAPI).
+Start the web dashboard for managing your social-hook workflow visually.
+
+Launches a Next.js frontend and FastAPI backend. From the dashboard you can
+review and edit drafts, approve or reject posts, manage projects, configure
+settings, monitor the pipeline in real time, and more.
+
+Requires Node.js. Use --install to run npm install on first launch.
+
+Example: social-hook web
+Example: social-hook web --port 8080 --install
 
 **Options:**
 
