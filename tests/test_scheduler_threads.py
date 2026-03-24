@@ -13,14 +13,14 @@ from social_hook.db import (
 )
 from social_hook.filesystem import generate_id
 from social_hook.models import Decision, Draft, DraftTweet
-from social_hook.scheduler import _post_draft
+from social_hook.scheduler import _post_draft, _registry
 
 
 class TestPostDraftSignature:
     """_post_draft accepts conn as first parameter."""
 
     def test_post_draft_requires_conn(self):
-        """_post_draft requires conn, draft, config."""
+        """_post_draft requires conn, draft, config, db_path."""
         import inspect
 
         sig = inspect.signature(_post_draft)
@@ -28,10 +28,15 @@ class TestPostDraftSignature:
         assert params[0] == "conn"
         assert params[1] == "draft"
         assert params[2] == "config"
+        assert "db_path" in params
 
 
 class TestPostDraftThread:
     """_post_draft thread-aware posting."""
+
+    def setup_method(self):
+        """Clear adapter registry between tests to prevent stale cache."""
+        _registry.clear()
 
     def _setup_draft_with_tweets(self, conn):
         """Create a project, decision, draft with thread tweets."""
@@ -71,8 +76,8 @@ class TestPostDraftThread:
 
         return project, draft
 
-    @patch("social_hook.adapters.platform.x.XAdapter")
-    def test_thread_posts_via_post_thread(self, MockXAdapter, temp_dir):
+    @patch("social_hook.adapters.platform.registry.create_adapter")
+    def test_thread_posts_via_post_thread(self, mock_create_adapter, temp_dir):
         """When draft has tweets, uses post_thread()."""
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -84,24 +89,22 @@ class TestPostDraftThread:
             tweet_results=[PostResult(success=True, external_id=f"ext_{i}") for i in range(4)],
         )
         mock_adapter.post_thread.return_value = mock_thread_result
-        MockXAdapter.return_value = mock_adapter
+        mock_create_adapter.return_value = mock_adapter
 
         config = MagicMock()
         config.env = {
-            "X_API_KEY": "k",
-            "X_API_SECRET": "s",
-            "X_ACCESS_TOKEN": "t",
-            "X_ACCESS_TOKEN_SECRET": "ts",
+            "X_CLIENT_ID": "cid",
+            "X_CLIENT_SECRET": "csec",
         }
         config.platforms = {"x": MagicMock(account_tier="free")}
 
-        result = _post_draft(conn, draft, config)
+        result = _post_draft(conn, draft, config, db_path=str(db_path))
         assert result.success is True
         mock_adapter.post_thread.assert_called_once()
         mock_adapter.post.assert_not_called()
 
-    @patch("social_hook.adapters.platform.x.XAdapter")
-    def test_thread_updates_draft_tweets_after_posting(self, MockXAdapter, temp_dir):
+    @patch("social_hook.adapters.platform.registry.create_adapter")
+    def test_thread_updates_draft_tweets_after_posting(self, mock_create_adapter, temp_dir):
         """After post_thread, each draft_tweet gets external_id and posted_at."""
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -113,25 +116,24 @@ class TestPostDraftThread:
             tweet_results=[PostResult(success=True, external_id=f"ext_{i}") for i in range(4)],
         )
         mock_adapter.post_thread.return_value = mock_thread_result
-        MockXAdapter.return_value = mock_adapter
+        mock_create_adapter.return_value = mock_adapter
 
         config = MagicMock()
         config.env = {
-            "X_API_KEY": "k",
-            "X_API_SECRET": "s",
-            "X_ACCESS_TOKEN": "t",
-            "X_ACCESS_TOKEN_SECRET": "ts",
+            "X_CLIENT_ID": "cid",
+            "X_CLIENT_SECRET": "csec",
         }
         config.platforms = {"x": MagicMock(account_tier="free")}
 
-        _post_draft(conn, draft, config)
+        _post_draft(conn, draft, config, db_path=str(db_path))
 
         tweets = get_draft_tweets(conn, draft.id)
         for i, tweet in enumerate(tweets):
             assert tweet.external_id == f"ext_{i}"
             assert tweet.posted_at is not None
 
-    def test_no_tweets_posts_single(self, temp_dir):
+    @patch("social_hook.adapters.platform.registry.create_adapter")
+    def test_no_tweets_posts_single(self, mock_create_adapter, temp_dir):
         """Without draft_tweets, posts single via post()."""
         from social_hook.db import insert_project
         from social_hook.models import Project
@@ -163,25 +165,22 @@ class TestPostDraftThread:
 
         config = MagicMock()
         config.env = {
-            "X_API_KEY": "k",
-            "X_API_SECRET": "s",
-            "X_ACCESS_TOKEN": "t",
-            "X_ACCESS_TOKEN_SECRET": "ts",
+            "X_CLIENT_ID": "cid",
+            "X_CLIENT_SECRET": "csec",
         }
         config.platforms = {"x": MagicMock(account_tier="free")}
 
-        with patch("social_hook.adapters.platform.x.XAdapter") as MockXAdapter:
-            mock_adapter = MagicMock()
-            mock_adapter.post.return_value = PostResult(success=True, external_id="ext_1")
-            MockXAdapter.return_value = mock_adapter
+        mock_adapter = MagicMock()
+        mock_adapter.post.return_value = PostResult(success=True, external_id="ext_1")
+        mock_create_adapter.return_value = mock_adapter
 
-            result = _post_draft(conn, draft, config)
-            assert result.success is True
-            mock_adapter.post.assert_called_once_with("Short post", media_paths=None)
-            mock_adapter.post_thread.assert_not_called()
+        result = _post_draft(conn, draft, config, db_path=str(db_path))
+        assert result.success is True
+        mock_adapter.post.assert_called_once_with("Short post", media_paths=None)
+        mock_adapter.post_thread.assert_not_called()
 
-    @patch("social_hook.adapters.platform.x.XAdapter")
-    def test_linkedin_thread_guard(self, MockXAdapter, temp_dir):
+    @patch("social_hook.adapters.platform.registry.create_adapter")
+    def test_linkedin_thread_guard(self, mock_create_adapter, temp_dir):
         """LinkedIn posts single content even if draft has tweets."""
         from social_hook.db import insert_project
         from social_hook.models import Project
@@ -224,17 +223,16 @@ class TestPostDraftThread:
         config = MagicMock()
         config.env = {"LINKEDIN_ACCESS_TOKEN": "tok"}
 
-        with patch("social_hook.adapters.platform.linkedin.LinkedInAdapter") as MockLinkedIn:
-            mock_adapter = MagicMock()
-            mock_adapter.post.return_value = PostResult(success=True, external_id="li_1")
-            MockLinkedIn.return_value = mock_adapter
+        mock_adapter = MagicMock()
+        mock_adapter.post.return_value = PostResult(success=True, external_id="li_1")
+        mock_create_adapter.return_value = mock_adapter
 
-            result = _post_draft(conn, draft, config)
-            assert result.success is True
-            mock_adapter.post.assert_called_once_with("Full post content here", media_paths=None)
+        result = _post_draft(conn, draft, config)
+        assert result.success is True
+        mock_adapter.post.assert_called_once_with("Full post content here", media_paths=None)
 
-    @patch("social_hook.adapters.platform.x.XAdapter")
-    def test_paid_tier_long_single_post(self, MockXAdapter, temp_dir):
+    @patch("social_hook.adapters.platform.registry.create_adapter")
+    def test_paid_tier_long_single_post(self, mock_create_adapter, temp_dir):
         """Paid tier long single post (>280 chars) posts successfully."""
         from social_hook.db import insert_project
         from social_hook.models import Project
@@ -267,18 +265,16 @@ class TestPostDraftThread:
 
         mock_adapter = MagicMock()
         mock_adapter.post.return_value = PostResult(success=True, external_id="ext_1")
-        MockXAdapter.return_value = mock_adapter
+        mock_create_adapter.return_value = mock_adapter
 
         config = MagicMock()
         config.env = {
-            "X_API_KEY": "k",
-            "X_API_SECRET": "s",
-            "X_ACCESS_TOKEN": "t",
-            "X_ACCESS_TOKEN_SECRET": "ts",
+            "X_CLIENT_ID": "cid",
+            "X_CLIENT_SECRET": "csec",
         }
         config.platforms = {"x": MagicMock(account_tier="premium")}
 
-        result = _post_draft(conn, draft, config)
+        result = _post_draft(conn, draft, config, db_path=str(db_path))
         assert result.success is True
         mock_adapter.post.assert_called_once_with(long_content, media_paths=None)
 

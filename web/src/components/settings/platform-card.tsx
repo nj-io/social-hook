@@ -1,13 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { PlatformConfig, SchedulingOverride } from "@/lib/types";
-import { updateEnv } from "@/lib/api";
+import { updateEnv, fetchOAuthAuthorize, fetchOAuthStatus, fetchOAuthDisconnect } from "@/lib/api";
 import { platformLabel } from "@/lib/platform";
+import { Note } from "@/components/ui/note";
 
 const FILTERS = ["all", "notable", "significant"];
 const FREQUENCIES = ["high", "moderate", "low", "minimal"];
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const OAUTH_PLATFORMS = ["x", "linkedin"];
 
 const TIERS: Record<string, string[]> = {
   x: ["free", "basic", "premium", "pro"],
@@ -16,16 +19,18 @@ const TIERS: Record<string, string[]> = {
 
 const PLATFORM_ENV_KEYS: Record<string, { key: string; label: string }[]> = {
   x: [
-    { key: "X_API_KEY", label: "API Key" },
-    { key: "X_API_SECRET", label: "API Secret" },
-    { key: "X_ACCESS_TOKEN", label: "Access Token" },
-    { key: "X_ACCESS_TOKEN_SECRET", label: "Access Token Secret" },
+    { key: "X_CLIENT_ID", label: "Client ID" },
+    { key: "X_CLIENT_SECRET", label: "Client Secret" },
   ],
   linkedin: [
     { key: "LINKEDIN_CLIENT_ID", label: "Client ID" },
     { key: "LINKEDIN_CLIENT_SECRET", label: "Client Secret" },
-    { key: "LINKEDIN_ACCESS_TOKEN", label: "Access Token" },
   ],
+};
+
+const OAUTH_PORTAL_URLS: Record<string, { label: string; url: string }> = {
+  x: { label: "X Developer Portal", url: "https://developer.x.com/en/portal/dashboard" },
+  linkedin: { label: "LinkedIn Developer Portal", url: "https://www.linkedin.com/developers/apps" },
 };
 
 interface PlatformCardProps {
@@ -42,7 +47,57 @@ export function PlatformCard({ name, config, onChange, onRemove, env, onEnvRefre
   const [keyValues, setKeyValues] = useState<Record<string, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
+  const isOAuthPlatform = OAUTH_PLATFORMS.includes(name);
+
+  // OAuth connection state
+  const [oauthStatus, setOauthStatus] = useState<{ connected: boolean; username: string } | null>(null);
+  const [oauthLoading, setOauthLoading] = useState(false);
+
+  const checkOAuthStatus = useCallback(async () => {
+    if (!isOAuthPlatform) return;
+    try {
+      const status = await fetchOAuthStatus(name);
+      setOauthStatus(status);
+      if (status.callback_url) setCallbackUrl(status.callback_url);
+    } catch {
+      // ignore — status check is best-effort
+    }
+  }, [name, isOAuthPlatform]);
+
+  useEffect(() => {
+    checkOAuthStatus();
+  }, [checkOAuthStatus]);
+
+  // Listen for postMessage from the OAuth callback popup
+  useEffect(() => {
+    if (!isOAuthPlatform) return;
+    function onMessage(e: MessageEvent) {
+      if (e.data === "oauth_complete") {
+        checkOAuthStatus();
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [isOAuthPlatform, checkOAuthStatus]);
+
+  const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
+
+  async function handleOAuthConnect() {
+    setOauthLoading(true);
+    try {
+      const data = await fetchOAuthAuthorize(name);
+      if (data.callback_url) setCallbackUrl(data.callback_url);
+      window.open(data.auth_url, "_blank");
+    } catch {
+      // ignore — user will see the button still available
+    } finally {
+      setOauthLoading(false);
+    }
+  }
+
   const envKeys = PLATFORM_ENV_KEYS[name];
+  const clientIdKey = `${name.toUpperCase()}_CLIENT_ID`;
+  const portal = OAUTH_PORTAL_URLS[name];
 
   async function handleKeySave(envKey: string) {
     const value = keyValues[envKey];
@@ -156,6 +211,66 @@ export function PlatformCard({ name, config, onChange, onRemove, env, onEnvRefre
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* OAuth connection */}
+      {isOAuthPlatform && (
+        <div className="border-t border-border px-4 py-3">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Authorization</p>
+          {oauthStatus?.connected ? (
+            <div className="flex items-center gap-2">
+              <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
+              <span className="text-sm text-green-700 dark:text-green-400">
+                Connected{oauthStatus.username ? ` as @${oauthStatus.username}` : ""}
+              </span>
+              <button
+                onClick={handleOAuthConnect}
+                disabled={oauthLoading}
+                className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+              >
+                {oauthLoading ? "..." : "Re-authorize"}
+              </button>
+              <button
+                onClick={async () => {
+                  await fetchOAuthDisconnect(name);
+                  setOauthStatus({ connected: false, username: "" });
+                }}
+                className="text-xs text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+              >
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleOAuthConnect}
+                disabled={oauthLoading || !env[clientIdKey]}
+                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
+              >
+                {oauthLoading ? "Opening..." : `Connect ${platformLabel(name)} Account`}
+              </button>
+              {!env[clientIdKey] && (
+                <span className="text-xs text-muted-foreground">
+                  Save Client ID first
+                </span>
+              )}
+            </div>
+          )}
+          <Note variant="info" className="mt-2">
+            Ensure{" "}
+            <code className="rounded bg-muted px-1">
+              {callbackUrl || `http://localhost:{api-port}/api/oauth/${name}/callback`}
+            </code>{" "}
+            is registered as a Redirect URI in your{" "}
+            {portal ? (
+              <a href={portal.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">
+                {portal.label}
+              </a>
+            ) : (
+              <span>{platformLabel(name)} Developer Portal</span>
+            )}.
+          </Note>
         </div>
       )}
 

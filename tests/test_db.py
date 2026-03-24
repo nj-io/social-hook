@@ -100,7 +100,7 @@ class TestDatabaseInitialization:
         assert result[0] == 1
 
     def test_all_tables_exist(self, temp_db):
-        """Verify all 15 tables exist."""
+        """Verify all 16 tables exist."""
         tables = temp_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
@@ -124,6 +124,7 @@ class TestDatabaseInitialization:
             "background_tasks",
             "file_summaries",
             "platform_introduced",
+            "oauth_tokens",
         }
 
         assert table_names == expected_tables

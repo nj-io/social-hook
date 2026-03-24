@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260313070000
+SCHEMA_VERSION = 20260323142446
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -271,6 +271,16 @@ CREATE TABLE IF NOT EXISTS background_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_background_tasks_ref ON background_tasks(type, ref_id, status);
+
+-- OAuth 2.0 token storage (per-account user tokens)
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    account_name TEXT PRIMARY KEY,
+    platform     TEXT NOT NULL,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
 """
 
 

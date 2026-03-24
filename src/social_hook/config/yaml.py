@@ -348,6 +348,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
             "default_identity",
             "content_strategies",
             "content_strategy",
+            "web",
         },
         "content-config",
     )

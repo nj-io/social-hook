@@ -58,6 +58,7 @@ class E2EHarness:
         self.fake_home: Path | None = None
         self.base: Path | None = None  # = fake_home / ".social-hook"
         self.repo_path: Path | None = None
+        self.db_path: Path | None = None
         self.conn = None
         self.project_id: str | None = None
         self._orig_home: str | None = None
@@ -106,6 +107,7 @@ class E2EHarness:
         from social_hook.filesystem import get_db_path
 
         db_path = get_db_path()
+        self.db_path = db_path
 
         if snapshot:
             # Load snapshot instead of fresh DB
