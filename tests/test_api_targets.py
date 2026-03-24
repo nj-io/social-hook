@@ -236,13 +236,8 @@ class TestAccounts:
         assert resp.status_code == 200
         assert "accounts" in resp.json()
 
-    def test_oauth_callback_no_code(self, client):
-        resp = client.get("/api/accounts/oauth-callback")
-        assert resp.status_code in (400, 422)
-
-    def test_oauth_callback_error(self, client):
-        resp = client.get("/api/accounts/oauth-callback?error=access_denied")
-        assert resp.status_code == 400
+    # OAuth callback tests removed — stub endpoint replaced by generic
+    # /api/oauth/{platform}/callback in oauth2-migration
 
 
 # ---------------------------------------------------------------------------

@@ -559,7 +559,7 @@ export async function createSummaryDraft(
 // --- Targets API ---
 
 // Platform Credentials
-export async function fetchPlatformCredentials(): Promise<{ credentials: PlatformCredential[] }> {
+export async function fetchPlatformCredentials(): Promise<{ platform_credentials: Record<string, Record<string, unknown>> }> {
   return apiFetch("/api/platform-credentials");
 }
 
@@ -580,7 +580,7 @@ export async function validatePlatformCredential(name: string): Promise<{ valid:
 }
 
 // Accounts
-export async function fetchAccounts(): Promise<{ accounts: Account[] }> {
+export async function fetchAccounts(): Promise<{ accounts: Record<string, Record<string, unknown>> }> {
   return apiFetch("/api/accounts");
 }
 
@@ -622,7 +622,7 @@ export async function enableTarget(projectId: string, name: string): Promise<{ s
 }
 
 // Strategies
-export async function fetchStrategies(projectId: string): Promise<{ strategies: Strategy[] }> {
+export async function fetchStrategies(projectId: string): Promise<{ strategies: Record<string, Record<string, unknown>> }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies`);
 }
 
@@ -755,7 +755,7 @@ export async function fetchSystemHealth(): Promise<SystemHealth> {
 }
 
 // Platform Settings
-export async function fetchPlatformSettings(): Promise<{ settings: PlatformSettings[] }> {
+export async function fetchPlatformSettings(): Promise<{ platform_settings: Record<string, Record<string, unknown>> }> {
   return apiFetch("/api/platform-settings");
 }
 

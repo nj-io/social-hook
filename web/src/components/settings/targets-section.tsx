@@ -48,8 +48,29 @@ export function TargetsSection() {
         fetchStrategies(projectId),
       ]);
       setTargets(t.targets);
-      setAccounts(a.accounts);
-      setStrategies(s.strategies);
+      // accounts API returns dict — convert to array
+      const acctMap = a.accounts;
+      if (acctMap && typeof acctMap === "object" && !Array.isArray(acctMap)) {
+        setAccounts(
+          Object.entries(acctMap).map(([name, val]: [string, Record<string, unknown>]) => ({
+            name,
+            platform: (val.platform as string) || "",
+            tier: (val.tier as string) || "",
+            created_at: (val.created_at as string) || "",
+          }))
+        );
+      } else {
+        setAccounts([]);
+      }
+      // strategies API returns dict — convert to array
+      const stratMap = s.strategies;
+      if (stratMap && typeof stratMap === "object" && !Array.isArray(stratMap)) {
+        setStrategies(
+          Object.entries(stratMap).map(([name]: [string, unknown]) => ({ name, template: false }))
+        );
+      } else {
+        setStrategies([]);
+      }
     } catch {
       // silent
     }

@@ -44,7 +44,15 @@ export function TopicQueue({ projectId }: { projectId: string }) {
         fetchStrategies(projectId),
       ]);
       setTopics(t.topics);
-      setStrategies(s.strategies);
+      // API returns {strategies: {name: {...}}} — convert to array
+      const stratMap = s.strategies;
+      if (stratMap && typeof stratMap === "object" && !Array.isArray(stratMap)) {
+        setStrategies(
+          Object.entries(stratMap).map(([name]: [string, unknown]) => ({ name, template: false }))
+        );
+      } else {
+        setStrategies([]);
+      }
     } catch {
       // silent
     } finally {

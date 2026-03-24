@@ -12,7 +12,19 @@ export function PlatformSettingsSection() {
   const load = useCallback(async () => {
     try {
       const res = await fetchPlatformSettings();
-      setSettings(res.settings);
+      // API returns {platform_settings: {name: {...}}} — convert to array
+      const ps = res.platform_settings;
+      if (ps && typeof ps === "object" && !Array.isArray(ps)) {
+        setSettings(
+          Object.entries(ps).map(([name, val]: [string, Record<string, unknown>]) => ({
+            name,
+            platform: name,
+            cross_account_gap_minutes: (val.cross_account_gap_minutes as number) || 0,
+          }))
+        );
+      } else {
+        setSettings([]);
+      }
     } catch {
       // silent
     } finally {

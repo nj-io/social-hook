@@ -37,13 +37,14 @@ export function PlatformsSection({ platforms, onChange, env, onEnvRefresh }: Pla
     });
   }
 
-  const entries = Object.entries(platforms);
+  // Filter out legacy "preview" platform — preview is now a per-target state, not a platform
+  const entries = Object.entries(platforms).filter(([name]) => name !== "preview");
 
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Platforms</h2>
       <p className="text-sm text-muted-foreground">
-        Configure output platforms. Each platform can be primary (more content) or secondary (filtered content).
+        Configure output platforms. Platforms start in preview mode until an account is connected.
       </p>
 
       <div className="space-y-3">

@@ -146,7 +146,7 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
   const status = draft.status;
 
   if (status === "draft" || status === "deferred") {
-    const isPreview = draft.preview_mode;
+    const isPreview = !!draft.preview_mode;
     const realPlatforms = enabledPlatforms
       ? Object.keys(enabledPlatforms)
       : [];

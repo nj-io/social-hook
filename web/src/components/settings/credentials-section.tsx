@@ -21,7 +21,19 @@ export function CredentialsSection() {
   const load = useCallback(async () => {
     try {
       const res = await fetchPlatformCredentials();
-      setCredentials(res.credentials);
+      // API returns {platform_credentials: {name: {platform, ...}}} — convert to array
+      const creds = res.platform_credentials;
+      if (creds && typeof creds === "object" && !Array.isArray(creds)) {
+        setCredentials(
+          Object.entries(creds).map(([name, val]: [string, Record<string, unknown>]) => ({
+            name,
+            platform: (val.platform as string) || "",
+            created_at: (val.created_at as string) || "",
+          }))
+        );
+      } else {
+        setCredentials([]);
+      }
     } catch {
       // silent
     } finally {

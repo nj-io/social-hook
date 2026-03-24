@@ -47,7 +47,25 @@ export function StrategiesSection() {
     if (!projectId) return;
     try {
       const res = await fetchStrategies(projectId);
-      setStrategies(res.strategies);
+      // API returns {strategies: {name: {...}}} — convert to array
+      const strats = res.strategies;
+      if (strats && typeof strats === "object" && !Array.isArray(strats)) {
+        setStrategies(
+          Object.entries(strats).map(([name, val]: [string, Record<string, unknown>]) => ({
+            name,
+            template: false,
+            audience: (val.audience as string) || undefined,
+            voice: (val.voice as string) || undefined,
+            angle: (val.angle as string) || undefined,
+            post_when: (val.post_when as string) || undefined,
+            avoid: (val.avoid as string) || undefined,
+            format_preference: (val.format_preference as string) || undefined,
+            media_preference: (val.media_preference as string) || undefined,
+          }))
+        );
+      } else {
+        setStrategies([]);
+      }
     } catch {
       // silent
     }

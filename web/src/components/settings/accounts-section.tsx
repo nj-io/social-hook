@@ -21,7 +21,22 @@ export function AccountsSection() {
   const load = useCallback(async () => {
     try {
       const res = await fetchAccounts();
-      setAccounts(res.accounts);
+      // API returns {accounts: {name: {platform, ...}}} — convert to array
+      const accts = res.accounts;
+      if (accts && typeof accts === "object" && !Array.isArray(accts)) {
+        setAccounts(
+          Object.entries(accts).map(([name, val]: [string, Record<string, unknown>]) => ({
+            name,
+            platform: (val.platform as string) || "",
+            tier: (val.tier as string) || "",
+            identity: (val.identity as string) || undefined,
+            target_count: (val.target_count as number) ?? undefined,
+            created_at: (val.created_at as string) || "",
+          }))
+        );
+      } else {
+        setAccounts([]);
+      }
     } catch {
       // silent
     } finally {

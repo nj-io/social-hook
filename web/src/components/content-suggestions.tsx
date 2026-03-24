@@ -41,7 +41,15 @@ export function ContentSuggestions({ projectId }: { projectId: string }) {
         fetchStrategies(projectId),
       ]);
       setSuggestions(s.suggestions);
-      setStrategies(st.strategies);
+      // API returns {strategies: {name: {...}}} — convert to array
+      const stratMap = st.strategies;
+      if (stratMap && typeof stratMap === "object" && !Array.isArray(stratMap)) {
+        setStrategies(
+          Object.entries(stratMap).map(([name]: [string, unknown]) => ({ name, template: false }))
+        );
+      } else {
+        setStrategies([]);
+      }
     } catch {
       // silent
     } finally {
