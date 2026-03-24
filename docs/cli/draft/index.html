@@ -87,6 +87,10 @@
       
     </div>
     
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
     
       
 
@@ -1912,9 +1916,8 @@ Example: social-hook draft list --commit 47a5191</p>
 <hr />
 <h3 id="social-hook-draft-post-now"><code>social-hook draft post-now</code><a class="headerlink" href="#social-hook-draft-post-now" title="Permanent link">&para;</a></h3>
 <p>Post a draft immediately to its platform.</p>
-<p>Approves and posts the draft in one step, bypassing the scheduler queue.
-The draft must be in draft, approved, or deferred status.</p>
-<p>Example: social-hook draft post-now draft-abc123</p>
+<p>Requires platform credentials in ~/.social-hook/.env.</p>
+<p>Example: social-hook draft post-now draft_abc123</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1943,6 +1946,12 @@ The draft must be in draft, approved, or deferred status.</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>--yes</code>, <code>-y</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Skip confirmation prompt</td>
+</tr>
 <tr>
 <td><code>--json</code></td>
 <td>boolean</td>
@@ -2323,7 +2332,7 @@ then marks the preview draft as superseded.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.10.0"}</script>
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
