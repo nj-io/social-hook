@@ -51,6 +51,9 @@ EDITABLE_STATUSES = frozenset(
     }
 )
 
+TOPIC_STATUSES = frozenset({"uncovered", "holding", "partial", "covered"})
+SUGGESTION_STATUSES = frozenset({"pending", "evaluated", "drafted", "dismissed"})
+
 
 class DecisionType(Enum):
     """Evaluation decision for a commit."""
@@ -60,18 +63,6 @@ class DecisionType(Enum):
     SKIP = "skip"
     IMPORTED = "imported"
     DEFERRED_EVAL = "deferred_eval"
-
-
-class EpisodeType(Enum):
-    """Post structural categories (vocabulary for angle selection)."""
-
-    DECISION = "decision"  # Why we chose X over Y
-    BEFORE_AFTER = "before_after"  # Measurable change with proof
-    DEMO_PROOF = "demo_proof"  # Show the working thing
-    MILESTONE = "milestone"  # Checkpoint - what changed, what's next
-    POSTMORTEM = "postmortem"  # Issue -> fix -> learnings
-    LAUNCH = "launch"  # Value prop + who it's for + CTA
-    SYNTHESIS = "synthesis"  # Frames overall story, pays narrative debt
 
 
 class PostCategory(Enum):
@@ -104,9 +95,13 @@ class LifecyclePhase(Enum):
 class ArcStatus(Enum):
     """Status of a narrative arc."""
 
+    PROPOSED = "proposed"
     ACTIVE = "active"
     COMPLETED = "completed"
     ABANDONED = "abandoned"
+
+
+ARC_STATUSES = frozenset(s.value for s in ArcStatus)
 
 
 # =============================================================================
@@ -158,6 +153,7 @@ class Project:
     discovery_files: str | None = None  # JSON-serialized list of file paths
     prompt_docs: str | None = None
     trigger_branch: str | None = None
+    brief_section_metadata: dict | None = None
     created_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -172,11 +168,15 @@ class Project:
             "discovery_files": self.discovery_files,
             "prompt_docs": self.prompt_docs,
             "trigger_branch": self.trigger_branch,
+            "brief_section_metadata": self.brief_section_metadata,
             "created_at": _to_iso(self.created_at),
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Project":
+        brief_meta = d.get("brief_section_metadata")
+        if isinstance(brief_meta, str):
+            brief_meta = safe_json_loads(brief_meta, "Project.brief_section_metadata", default={})
         return cls(
             id=d["id"],
             name=d["name"],
@@ -188,6 +188,7 @@ class Project:
             discovery_files=d.get("discovery_files"),
             prompt_docs=d.get("prompt_docs"),
             trigger_branch=d.get("trigger_branch"),
+            brief_section_metadata=brief_meta,
             created_at=_from_iso(d.get("created_at")),
         )
 
@@ -239,14 +240,6 @@ class Decision:
             raise ValueError(
                 f"Invalid decision '{self.decision}', must be one of {valid_decisions}"
             )
-
-        # Validate episode_type if provided
-        if self.episode_type:
-            valid_episodes = [e.value for e in EpisodeType]
-            if self.episode_type not in valid_episodes:
-                raise ValueError(
-                    f"Invalid episode_type '{self.episode_type}', must be one of {valid_episodes}"
-                )
 
         # Validate post_category if provided
         if self.post_category:
@@ -385,6 +378,12 @@ class Draft:
     is_intro: bool = False
     post_format: str | None = None
     reference_post_id: str | None = None
+    target_id: str | None = None
+    evaluation_cycle_id: str | None = None
+    topic_id: str | None = None
+    suggestion_id: str | None = None
+    pattern_id: str | None = None
+    preview_mode: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -414,6 +413,12 @@ class Draft:
             "is_intro": self.is_intro,
             "post_format": self.post_format,
             "reference_post_id": self.reference_post_id,
+            "target_id": self.target_id,
+            "evaluation_cycle_id": self.evaluation_cycle_id,
+            "topic_id": self.topic_id,
+            "suggestion_id": self.suggestion_id,
+            "pattern_id": self.pattern_id,
+            "preview_mode": self.preview_mode,
             "created_at": _to_iso(self.created_at),
             "updated_at": _to_iso(self.updated_at),
         }
@@ -455,12 +460,18 @@ class Draft:
             is_intro=bool(d.get("is_intro", False)),
             post_format=d.get("post_format"),
             reference_post_id=d.get("reference_post_id"),
+            target_id=d.get("target_id"),
+            evaluation_cycle_id=d.get("evaluation_cycle_id"),
+            topic_id=d.get("topic_id"),
+            suggestion_id=d.get("suggestion_id"),
+            pattern_id=d.get("pattern_id"),
+            preview_mode=bool(d.get("preview_mode", False)),
             created_at=_from_iso(d.get("created_at")),
             updated_at=_from_iso(d.get("updated_at")),
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (19 columns)."""
+        """Return tuple for INSERT (25 columns)."""
         import json
 
         return (
@@ -483,6 +494,12 @@ class Draft:
             1 if self.is_intro else 0,
             self.post_format,
             self.reference_post_id,
+            self.target_id,
+            self.evaluation_cycle_id,
+            self.topic_id,
+            self.suggestion_id,
+            self.pattern_id,
+            1 if self.preview_mode else 0,
         )
 
 
@@ -608,6 +625,10 @@ class Post:
     content: str
     external_id: str | None = None
     external_url: str | None = None
+    target_id: str | None = None
+    topic_tags: list[str] = field(default_factory=list)
+    feature_tags: list[str] = field(default_factory=list)
+    is_thread_head: bool = False
     posted_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -619,11 +640,21 @@ class Post:
             "external_id": self.external_id,
             "external_url": self.external_url,
             "content": self.content,
+            "target_id": self.target_id,
+            "topic_tags": self.topic_tags,
+            "feature_tags": self.feature_tags,
+            "is_thread_head": self.is_thread_head,
             "posted_at": _to_iso(self.posted_at),
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Post":
+        topic_tags = d.get("topic_tags", [])
+        if isinstance(topic_tags, str):
+            topic_tags = safe_json_loads(topic_tags, "Post.topic_tags", default=[])
+        feature_tags = d.get("feature_tags", [])
+        if isinstance(feature_tags, str):
+            feature_tags = safe_json_loads(feature_tags, "Post.feature_tags", default=[])
         return cls(
             id=d["id"],
             draft_id=d["draft_id"],
@@ -632,11 +663,17 @@ class Post:
             external_id=d.get("external_id"),
             external_url=d.get("external_url"),
             content=d["content"],
+            target_id=d.get("target_id"),
+            topic_tags=topic_tags,
+            feature_tags=feature_tags,
+            is_thread_head=bool(d.get("is_thread_head", False)),
             posted_at=_from_iso(d.get("posted_at")),
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT."""
+        """Return tuple for INSERT (11 columns)."""
+        import json
+
         return (
             self.id,
             self.draft_id,
@@ -645,6 +682,10 @@ class Post:
             self.external_id,
             self.external_url,
             self.content,
+            self.target_id,
+            json.dumps(self.topic_tags),
+            json.dumps(self.feature_tags),
+            1 if self.is_thread_head else 0,
         )
 
 
@@ -710,7 +751,9 @@ class Arc:
     id: str
     project_id: str
     theme: str
+    strategy: str = ""
     status: str = "active"  # ArcStatus value
+    reasoning: str | None = None
     post_count: int = 0
     last_post_at: datetime | None = None
     notes: str | None = None
@@ -728,7 +771,9 @@ class Arc:
             "id": self.id,
             "project_id": self.project_id,
             "theme": self.theme,
+            "strategy": self.strategy,
             "status": self.status,
+            "reasoning": self.reasoning,
             "post_count": self.post_count,
             "last_post_at": _to_iso(self.last_post_at),
             "notes": self.notes,
@@ -743,7 +788,9 @@ class Arc:
             id=d["id"],
             project_id=d["project_id"],
             theme=d["theme"],
+            strategy=d.get("strategy", ""),
             status=d.get("status", "active"),
+            reasoning=d.get("reasoning"),
             post_count=d.get("post_count", 0),
             last_post_at=_from_iso(d.get("last_post_at")),
             notes=d.get("notes"),
@@ -753,12 +800,14 @@ class Arc:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT."""
+        """Return tuple for INSERT (id, project_id, theme, strategy, status, reasoning, post_count, last_post_at, notes)."""
         return (
             self.id,
             self.project_id,
             self.theme,
+            self.strategy,
             self.status,
+            self.reasoning,
             self.post_count,
             _to_iso(self.last_post_at),
             self.notes,
@@ -861,6 +910,326 @@ class UsageLog:
             self.cost_cents,
             self.commit_hash,
             self.trigger_source,
+        )
+
+
+# =============================================================================
+# Targets Phase 1 Models
+# =============================================================================
+
+
+@dataclass
+class OAuthToken:
+    """OAuth 2.0 token for a platform account."""
+
+    account_name: str
+    platform: str
+    access_token: str
+    refresh_token: str
+    expires_at: str | None = None
+    updated_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "account_name": self.account_name,
+            "platform": self.platform,
+            "access_token": self.access_token,
+            "refresh_token": self.refresh_token,
+            "expires_at": self.expires_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "OAuthToken":
+        return cls(
+            account_name=d["account_name"],
+            platform=d["platform"],
+            access_token=d["access_token"],
+            refresh_token=d["refresh_token"],
+            expires_at=d.get("expires_at"),
+            updated_at=d.get("updated_at"),
+        )
+
+    def to_row(self) -> tuple:
+        """Return tuple for INSERT/UPSERT."""
+        return (
+            self.account_name,
+            self.platform,
+            self.access_token,
+            self.refresh_token,
+            self.expires_at,
+            self.updated_at,
+        )
+
+
+@dataclass
+class ContentTopic:
+    """A content topic in the queue."""
+
+    id: str
+    project_id: str
+    strategy: str
+    topic: str
+    description: str | None = None
+    priority_rank: int = 0
+    status: str = "uncovered"
+    commit_count: int = 0
+    last_commit_at: str | None = None
+    last_posted_at: str | None = None
+    created_by: str = "user"
+    created_at: str | None = None
+
+    def __post_init__(self):
+        if self.status not in TOPIC_STATUSES:
+            raise ValueError(
+                f"Invalid status '{self.status}', must be one of {sorted(TOPIC_STATUSES)}"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "strategy": self.strategy,
+            "topic": self.topic,
+            "description": self.description,
+            "priority_rank": self.priority_rank,
+            "status": self.status,
+            "commit_count": self.commit_count,
+            "last_commit_at": self.last_commit_at,
+            "last_posted_at": self.last_posted_at,
+            "created_by": self.created_by,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "ContentTopic":
+        return cls(
+            id=d["id"],
+            project_id=d["project_id"],
+            strategy=d["strategy"],
+            topic=d["topic"],
+            description=d.get("description"),
+            priority_rank=d.get("priority_rank", 0),
+            status=d.get("status", "uncovered"),
+            commit_count=d.get("commit_count", 0),
+            last_commit_at=d.get("last_commit_at"),
+            last_posted_at=d.get("last_posted_at"),
+            created_by=d.get("created_by", "user"),
+            created_at=d.get("created_at"),
+        )
+
+    def to_row(self) -> tuple:
+        """Return tuple for INSERT."""
+        return (
+            self.id,
+            self.project_id,
+            self.strategy,
+            self.topic,
+            self.description,
+            self.priority_rank,
+            self.status,
+            self.commit_count,
+            self.last_commit_at,
+            self.last_posted_at,
+            self.created_by,
+        )
+
+
+@dataclass
+class ContentSuggestion:
+    """An operator content suggestion."""
+
+    id: str
+    project_id: str
+    idea: str
+    strategy: str | None = None
+    media_refs: list | None = None
+    status: str = "pending"
+    source: str = "operator"
+    created_at: str | None = None
+    evaluated_at: str | None = None
+
+    def __post_init__(self):
+        if self.status not in SUGGESTION_STATUSES:
+            raise ValueError(
+                f"Invalid status '{self.status}', must be one of {sorted(SUGGESTION_STATUSES)}"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "idea": self.idea,
+            "strategy": self.strategy,
+            "media_refs": self.media_refs,
+            "status": self.status,
+            "source": self.source,
+            "created_at": self.created_at,
+            "evaluated_at": self.evaluated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "ContentSuggestion":
+        media_refs = d.get("media_refs")
+        if isinstance(media_refs, str):
+            media_refs = safe_json_loads(media_refs, "ContentSuggestion.media_refs", default=[])
+        return cls(
+            id=d["id"],
+            project_id=d["project_id"],
+            idea=d["idea"],
+            strategy=d.get("strategy"),
+            media_refs=media_refs,
+            status=d.get("status", "pending"),
+            source=d.get("source", "operator"),
+            created_at=d.get("created_at"),
+            evaluated_at=d.get("evaluated_at"),
+        )
+
+    def to_row(self) -> tuple:
+        """Return tuple for INSERT."""
+        import json
+
+        return (
+            self.id,
+            self.project_id,
+            self.strategy,
+            self.idea,
+            json.dumps(self.media_refs) if self.media_refs is not None else "[]",
+            self.status,
+            self.source,
+        )
+
+
+@dataclass
+class EvaluationCycle:
+    """An evaluation cycle grouping."""
+
+    id: str
+    project_id: str
+    trigger_type: str
+    trigger_ref: str | None = None
+    commit_analysis_id: str | None = None
+    created_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "trigger_type": self.trigger_type,
+            "trigger_ref": self.trigger_ref,
+            "commit_analysis_id": self.commit_analysis_id,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "EvaluationCycle":
+        return cls(
+            id=d["id"],
+            project_id=d["project_id"],
+            trigger_type=d["trigger_type"],
+            trigger_ref=d.get("trigger_ref"),
+            commit_analysis_id=d.get("commit_analysis_id"),
+            created_at=d.get("created_at"),
+        )
+
+    def to_row(self) -> tuple:
+        """Return tuple for INSERT."""
+        return (
+            self.id,
+            self.project_id,
+            self.trigger_type,
+            self.trigger_ref,
+            self.commit_analysis_id,
+        )
+
+
+@dataclass
+class DraftPattern:
+    """An observational content format pattern."""
+
+    id: str
+    project_id: str
+    pattern_name: str
+    description: str | None = None
+    example_draft_id: str | None = None
+    created_by: str = "operator"
+    created_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "project_id": self.project_id,
+            "pattern_name": self.pattern_name,
+            "description": self.description,
+            "example_draft_id": self.example_draft_id,
+            "created_by": self.created_by,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "DraftPattern":
+        return cls(
+            id=d["id"],
+            project_id=d["project_id"],
+            pattern_name=d["pattern_name"],
+            description=d.get("description"),
+            example_draft_id=d.get("example_draft_id"),
+            created_by=d.get("created_by", "operator"),
+            created_at=d.get("created_at"),
+        )
+
+    def to_row(self) -> tuple:
+        """Return tuple for INSERT."""
+        return (
+            self.id,
+            self.project_id,
+            self.pattern_name,
+            self.description,
+            self.example_draft_id,
+            self.created_by,
+        )
+
+
+@dataclass
+class SystemErrorRecord:
+    """A system error record."""
+
+    id: str
+    severity: str
+    message: str
+    context: str = "{}"
+    source: str = ""
+    created_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "severity": self.severity,
+            "message": self.message,
+            "context": self.context,
+            "source": self.source,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "SystemErrorRecord":
+        return cls(
+            id=d["id"],
+            severity=d["severity"],
+            message=d["message"],
+            context=d.get("context", "{}"),
+            source=d.get("source", ""),
+            created_at=d.get("created_at"),
+        )
+
+    def to_row(self) -> tuple:
+        """Return tuple for INSERT."""
+        return (
+            self.id,
+            self.severity,
+            self.message,
+            self.context,
+            self.source,
         )
 
 

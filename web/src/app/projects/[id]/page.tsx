@@ -30,6 +30,11 @@ import { ArcsSection } from "@/components/arcs-section";
 import { RateLimitCard } from "@/components/rate-limit-card";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { EvaluationCycles } from "@/components/evaluation-cycles";
+import { TopicQueue } from "@/components/topic-queue";
+import { BriefEditor } from "@/components/brief-editor";
+import { ContentSuggestions } from "@/components/content-suggestions";
+import { AsyncButton } from "@/components/async-button";
 
 const DECISIONS_PER_PAGE = 10;
 
@@ -71,6 +76,7 @@ export default function ProjectDetailPage() {
   const [importBranch, setImportBranch] = useState<string>("");
   const [importLoading, setImportLoading] = useState(false);
   const [importRefreshKey, setImportRefreshKey] = useState(0);
+  const [activeTab, setActiveTab] = useState<"cycles" | "commits" | "topics" | "brief">("cycles");
   // Consolidate uses a special ref_id key since it spans multiple decisions
   const CONSOLIDATE_REF = "__consolidate__";
 
@@ -93,8 +99,9 @@ export default function ProjectDetailPage() {
       } else if (task.type === "import_commits") {
         setImportModalOpen(false);
         setImportLoading(false);
-        // Trigger re-fetch by bumping a counter
         setImportRefreshKey((k) => k + 1);
+      } else if (task.type === "retrigger") {
+        reload();
       }
     } else if (task.status === "failed") {
       const error = task.error ?? "Task failed";
@@ -104,11 +111,13 @@ export default function ProjectDetailPage() {
         setConsolidateResult({ error });
       } else if (task.type === "import_commits") {
         setImportLoading(false);
+      } else if (task.type === "retrigger") {
+        setActionError(error);
       }
     }
   }, []);
 
-  const { trackTask, isRunning: isTaskRunning } = useBackgroundTasks(id, onTaskCompleted);
+  const { trackTask, isRunning: isTaskRunning, getTask } = useBackgroundTasks(id, onTaskCompleted);
 
   const loadMemories = useCallback(async (repoPath: string) => {
     try {
@@ -428,8 +437,50 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Evaluator Decisions */}
-      <div>
+      {/* Content Suggestions */}
+      <ContentSuggestions projectId={id} />
+
+      {/* Tab bar */}
+      <div className="border-b border-border">
+        <div className="flex gap-0">
+          {([
+            { key: "cycles", label: "Evaluation Cycles" },
+            { key: "commits", label: "Commit Log" },
+            { key: "topics", label: "Topic Queue" },
+            { key: "brief", label: "Brief" },
+          ] as const).map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.key
+                  ? "border-accent text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Evaluation Cycles tab */}
+      {activeTab === "cycles" && (
+        <EvaluationCycles projectId={id} />
+      )}
+
+      {/* Topic Queue tab */}
+      {activeTab === "topics" && (
+        <TopicQueue projectId={id} />
+      )}
+
+      {/* Brief tab */}
+      {activeTab === "brief" && (
+        <BriefEditor projectId={id} />
+      )}
+
+      {/* Commit Log tab (existing Evaluator Decisions) */}
+      {activeTab === "commits" && <div>
         <div className="mb-3 flex items-center gap-3">
           <h2 className="text-lg font-semibold">Evaluator Decisions</h2>
           <select
@@ -495,6 +546,8 @@ export default function ProjectDetailPage() {
                   {decisions.map((d) => {
                     const isExpanded = expandedDecisions.has(d.id);
                     const isCreating = isTaskRunning(d.id);
+                    const isEvaluating = isTaskRunning(`retrigger-${d.id}`) || d.decision === "evaluating";
+                    const evalTask = getTask(`retrigger-${d.id}`);
                     const result = draftResult[d.id];
                     return (
                       <tr
@@ -592,26 +645,27 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1.5">
-                            {d.decision === "imported" ? (
-                              <button
+                            {(d.decision === "imported" || d.decision === "evaluating") ? (
+                              <AsyncButton
+                                loading={isEvaluating}
+                                startTime={evalTask?.created_at}
+                                loadingText="Evaluating"
                                 onClick={async () => {
-                                  setActionLoading(true);
                                   setActionError(null);
                                   try {
-                                    await retriggerDecision(d.id);
-                                    reload();
+                                    const res = await retriggerDecision(d.id);
+                                    if (res.task_id) {
+                                      trackTask(res.task_id, `retrigger-${d.id}`, "retrigger");
+                                    }
                                   } catch (err) {
                                     setActionError(err instanceof Error ? err.message : "Evaluate failed");
-                                  } finally {
-                                    setActionLoading(false);
                                   }
                                 }}
-                                disabled={actionLoading}
+                                disabled={isEvaluating}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950 disabled:opacity-70"
-                                title="Run evaluator on this imported commit"
                               >
                                 Evaluate
-                              </button>
+                              </AsyncButton>
                             ) : (
                               <button
                                 onClick={() => onCreateDraftClick(d.id, d.draft_count > 0)}
@@ -621,7 +675,7 @@ export default function ProjectDetailPage() {
                                     ? "border border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
                                     : "bg-accent text-accent-foreground hover:bg-accent/80"
                                 }`}
-                                title={platformCount === 0 ? "Uses preview mode" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
+                                title={platformCount === 0 ? "No platforms configured" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
                               >
                                 {isCreating && (
                                   <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -677,7 +731,7 @@ export default function ProjectDetailPage() {
             </div>
           </>
         )}
-      </div>
+      </div>}
 
       {/* Arcs */}
       <ArcsSection
@@ -772,9 +826,13 @@ export default function ProjectDetailPage() {
           .reduce((sum, d) => sum + d.draft_count, 0);
         return (
           <Modal open={true} onClose={() => !actionLoading && setConfirmDelete(false)} maxWidth="max-w-sm">
-            <h3 className="text-sm font-semibold">Delete {ids.length === 1 ? "decision" : `${ids.length} decisions`}?</h3>
+            <h3 className="text-sm font-semibold">
+              {decisions.filter((d) => ids.includes(d.id)).every((d) => d.decision === "imported")
+                ? `Remove ${ids.length === 1 ? "import" : `${ids.length} imports`}?`
+                : `Delete ${ids.length === 1 ? "decision" : `${ids.length} decisions`}?`}
+            </h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              This will permanently delete {ids.length} decision{ids.length !== 1 ? "s" : ""}{totalDrafts > 0 ? ` and ${totalDrafts} associated draft${totalDrafts !== 1 ? "s" : ""}` : ""}.
+              This will permanently remove {ids.length} record{ids.length !== 1 ? "s" : ""}{totalDrafts > 0 ? ` and ${totalDrafts} associated draft${totalDrafts !== 1 ? "s" : ""}` : ""}.
             </p>
             {actionError && (
               <p className="mt-2 text-sm text-destructive">{actionError}</p>
@@ -839,13 +897,11 @@ export default function ProjectDetailPage() {
                   setActionError(null);
                   try {
                     const res = await retriggerDecision(did);
-                    if (res.status === "retriggered") {
-                      setSelectedDecisions(new Set());
-                      setConfirmRetrigger(false);
-                      reload();
-                    } else {
-                      setActionError(`Re-evaluation failed (exit code ${res.exit_code})`);
+                    if (res.task_id) {
+                      trackTask(res.task_id, `retrigger-${did}`, "retrigger");
                     }
+                    setSelectedDecisions(new Set());
+                    setConfirmRetrigger(false);
                   } catch (err) {
                     setActionError(err instanceof Error ? err.message : "Retrigger failed");
                   } finally {
@@ -973,7 +1029,9 @@ export default function ProjectDetailPage() {
                       onClick={() => { setActionError(null); setConfirmDelete(true); }}
                       className="rounded-md border border-destructive/50 px-4 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
                     >
-                      Delete {selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}
+                      {allImported
+                        ? `Remove ${selectedDecisions.size === 1 ? "import" : `${selectedDecisions.size} imports`}`
+                        : `Delete ${selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}`}
                     </button>
                     {allImported && selectedDecisions.size >= 1 && (
                       <button
@@ -983,15 +1041,13 @@ export default function ProjectDetailPage() {
                           try {
                             for (const did of Array.from(selectedDecisions)) {
                               const res = await retriggerDecision(did);
-                              if (res.status !== "retriggered") {
-                                setActionError(`Evaluate failed for ${did.slice(0, 8)} (exit code ${res.exit_code})`);
-                                break;
+                              if (res.task_id) {
+                                trackTask(res.task_id, `retrigger-${did}`, "retrigger");
                               }
                             }
                             setSelectedDecisions(new Set());
-                            reload();
                           } catch (err) {
-                            setActionError(err instanceof Error ? err.message : "Batch evaluate failed");
+                            setActionError(err instanceof Error ? err.message : "Evaluate failed");
                           } finally {
                             setActionLoading(false);
                           }
@@ -1001,7 +1057,7 @@ export default function ProjectDetailPage() {
                       >
                         {actionLoading
                           ? "Evaluating..."
-                          : `Batch evaluate (${selectedDecisions.size})`}
+                          : `Evaluate (${selectedDecisions.size})`}
                       </button>
                     )}
                     {allEvaluated && selectedDecisions.size >= 2 && (

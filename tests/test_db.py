@@ -100,7 +100,7 @@ class TestDatabaseInitialization:
         assert result[0] == 1
 
     def test_all_tables_exist(self, temp_db):
-        """Verify all 16 tables exist."""
+        """Verify all 23 tables exist."""
         tables = temp_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
@@ -125,6 +125,11 @@ class TestDatabaseInitialization:
             "file_summaries",
             "platform_introduced",
             "oauth_tokens",
+            "content_topics",
+            "content_suggestions",
+            "evaluation_cycles",
+            "draft_patterns",
+            "system_errors",
         }
 
         assert table_names == expected_tables
@@ -1308,9 +1313,9 @@ class TestDraftMediaFields:
             media_spec={"prompt": "test prompt", "width": 1024},
         )
 
-        # Verify to_row returns exactly 19 elements
+        # Verify to_row returns exactly 25 elements
         row = draft.to_row()
-        assert len(row) == 19
+        assert len(row) == 25
 
         # Verify round-trip via to_dict/from_dict
         d = draft.to_dict()

@@ -82,10 +82,9 @@ def approve(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.platform == "preview":
+        if draft.preview_mode:
             typer.echo(
-                "Preview drafts cannot be posted. Use 'social-hook draft promote "
-                "<id> --platform <name>' to create a platform-specific draft."
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
             )
             raise typer.Exit(1)
         if draft.status in TERMINAL_STATUSES:
@@ -170,10 +169,9 @@ def schedule(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.platform == "preview":
+        if draft.preview_mode:
             typer.echo(
-                "Preview drafts cannot be posted. Use 'social-hook draft promote "
-                "<id> --platform <name>' to create a platform-specific draft."
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
             )
             raise typer.Exit(1)
         if draft.status not in PENDING_STATUSES:
@@ -528,8 +526,10 @@ def post_now(
                 typer.echo(msg)
             raise typer.Exit(1)
 
-        if draft.platform == "preview":
-            msg = "Cannot post preview drafts"
+        if draft.preview_mode:
+            msg = (
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
+            )
             if json_output:
                 typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
             else:
@@ -624,10 +624,9 @@ def quick_approve(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.platform == "preview":
+        if draft.preview_mode:
             typer.echo(
-                "Preview drafts cannot be posted. Use 'social-hook draft promote "
-                "<id> --platform <name>' to create a platform-specific draft."
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
             )
             raise typer.Exit(1)
         # Scheduled drafts go through the scheduler; use unschedule first
@@ -862,8 +861,6 @@ def list_cmd(
             try:
                 dec = ops.get_decision(conn, d.decision_id)
                 if dec:
-                    if dec.episode_type:
-                        tags.append(f"[{dec.episode_type}]")
                     if dec.post_category:
                         tags.append(f"[{dec.post_category}]")
                     if dec.episode_tags:
@@ -985,8 +982,8 @@ def promote(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.platform != "preview":
-            typer.echo(f"Draft is not a preview draft (platform: {draft.platform}).")
+        if not draft.preview_mode:
+            typer.echo(f"Draft is not in preview mode (platform: {draft.platform}).")
             raise typer.Exit(1)
         if draft.status in TERMINAL_STATUSES:
             typer.echo(f"Cannot promote: draft status is '{draft.status}'")
@@ -1054,7 +1051,6 @@ def promote(
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform],
-                skip_content_filter=True,
             )
 
         if not results:
@@ -1081,5 +1077,110 @@ def promote(
             typer.echo(f"Preview draft {draft_id} promoted to {platform}.")
             typer.echo(f"New draft: {new_draft.id}")
             typer.echo(f"Content: {new_draft.content}")
+    finally:
+        conn.close()
+
+
+@app.command()
+def connect(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Preview-mode draft ID to connect"),
+    account: str = typer.Option(
+        ..., "--account", "-a", help="Account name to connect (must match draft platform)"
+    ),
+    json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+):
+    """Connect a preview-mode draft to an account.
+
+    Links the draft's target to an existing OAuth account, clearing preview mode.
+    The account's platform must match the draft's platform.
+
+    Example: social-hook draft connect draft-abc123 --account my-x-account
+    """
+    from social_hook.config.yaml import load_full_config, save_config
+    from social_hook.db import operations as ops
+
+    use_json = json or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if not draft.preview_mode:
+            msg = f"Draft is not in preview mode (platform: {draft.platform})."
+            if use_json:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+        if draft.status in TERMINAL_STATUSES:
+            msg = f"Cannot connect: draft status is '{draft.status}'"
+            if use_json:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        config_path = ctx.obj.get("config") if ctx.obj else None
+        config = load_full_config(str(config_path) if config_path else None)
+
+        acct = config.accounts.get(account)
+        if not acct:
+            msg = f"Account '{account}' not found."
+            if use_json:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if acct.platform != draft.platform:
+            msg = (
+                f"Account platform '{acct.platform}' does not match "
+                f"draft platform '{draft.platform}'."
+            )
+            if use_json:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if not yes:
+            typer.confirm(
+                f"Connect draft {draft_id[:12]} to account '{account}' ({acct.platform})?",
+                abort=True,
+            )
+
+        # Clear preview_mode on the draft
+        ops.clear_draft_preview_mode(conn, draft_id)
+
+        # Persist target -> account link in config
+        target_name = draft.target_id
+        if target_name and target_name in config.targets:
+            from social_hook.filesystem import get_config_path
+
+            effective_path = str(config_path) if config_path else str(get_config_path())
+            save_config(
+                {"targets": {target_name: {"account": account}}},
+                effective_path,
+                deep_merge=True,
+            )
+
+        ops.emit_data_event(conn, "draft", "connected", draft_id, draft.project_id)
+
+        if use_json:
+            typer.echo(
+                json_mod.dumps(
+                    {
+                        "draft_id": draft_id,
+                        "account": account,
+                        "platform": draft.platform,
+                        "status": "connected",
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(f"Draft {draft_id[:12]} connected to account '{account}'.")
+            typer.echo("Preview mode cleared. Draft is now eligible for posting.")
     finally:
         conn.close()

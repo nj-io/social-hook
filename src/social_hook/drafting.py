@@ -8,7 +8,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from social_hook.config.platforms import passes_content_filter, resolve_platform
+from social_hook.config.platforms import resolve_platform
 from social_hook.config.yaml import TIER_CHAR_LIMITS
 from social_hook.filesystem import generate_id, get_base_path
 from social_hook.models import Draft, DraftTweet
@@ -24,7 +24,6 @@ class DraftResult:
     draft: Draft
     schedule: ScheduleResult
     thread_tweets: list[str]
-    episode_type: str | None = None
     post_category: str | None = None
     angle: str | None = None
     episode_tags: list[str] | None = None
@@ -43,7 +42,6 @@ def draft_for_platforms(
     target_platform_names: list[str] | None = None,
     dry_run: bool = False,
     verbose: bool = False,
-    skip_content_filter: bool = False,
 ) -> list[DraftResult]:
     """Run the per-platform drafting pipeline: resolve, filter, draft, insert.
 
@@ -64,16 +62,15 @@ def draft_for_platforms(
             None means all enabled platforms.
         dry_run: If True, skip DB writes and real API calls.
         verbose: If True, print detailed output.
-        skip_content_filter: If True, bypass episode_type content filtering.
-            Used when the user explicitly requests a draft (manual override).
 
     Returns:
         List of DraftResult for each successfully created draft.
         Empty list if no platforms resolve or all are filtered.
     """
-    resolved = _resolve_and_filter_platforms(
-        config, evaluation, target_platform_names, skip_content_filter, verbose
+    logger.warning(
+        "Using legacy platform-based drafting. Configure targets for per-strategy control."
     )
+    resolved = _resolve_and_filter_platforms(config, target_platform_names, verbose)
     if not resolved:
         return []
     return _draft_for_resolved_platforms(
@@ -92,13 +89,11 @@ def draft_for_platforms(
     )
 
 
-def _resolve_and_filter_platforms(
-    config, evaluation, target_platform_names, skip_content_filter, verbose
-):
-    """Resolve enabled platforms and apply content filter.
+def _resolve_and_filter_platforms(config, target_platform_names, verbose):
+    """Resolve enabled platforms.
 
     Returns:
-        Dict of platform_name -> ResolvedPlatformConfig, or empty dict if none pass.
+        Dict of platform_name -> ResolvedPlatformConfig, or empty dict if none resolve.
     """
     # 1. Resolve enabled platforms
     resolved_platforms = {}
@@ -116,63 +111,13 @@ def _resolve_and_filter_platforms(
             k: v for k, v in resolved_platforms.items() if k in target_platform_names
         }
 
-    # Auto-inject preview platform when no platforms are enabled and no
-    # explicit filter was requested — lets users draft without configuring
-    # a real platform first.
-    if not resolved_platforms and target_platform_names is None:
-        from social_hook.config.platforms import OutputPlatformConfig
-
-        preview_raw = OutputPlatformConfig(
-            enabled=True,
-            priority="secondary",
-            type="custom",
-            description="Generic preview for reviewing what the system would generate, without publishing",
-            format="post",
-            max_length=2000,
-            filter="all",
-        )
-        resolved_platforms["preview"] = resolve_platform(
-            "preview",
-            preview_raw,
-            config.scheduling,
-        )
-        if verbose:
-            print("No enabled platforms — using built-in preview platform.")
-
     if not resolved_platforms:
         logger.info("No matching platforms. Skipping draft creation.")
         if verbose:
             print("No matching platforms. Skipping draft creation.")
         return {}
 
-    # 2. Apply content filter per platform (skipped for manual overrides)
-    ep_type = getattr(evaluation, "episode_type", None)
-    if ep_type is not None and hasattr(ep_type, "value"):
-        ep_type = ep_type.value
-    if skip_content_filter:
-        return dict(resolved_platforms)
-
-    target_platforms = {}
-    for pname, rpcfg in resolved_platforms.items():
-        if passes_content_filter(rpcfg.filter, ep_type):
-            target_platforms[pname] = rpcfg
-        else:
-            logger.info(
-                "Platform %s: filtered (filter=%s, episode_type=%s)",
-                pname,
-                rpcfg.filter,
-                ep_type,
-            )
-            if verbose:
-                print(f"Platform {pname}: filtered (filter={rpcfg.filter}, episode={ep_type})")
-
-    if not target_platforms:
-        logger.info("All platforms filtered out (episode_type=%s). No drafts created.", ep_type)
-        if verbose:
-            print("All platforms filtered this commit.")
-        return {}
-
-    return target_platforms
+    return dict(resolved_platforms)
 
 
 def _draft_for_resolved_platforms(
@@ -188,11 +133,20 @@ def _draft_for_resolved_platforms(
     project_config=None,
     dry_run: bool = False,
     verbose: bool = False,
+    preview_targets: set[str] | None = None,
+    shared_group: bool = False,
 ) -> list[DraftResult]:
     """Core drafting loop: create drafter client, draft per platform, schedule, insert.
 
     Called directly by merge execution (bypasses resolution + filter).
     Called by draft_for_platforms() after resolution + filtering.
+
+    Args:
+        preview_targets: Set of target/platform names that are in preview mode
+            (accountless targets). Drafts for these get preview_mode=True.
+        shared_group: When True and multiple platforms are present, call the
+            drafter once for the most constrained platform and adapt the result
+            for the remaining platforms. Saves LLM calls.
     """
     # 3. Create drafter client
     from social_hook.errors import ConfigError
@@ -245,7 +199,28 @@ def _draft_for_resolved_platforms(
 
         referenced_posts = _ops.get_posts_by_ids(conn, _ref_post_ids)
 
-    # 5. Draft for each target platform
+    # 5. Shared group optimisation: one LLM call, adapt for remaining platforms
+    if shared_group and len(platforms) > 1:
+        return _draft_shared_group(
+            platforms=platforms,
+            drafter=drafter,
+            config=config,
+            conn=conn,
+            db=db,
+            project=project,
+            decision_id=decision_id,
+            evaluation=evaluation,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            dry_run=dry_run,
+            verbose=verbose,
+            preview_targets=preview_targets,
+            arc_context=arc_context,
+            referenced_posts=referenced_posts,
+        )
+
+    # 5b. Draft for each target platform (default: one LLM call per platform)
     results = []
     for pname, rpcfg in platforms.items():
         # Per-platform introduction check
@@ -371,6 +346,7 @@ def _draft_for_resolved_platforms(
                 last_error=f"Media generation failed: {media_error}"
                 if media_error and not media_paths
                 else None,
+                preview_mode=bool(preview_targets and pname in preview_targets),
             )
 
             # Set reference post info from evaluator (prefer same-platform for native quote)
@@ -433,9 +409,6 @@ def _draft_for_resolved_platforms(
                 continue
 
             # Extract metadata from evaluation for notification pass-through
-            _ep_type = getattr(evaluation, "episode_type", None)
-            if _ep_type is not None and hasattr(_ep_type, "value"):
-                _ep_type = _ep_type.value
             _post_cat = getattr(evaluation, "post_category", None)
             if _post_cat is not None and hasattr(_post_cat, "value"):
                 _post_cat = _post_cat.value
@@ -447,7 +420,6 @@ def _draft_for_resolved_platforms(
                     draft=draft,
                     schedule=schedule,
                     thread_tweets=thread_tweets,
-                    episode_type=_ep_type,
                     post_category=_post_cat,
                     angle=_angle,
                     episode_tags=_ep_tags,
@@ -466,6 +438,478 @@ def _draft_for_resolved_platforms(
             if verbose:
                 print(f"LLM API error during drafting for {pname}: {e}")
             # Continue with other platforms
+
+    return results
+
+
+def draft_for_targets(
+    target_actions: list,  # list[RoutedTarget] — imported lazily
+    config,
+    conn: sqlite3.Connection,
+    db,
+    project,
+    decision_id: str,
+    evaluation,
+    context,
+    commit,
+    content_source_registry=None,
+    project_config=None,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> list[DraftResult]:
+    """Draft for resolved target actions.
+
+    Replaces draft_for_platforms() when targets config exists.
+    Groups targets by draft_group for draft sharing.
+    Assembles per-target context via ContentSource registry.
+    """
+    from social_hook.content_sources import content_sources as default_registry
+
+    registry = content_source_registry or default_registry
+
+    # Only process targets with "draft" action
+    draft_actions = [ta for ta in target_actions if ta.action == "draft"]
+    if not draft_actions:
+        if verbose:
+            print("No targets with 'draft' action.")
+        return []
+
+    # Group by draft_group for draft sharing
+    groups: dict[str, list] = {}
+    ungrouped: list = []
+    for ta in draft_actions:
+        if ta.draft_group:
+            groups.setdefault(ta.draft_group, []).append(ta)
+        else:
+            ungrouped.append(ta)
+
+    # Resolve content sources for each strategy decision
+    resolved_context: dict[str, dict[str, str]] = {}
+    for ta in draft_actions:
+        strategy_name = ta.target_config.strategy
+        if strategy_name in resolved_context:
+            continue
+        # Get context source spec from the strategy decision
+        spec = getattr(ta.strategy_decision, "context_source", None)
+        if spec and hasattr(spec, "types") and spec.types:
+            kwargs: dict[str, Any] = {
+                "conn": conn,
+                "project_id": project.id,
+            }
+            if hasattr(spec, "topic_id") and spec.topic_id:
+                kwargs["topic_id"] = spec.topic_id
+            if hasattr(spec, "suggestion_id") and spec.suggestion_id:
+                kwargs["suggestion_id"] = spec.suggestion_id
+            resolved_context[strategy_name] = registry.resolve(source_types=spec.types, **kwargs)
+        else:
+            resolved_context[strategy_name] = {}
+
+    all_results: list[DraftResult] = []
+
+    # Collect accountless targets — these get preview_mode=True on their drafts
+    _preview_targets = {ta.target_name for ta in draft_actions if not ta.target_config.account}
+
+    def _resolve_target_platform(ta):
+        """Resolve a ResolvedPlatformConfig for a target action."""
+        account = ta.account_config
+        platform_name = account.platform
+        pcfg = config.platforms.get(platform_name)
+        if pcfg:
+            return resolve_platform(platform_name, pcfg, config.scheduling)
+        from social_hook.config.platforms import OutputPlatformConfig
+
+        raw = OutputPlatformConfig(
+            enabled=True,
+            priority="primary" if ta.target_config.primary else "secondary",
+            type="builtin" if platform_name in ("x", "linkedin") else "custom",
+            account_tier=account.tier,
+        )
+        return resolve_platform(platform_name, raw, config.scheduling)
+
+    def _draft_batch(platforms_map, shared_group: bool = False):
+        """Run _draft_for_resolved_platforms with shared kwargs."""
+        return _draft_for_resolved_platforms(
+            platforms_map,
+            config,
+            conn,
+            db,
+            project,
+            decision_id=decision_id,
+            evaluation=evaluation,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            dry_run=dry_run,
+            verbose=verbose,
+            preview_targets=_preview_targets,
+            shared_group=shared_group,
+        )
+
+    # Process grouped targets (shared draft per group — single LLM call)
+    for _group_name, group_targets in groups.items():
+        platforms_for_group = {ta.target_name: _resolve_target_platform(ta) for ta in group_targets}
+        all_results.extend(_draft_batch(platforms_for_group, shared_group=True))
+
+    # Process ungrouped targets individually
+    for ta in ungrouped:
+        all_results.extend(_draft_batch({ta.target_name: _resolve_target_platform(ta)}))
+
+    return all_results
+
+
+def _pick_lead_platform(platforms: dict) -> tuple[str, Any]:
+    """Pick the most constrained platform (lowest max_length) as the lead.
+
+    When max_length is None, treat as unconstrained (infinity).
+    This ensures adaptation only expands (safe), never truncates (lossy).
+    """
+    lead_name = None
+    lead_rpcfg = None
+    lead_limit = float("inf")
+    for pname, rpcfg in platforms.items():
+        limit = rpcfg.max_length if rpcfg.max_length is not None else float("inf")
+        # Also consider tier char limits for builtin platforms
+        if rpcfg.account_tier:
+            tier_limit = TIER_CHAR_LIMITS.get(rpcfg.account_tier, float("inf"))
+            limit = min(limit, tier_limit)
+        if limit < lead_limit:
+            lead_limit = limit
+            lead_name = pname
+            lead_rpcfg = rpcfg
+    # Fallback: first platform if all are unconstrained
+    if lead_name is None:
+        lead_name = next(iter(platforms))
+        lead_rpcfg = platforms[lead_name]
+    return lead_name, lead_rpcfg
+
+
+def _unthread_content(thread_content: str) -> str:
+    """Reverse thread formatting: join tweets into a single post.
+
+    Strips numbered markers (1/, 2/, ...) and joins with double newlines.
+    """
+    # Strip numbered markers
+    stripped = re.sub(r"(?:^|\n+)\d+/\s*", "\n\n", thread_content)
+    # Split and rejoin cleanly
+    paragraphs = [p.strip() for p in stripped.split("\n\n") if p.strip()]
+    return "\n\n".join(paragraphs)
+
+
+def _adapt_content_for_platform(
+    content: str,
+    was_threaded: bool,
+    target_platform: str,
+    max_length: int | None,
+) -> str:
+    """Adapt lead draft content for a different platform.
+
+    - Thread -> non-thread: unthread (join with double newlines)
+    - Single -> any: pass through
+    - Apply char limit truncation (should rarely fire since lead is most constrained)
+    """
+    adapted = content
+    # Thread to non-thread: flatten
+    if was_threaded and target_platform != "x":
+        adapted = _unthread_content(content)
+    elif not was_threaded:
+        # Single post works everywhere — pass through
+        pass
+    else:
+        # Threaded content staying on X — pass through
+        pass
+
+    # Apply char limit if set (safety net — lead is most constrained so this rarely truncates)
+    if max_length and len(adapted) > max_length:
+        logger.warning(
+            "Adapted content for %s exceeds max_length (%d > %d), truncating",
+            target_platform,
+            len(adapted),
+            max_length,
+        )
+        adapted = adapted[:max_length]
+
+    return adapted
+
+
+def _draft_shared_group(
+    platforms,
+    drafter,
+    config,
+    conn: sqlite3.Connection,
+    db,
+    project,
+    decision_id: str,
+    evaluation,
+    context,
+    commit,
+    project_config=None,
+    dry_run: bool = False,
+    verbose: bool = False,
+    preview_targets: set[str] | None = None,
+    arc_context=None,
+    referenced_posts=None,
+) -> list[DraftResult]:
+    """Draft once for the most constrained platform, adapt for the rest.
+
+    Saves LLM calls when multiple targets share a strategy group.
+    Each platform still gets its own Draft row, scheduling, and preview_mode.
+    """
+    # Pick the lead platform (most constrained)
+    lead_name, lead_rpcfg = _pick_lead_platform(platforms)
+
+    if verbose:
+        print(f"Shared group: lead platform={lead_name}, adapting for {len(platforms) - 1} others")
+
+    # Resolve identity + intro state for lead
+    from social_hook.config.yaml import resolve_identity
+    from social_hook.db import operations as _id_ops
+
+    lead_is_introduced = context.platform_introduced.get(lead_name, False)
+    lead_identity = resolve_identity(config, lead_name)
+    lead_post_count = len([p for p in context.recent_posts if p.platform == lead_name])
+    lead_is_first = not lead_is_introduced
+    lead_first_date = _id_ops.get_first_post_date(conn, project.id, lead_name)
+
+    # Single LLM call for the lead platform
+    try:
+        lead_draft_result = drafter.create_draft(
+            evaluation,
+            context,
+            commit,
+            db,
+            platform=lead_name,
+            platform_config=lead_rpcfg,
+            arc_context=arc_context,
+            config=project_config.context if project_config else None,
+            media_config=config.media_generation,
+            media_guidance=project_config.media_guidance if project_config else None,
+            referenced_posts=referenced_posts,
+            platform_introduced=lead_is_introduced,
+            identity=lead_identity,
+            target_post_count=lead_post_count,
+            is_first_post=lead_is_first,
+            first_post_date=lead_first_date,
+        )
+        lead_draft_result.platform = lead_name
+    except Exception as e:
+        logger.error(f"LLM API error during shared-group drafting (lead={lead_name}): {e}")
+        if verbose:
+            print(f"LLM API error during shared-group drafting (lead={lead_name}): {e}")
+        return []
+
+    # Generate media once from lead draft
+    media_paths, media_type_str, media_spec_dict, media_error = [], None, None, None
+    _mt = getattr(lead_draft_result, "media_type", None)
+    if _mt is not None and hasattr(_mt, "value"):
+        _mt = _mt.value
+    _ms = getattr(lead_draft_result, "media_spec", None)
+    if _mt and _mt != "none":
+        if not _ms:
+            logger.warning(
+                "Drafter selected media_type=%s but media_spec is empty — skipping media generation",
+                _mt,
+            )
+            _mt = None
+        else:
+            media_paths, media_type_str, media_spec_dict, media_error = _generate_media(
+                config,
+                _mt,
+                _ms,
+                dry_run=dry_run,
+                verbose=verbose,
+                project_config=project_config,
+            )
+
+    # Check if lead draft needs threading
+    lead_was_threaded = _needs_thread(
+        lead_draft_result,
+        lead_name,
+        lead_rpcfg.account_tier or "free",
+        thread_min=config.scheduling.thread_min_tweets,
+    )
+    lead_thread_tweets: list[str] = []
+    if lead_was_threaded:
+        lead_thread_result = drafter.create_thread(
+            evaluation,
+            context,
+            commit,
+            db,
+            platform=lead_name,
+            media_config=config.media_generation,
+            media_guidance=project_config.media_guidance if project_config else None,
+            identity=lead_identity,
+            target_post_count=lead_post_count,
+            is_first_post=lead_is_first,
+            first_post_date=lead_first_date,
+        )
+        lead_thread_tweets = _parse_thread_tweets(
+            lead_thread_result.content,
+            thread_min=config.scheduling.thread_min_tweets,
+        )
+        lead_content = lead_thread_result.content
+        lead_reasoning = lead_thread_result.reasoning
+    else:
+        lead_content = lead_draft_result.content
+        lead_reasoning = lead_draft_result.reasoning
+
+    # Now create a Draft + DraftResult for each platform (lead + adapted)
+    results: list[DraftResult] = []
+
+    for pname, rpcfg in platforms.items():
+        try:
+            platform_is_introduced = context.platform_introduced.get(pname, False)
+
+            if pname == lead_name:
+                # Lead platform: use original content
+                draft_content = lead_content
+                draft_reasoning = lead_reasoning
+                thread_tweets = lead_thread_tweets
+            else:
+                # Adapted platform: transform lead content
+                draft_content = _adapt_content_for_platform(
+                    lead_content,
+                    was_threaded=lead_was_threaded,
+                    target_platform=rpcfg.name,
+                    max_length=rpcfg.max_length,
+                )
+                draft_reasoning = lead_reasoning
+                # Adapted platforms don't get thread tweets (unthreaded above)
+                if lead_was_threaded and rpcfg.name == "x":
+                    # X-to-X adaptation: re-parse threads
+                    thread_tweets = _parse_thread_tweets(
+                        draft_content,
+                        thread_min=config.scheduling.thread_min_tweets,
+                    )
+                else:
+                    thread_tweets = []
+
+                if verbose:
+                    print(f"  Adapted draft for {pname} from lead {lead_name}")
+
+            # Per-platform scheduling
+            schedule = calculate_optimal_time(
+                conn,
+                project.id,
+                platform=pname,
+                tz=config.scheduling.timezone,
+                max_posts_per_day=rpcfg.max_posts_per_day,
+                min_gap_minutes=rpcfg.min_gap_minutes,
+                optimal_days=rpcfg.optimal_days,
+                optimal_hours=rpcfg.optimal_hours,
+                max_per_week=config.scheduling.max_per_week,
+            )
+
+            is_deferred = schedule.deferred
+            if is_deferred and verbose:
+                print(f"Platform {pname}: deferred ({schedule.day_reason})")
+
+            draft = Draft(
+                id=generate_id("draft"),
+                project_id=project.id,
+                decision_id=decision_id,
+                platform=pname,
+                content=draft_content,
+                media_paths=media_paths,
+                media_type=media_type_str,
+                media_spec=media_spec_dict,
+                media_spec_used=media_spec_dict if media_paths else None,
+                status="deferred" if is_deferred else "draft",
+                suggested_time=None if is_deferred else schedule.datetime,
+                reasoning=draft_reasoning,
+                last_error=f"Media generation failed: {media_error}"
+                if media_error and not media_paths
+                else None,
+                preview_mode=bool(preview_targets and pname in preview_targets),
+            )
+
+            # Set reference post info from evaluator
+            if referenced_posts:
+                same_platform = [
+                    p for p in referenced_posts if p.platform == pname and p.external_id
+                ]
+                any_published = [p for p in referenced_posts if p.external_id]
+                ref_post = (
+                    same_platform[0]
+                    if same_platform
+                    else (any_published[0] if any_published else None)
+                )
+                if ref_post:
+                    draft.reference_post_id = ref_post.id
+                    if ref_post.platform == pname:
+                        draft.post_format = "quote"
+
+            # Mark as intro if platform not yet introduced
+            if not platform_is_introduced and not dry_run:
+                draft.is_intro = True
+
+            db.insert_draft(draft)
+
+            # After draft insertion, mark platform as introduced
+            if not platform_is_introduced and not dry_run:
+                from social_hook.db import operations as _intro_ops
+
+                _intro_ops.set_platform_introduced(conn, project.id, pname, True)
+                context.platform_introduced[pname] = True
+                db.emit_data_event("project", "updated", project.id, project.id)
+
+            db.emit_data_event(
+                "draft",
+                "created",
+                draft.id,
+                project.id,
+                extra={"content": draft.content[:500], "platform": pname},
+            )
+
+            if thread_tweets:
+                for pos, tc in enumerate(thread_tweets):
+                    db.insert_draft_tweet(
+                        DraftTweet(
+                            id=generate_id("tweet"),
+                            draft_id=draft.id,
+                            position=pos,
+                            content=tc,
+                        )
+                    )
+
+            if is_deferred:
+                from social_hook.notifications import send_notification
+
+                send_notification(
+                    config,
+                    f"*Draft deferred*\n\nPlatform: {pname}\nReason: {schedule.day_reason}\n\n```\n{draft.content[:300]}\n```",
+                    dry_run=dry_run,
+                )
+                continue
+
+            # Extract metadata from evaluation for notification pass-through
+            _post_cat = getattr(evaluation, "post_category", None)
+            if _post_cat is not None and hasattr(_post_cat, "value"):
+                _post_cat = _post_cat.value
+            _angle = getattr(evaluation, "angle", None)
+            _ep_tags = getattr(evaluation, "episode_tags", None)
+
+            results.append(
+                DraftResult(
+                    draft=draft,
+                    schedule=schedule,
+                    thread_tweets=thread_tweets,
+                    post_category=_post_cat,
+                    angle=_angle,
+                    episode_tags=_ep_tags,
+                )
+            )
+
+            if verbose:
+                print(f"Draft created for {pname}: {draft.id}")
+                if thread_tweets:
+                    print(f"  Format: thread ({len(thread_tweets)} tweets)")
+                print(f"  Content: {draft_content[:100]}...")
+                print(f"  Suggested time: {schedule.datetime} ({schedule.time_reason})")
+
+        except Exception as e:
+            logger.error(f"Error creating draft for {pname} in shared group: {e}")
+            if verbose:
+                print(f"Error creating draft for {pname} in shared group: {e}")
 
     return results
 

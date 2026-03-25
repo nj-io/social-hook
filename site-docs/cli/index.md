@@ -19,9 +19,14 @@ These options can be placed before any command.
 
 | Group | Description |
 |-------|-------------|
+| [`account`](account.md) | Platform account management. |
 | [`arc`](arc.md) | Manage narrative arcs. |
 | [`bot`](bot.md) | Bot daemon management. |
+| [`brief`](brief.md) | Project brief management. |
 | [`config`](config.md) | View and modify configuration. |
+| [`content`](content.md) | Content suggestions and operations. |
+| [`credentials`](credentials.md) | Platform credential management. |
+| [`cycles`](cycles.md) | Evaluation cycle history. |
 | [`decision`](decision.md) | Decision management. |
 | [`draft`](draft.md) | Draft lifecycle management. |
 | [`inspect`](inspect.md) | Inspect system state. |
@@ -31,6 +36,10 @@ These options can be placed before any command.
 | [`memory`](memory.md) | Manage voice memories. |
 | [`project`](project.md) | Project management. |
 | [`snapshot`](snapshot.md) | DB snapshot management. |
+| [`strategy`](strategy.md) | Content strategy management. |
+| [`system`](system.md) | System health and errors. |
+| [`target`](target.md) | Content distribution targets. |
+| [`topics`](topics.md) | Content topic queue. |
 
 ## Commands
 

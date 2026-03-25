@@ -1441,7 +1441,7 @@ class TestReviewEvaluatorContext:
 
     @patch("social_hook.bot.commands._get_conn")
     def test_review_shows_evaluator_context(self, mock_conn, mock_adapter, temp_dir):
-        """Verify angle, episode_type, post_category in formatted review output."""
+        """Verify angle, post_category in formatted review output."""
         from social_hook.bot.commands import cmd_review
         from social_hook.db import insert_decision
         from social_hook.models import Decision
@@ -1458,7 +1458,6 @@ class TestReviewEvaluatorContext:
             commit_hash="abc12345",
             decision="draft",
             reasoning="Strong commit with clear narrative",
-            episode_type="launch",
             post_category="arc",
             angle="Show how the new API simplifies integration",
         )
@@ -1476,7 +1475,6 @@ class TestReviewEvaluatorContext:
         cmd_review(mock_adapter, "123", draft.id, None)
         mock_adapter.send_message.assert_called_once()
         msg = mock_adapter.send_message.call_args[0][1]
-        assert "Episode: launch" in msg.text
         assert "Category: arc" in msg.text
         assert "Angle:" in msg.text
         assert "simplifies integration" in msg.text

@@ -133,7 +133,6 @@ def draft(
                 target_platform_names=target_platform_names,
                 dry_run=dry_run,
                 verbose=verbose,
-                skip_content_filter=True,
             )
 
         if not results:
@@ -242,7 +241,6 @@ def consolidate(
                 project_config=project_config,
                 dry_run=dry_run,
                 verbose=verbose,
-                skip_content_filter=True,
             )
 
         if not results:
@@ -278,10 +276,9 @@ def post(
             typer.echo(f"Draft not found: {draft_id}")
             raise typer.Exit(1)
 
-        if draft_obj.platform == "preview":
+        if draft_obj.preview_mode:
             typer.echo(
-                "Preview drafts cannot be posted. Use 'social-hook draft promote "
-                "<id> --platform <name>' to create a platform-specific draft."
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
             )
             raise typer.Exit(1)
 

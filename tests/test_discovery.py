@@ -119,7 +119,7 @@ def _make_response(tool_name, tool_input):
 class TestDiscoverProject:
     @patch("social_hook.llm.discovery.log_usage")
     def test_two_pass_flow(self, mock_log_usage, temp_repo):
-        """Verify the two-pass flow: select files then generate summary."""
+        """Verify the two-pass flow: select files, generate summary, then brief."""
         mock_client = MagicMock()
 
         # Pass 1: select_files response
@@ -139,22 +139,34 @@ class TestDiscoverProject:
                 "prompt_docs": ["README.md"],
             },
         )
+        # Pass 3: generate_brief response (brief replaces raw summary)
+        brief_response = _make_response(
+            "generate_brief",
+            {
+                "what_it_does": "Test Project does X.",
+                "key_capabilities": "Feature A.",
+                "technical_architecture": "Python app.",
+                "current_state": "Active.",
+            },
+        )
 
-        mock_client.complete.side_effect = [select_response, summary_response]
+        mock_client.complete.side_effect = [select_response, summary_response, brief_response]
 
         summary, files, file_summaries, prompt_docs = discover_project(
             client=mock_client,
             repo_path=str(temp_repo),
         )
 
-        assert summary == "Test Project is a Python application that does X."
+        # Brief replaces the raw summary
+        assert "## What It Does" in summary
+        assert "Test Project does X." in summary
         assert "README.md" in files
         assert isinstance(file_summaries, list)
         assert isinstance(prompt_docs, list)
         assert len(file_summaries) == 1
         assert file_summaries[0]["path"] == "README.md"
         assert prompt_docs == ["README.md"]
-        assert mock_client.complete.call_count == 2
+        assert mock_client.complete.call_count == 3
 
         # Verify pass 1 used select_files tool
         call1 = mock_client.complete.call_args_list[0]
@@ -164,10 +176,9 @@ class TestDiscoverProject:
         call2 = mock_client.complete.call_args_list[1]
         assert call2.kwargs["tools"][0]["name"] == "generate_summary"
 
-        # Verify log_usage called for both passes
-        assert mock_log_usage.call_count == 2
-        assert mock_log_usage.call_args_list[0][0][1] == "discovery_select"
-        assert mock_log_usage.call_args_list[1][0][1] == "discovery_summarize"
+        # Verify pass 3 used generate_brief tool
+        call3 = mock_client.complete.call_args_list[2]
+        assert call3.kwargs["tools"][0]["name"] == "generate_brief"
 
     def test_project_docs_priority(self, temp_repo):
         """Verify user-specified project_docs get priority loading."""

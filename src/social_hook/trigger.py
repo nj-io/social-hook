@@ -160,6 +160,7 @@ def run_trigger(
     verbose: bool = False,
     show_prompt: bool = False,
     trigger_source: str = "commit",
+    existing_decision_id: str | None = None,
 ) -> int:
     """Run the commit-to-draft trigger pipeline.
 
@@ -176,6 +177,8 @@ def run_trigger(
         dry_run: If True, skip DB writes and real API calls
         config_path: Optional override for config location
         verbose: If True, print detailed output
+        existing_decision_id: If provided, reuse this ID instead of generating
+            a new one. Used by retrigger to update in-place (upsert).
 
     Returns:
         Exit code (0-4)
@@ -244,7 +247,7 @@ def run_trigger(
         gate_result = check_rate_limit(conn, config.rate_limits)
         if gate_result.blocked:
             decision = Decision(
-                id=generate_id("decision"),
+                id=existing_decision_id or generate_id("decision"),
                 project_id=project.id,
                 commit_hash=commit_hash,
                 decision="deferred_eval",
@@ -253,7 +256,12 @@ def run_trigger(
                 trigger_source=trigger_source,
                 branch=current_branch,
             )
-            db.insert_decision(decision)
+            if existing_decision_id:
+                from social_hook.db import operations as _ops
+
+                _ops.upsert_decision(conn, decision)
+            else:
+                db.insert_decision(decision)
             db.emit_data_event("decision", "created", decision.id, project.id)
             if verbose:
                 print(f"Evaluation deferred: {gate_result.reason}")
@@ -416,6 +424,7 @@ def run_trigger(
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
             scheduling_state=scheduling_state,
+            strategies=config.content_strategies or None,
         )
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
@@ -426,7 +435,32 @@ def run_trigger(
 
     # 8. Map evaluation output to Decision
     analysis = evaluation.commit_analysis
-    target = evaluation.targets.get("default")
+
+    # --- New targets path: when config.targets has real target entries ---
+    if getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets:
+        result = _run_targets_path(
+            evaluation=evaluation,
+            analysis=analysis,
+            config=config,
+            conn=conn,
+            db=db,
+            project=project,
+            commit=commit,
+            commit_hash=commit_hash,
+            context=context,
+            project_config=project_config,
+            current_branch=current_branch,
+            evaluator_client=evaluator_client,
+            dry_run=dry_run,
+            verbose=verbose,
+            existing_decision_id=existing_decision_id,
+        )
+        conn.close()
+        return result
+
+    # --- Legacy path: single "default" target ---
+    logger.warning("No targets configured. Using legacy platform-based drafting.")
+    target = evaluation.strategies.get("default")
     if target is None:
         logger.error("Evaluation missing 'default' target")
         if verbose:
@@ -440,14 +474,14 @@ def run_trigger(
     decision_type = _val(target.action)  # "draft", "hold", or "skip"
 
     decision = Decision(
-        id=generate_id("decision"),
+        id=existing_decision_id or generate_id("decision"),
         project_id=project.id,
         commit_hash=commit_hash,
         decision=decision_type,
         reasoning=target.reason,
         commit_message=commit.message,
         angle=target.angle,
-        episode_type=_val(target.episode_type),
+        episode_type=None,
         episode_tags=analysis.episode_tags,
         post_category=_val(target.post_category),
         arc_id=target.arc_id,
@@ -468,7 +502,10 @@ def run_trigger(
             decision.decision = "skip"
             decision_type = "skip"
 
-    db.insert_decision(decision)
+    if existing_decision_id:
+        ops.upsert_decision(conn, decision)
+    else:
+        db.insert_decision(decision)
     db.emit_data_event("decision", "created", decision.id, project.id)
 
     # 8b. Arc activation: create new arc or link to existing
@@ -593,6 +630,331 @@ def run_trigger(
 
     conn.close()
     return 0
+
+
+def _determine_overall_decision(
+    strategies: dict,
+) -> str:
+    """Derive a single DecisionType from per-strategy decisions.
+
+    Rules:
+    - Empty strategies dict -> log warning, return "skip".
+    - If any strategy has action "draft" -> "draft"
+    - If all strategies have action "hold" -> "hold"
+    - If all strategies have action "skip" -> "skip"
+    - Mixed hold+skip (no draft) -> "skip"
+    """
+    if not strategies:
+        logger.warning("Empty strategies dict in _determine_overall_decision")
+        return "skip"
+
+    actions = set()
+    for decision in strategies.values():
+        action = decision.action
+        if hasattr(action, "value"):
+            action = action.value
+        actions.add(action)
+
+    if "draft" in actions:
+        return "draft"
+    if actions == {"hold"}:
+        return "hold"
+    return "skip"
+
+
+def _combine_strategy_reasoning(
+    strategies: dict,
+) -> str:
+    """Combine per-strategy reasoning into a single string for the Decision record.
+
+    Format: "strategy-name: reason; strategy-name: reason"
+    Truncate to 500 chars if needed.
+    """
+    parts = []
+    for name, decision in strategies.items():
+        parts.append(f"{name}: {decision.reason}")
+    combined = "; ".join(parts)
+    if len(combined) > 500:
+        combined = combined[:497] + "..."
+    return combined
+
+
+def _run_targets_path(
+    evaluation,
+    analysis,
+    config,
+    conn,
+    db,
+    project,
+    commit,
+    commit_hash: str,
+    context,
+    project_config,
+    current_branch: str | None,
+    evaluator_client,
+    dry_run: bool,
+    verbose: bool,
+    existing_decision_id: str | None = None,
+) -> int:
+    """New targets pipeline path: multi-strategy -> multi-target routing."""
+    from social_hook.models import EvaluationCycle
+
+    def _val(x):
+        return x.value if hasattr(x, "value") else x
+
+    # Create evaluation cycle record
+    cycle = EvaluationCycle(
+        id=generate_id("cycle"),
+        project_id=project.id,
+        trigger_type="commit",
+        trigger_ref=commit_hash,
+    )
+    db.insert_evaluation_cycle(cycle)
+
+    # Brief update: if commit is non-trivial, update the brief
+    _trigger_brief_update(
+        evaluation=evaluation,
+        analysis=analysis,
+        conn=conn,
+        db=db,
+        project=project,
+        evaluator_client=evaluator_client,
+        dry_run=dry_run,
+        verbose=verbose,
+    )
+
+    # Tag-to-topic matching: increment commit counts
+    for tag in analysis.episode_tags:
+        matching_topics = ops.get_topics_matching_tag(conn, project.id, tag)
+        for topic in matching_topics:
+            ops.increment_topic_commit_count(conn, topic.id)
+
+    # Update content topic statuses for held topics
+    for _strategy_name, strat_decision in evaluation.strategies.items():
+        action = _val(strat_decision.action)
+        if action == "hold" and strat_decision.topic_id:
+            ops.update_topic_status(conn, strat_decision.topic_id, "holding")
+
+    # Derive overall decision from per-strategy decisions
+    decision_type = _determine_overall_decision(evaluation.strategies)
+
+    # Get the first "draft" strategy for arc/angle/category or fall back to first strategy
+    first_draft_strategy = None
+    for _sn, sd in evaluation.strategies.items():
+        if _val(sd.action) == "draft":
+            first_draft_strategy = sd
+            break
+    representative = first_draft_strategy or next(iter(evaluation.strategies.values()))
+
+    decision = Decision(
+        id=existing_decision_id or generate_id("decision"),
+        project_id=project.id,
+        commit_hash=commit_hash,
+        decision=decision_type,
+        reasoning=_combine_strategy_reasoning(evaluation.strategies),
+        commit_message=commit.message,
+        angle=representative.angle,
+        episode_type=None,
+        episode_tags=analysis.episode_tags,
+        post_category=_val(representative.post_category),
+        arc_id=representative.arc_id,
+        media_tool=_val(representative.media_tool),
+        targets={k: v.model_dump() for k, v in evaluation.strategies.items()},
+        commit_summary=analysis.summary,
+        consolidate_with=representative.consolidate_with,
+        reference_posts=representative.reference_posts,
+        branch=current_branch,
+    )
+
+    # Hold count enforcement
+    if decision_type == "hold":
+        max_hold = project_config.context.max_hold_count if project_config else 5
+        current_held = ops.get_held_decisions(conn, project.id)
+        if len(current_held) >= max_hold:
+            logger.warning(f"Hold limit reached ({max_hold}), forcing skip for {commit_hash[:8]}")
+            decision.decision = "skip"
+            decision_type = "skip"
+
+    if existing_decision_id:
+        ops.upsert_decision(conn, decision)
+    else:
+        db.insert_decision(decision)
+    db.emit_data_event("decision", "created", decision.id, project.id)
+
+    # Arc activation for draftable strategies
+    if is_draftable(decision.decision):
+        for _sn, sd in evaluation.strategies.items():
+            if _val(sd.action) != "draft":
+                continue
+            if sd.new_arc_theme and not sd.arc_id:
+                try:
+                    from social_hook.narrative.arcs import create_arc as _create_arc
+
+                    new_arc_id = _create_arc(db.conn, project.id, sd.new_arc_theme)
+                    db.update_decision(decision.id, arc_id=new_arc_id)
+                    decision.arc_id = new_arc_id
+                    if verbose:
+                        print(f"Created new arc: {new_arc_id} ({sd.new_arc_theme})")
+                except Exception as e:
+                    logger.warning(f"Arc creation failed (non-fatal): {e}")
+                break  # Only one arc per decision
+
+    # Held decision absorption
+    if is_draftable(decision.decision) and representative.consolidate_with:
+        valid_ids = [d.id for d in context.held_decisions]
+        absorbed = [cid for cid in representative.consolidate_with if cid in valid_ids]
+        if absorbed and not dry_run:
+            batch_id = generate_id("batch")
+            ops.mark_decisions_processed(conn, absorbed, batch_id)
+
+    # Queue actions (same as legacy path)
+    if evaluation.queue_actions:
+        for _target_name, actions in evaluation.queue_actions.items():
+            for qa in actions:
+                action_type = qa.action
+                if action_type == "merge":
+                    continue
+                if not dry_run:
+                    draft_ref = ops.get_draft(conn, qa.draft_id)
+                    if not draft_ref or draft_ref.status not in ("draft", "approved", "scheduled"):
+                        if verbose:
+                            print(f"Queue action skipped: draft {qa.draft_id} not actionable")
+                        continue
+                    ops.execute_queue_action(conn, action_type, qa.draft_id, qa.reason)
+                if verbose:
+                    print(f"Queue action: {action_type} draft {qa.draft_id}")
+
+        if not dry_run:
+            _execute_merge_groups(
+                evaluation.queue_actions,
+                config,
+                conn,
+                db,
+                project,
+                context,
+                project_config,
+                dry_run,
+                verbose,
+            )
+
+    # Send decision notification for non-draftable decisions
+    if (
+        not dry_run
+        and config.notification_level == "all_decisions"
+        and not is_draftable(decision.decision)
+    ):
+        _send_decision_notification(config, project, commit, decision)
+
+    if verbose:
+        print(f"Decision: {decision_type}")
+        print(f"Reasoning: {decision.reasoning}")
+
+    # Route per-strategy decisions to per-target actions and draft
+    if is_draftable(decision.decision):
+        from social_hook.content_sources import content_sources
+        from social_hook.drafting import draft_for_targets
+        from social_hook.routing import route_to_targets
+
+        db.emit_data_event("pipeline", "drafting", commit_hash[:8], project.id)
+
+        target_actions = route_to_targets(evaluation.strategies, config, conn)
+        draftable_actions = [a for a in target_actions if a.action == "draft"]
+
+        if draftable_actions:
+            draft_results = draft_for_targets(
+                draftable_actions,
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                content_source_registry=content_sources,
+                project_config=project_config,
+                dry_run=dry_run,
+                verbose=verbose,
+            )
+
+            # Increment arc post count if drafts were created for an arc
+            if draft_results and decision.arc_id:
+                try:
+                    from social_hook.narrative.arcs import increment_arc_post_count
+
+                    increment_arc_post_count(db.conn, decision.arc_id)
+                    if verbose:
+                        print(f"Incremented post count for arc: {decision.arc_id}")
+                except Exception as e:
+                    logger.warning(f"Arc post count increment failed (non-fatal): {e}")
+
+            # Notifications
+            if not dry_run:
+                if draft_results:
+                    from social_hook.notifications import notify_draft_review
+
+                    notify_draft_review(
+                        config,
+                        project_name=project.name,
+                        project_id=project.id,
+                        commit_hash=commit.hash,
+                        commit_message=commit.message,
+                        draft_results=draft_results,
+                    )
+                elif config.notification_level != "drafts_only":
+                    _send_decision_notification(config, project, commit, decision)
+        else:
+            if not dry_run and config.notification_level != "drafts_only":
+                _send_decision_notification(config, project, commit, decision)
+
+    return 0
+
+
+def _trigger_brief_update(
+    evaluation,
+    analysis,
+    conn,
+    db,
+    project,
+    evaluator_client,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Update the project brief after commit analysis if the commit is non-trivial."""
+    # Only update for non-trivial commits (has episode tags beyond trivial markers)
+    if not analysis.episode_tags:
+        return
+
+    try:
+        from social_hook.llm.brief import update_brief_from_commit
+
+        current_brief = ops.get_project_summary(conn, project.id)
+        if not current_brief:
+            return
+
+        # Get section metadata from the project
+        proj = ops.get_project(conn, project.id)
+        section_metadata = proj.brief_section_metadata if proj else None
+
+        updated_brief, updated_metadata, changed_keys = update_brief_from_commit(
+            current_brief=current_brief,
+            commit_analysis_summary=analysis.summary,
+            commit_analysis_tags=analysis.episode_tags,
+            client=evaluator_client,
+            section_metadata=section_metadata,
+            db=db,
+            project_id=project.id,
+        )
+        if updated_brief != current_brief and not dry_run:
+            db.update_project_summary(project.id, updated_brief)
+            if verbose:
+                print(f"Brief updated: sections changed: {changed_keys}")
+    except ImportError:
+        logger.debug("brief.py not available, skipping brief update")
+    except Exception as e:
+        logger.warning(f"Brief update failed (non-fatal): {e}")
+        if verbose:
+            print(f"Brief update skipped: {e}", file=sys.stderr)
 
 
 def _send_decision_notification(config, project, commit, decision):
@@ -785,7 +1147,6 @@ def _execute_merge_groups(
                         target_platform_names=[platform],
                         dry_run=dry_run,
                         verbose=verbose,
-                        skip_content_filter=True,
                     )
 
                     if draft_results and not dry_run:
@@ -848,11 +1209,10 @@ def run_summary_trigger(
     # Build a minimal evaluation-compatible object for the drafter
     from social_hook.llm.schemas import (
         CommitAnalysis,
-        EpisodeTypeSchema,
         LogEvaluationInput,
         PostCategorySchema,
+        StrategyDecisionInput,
         TargetAction,
-        TargetDecisionInput,
     )
 
     evaluation = LogEvaluationInput(
@@ -860,12 +1220,11 @@ def run_summary_trigger(
             summary=summary[:500],
             episode_tags=["introduction"],
         ),
-        targets={
-            "default": TargetDecisionInput(
+        strategies={
+            "default": StrategyDecisionInput(
                 action=TargetAction.draft,
                 reason="Summary-based introduction",
                 angle="Introduce the project and what it does",
-                episode_type=EpisodeTypeSchema.synthesis,
                 post_category=PostCategorySchema.opportunistic,
             ),
         },
@@ -912,6 +1271,99 @@ def run_summary_trigger(
         "platform": first.draft.platform,
         "content": first.draft.content,
     }
+
+
+def run_suggestion_trigger(
+    suggestion_id: str,
+    project_id: str,
+    config_path: str | None = None,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> int:
+    """Trigger evaluation from an operator content suggestion.
+
+    Similar to run_trigger() but:
+    - No commit analysis stage (no commit)
+    - Trigger content is the suggestion idea
+    - trigger_type = 'operator_suggestion'
+
+    Returns:
+        Exit code: 0 = success, 1 = error
+    """
+    # 1. Load config
+    try:
+        config = load_full_config(
+            yaml_path=config_path if config_path else None,
+        )
+    except ConfigError as e:
+        logger.error("Config error: %s", e)
+        if verbose:
+            print(f"Config error: {e}", file=sys.stderr)
+        return 1
+
+    # 2. Initialize DB
+    try:
+        db_path = get_db_path()
+        conn = init_database(db_path)
+    except DatabaseError as e:
+        logger.error("Database error: %s", e)
+        if verbose:
+            print(f"Database error: {e}", file=sys.stderr)
+        return 1
+
+    # 3. Validate project exists
+    project = ops.get_project(conn, project_id)
+    if project is None:
+        logger.error("Project '%s' not found", project_id)
+        if verbose:
+            print(f"Project '{project_id}' not found", file=sys.stderr)
+        conn.close()
+        return 1
+
+    # 4. Validate suggestion exists and is pending
+    suggestions = ops.get_suggestions_by_project(conn, project_id)
+    suggestion = None
+    for s in suggestions:
+        if s.id == suggestion_id:
+            suggestion = s
+            break
+
+    if suggestion is None:
+        raise ConfigError(f"Suggestion '{suggestion_id}' not found in project '{project_id}'")
+
+    if suggestion.status != "pending":
+        raise ConfigError(
+            f"Suggestion '{suggestion_id}' has status '{suggestion.status}', expected 'pending'"
+        )
+
+    # 5. Evaluate suggestion
+    from social_hook.suggestions import evaluate_suggestion
+
+    try:
+        cycle_id = evaluate_suggestion(
+            conn,
+            config,
+            project_id,
+            suggestion_id,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        logger.error("Suggestion evaluation failed: %s", e)
+        if verbose:
+            print(f"Suggestion evaluation failed: {e}", file=sys.stderr)
+        conn.close()
+        return 1
+
+    if cycle_id is None:
+        logger.error("Suggestion evaluation returned no cycle for %s", suggestion_id)
+        conn.close()
+        return 1
+
+    if verbose:
+        print(f"Suggestion {suggestion_id} evaluated, cycle: {cycle_id}")
+
+    conn.close()
+    return 0
 
 
 # Backward-compatible re-exports — tests import these from trigger.py

@@ -119,7 +119,7 @@ export default function DashboardPage() {
                 onClick={() => setShowQuickstart(true)}
                 className="rounded-md border border-border px-6 py-2.5 text-sm font-medium hover:bg-muted transition-colors"
               >
-                Quick Preview
+                Quick Start
               </button>
             </div>
           </div>
@@ -193,8 +193,8 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-muted-foreground">{draft.platform}</span>
                     <Badge value={draft.status} variant="status" />
-                    {draft.is_intro && <Badge value="INTRO" variant="system" />}
-                    {draft.platform === "preview" && <Badge value="Preview" variant="system" />}
+                    {!!draft.is_intro && <Badge value="INTRO" variant="system" />}
+                    {!!draft.preview_mode && <Badge value="Preview" variant="system" />}
                   </div>
                   <span className="text-xs text-muted-foreground">
                     {new Date(draft.created_at).toLocaleDateString()}

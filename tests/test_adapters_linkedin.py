@@ -59,7 +59,7 @@ class TestLinkedInAdapterAuth:
         success, info = adapter.validate()
 
         assert success is True
-        assert info == "John Doe"
+        assert info == "Personal: John Doe"
         assert adapter.author_urn == "urn:li:person:782bbtaQ"
 
     @patch("social_hook.adapters.platform.linkedin.requests.get")

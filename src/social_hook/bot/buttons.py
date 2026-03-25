@@ -177,6 +177,11 @@ def handle_callback(
         "review": btn_review,
         "promote": btn_promote_submenu,
         "promote_to": btn_promote_to,
+        "cycle_expand": handle_cycle_expand,
+        "cycle_approve": handle_cycle_approve,
+        "cycle_view": handle_cycle_view,
+        "arc_approve": handle_arc_approve,
+        "arc_dismiss": handle_arc_dismiss,
     }
 
     handler = handlers.get(action)
@@ -212,12 +217,11 @@ def btn_approve(
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.platform == "preview":
+        if draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be posted directly. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
 
@@ -267,12 +271,11 @@ def btn_schedule_optimal(
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.platform == "preview":
+        if draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be scheduled. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
 
@@ -434,12 +437,11 @@ def btn_quick_approve(
 
         set_chat_draft_context(chat_id, draft_id, draft.project_id)
 
-        if draft.platform == "preview":
+        if draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be posted directly. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
 
@@ -511,8 +513,12 @@ def btn_post_now(
             _send(adapter, chat_id, f"Cannot post: draft status is {draft.status}")
             return
 
-        if draft.platform == "preview":
-            _send(adapter, chat_id, "Cannot post preview drafts.")
+        if draft.preview_mode:
+            _send(
+                adapter,
+                chat_id,
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
+            )
             return
 
         # Check project is not paused
@@ -594,12 +600,11 @@ def btn_schedule_custom(
         from social_hook.db import get_draft
 
         draft = get_draft(conn, draft_id)
-        if draft and draft.platform == "preview":
+        if draft and draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be scheduled. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
     finally:
@@ -1685,8 +1690,8 @@ def btn_promote_submenu(
         if not draft:
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
-        if draft.platform != "preview":
-            _send(adapter, chat_id, "Only preview drafts can be promoted.")
+        if not draft.preview_mode:
+            _send(adapter, chat_id, "Only preview-mode drafts can be promoted.")
             return
         if draft.status in TERMINAL_STATUSES:
             _send(adapter, chat_id, f"Cannot promote: draft status is '{draft.status}'")
@@ -1698,9 +1703,7 @@ def btn_promote_submenu(
         _send(adapter, chat_id, "Config not available.")
         return
 
-    real_platforms = [
-        name for name, pcfg in config.platforms.items() if pcfg.enabled and name != "preview"
-    ]
+    real_platforms = [name for name, pcfg in config.platforms.items() if pcfg.enabled]
 
     if not real_platforms:
         _send(
@@ -1749,8 +1752,8 @@ def btn_promote_to(
         if not draft:
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
-        if draft.platform != "preview":
-            _send(adapter, chat_id, "Only preview drafts can be promoted.")
+        if not draft.preview_mode:
+            _send(adapter, chat_id, "Only preview-mode drafts can be promoted.")
             return
         if draft.status in TERMINAL_STATUSES:
             _send(adapter, chat_id, f"Cannot promote: draft status is '{draft.status}'")
@@ -1822,7 +1825,6 @@ def btn_promote_to(
             commit=commit,
             project_config=project_config,
             target_platform_names=[platform],
-            skip_content_filter=True,
         )
 
         if not results:
@@ -1836,7 +1838,9 @@ def btn_promote_to(
         # Send review with buttons for the new draft
         from social_hook.bot.notifications import get_review_buttons_normalized
 
-        buttons = get_review_buttons_normalized(new_draft.id, platform=new_draft.platform)
+        buttons = get_review_buttons_normalized(
+            new_draft.id, platform=new_draft.platform, preview_mode=new_draft.preview_mode
+        )
         _send_with_buttons(
             adapter,
             chat_id,
@@ -1848,5 +1852,170 @@ def btn_promote_to(
     except Exception as e:
         logger.exception("Error promoting draft")
         _send(adapter, chat_id, f"Error promoting draft: {e}")
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Cycle-level callback handlers
+# =============================================================================
+
+
+def handle_cycle_expand(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Expand all drafts in a cycle. Payload is cycle_id."""
+    _answer_callback(adapter, callback_id, "Expanding...")
+
+    cycle_id = payload
+    conn = _get_conn()
+    try:
+        from social_hook.db import operations as ops
+
+        drafts = ops.get_drafts_by_cycle(conn, cycle_id)
+        if not drafts:
+            _send(adapter, chat_id, f"No drafts found for cycle `{cycle_id[:12]}`.")
+            return
+
+        lines = [f"*Cycle* `{cycle_id[:12]}` — {len(drafts)} draft(s)"]
+        for draft in drafts:
+            strategy = getattr(draft, "strategy", None) or draft.platform
+            lines.append(f"\n*{strategy}* (`{draft.id[:12]}`) — {draft.status}")
+            lines.append(f"```\n{draft.content}\n```")
+        _send(adapter, chat_id, "\n".join(lines))
+    finally:
+        conn.close()
+
+
+def handle_cycle_approve(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Approve all editable drafts in a cycle. Payload is cycle_id."""
+    _answer_callback(adapter, callback_id, "Approving all...")
+
+    cycle_id = payload
+    conn = _get_conn()
+    try:
+        from social_hook.db import operations as ops
+
+        drafts = ops.get_drafts_by_cycle(conn, cycle_id)
+        if not drafts:
+            _send(adapter, chat_id, f"No drafts found for cycle `{cycle_id[:12]}`.")
+            return
+
+        approved = already = terminal = 0
+        for draft in drafts:
+            if draft.status in EDITABLE_STATUSES:
+                ops.update_draft(conn, draft.id, status="approved")
+                ops.emit_data_event(conn, "draft", "approved", draft.id, draft.project_id)
+                approved += 1
+            elif draft.status in TERMINAL_STATUSES:
+                terminal += 1
+            else:
+                already += 1  # approved, scheduled — already processed
+
+        parts = [f"Approved {approved}."]
+        if already:
+            parts.append(f"Already processed: {already}.")
+        if terminal:
+            parts.append(f"Skipped (terminal): {terminal}.")
+        _send(adapter, chat_id, " ".join(parts))
+    finally:
+        conn.close()
+
+
+def handle_cycle_view(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """View a single draft from a cycle. Payload is 'cycle_id:draft_id'."""
+    _answer_callback(adapter, callback_id, "Loading...")
+
+    parts = payload.split(":", 1)
+    if len(parts) != 2:
+        _send(adapter, chat_id, "Invalid cycle view payload.")
+        return
+    _cycle_id, draft_id = parts
+
+    conn = _get_conn()
+    try:
+        from social_hook.bot.notifications import get_review_buttons_normalized
+        from social_hook.db import operations as ops
+
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` not found.")
+            return
+
+        strategy = getattr(draft, "strategy", None) or draft.platform
+        text = f"*{strategy}* — `{draft.id[:12]}` ({draft.status})\n\n```\n{draft.content}\n```"
+        buttons = get_review_buttons_normalized(
+            draft.id, platform=draft.platform, preview_mode=draft.preview_mode
+        )
+        _send_with_buttons(adapter, chat_id, text, buttons)
+    finally:
+        conn.close()
+
+
+def handle_arc_approve(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Approve a proposed arc. Payload is arc_id."""
+    arc_id = payload
+    conn = _get_conn()
+    try:
+        from social_hook.db import operations as ops
+
+        updated = ops.update_arc(conn, arc_id, status="active")
+        if updated:
+            _answer_callback(adapter, callback_id, "Arc approved")
+            _send(adapter, chat_id, f"Arc `{arc_id[:12]}` approved.")
+        else:
+            _answer_callback(adapter, callback_id, "Arc not found")
+            _send(adapter, chat_id, f"Arc `{arc_id[:12]}` not found.")
+    finally:
+        conn.close()
+
+
+def handle_arc_dismiss(
+    adapter: MessagingAdapter,
+    chat_id: str,
+    callback_id: str,
+    payload: str,
+    config: Any | None,
+    **kwargs: Any,
+) -> None:
+    """Dismiss a proposed arc. Payload is arc_id."""
+    arc_id = payload
+    conn = _get_conn()
+    try:
+        from social_hook.db import operations as ops
+
+        updated = ops.update_arc(conn, arc_id, status="abandoned")
+        if updated:
+            _answer_callback(adapter, callback_id, "Arc dismissed")
+            _send(adapter, chat_id, f"Arc `{arc_id[:12]}` dismissed.")
+        else:
+            _answer_callback(adapter, callback_id, "Arc not found")
+            _send(adapter, chat_id, f"Arc `{arc_id[:12]}` not found.")
     finally:
         conn.close()
