@@ -56,6 +56,15 @@ class ExpertAction(str, Enum):
     save_context_note = "save_context_note"
 
 
+class CommitClassification(str, Enum):
+    """Classification of commit significance for stage 1 analysis."""
+
+    trivial = "trivial"
+    routine = "routine"
+    notable = "notable"
+    significant = "significant"
+
+
 # =============================================================================
 # Pydantic Models (LLM response validation)
 # =============================================================================
@@ -75,6 +84,7 @@ class CommitAnalysis(BaseModel):
     summary: str
     technical_detail: str | None = None
     episode_tags: list[str] = []
+    classification: CommitClassification | None = None
 
 
 class ContextSourceSpec(BaseModel):
@@ -555,3 +565,85 @@ class ExpertResponseInput(BaseModel):
             return cls.model_validate(data)
         except ValidationError as e:
             raise MalformedResponseError(f"Invalid expert_response input: {e}") from e
+
+
+# =============================================================================
+# Stage 1: Commit Analysis (standalone analyzer)
+# =============================================================================
+
+
+class BriefUpdateInstructions(BaseModel):
+    """Instructions for incrementally updating brief sections after a commit."""
+
+    sections_to_update: dict[str, str] = {}
+    new_facts: list[str] = []
+
+
+class CommitAnalysisResult(BaseModel):
+    """Stage 1 analyzer output: commit classification, tags, summary, brief instructions."""
+
+    commit_analysis: CommitAnalysis
+    brief_update: BriefUpdateInstructions
+
+    @classmethod
+    def to_tool_schema(cls) -> dict[str, Any]:
+        """Return JSON schema dict for the log_commit_analysis tool."""
+        return {
+            "name": "log_commit_analysis",
+            "description": "Record the stage 1 commit analysis: classification, tags, summary, and brief update instructions",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "commit_analysis": {
+                        "type": "object",
+                        "description": "Structured analysis of the commit",
+                        "properties": {
+                            "summary": {
+                                "type": "string",
+                                "description": "1-2 sentence summary of what this commit does",
+                            },
+                            "technical_detail": {
+                                "type": "string",
+                                "description": "Optional deeper technical context",
+                            },
+                            "episode_tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Freeform tags categorizing this commit (e.g. 'refactor', 'feature', 'bugfix', 'performance')",
+                            },
+                            "classification": {
+                                "type": "string",
+                                "enum": [e.value for e in CommitClassification],
+                                "description": "Significance level: trivial (whitespace/typos), routine (small fix/refactor), notable (new feature/significant fix), significant (architectural change/major feature)",
+                            },
+                        },
+                        "required": ["summary", "classification", "episode_tags"],
+                    },
+                    "brief_update": {
+                        "type": "object",
+                        "description": "Instructions for updating the project brief",
+                        "properties": {
+                            "sections_to_update": {
+                                "type": "object",
+                                "description": "Map of brief section name to text to add/update in that section",
+                                "additionalProperties": {"type": "string"},
+                            },
+                            "new_facts": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "New project facts learned from this commit",
+                            },
+                        },
+                    },
+                },
+                "required": ["commit_analysis", "brief_update"],
+            },
+        }
+
+    @classmethod
+    def validate(cls, data: dict[str, Any]) -> "CommitAnalysisResult":
+        """Validate tool call input data."""
+        try:
+            return cls.model_validate(data)
+        except ValidationError as e:
+            raise MalformedResponseError(f"Invalid log_commit_analysis input: {e}") from e

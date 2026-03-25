@@ -154,6 +154,7 @@ class Project:
     prompt_docs: str | None = None
     trigger_branch: str | None = None
     brief_section_metadata: dict | None = None
+    analysis_commit_count: int = 0
     created_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -169,6 +170,7 @@ class Project:
             "prompt_docs": self.prompt_docs,
             "trigger_branch": self.trigger_branch,
             "brief_section_metadata": self.brief_section_metadata,
+            "analysis_commit_count": self.analysis_commit_count,
             "created_at": _to_iso(self.created_at),
         }
 
@@ -189,6 +191,7 @@ class Project:
             prompt_docs=d.get("prompt_docs"),
             trigger_branch=d.get("trigger_branch"),
             brief_section_metadata=brief_meta,
+            analysis_commit_count=int(d.get("analysis_commit_count", 0)),
             created_at=_from_iso(d.get("created_at")),
         )
 
@@ -1109,6 +1112,7 @@ class EvaluationCycle:
     trigger_type: str
     trigger_ref: str | None = None
     commit_analysis_id: str | None = None
+    commit_analysis_json: str | None = None
     created_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -1118,6 +1122,7 @@ class EvaluationCycle:
             "trigger_type": self.trigger_type,
             "trigger_ref": self.trigger_ref,
             "commit_analysis_id": self.commit_analysis_id,
+            "commit_analysis_json": self.commit_analysis_json,
             "created_at": self.created_at,
         }
 
@@ -1129,6 +1134,7 @@ class EvaluationCycle:
             trigger_type=d["trigger_type"],
             trigger_ref=d.get("trigger_ref"),
             commit_analysis_id=d.get("commit_analysis_id"),
+            commit_analysis_json=d.get("commit_analysis_json"),
             created_at=d.get("created_at"),
         )
 

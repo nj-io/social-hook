@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260324152432
+SCHEMA_VERSION = 20260325094709
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS projects (
     prompt_docs           TEXT DEFAULT NULL,
     trigger_branch        TEXT DEFAULT NULL,
     brief_section_metadata TEXT DEFAULT '{}',
+    analysis_commit_count INTEGER NOT NULL DEFAULT 0,
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -336,6 +337,7 @@ CREATE TABLE IF NOT EXISTS evaluation_cycles (
     trigger_type TEXT NOT NULL,
     trigger_ref TEXT,
     commit_analysis_id TEXT,
+    commit_analysis_json TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now'))
 );
 

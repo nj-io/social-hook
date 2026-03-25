@@ -81,6 +81,26 @@ def record_post_success(conn, draft, result, config, project_name: str, dry_run:
     """Record a successful post: update draft, create Post record, emit events, notify."""
     ops.update_draft(conn, draft.id, status="posted")
     ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
+
+    # Populate post metadata from decision and draft structure
+    topic_tags: list[str] = []
+    feature_tags: list[str] = []
+    is_thread_head = False
+
+    if draft.decision_id:
+        decision = ops.get_decision(conn, draft.decision_id)
+        if decision:
+            topic_tags = decision.episode_tags or []
+            # feature_tags: same source — episode_tags covers both for now
+            feature_tags = []
+        else:
+            logger.warning("Decision %s not found for draft %s", draft.decision_id, draft.id)
+
+    # Thread head: draft has thread tweets
+    draft_tweets = ops.get_draft_tweets(conn, draft.id)
+    if draft_tweets:
+        is_thread_head = True
+
     post = Post(
         id=generate_id("post"),
         draft_id=draft.id,
@@ -90,6 +110,9 @@ def record_post_success(conn, draft, result, config, project_name: str, dry_run:
         external_url=result.external_url,
         content=draft.content,
         target_id=draft.target_id,
+        topic_tags=topic_tags,
+        feature_tags=feature_tags,
+        is_thread_head=is_thread_head,
     )
     ops.insert_post(conn, post)
     ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)

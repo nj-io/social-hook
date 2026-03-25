@@ -2416,6 +2416,70 @@ def get_recent_cycles(
     return [EvaluationCycle.from_dict(dict(row)) for row in rows]
 
 
+def update_cycle_analysis_json(conn: sqlite3.Connection, cycle_id: str, analysis_json: str) -> None:
+    """Store commit analysis JSON on an evaluation cycle for caching."""
+    conn.execute(
+        "UPDATE evaluation_cycles SET commit_analysis_json = ? WHERE id = ?",
+        (analysis_json, cycle_id),
+    )
+    conn.commit()
+
+
+def get_latest_cycle_with_analysis(
+    conn: sqlite3.Connection, project_id: str
+) -> EvaluationCycle | None:
+    """Get the most recent evaluation cycle that has cached analysis JSON."""
+    row = conn.execute(
+        """
+        SELECT * FROM evaluation_cycles
+        WHERE project_id = ? AND commit_analysis_json IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (project_id,),
+    ).fetchone()
+    if row:
+        return EvaluationCycle.from_dict(dict(row))
+    return None
+
+
+# =============================================================================
+# Analysis Commit Count (commit_analysis_interval gating)
+# =============================================================================
+
+
+def increment_analysis_commit_count(conn: sqlite3.Connection, project_id: str) -> int:
+    """Increment analysis_commit_count and return the new value."""
+    conn.execute(
+        "UPDATE projects SET analysis_commit_count = analysis_commit_count + 1 WHERE id = ?",
+        (project_id,),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT analysis_commit_count FROM projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def reset_analysis_commit_count(conn: sqlite3.Connection, project_id: str) -> None:
+    """Reset analysis_commit_count to 0 after a full analysis."""
+    conn.execute(
+        "UPDATE projects SET analysis_commit_count = 0 WHERE id = ?",
+        (project_id,),
+    )
+    conn.commit()
+
+
+def get_analysis_commit_count(conn: sqlite3.Connection, project_id: str) -> int:
+    """Get the current analysis_commit_count for a project."""
+    row = conn.execute(
+        "SELECT analysis_commit_count FROM projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
 # =============================================================================
 # Draft Patterns
 # =============================================================================

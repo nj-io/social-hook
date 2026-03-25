@@ -416,6 +416,25 @@ def run_trigger(
     held_topics = [t for t in all_topics if t.status == "holding"]
     active_arcs_all = ops.get_arcs_by_project(conn, project.id, status="active")
 
+    # Stage 1: Commit Analyzer (targets path only, with interval gating)
+    analyzer_result = None
+    has_targets = (
+        getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets
+    )
+    if has_targets:
+        analyzer_result = _run_commit_analyzer(
+            conn=conn,
+            db=db,
+            project=project,
+            commit=commit,
+            context=context,
+            evaluator_client=evaluator_client,
+            project_config=project_config,
+            show_prompt=show_prompt,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(
@@ -463,6 +482,7 @@ def run_trigger(
             dry_run=dry_run,
             verbose=verbose,
             existing_decision_id=existing_decision_id,
+            analyzer_result=analyzer_result,
         )
         conn.close()
         return result
@@ -688,6 +708,83 @@ def _combine_strategy_reasoning(
     return combined
 
 
+def _run_commit_analyzer(
+    conn,
+    db,
+    project,
+    commit,
+    context,
+    evaluator_client,
+    project_config,
+    show_prompt: bool,
+    dry_run: bool,
+    verbose: bool,
+):
+    """Run stage 1 commit analyzer with interval gating.
+
+    Returns CommitAnalysisResult if analysis was run or cached, None on error.
+    """
+    import json
+
+    from social_hook.llm.schemas import CommitAnalysisResult
+
+    # 1. Increment commit count
+    new_count = ops.increment_analysis_commit_count(conn, project.id)
+
+    # 2. Check interval threshold
+    interval = 1
+    if project_config and hasattr(project_config, "context") and project_config.context:
+        interval = getattr(project_config.context, "commit_analysis_interval", 1)
+    if interval < 1:
+        interval = 1
+
+    if new_count < interval:
+        # Interval not met — use cached analysis from most recent cycle
+        cached_cycle = ops.get_latest_cycle_with_analysis(conn, project.id)
+        if cached_cycle and cached_cycle.commit_analysis_json:
+            try:
+                cached_data = json.loads(cached_cycle.commit_analysis_json)
+                result = CommitAnalysisResult.model_validate(cached_data)
+                if verbose:
+                    print(f"Using cached analysis (count {new_count}/{interval})")
+                return result
+            except Exception as e:
+                logger.warning(f"Failed to load cached analysis, running fresh: {e}")
+                # Fall through to run fresh analysis
+        else:
+            # No cache (first commit case) — run fresh analysis
+            if verbose:
+                print(f"No cached analysis available, running fresh (count {new_count}/{interval})")
+
+    # 3. Run fresh analysis
+    try:
+        from social_hook.llm.analyzer import CommitAnalyzer
+
+        analyzer = CommitAnalyzer(evaluator_client)
+        result = analyzer.analyze(
+            commit=commit,
+            context=context,
+            db=db,
+            show_prompt=show_prompt,
+        )
+
+        # Reset counter after successful analysis
+        ops.reset_analysis_commit_count(conn, project.id)
+
+        if verbose:
+            print(
+                f"Commit analysis complete (classification: "
+                f"{result.commit_analysis.classification.value if result.commit_analysis.classification else 'unknown'})"
+            )
+
+        return result
+    except Exception as e:
+        logger.warning(f"Commit analyzer failed (non-fatal, evaluator will proceed): {e}")
+        if verbose:
+            print(f"Commit analyzer skipped: {e}", file=sys.stderr)
+        return None
+
+
 def _run_targets_path(
     evaluation,
     analysis,
@@ -704,6 +801,7 @@ def _run_targets_path(
     dry_run: bool,
     verbose: bool,
     existing_decision_id: str | None = None,
+    analyzer_result=None,
 ) -> int:
     """New targets pipeline path: multi-strategy -> multi-target routing."""
     from social_hook.models import EvaluationCycle
@@ -719,6 +817,33 @@ def _run_targets_path(
         trigger_ref=commit_hash,
     )
     db.insert_evaluation_cycle(cycle)
+
+    # If stage 1 analyzer produced a result, use it for enrichment
+    if analyzer_result is not None:
+        import json
+
+        # Store analysis JSON on the cycle for caching
+        try:
+            analysis_json = json.dumps(analyzer_result.model_dump(), default=str)
+            ops.update_cycle_analysis_json(conn, cycle.id, analysis_json)
+        except Exception as e:
+            logger.warning(f"Failed to cache analysis JSON (non-fatal): {e}")
+
+        # Enrich the evaluator's analysis with stage 1 classification
+        if analyzer_result.commit_analysis.classification:
+            analysis.classification = analyzer_result.commit_analysis.classification
+
+        # Use stage 1 tags if evaluator produced none
+        if not analysis.episode_tags and analyzer_result.commit_analysis.episode_tags:
+            analysis.episode_tags = analyzer_result.commit_analysis.episode_tags
+
+        if verbose:
+            classification = (
+                analyzer_result.commit_analysis.classification.value
+                if analyzer_result.commit_analysis.classification
+                else "unknown"
+            )
+            print(f"Stage 1 classification: {classification}")
 
     # Brief update: if commit is non-trivial, update the brief
     _trigger_brief_update(
