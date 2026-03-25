@@ -1,5 +1,5 @@
-<!-- last_run_commit: 21c6a1ffe50cdf762497b4b5c0b0879ddc1fdc56 -->
-<!-- last_run_date: 2026-03-24 -->
+<!-- last_run_commit: f07f52124396725fc2b848897c3c1587c8f237c5 -->
+<!-- last_run_date: 2026-03-25 -->
 
 # Documentation Status
 
@@ -9,24 +9,24 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Command | Coverage | Notes |
 |---------|----------|-------|
-| `quickstart` | poor | "Run the quickstart flow" — says nothing about what it does |
-| `consolidation-tick` | poor | No context on when/why to run |
-| `scheduler-tick` | poor | No context on when/why to run |
-| `discover` | poor | "Two-pass project discovery" is jargon |
-| `setup` | partial | `--only` component values unexplained |
-| `test` | poor | No explanation of `--compare`/`--output` workflow |
-| `trigger` | poor | Doesn't explain how it differs from `test` |
+| `quickstart` | ok | Enriched: explains full onboarding flow |
+| `consolidation-tick` | ok | Enriched: explains hold processing, modes, cron usage |
+| `scheduler-tick` | ok | Enriched: explains posting, deferred promotion, cron |
+| `discover` | ok | Enriched: explains two-pass LLM analysis |
+| `setup` | partial | `--only` component values still unexplained |
+| `test` | ok | Enriched: explains dry-run, --output/--compare |
+| `trigger` | ok | Enriched: explains full pipeline, contrasts with test |
 | `init` | ok | |
 | `events` | ok | Has examples |
 | `help` | ok | Has examples |
 | `rate-limits` | ok | Has examples |
 | `version` | ok | |
-| `web` | poor | "Start the web dashboard" — no detail on what it offers |
-| `draft approve` | poor | Just restates the command name |
-| `draft cancel` | poor | Just restates the command name |
-| `draft retry` | poor | Just restates the command name |
-| `draft quick-approve` | poor | No explanation of what "optimal time" means |
-| `draft schedule` | partial | Doesn't explain auto-scheduling behavior |
+| `web` | ok | Enriched: explains dashboard capabilities |
+| `draft approve` | ok | Enriched: explains scheduler interaction |
+| `draft cancel` | ok | Enriched: explains queue removal |
+| `draft retry` | ok | Enriched: explains re-queuing |
+| `draft quick-approve` | ok | Enriched: explains combined approve + optimal scheduling |
+| `draft schedule` | ok | Enriched: explains auto-scheduling vs explicit --time |
 | `draft edit` | ok | Has example |
 | `draft list` | ok | Has examples |
 | `draft media-edit` | ok | Has example |
@@ -73,3 +73,5 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] Workflow tutorials (#20)
 - [ ] examples/ directory (#22)
 - [ ] Scheduling deep-dive (how optimal times are calculated, posting windows, rate limits)
+- [ ] Agent-first CLI equivalents — interactive commands like `setup` need non-interactive agent equivalents, then documented
+- [ ] Update docs when targets branch merges (preview concept changing)
