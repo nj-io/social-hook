@@ -295,16 +295,17 @@ def draft_now(
     ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """Force a draft on a held topic.
+    """Force a draft on a held topic via LLM evaluation and drafting.
 
-    Creates a draft from the topic's content, bypassing normal scheduling.
+    Only topics with status 'holding' can be force-drafted. Runs the full
+    evaluation and drafting pipeline (same as the web UI "Draft Now" button).
     This is an LLM operation — may take a moment.
 
     Example: social-hook topics draft-now topic_abc123
     """
+    from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
-    from social_hook.filesystem import generate_id
-    from social_hook.models import Decision, Draft, EvaluationCycle
+    from social_hook.topics import force_draft_topic
 
     json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
@@ -329,63 +330,46 @@ def draft_now(
                 typer.echo(msg)
             raise typer.Exit(1)
 
+        if topic.status != "holding":
+            msg = f"Topic has status '{topic.status}'. Only held topics can be force-drafted."
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        # Resolve strategy: topic.strategy, then config.content_strategy fallback
+        strategy = topic.strategy
+        config_path = ctx.obj.get("config") if ctx.obj else None
+        config = load_full_config(str(config_path) if config_path else None)
+
+        if not strategy:
+            strategy = getattr(config, "content_strategy", None) or ""
+        if not strategy:
+            msg = "Topic has no strategy and no content_strategy configured. Set a strategy first."
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
         if not json_output:
             typer.echo(f"Creating draft for topic '{topic.topic}'...")
 
-        # Create evaluation cycle
-        cycle_id = generate_id("cycle")
-        cycle = EvaluationCycle(
-            id=cycle_id,
-            project_id=proj.id,
-            trigger_type="draft_now",
-            trigger_ref=topic_id,
-        )
-        ops.insert_evaluation_cycle(conn, cycle)
+        cycle_id = force_draft_topic(conn, config, proj.id, topic_id, strategy)
 
-        # Create decision
-        decision_id = generate_id("decision")
-        context = f"Topic: {topic.topic}"
-        if topic.description:
-            context += f"\nDescription: {topic.description}"
-        decision = Decision(
-            id=decision_id,
-            project_id=proj.id,
-            commit_hash=f"topic:{topic_id}",
-            decision="draft",
-            reasoning=f"Forced draft for topic: {topic.topic}",
-            commit_message=context,
-            trigger_source="draft_now",
-        )
-        ops.insert_decision(conn, decision)
-
-        # Create draft — resolve real platform from targets config
-        from social_hook.config.targets import is_default_target_preview, resolve_default_platform
-        from social_hook.config.yaml import load_full_config
-
-        config_path = ctx.obj.get("config") if ctx.obj else None
-        _config = load_full_config(str(config_path) if config_path else None)
-        default_platform = resolve_default_platform(_config)
-
-        draft_id = generate_id("draft")
-        draft = Draft(
-            id=draft_id,
-            project_id=proj.id,
-            decision_id=decision_id,
-            platform=default_platform,
-            content=context,
-            status="draft",
-            evaluation_cycle_id=cycle_id,
-            preview_mode=is_default_target_preview(_config),
-        )
-        ops.insert_draft(conn, draft)
-
-        ops.emit_data_event(conn, "draft", "created", draft_id, proj.id)
+        if cycle_id is None:
+            msg = "Failed to create draft. Check logs for details."
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(2)
 
         if json_output:
             typer.echo(
                 json_mod.dumps(
                     {
-                        "draft_id": draft_id,
                         "topic_id": topic_id,
                         "cycle_id": cycle_id,
                     },
@@ -393,6 +377,6 @@ def draft_now(
                 )
             )
         else:
-            typer.echo(f"Draft created: {draft_id}")
+            typer.echo(f"Evaluation cycle created: {cycle_id}")
     finally:
         conn.close()

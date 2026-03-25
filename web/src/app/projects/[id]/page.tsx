@@ -76,7 +76,15 @@ export default function ProjectDetailPage() {
   const [importBranch, setImportBranch] = useState<string>("");
   const [importLoading, setImportLoading] = useState(false);
   const [importRefreshKey, setImportRefreshKey] = useState(0);
-  const [activeTab, setActiveTab] = useState<"cycles" | "commits" | "topics" | "brief">("cycles");
+  const [activeTab, setActiveTab] = useState<"cycles" | "commits" | "topics" | "brief">(() => {
+    if (typeof window === "undefined") return "cycles";
+    const validTabs = ["cycles", "commits", "topics", "brief"] as const;
+    const param = new URLSearchParams(window.location.search).get("tab");
+    if (param && (validTabs as readonly string[]).includes(param)) {
+      return param as typeof validTabs[number];
+    }
+    return "cycles";
+  });
   // Consolidate uses a special ref_id key since it spans multiple decisions
   const CONSOLIDATE_REF = "__consolidate__";
 
@@ -451,7 +459,10 @@ export default function ProjectDetailPage() {
           ] as const).map((tab) => (
             <button
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => {
+                setActiveTab(tab.key);
+                window.history.replaceState({}, "", `?tab=${tab.key}`);
+              }}
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab.key
                   ? "border-accent text-foreground"

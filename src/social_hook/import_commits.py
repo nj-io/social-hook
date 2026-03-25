@@ -149,7 +149,7 @@ def import_project_commits(
             project_id=project_id,
             commit_hash=c["hash"],
             decision="imported",
-            reasoning="Historical commit",
+            reasoning="",
             commit_message=c["message"],
             branch=commit_branch,
         )

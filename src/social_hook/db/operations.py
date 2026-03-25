@@ -2277,6 +2277,32 @@ def increment_topic_commit_count(conn: sqlite3.Connection, topic_id: str) -> boo
 
 
 # =============================================================================
+# Topic Commits
+# =============================================================================
+
+
+def insert_topic_commit(
+    conn: sqlite3.Connection, topic_id: str, commit_hash: str, matched_tag: str | None = None
+) -> bool:
+    """Record that a commit contributed to a topic. Returns True if inserted (not duplicate)."""
+    try:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO topic_commits (topic_id, commit_hash, matched_tag)
+            VALUES (?, ?, ?)
+            """,
+            (topic_id, commit_hash, matched_tag),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        logger.warning(
+            "Failed to insert topic_commit (%s, %s)", topic_id, commit_hash, exc_info=True
+        )
+        return False
+
+
+# =============================================================================
 # Content Suggestions
 # =============================================================================
 

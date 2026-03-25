@@ -4491,6 +4491,20 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                     targets_data = decision.targets
                     if isinstance(targets_data, str):
                         targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
+
+                    # Build strategy_to_draft map: draft.target_id → config target → strategy name
+                    config = _get_config()
+                    strategy_to_draft: dict[str, object] = {}
+                    for d in drafts:
+                        if d.target_id and config.targets.get(d.target_id):
+                            target_strategy = config.targets[d.target_id].strategy
+                            if target_strategy and target_strategy not in strategy_to_draft:
+                                strategy_to_draft[target_strategy] = d
+                        else:
+                            # Legacy drafts without target_id → assign to "default"
+                            if "default" not in strategy_to_draft:
+                                strategy_to_draft["default"] = d
+
                     for strat_name, strat_data in (targets_data or {}).items():
                         action = (
                             strat_data.get("action", "skip")
@@ -4502,11 +4516,8 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                         reasoning = (
                             strat_data.get("reason", "") if isinstance(strat_data, dict) else ""
                         )
-                        # Find a draft matching this strategy (by target_id or platform)
-                        strat_draft = None
-                        for d in drafts:
-                            strat_draft = d
-                            break
+                        # Find a draft matching this strategy via target_id → config target → strategy
+                        strat_draft = strategy_to_draft.get(strat_name)
                         strategies[strat_name] = {
                             "decision": action,
                             "reasoning": reasoning,

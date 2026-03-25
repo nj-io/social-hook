@@ -692,8 +692,20 @@ class TestTopicsReorder:
 
 
 class TestTopicsDraftNow:
+    def _set_topic_holding(self, db_env):
+        """Set the test topic to 'holding' status so draft-now can proceed."""
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.execute("UPDATE content_topics SET status = 'holding' WHERE id = 'topic_test1'")
+        conn.commit()
+        conn.close()
+
     def test_draft_now(self, db_env_with_topic):
-        with _patch_paths(db_env_with_topic):
+        self._set_topic_holding(db_env_with_topic)
+        with (
+            _patch_paths(db_env_with_topic),
+            patch("social_hook.topics.force_draft_topic", return_value="cycle_mock1"),
+            patch("social_hook.config.yaml.load_full_config"),
+        ):
             result = runner.invoke(
                 app,
                 [
@@ -705,10 +717,15 @@ class TestTopicsDraftNow:
                 ],
             )
             assert result.exit_code == 0
-            assert "Draft created" in result.output
+            assert "cycle_mock1" in result.output
 
     def test_draft_now_json(self, db_env_with_topic):
-        with _patch_paths(db_env_with_topic):
+        self._set_topic_holding(db_env_with_topic)
+        with (
+            _patch_paths(db_env_with_topic),
+            patch("social_hook.topics.force_draft_topic", return_value="cycle_mock1"),
+            patch("social_hook.config.yaml.load_full_config"),
+        ):
             result = runner.invoke(
                 app,
                 [
@@ -722,7 +739,24 @@ class TestTopicsDraftNow:
             )
             assert result.exit_code == 0
             data = json.loads(result.output)
-            assert "draft_id" in data
+            assert data["cycle_id"] == "cycle_mock1"
+            assert data["topic_id"] == "topic_test1"
+
+    def test_draft_now_not_holding(self, db_env_with_topic):
+        """Topic with status != 'holding' should be rejected."""
+        with _patch_paths(db_env_with_topic):
+            result = runner.invoke(
+                app,
+                [
+                    "topics",
+                    "draft-now",
+                    "topic_test1",
+                    "--project",
+                    str(db_env_with_topic["tmp_path"]),
+                ],
+            )
+            assert result.exit_code == 1
+            assert "Only held topics" in result.output
 
     def test_draft_now_not_found(self, db_env):
         with _patch_paths(db_env):

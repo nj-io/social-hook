@@ -723,11 +723,12 @@ def _run_targets_path(
         verbose=verbose,
     )
 
-    # Tag-to-topic matching: increment commit counts
+    # Tag-to-topic matching: increment commit counts and record junction
     for tag in analysis.episode_tags:
         matching_topics = ops.get_topics_matching_tag(conn, project.id, tag)
         for topic in matching_topics:
             ops.increment_topic_commit_count(conn, topic.id)
+            ops.insert_topic_commit(conn, topic.id, commit_hash, matched_tag=tag)
 
     # Update content topic statuses for held topics
     for _strategy_name, strat_decision in evaluation.strategies.items():
@@ -888,24 +889,56 @@ def _run_targets_path(
                 except Exception as e:
                     logger.warning(f"Arc post count increment failed (non-fatal): {e}")
 
-            # Notifications
-            if not dry_run:
-                if draft_results:
-                    from social_hook.notifications import notify_draft_review
+            # Cycle notification
+            if not dry_run and (draft_results or config.notification_level != "drafts_only"):
+                from social_hook.notifications import notify_evaluation_cycle
 
-                    notify_draft_review(
-                        config,
-                        project_name=project.name,
-                        project_id=project.id,
-                        commit_hash=commit.hash,
-                        commit_message=commit.message,
-                        draft_results=draft_results,
-                    )
-                elif config.notification_level != "drafts_only":
-                    _send_decision_notification(config, project, commit, decision)
+                strategy_outcomes = {
+                    sn: {
+                        "action": _val(sd.action),
+                        "reason": sd.reason,
+                        "arc_id": sd.arc_id,
+                        "topic_id": sd.topic_id,
+                    }
+                    for sn, sd in evaluation.strategies.items()
+                }
+                drafts = [r.draft for r in draft_results] if draft_results else []
+                notify_evaluation_cycle(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    cycle_id=cycle.id,
+                    trigger_description=f"Commit {commit.hash[:8]} — {commit.message}",
+                    strategy_outcomes=strategy_outcomes,
+                    drafts=drafts,
+                    queue_actions=None,
+                    dry_run=dry_run,
+                )
         else:
+            # Non-draftable path (all skip/hold) — still send cycle notification
             if not dry_run and config.notification_level != "drafts_only":
-                _send_decision_notification(config, project, commit, decision)
+                from social_hook.notifications import notify_evaluation_cycle
+
+                strategy_outcomes = {
+                    sn: {
+                        "action": _val(sd.action),
+                        "reason": sd.reason,
+                        "arc_id": sd.arc_id,
+                        "topic_id": sd.topic_id,
+                    }
+                    for sn, sd in evaluation.strategies.items()
+                }
+                notify_evaluation_cycle(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    cycle_id=cycle.id,
+                    trigger_description=f"Commit {commit.hash[:8]} — {commit.message}",
+                    strategy_outcomes=strategy_outcomes,
+                    drafts=[],
+                    queue_actions=None,
+                    dry_run=dry_run,
+                )
 
     return 0
 

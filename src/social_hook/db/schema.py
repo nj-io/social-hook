@@ -350,6 +350,15 @@ CREATE TABLE IF NOT EXISTS draft_patterns (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Topic-commit junction (which commits contributed to each topic)
+CREATE TABLE IF NOT EXISTS topic_commits (
+    topic_id TEXT NOT NULL,
+    commit_hash TEXT NOT NULL,
+    matched_tag TEXT,
+    matched_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (topic_id, commit_hash)
+);
+
 -- System error persistence
 CREATE TABLE IF NOT EXISTS system_errors (
     id TEXT PRIMARY KEY,
