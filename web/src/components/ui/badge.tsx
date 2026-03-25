@@ -18,6 +18,9 @@ const variantStyles: Record<string, Record<string, string>> = {
   system: {
     _default: "bg-accent/10 text-accent dark:bg-accent/20",
   },
+  tag: {
+    _default: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400",
+  },
   category: {
     _default: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
   },
@@ -36,7 +39,7 @@ const decisionLabels: Record<string, string> = {
 
 interface BadgeProps {
   value: string;
-  variant?: "status" | "decision" | "system" | "category" | "default";
+  variant?: "status" | "decision" | "system" | "category" | "tag" | "default";
   className?: string;
 }
 
