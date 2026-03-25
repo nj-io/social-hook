@@ -40,6 +40,70 @@ def _ensure_error_feed(config, db_path: str) -> None:
     _error_feed_wired = True
 
 
+def _check_per_account_gap(conn, config, draft) -> bool:
+    """Check if posting this draft would violate the per-account posting gap.
+
+    For targets-path drafts (draft.target_id set), finds all targets sharing the
+    same account and computes the effective gap as the maximum min_gap_minutes
+    across those targets. This prevents the loosest target from bypassing the
+    tightest target's gap.
+
+    Returns True if gap is satisfied (OK to post), False if too soon.
+    """
+    target_id = draft.target_id
+    if not target_id:
+        return True  # Legacy path, no per-account gap
+
+    targets = getattr(config, "targets", None)
+    if not targets or not isinstance(targets, dict):
+        return True
+
+    target = targets.get(target_id)
+    if not target:
+        logger.warning("Target '%s' not found in config for draft %s", target_id, draft.id)
+        return True
+
+    account_name = target.account
+    if not account_name:
+        return True  # No account (preview mode)
+
+    # Find all targets sharing this account
+    from social_hook.config.platforms import FREQUENCY_PARAMS
+
+    sibling_target_ids = []
+    max_gap = 0
+    for tname, tcfg in targets.items():
+        if tcfg.account == account_name:
+            sibling_target_ids.append(tname)
+            # Resolve min_gap_minutes for this target
+            frequency = tcfg.frequency or "moderate"
+            freq_params = FREQUENCY_PARAMS.get(frequency, FREQUENCY_PARAMS["moderate"])
+            gap = freq_params["min_gap_minutes"]
+            sched = tcfg.scheduling or {}
+            gap = sched.get("min_gap_minutes", gap)
+            if gap > max_gap:
+                max_gap = gap
+
+    if max_gap <= 0:
+        return True
+
+    last_post_time = ops.get_last_post_time_by_account(conn, sibling_target_ids)
+    if last_post_time is None:
+        return True
+
+    elapsed = (datetime.now(timezone.utc) - last_post_time).total_seconds() / 60
+    if elapsed >= max_gap:
+        return True
+    else:
+        logger.info(
+            "Per-account gap not met for account '%s': %.0f min elapsed, need %d min",
+            account_name,
+            elapsed,
+            max_gap,
+        )
+        return False
+
+
 def _check_cross_account_gap(conn, config, draft) -> bool:
     """Check if posting this draft would violate the cross-account platform gap.
 
@@ -116,6 +180,12 @@ def record_post_success(conn, draft, result, config, project_name: str, dry_run:
     )
     ops.insert_post(conn, post)
     ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
+
+    # Update topic status when a draft with topic_id is posted
+    if draft.topic_id and not dry_run:
+        ops.update_topic_status(conn, draft.topic_id, "covered")
+        logger.info("Topic %s status -> covered (draft %s posted)", draft.topic_id, draft.id)
+
     send_notification(
         config,
         f"*Posted successfully*\n\n"
@@ -644,6 +714,10 @@ def scheduler_tick(
                         logger.info(f"Skipping draft {draft.id}: project {project.name} is paused")
                         continue
 
+                    # Per-account gap check: skip if too soon after last post for this account
+                    if not _check_per_account_gap(conn, config, draft):
+                        continue
+
                     # Cross-account gap check: skip if too soon after last post on this platform
                     if not _check_cross_account_gap(conn, config, draft):
                         continue
@@ -707,6 +781,11 @@ def _tick_single_draft(conn, config, draft_id, dry_run, db_path=None) -> int:
 
     if project.paused:
         logger.info(f"Post-now: skipping draft {draft_id}, project {project.name} is paused")
+        return 0
+
+    # Per-account gap check
+    if not _check_per_account_gap(conn, config, draft):
+        logger.info(f"Post-now: draft {draft_id} deferred by per-account gap")
         return 0
 
     # Cross-account gap check: post-now still checks because automated cross-posting can trigger it
@@ -790,6 +869,12 @@ def _post_draft(conn, draft, config, db_path=None):
             # Legacy path: no target_id or target_id not in config
             adapter = _registry.get(draft.platform, config, db_path=db_path_str)
     except ConfigError as e:
+        error_feed.emit(
+            ErrorSeverity.ERROR,
+            f"Adapter creation failed for draft {draft.id}: {e}",
+            context={"draft_id": draft.id, "platform": draft.platform},
+            source="auth",
+        )
         return PostResult(success=False, error=str(e))
 
     # Post format assignment: determine quote/reply for arc continuations
@@ -881,7 +966,17 @@ def _handle_post_failure(conn, draft, error_msg, config, dry_run):
     new_retry_count = draft.retry_count + 1
 
     if new_retry_count >= 3:
-        # Max retries exceeded
+        # Max retries exceeded — emit to error feed
+        error_feed.emit(
+            ErrorSeverity.ERROR,
+            f"Draft {draft.id} failed after {new_retry_count} attempts: {error_msg}",
+            context={
+                "draft_id": draft.id,
+                "project_id": draft.project_id,
+                "platform": draft.platform,
+            },
+            source="posting",
+        )
         ops.update_draft(
             conn,
             draft.id,
@@ -907,6 +1002,17 @@ def _handle_post_failure(conn, draft, error_msg, config, dry_run):
     else:
         # Schedule retry with backoff
         from datetime import datetime, timedelta, timezone
+
+        error_feed.emit(
+            ErrorSeverity.WARNING,
+            f"Draft {draft.id} posting failed (attempt {new_retry_count}/3): {error_msg}",
+            context={
+                "draft_id": draft.id,
+                "project_id": draft.project_id,
+                "platform": draft.platform,
+            },
+            source="posting",
+        )
 
         backoff_minutes = 5 * (2**new_retry_count)  # 10, 20 minutes
         retry_time = datetime.now(timezone.utc) + timedelta(minutes=backoff_minutes)

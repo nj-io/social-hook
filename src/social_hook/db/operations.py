@@ -888,10 +888,11 @@ def get_drafts_filtered(
     project_id: str | None = None,
     decision_id: str | None = None,
     commit_hash: str | None = None,
+    tag: str | None = None,
 ) -> list[Draft]:
-    """Get drafts with optional status, project, decision, and commit filters."""
+    """Get drafts with optional status, project, decision, commit, and tag filters."""
     clauses, params = [], []
-    need_join = commit_hash is not None
+    need_join = commit_hash is not None or tag is not None
     if status:
         clauses.append("d.status = ?")
         params.append(status)
@@ -904,6 +905,9 @@ def get_drafts_filtered(
     if commit_hash:
         clauses.append("dec.commit_hash = ?")
         params.append(commit_hash)
+    if tag:
+        clauses.append("dec.episode_tags LIKE ?")
+        params.append(f'%"{tag}"%')
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     if need_join:
         sql = f"SELECT d.* FROM drafts d JOIN decisions dec ON d.decision_id = dec.id{where} ORDER BY d.created_at DESC"
@@ -1173,6 +1177,36 @@ def get_last_post_time_by_platform(conn: sqlite3.Connection, platform: str):
     row = conn.execute(
         "SELECT posted_at FROM posts WHERE platform = ? ORDER BY posted_at DESC LIMIT 1",
         (platform,),
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+
+    raw = row[0]
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def get_last_post_time_by_account(conn: sqlite3.Connection, target_ids: list[str]):
+    """Get the most recent post time for any of the given target IDs.
+
+    Used by per-account posting gap check. Multiple targets can share the same
+    account — pass all target IDs that use the account.
+
+    Returns:
+        datetime or None
+    """
+    from datetime import datetime, timezone
+
+    if not target_ids:
+        return None
+
+    placeholders = ",".join("?" for _ in target_ids)
+    row = conn.execute(
+        f"SELECT posted_at FROM posts WHERE target_id IN ({placeholders}) "
+        "ORDER BY posted_at DESC LIMIT 1",
+        target_ids,
     ).fetchone()
     if not row or not row[0]:
         return None

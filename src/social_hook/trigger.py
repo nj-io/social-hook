@@ -7,6 +7,7 @@ import sys
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
+from social_hook.error_feed import ErrorSeverity, error_feed
 from social_hook.errors import ConfigError, DatabaseError
 from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.dry_run import DryRunContext
@@ -190,6 +191,12 @@ def run_trigger(
         )
     except ConfigError as e:
         logger.error(f"Config error: {e}")
+        error_feed.emit(
+            ErrorSeverity.ERROR,
+            f"Config error in trigger: {e}",
+            context={"commit_hash": commit_hash, "repo_path": repo_path},
+            source="config",
+        )
         if verbose:
             print(f"Config error: {e}", file=sys.stderr)
         return 1
@@ -200,9 +207,20 @@ def run_trigger(
         conn = init_database(db_path)
     except DatabaseError as e:
         logger.error(f"Database error: {e}")
+        error_feed.emit(
+            ErrorSeverity.ERROR,
+            f"Database error in trigger: {e}",
+            context={"commit_hash": commit_hash},
+            source="database",
+        )
         if verbose:
             print(f"Database error: {e}", file=sys.stderr)
         return 2
+
+    # Wire error feed once per process (needs both config and db_path)
+    from social_hook.scheduler import _ensure_error_feed
+
+    _ensure_error_feed(config, str(db_path))
 
     db = DryRunContext(conn, dry_run=dry_run)
     db.trigger_source = trigger_source
@@ -388,6 +406,12 @@ def run_trigger(
         evaluator_client = create_client(config.models.evaluator, config, verbose=verbose)
     except ConfigError as e:
         logger.error(f"Config error: {e}")
+        error_feed.emit(
+            ErrorSeverity.ERROR,
+            f"Evaluator client config error: {e}",
+            context={"commit_hash": commit_hash, "project_id": project.id},
+            source="config",
+        )
         if verbose:
             print(f"Config error: {e}", file=sys.stderr)
         conn.close()
@@ -1052,6 +1076,7 @@ def _run_targets_path(
             ops.mark_decisions_processed(conn, absorbed, batch_id)
 
     # Queue actions (same as legacy path)
+    executed_queue_actions: list[dict[str, str]] = []
     if evaluation.queue_actions:
         for _target_name, actions in evaluation.queue_actions.items():
             for qa in actions:
@@ -1065,6 +1090,13 @@ def _run_targets_path(
                             print(f"Queue action skipped: draft {qa.draft_id} not actionable")
                         continue
                     ops.execute_queue_action(conn, action_type, qa.draft_id, qa.reason)
+                    executed_queue_actions.append(
+                        {
+                            "type": action_type,
+                            "draft_id": qa.draft_id,
+                            "reason": qa.reason or "",
+                        }
+                    )
                 if verbose:
                     print(f"Queue action: {action_type} draft {qa.draft_id}")
 
@@ -1132,6 +1164,15 @@ def _run_targets_path(
                 except Exception as e:
                     logger.warning(f"Arc post count increment failed (non-fatal): {e}")
 
+            # Update topic status for strategies that drafted with a topic_id
+            if draft_results and not dry_run:
+                for _sn, sd in evaluation.strategies.items():
+                    if _val(sd.action) == "draft" and sd.topic_id:
+                        new_status = "partial" if sd.arc_id else "covered"
+                        ops.update_topic_status(conn, sd.topic_id, new_status)
+                        if verbose:
+                            print(f"Topic {sd.topic_id} status -> {new_status}")
+
             # Cycle notification
             if not dry_run and (draft_results or config.notification_level != "drafts_only"):
                 from social_hook.notifications import notify_evaluation_cycle
@@ -1154,7 +1195,7 @@ def _run_targets_path(
                     trigger_description=f"Commit {commit.hash[:8]} — {commit.message}",
                     strategy_outcomes=strategy_outcomes,
                     drafts=drafts,
-                    queue_actions=None,
+                    queue_actions=executed_queue_actions or None,
                     dry_run=dry_run,
                 )
         else:
@@ -1179,7 +1220,7 @@ def _run_targets_path(
                     trigger_description=f"Commit {commit.hash[:8]} — {commit.message}",
                     strategy_outcomes=strategy_outcomes,
                     drafts=[],
-                    queue_actions=None,
+                    queue_actions=executed_queue_actions or None,
                     dry_run=dry_run,
                 )
 

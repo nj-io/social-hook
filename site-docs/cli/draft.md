@@ -87,6 +87,7 @@ List drafts with optional filters.
 Example: social-hook draft list --pending --json
 Example: social-hook draft list --decision decision-abc123
 Example: social-hook draft list --commit 47a5191
+Example: social-hook draft list --tag auth
 
 **Options:**
 
@@ -96,6 +97,7 @@ Example: social-hook draft list --commit 47a5191
 | `--project`, `-i` | string |  | Filter by project ID |
 | `--decision`, `-d` | string |  | Filter by decision ID |
 | `--commit`, `-c` | string |  | Filter by commit hash |
+| `--tag`, `-t` | string |  | Filter by episode tag (matches decision episode_tags) |
 | `--pending` | boolean | false | Show only actionable drafts (draft/approved/scheduled) |
 | `--json` | boolean | false | Output as JSON |
 

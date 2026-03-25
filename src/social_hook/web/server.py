@@ -727,8 +727,9 @@ async def api_drafts(
     project_id: str | None = None,
     decision_id: str | None = None,
     commit: str | None = None,
+    tag: str | None = None,
 ):
-    """List drafts, optionally filtered by status, project, decision, or commit."""
+    """List drafts, optionally filtered by status, project, decision, commit, or tag."""
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -739,6 +740,7 @@ async def api_drafts(
             project_id=project_id,
             decision_id=decision_id,
             commit_hash=commit,
+            tag=tag,
         )
         drafts = [d.to_dict() for d in draft_models]
         if pending:

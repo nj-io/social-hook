@@ -25,11 +25,36 @@ Example: social-hook topics add --strategy technical --topic "evaluation pipelin
 
 ---
 
+### `social-hook topics delete`
+
+Delete a topic from the queue.
+
+Permanently removes the topic. This cannot be undone.
+
+Example: social-hook topics delete topic_abc123 --yes
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `topic_id` | yes | Topic ID to delete |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes`, `-y` | boolean | false | Skip confirmation |
+| `--project`, `-p` | string |  | Repository path (default: cwd) |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
 ### `social-hook topics draft-now`
 
-Force a draft on a held topic.
+Force a draft on a held topic via LLM evaluation and drafting.
 
-Creates a draft from the topic's content, bypassing normal scheduling.
+Only topics with status 'holding' can be force-drafted. Runs the full
+evaluation and drafting pipeline (same as the web UI "Draft Now" button).
 This is an LLM operation — may take a moment.
 
 Example: social-hook topics draft-now topic_abc123

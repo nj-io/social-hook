@@ -44,12 +44,14 @@ export async function fetchDrafts(filters?: {
   project_id?: string;
   decision_id?: string;
   commit?: string;
+  tag?: string;
 }): Promise<{ drafts: Draft[] }> {
   const params = new URLSearchParams();
   if (filters?.status) params.set("status", filters.status);
   if (filters?.project_id) params.set("project_id", filters.project_id);
   if (filters?.decision_id) params.set("decision_id", filters.decision_id);
   if (filters?.commit) params.set("commit", filters.commit);
+  if (filters?.tag) params.set("tag", filters.tag);
   const qs = params.toString();
   return apiFetch(`/api/drafts${qs ? `?${qs}` : ""}`);
 }
