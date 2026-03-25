@@ -22,15 +22,15 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `rate-limits` | ok | Has examples |
 | `version` | ok | |
 | `web` | ok | Enriched: explains dashboard capabilities |
-| `account *` | new | Added by targets feature — needs docstring review |
-| `brief *` | new | Added by targets feature — needs docstring review |
-| `content *` | new | Added by targets feature — needs docstring review |
-| `credentials *` | new | Added by targets feature — needs docstring review |
-| `cycles *` | new | Added by targets feature — needs docstring review |
-| `strategy *` | new | Added by targets feature — needs docstring review |
-| `system *` | new | Added by targets feature — needs docstring review |
-| `target *` | new | Added by targets feature — needs docstring review |
-| `topics *` | new | Added by targets feature — needs docstring review |
+| `account *` | ok | Group help enriched; subcommand docstrings already good |
+| `brief *` | ok | Group help enriched; subcommand docstrings already good |
+| `content *` | ok | Group help enriched; subcommand docstrings already good |
+| `credentials *` | ok | Group help enriched; subcommand docstrings already good |
+| `cycles *` | ok | Group help enriched; subcommand docstrings already good |
+| `strategy *` | ok | Group help enriched; subcommand docstrings already good |
+| `system *` | ok | Group help enriched; subcommand docstrings already good |
+| `target *` | ok | Group help enriched; subcommand docstrings already good |
+| `topics *` | ok | Group help enriched; subcommand docstrings already good |
 | `draft approve` | ok | Enriched: explains scheduler interaction |
 | `draft cancel` | ok | Enriched: explains queue removal |
 | `draft retry` | ok | Enriched: explains re-queuing |
@@ -89,4 +89,4 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] examples/ directory (#22)
 - [ ] Scheduling deep-dive (how optimal times are calculated, posting windows, rate limits)
 - [ ] Agent-first CLI equivalents — interactive commands like `setup` need non-interactive agent equivalents, then documented
-- [ ] Enrich docstrings for 9 new CLI command groups (account, brief, content, credentials, cycles, strategy, system, target, topics)
+- [x] ~~Enrich docstrings for 9 new CLI command groups~~ (done — group help enriched, subcommands already well-documented)
