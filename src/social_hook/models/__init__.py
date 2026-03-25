@@ -63,6 +63,7 @@ class DecisionType(Enum):
     SKIP = "skip"
     IMPORTED = "imported"
     DEFERRED_EVAL = "deferred_eval"
+    EVALUATING = "evaluating"
 
 
 class PostCategory(Enum):
