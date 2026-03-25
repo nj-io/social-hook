@@ -435,6 +435,27 @@ def run_trigger(
             verbose=verbose,
         )
 
+        # Stage 1 trivial skip: if analyzer classified as trivial, skip stage 2
+        if analyzer_result is not None and _is_trivial_classification(analyzer_result):
+            logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
+            result = _run_trivial_skip(
+                analyzer_result=analyzer_result,
+                config=config,
+                conn=conn,
+                db=db,
+                project=project,
+                commit=commit,
+                commit_hash=commit_hash,
+                context=context,
+                evaluator_client=evaluator_client,
+                current_branch=current_branch,
+                dry_run=dry_run,
+                verbose=verbose,
+                existing_decision_id=existing_decision_id,
+            )
+            conn.close()
+            return result
+
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(
@@ -453,6 +474,7 @@ def run_trigger(
             active_arcs_all=active_arcs_all or None,
             targets=config.targets or None,
             all_topics=all_topics or None,
+            analysis=analyzer_result,
         )
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
@@ -706,6 +728,93 @@ def _combine_strategy_reasoning(
     if len(combined) > 500:
         combined = combined[:497] + "..."
     return combined
+
+
+def _is_trivial_classification(analyzer_result) -> bool:
+    """Check if the analyzer classified the commit as trivial."""
+    if analyzer_result is None:
+        return False
+    ca = analyzer_result.commit_analysis
+    if ca and ca.classification:
+        return (
+            ca.classification.value == "trivial"
+            if hasattr(ca.classification, "value")
+            else ca.classification == "trivial"
+        )
+    else:
+        logger.warning("Analyzer result has no classification, treating as non-trivial")
+        return False
+
+
+def _run_trivial_skip(
+    analyzer_result,
+    config,
+    conn,
+    db,
+    project,
+    commit,
+    commit_hash: str,
+    context,
+    evaluator_client,
+    current_branch: str | None,
+    dry_run: bool,
+    verbose: bool,
+    existing_decision_id: str | None = None,
+) -> int:
+    """Handle trivial commits: create cycle, do tag matching, skip stage 2."""
+    import json
+
+    from social_hook.models import EvaluationCycle
+
+    analysis = analyzer_result.commit_analysis
+
+    # Create evaluation cycle record
+    cycle = EvaluationCycle(
+        id=generate_id("cycle"),
+        project_id=project.id,
+        trigger_type="commit",
+        trigger_ref=commit_hash,
+    )
+    db.insert_evaluation_cycle(cycle)
+
+    # Store analysis JSON on the cycle for caching
+    try:
+        analysis_json = json.dumps(analyzer_result.model_dump(), default=str)
+        ops.update_cycle_analysis_json(conn, cycle.id, analysis_json)
+    except Exception as e:
+        logger.warning(f"Failed to cache analysis JSON (non-fatal): {e}")
+
+    # Tag-to-topic matching (even trivial commits may match topics)
+    for tag in analysis.episode_tags:
+        matching_topics = ops.get_topics_matching_tag(conn, project.id, tag)
+        for topic in matching_topics:
+            ops.increment_topic_commit_count(conn, topic.id)
+            ops.insert_topic_commit(conn, topic.id, commit_hash, matched_tag=tag)
+
+    # Create skip decision
+    decision = Decision(
+        id=existing_decision_id or generate_id("decision"),
+        project_id=project.id,
+        commit_hash=commit_hash,
+        decision="skip",
+        reasoning="Trivial commit — skipped strategy evaluation",
+        commit_message=commit.message,
+        episode_tags=analysis.episode_tags,
+        commit_summary=analysis.summary,
+        branch=current_branch,
+    )
+
+    if existing_decision_id:
+        ops.upsert_decision(conn, decision)
+    else:
+        db.insert_decision(decision)
+    db.emit_data_event("decision", "created", decision.id, project.id)
+
+    if verbose:
+        print("Decision: skip (trivial commit)")
+        print(f"Summary: {analysis.summary}")
+
+    return 0
 
 
 def _run_commit_analyzer(

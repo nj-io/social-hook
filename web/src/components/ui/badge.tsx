@@ -21,6 +21,12 @@ const variantStyles: Record<string, Record<string, string>> = {
   tag: {
     _default: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400",
   },
+  classification: {
+    trivial: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+    routine: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    notable: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+    significant: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  },
   category: {
     _default: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
   },
@@ -39,7 +45,7 @@ const decisionLabels: Record<string, string> = {
 
 interface BadgeProps {
   value: string;
-  variant?: "status" | "decision" | "system" | "category" | "tag" | "default";
+  variant?: "status" | "decision" | "classification" | "system" | "category" | "tag" | "default";
   className?: string;
 }
 

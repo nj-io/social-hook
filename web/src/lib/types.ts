@@ -199,6 +199,7 @@ export interface Decision {
   platforms: string;
   targets: Record<string, unknown>;
   consolidate_with: string[] | null;
+  classification?: string | null;
   draft_count: number;
   draft_ids?: string[];
   branch?: string | null;

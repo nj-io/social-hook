@@ -1388,6 +1388,33 @@ async def api_project_decisions(
             for d in decisions_list:
                 d["draft_ids"] = drafts_by_decision.get(d["id"], [])
 
+        # Enrich with classification from stage 1 analyzer (via evaluation_cycles)
+        commit_hashes = [d["commit_hash"] for d in decisions_list if d.get("commit_hash")]
+        if commit_hashes:
+            ch_placeholders = ",".join("?" * len(commit_hashes))
+            cycle_rows = conn.execute(
+                f"""SELECT trigger_ref, commit_analysis_json
+                    FROM evaluation_cycles
+                    WHERE project_id = ? AND trigger_type = 'commit'
+                    AND trigger_ref IN ({ch_placeholders})
+                    AND commit_analysis_json IS NOT NULL""",
+                [project_id, *commit_hashes],
+            ).fetchall()
+            classification_by_hash: dict[str, str] = {}
+            for cr in cycle_rows:
+                try:
+                    import json as _json
+
+                    analysis_data = _json.loads(cr["commit_analysis_json"])
+                    ca = analysis_data.get("commit_analysis", {})
+                    cls_val = ca.get("classification")
+                    if cls_val:
+                        classification_by_hash[cr["trigger_ref"]] = cls_val
+                except Exception:
+                    pass
+            for d in decisions_list:
+                d["classification"] = classification_by_hash.get(d.get("commit_hash", ""))
+
         return {"decisions": decisions_list, "total": total}
     finally:
         conn.close()

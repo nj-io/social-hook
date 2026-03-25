@@ -6,7 +6,7 @@ from social_hook.config.project import ContextConfig
 from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.prompts import assemble_evaluator_prompt, load_prompt
-from social_hook.llm.schemas import LogEvaluationInput
+from social_hook.llm.schemas import CommitAnalysisResult, LogEvaluationInput
 from social_hook.models import CommitInfo, ProjectContext
 from social_hook.scheduling import ProjectSchedulingState
 
@@ -43,6 +43,7 @@ class Evaluator:
         active_arcs_all: list | None = None,
         targets: dict | None = None,
         all_topics: list | None = None,
+        analysis: CommitAnalysisResult | None = None,
     ) -> LogEvaluationInput:
         """Evaluate a commit for post-worthiness.
 
@@ -62,6 +63,7 @@ class Evaluator:
             active_arcs_all: Active arcs across all strategies
             targets: Target definitions for post-to-strategy mapping
             all_topics: All topics for topic queue section
+            analysis: Pre-computed stage 1 commit analysis (classification, tags, summary)
 
         Returns:
             Validated LogEvaluationInput from the LLM
@@ -83,6 +85,7 @@ class Evaluator:
             active_arcs_all=active_arcs_all,
             targets=targets,
             all_topics=all_topics,
+            analysis=analysis,
         )
 
         # Check summary freshness and include hint

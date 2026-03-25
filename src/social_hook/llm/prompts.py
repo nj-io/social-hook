@@ -406,6 +406,7 @@ def assemble_evaluator_prompt(
     active_arcs_all: list[Any] | None = None,
     targets: dict[str, Any] | None = None,
     all_topics: list[Any] | None = None,
+    analysis: Any | None = None,
 ) -> str:
     """Assemble full evaluator system prompt with context.
 
@@ -428,6 +429,7 @@ def assemble_evaluator_prompt(
         active_arcs_all: Active arcs across all strategies (Arc objects)
         targets: Target definitions for post-to-strategy mapping
         all_topics: All topics for the topic queue section (ContentTopic objects)
+        analysis: Pre-computed CommitAnalysisResult from stage 1 analyzer
 
     Returns:
         Complete system prompt string
@@ -717,6 +719,29 @@ def assemble_evaluator_prompt(
         sections.append(f"- Refresh after {summary_config.refresh_after_commits} commits")
         sections.append(f"- Refresh after {summary_config.refresh_after_days} days")
 
+    # Pre-computed commit analysis from stage 1 (when available)
+    if analysis is not None:
+        ca = getattr(analysis, "commit_analysis", None)
+        if ca:
+            sections.append("\n---\n## Pre-Computed Commit Analysis")
+            sections.append(
+                "The commit has already been classified by a stage 1 analyzer. "
+                "Use this as your starting point — do NOT re-classify the commit."
+            )
+            classification = getattr(ca, "classification", None)
+            if classification:
+                cls_val = (
+                    classification.value if hasattr(classification, "value") else classification
+                )
+                sections.append(f"- **Classification**: {cls_val}")
+            else:
+                logger.warning("Pre-computed analysis has no classification")
+            if ca.episode_tags:
+                sections.append(f"- **Tags**: {', '.join(ca.episode_tags)}")
+            sections.append(f"- **Summary**: {ca.summary}")
+            if ca.technical_detail:
+                sections.append(f"- **Technical detail**: {ca.technical_detail}")
+
     # Current commit
     sections.append("\n---\n## Current Commit")
     sections.append(f"- Hash: {commit.hash}")
@@ -727,11 +752,23 @@ def assemble_evaluator_prompt(
     if commit.files_changed:
         sections.append(f"- Files: {', '.join(commit.files_changed[:20])}")
     if commit.diff:
-        diff_text = commit.diff
-        max_diff_tokens = config.max_tokens // 4  # Reserve budget for diff
-        if count_tokens(diff_text) > max_diff_tokens:
-            diff_text = diff_text[: max_diff_tokens * 4] + "\n[...truncated]"
-        sections.append(f"\n### Diff\n```\n{diff_text}\n```")
+        if analysis is not None:
+            # When stage 1 analysis is available, use a reduced diff budget
+            # since the analysis already summarizes the commit
+            diff_text = commit.diff
+            max_diff_tokens = config.max_tokens // 8  # Reduced budget with analysis
+            if count_tokens(diff_text) > max_diff_tokens:
+                diff_text = (
+                    diff_text[: max_diff_tokens * 4]
+                    + "\n[...truncated — see Pre-Computed Commit Analysis above]"
+                )
+            sections.append(f"\n### Diff\n```\n{diff_text}\n```")
+        else:
+            diff_text = commit.diff
+            max_diff_tokens = config.max_tokens // 4  # Reserve budget for diff
+            if count_tokens(diff_text) > max_diff_tokens:
+                diff_text = diff_text[: max_diff_tokens * 4] + "\n[...truncated]"
+            sections.append(f"\n### Diff\n```\n{diff_text}\n```")
 
     result = "\n".join(sections)
 

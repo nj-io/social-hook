@@ -586,7 +586,12 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="py-2 pr-4">
                           <div>
-                            <code className="text-xs">{d.commit_hash.slice(0, 7)}</code>
+                            <div className="flex items-center gap-1.5">
+                              <code className="text-xs">{d.commit_hash.slice(0, 7)}</code>
+                              {d.classification && (
+                                <Badge value={d.classification} variant="classification" />
+                              )}
+                            </div>
                             <p className="text-xs text-muted-foreground">
                               {d.commit_message?.split("\n")[0]}
                             </p>
