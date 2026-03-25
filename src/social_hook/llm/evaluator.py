@@ -12,7 +12,7 @@ from social_hook.scheduling import ProjectSchedulingState
 
 if TYPE_CHECKING:
     from social_hook.config.project import MediaToolGuidance, StrategyConfig, SummaryConfig
-    from social_hook.config.yaml import MediaGenerationConfig
+    from social_hook.config.yaml import ContentStrategyConfig, MediaGenerationConfig
 
 
 class Evaluator:
@@ -38,6 +38,7 @@ class Evaluator:
         strategy_config: Optional["StrategyConfig"] = None,
         summary_config: Optional["SummaryConfig"] = None,
         scheduling_state: ProjectSchedulingState | None = None,
+        strategies: dict[str, "ContentStrategyConfig"] | None = None,
     ) -> LogEvaluationInput:
         """Evaluate a commit for post-worthiness.
 
@@ -52,6 +53,7 @@ class Evaluator:
             media_guidance: Per-tool content guidance
             strategy_config: Strategy thresholds (portfolio window, episode prefs)
             summary_config: Summary refresh thresholds
+            strategies: Content strategy definitions (audience, voice, angle, etc.)
 
         Returns:
             Validated LogEvaluationInput from the LLM
@@ -68,6 +70,7 @@ class Evaluator:
             strategy_config=strategy_config,
             summary_config=summary_config,
             scheduling_state=scheduling_state,
+            strategies=strategies,
         )
 
         # Check summary freshness and include hint

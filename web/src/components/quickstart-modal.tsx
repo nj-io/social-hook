@@ -178,14 +178,10 @@ export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }:
     try {
       // Step 0: Configure settings
       const identityName = template.defaults.identity === "company" ? "company" : "default";
-      // save_config merges dict keys (.update()), so sending only preview
-      // leaves any previously-enabled platforms (like x) intact. Explicitly
-      // disable the other builtins so only preview is active.
+      // Default to X in preview mode (no account connected).
       await updateConfig({
         platforms: {
-          preview: { enabled: true, priority: "secondary", type: "builtin" },
-          x: { enabled: false, priority: "primary", type: "builtin" },
-          linkedin: { enabled: false, priority: "primary", type: "builtin" },
+          x: { enabled: true, priority: "primary", type: "builtin", account_tier: "free" },
         },
         identities: {
           [identityName]: {
@@ -390,7 +386,7 @@ export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }:
     <Modal open={true} onClose={onClose} maxWidth="max-w-lg">
       <div className="space-y-4">
         <div>
-          <h3 className="text-lg font-semibold">Quick Preview</h3>
+          <h3 className="text-lg font-semibold">Quick Start</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             2 steps to see your first draft. Pick a repo and a strategy — we handle the rest.
           </p>
@@ -461,7 +457,7 @@ export function QuickstartModal({ open, onClose, onComplete, onOpenFullWizard }:
                 disabled={!strategyId}
                 className="rounded-md bg-accent px-6 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
               >
-                Start Preview
+                Start
               </button>
             </div>
           </div>

@@ -929,6 +929,43 @@ from social_hook.cli.snapshot import app as snapshot_app
 # DB snapshot management: save, restore, reset, list, delete
 app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
 
+from social_hook.cli.account import app as account_app
+from social_hook.cli.brief import app as brief_app
+from social_hook.cli.content import app as content_app
+from social_hook.cli.credentials import app as credentials_app
+from social_hook.cli.cycles import app as cycles_app
+from social_hook.cli.strategy import app as strategy_app
+from social_hook.cli.system import app as system_app
+from social_hook.cli.target import app as target_app
+from social_hook.cli.topics import app as topics_app
+
+# Platform credentials: list, add, validate, remove
+app.add_typer(credentials_app, name="credentials", help="Platform credential management.")
+
+# Account management: list, add, validate, remove
+app.add_typer(account_app, name="account", help="Platform account management.")
+
+# Target management: list, add, disable, enable
+app.add_typer(target_app, name="target", help="Content distribution targets.")
+
+# Strategy management: list, show, edit, reset
+app.add_typer(strategy_app, name="strategy", help="Content strategy management.")
+
+# Topic queue: list, add, reorder, status, draft-now
+app.add_typer(topics_app, name="topics", help="Content topic queue.")
+
+# Brief management: show, edit
+app.add_typer(brief_app, name="brief", help="Project brief management.")
+
+# Content suggestions: suggest, list, dismiss, combine, hero-launch
+app.add_typer(content_app, name="content", help="Content suggestions and operations.")
+
+# Evaluation cycles: list, show
+app.add_typer(cycles_app, name="cycles", help="Evaluation cycle history.")
+
+# System health: errors, health
+app.add_typer(system_app, name="system", help="System health and errors.")
+
 from social_hook.cli.events import events as events_cmd
 from social_hook.cli.quickstart import quickstart as quickstart_cmd
 from social_hook.cli.rate_limits import rate_limits as rate_limits_cmd

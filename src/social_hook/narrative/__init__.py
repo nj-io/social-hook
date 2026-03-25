@@ -1,6 +1,14 @@
 """Narrative management module for social-hook."""
 
-from social_hook.narrative.arcs import create_arc, get_active_arcs, get_arc, update_arc
+from social_hook.narrative.arcs import (
+    abandon_arc,
+    activate_arc,
+    create_arc,
+    get_active_arcs,
+    get_arc,
+    propose_arc,
+    update_arc,
+)
 from social_hook.narrative.debt import (
     get_narrative_debt,
     increment_narrative_debt,
@@ -45,9 +53,12 @@ __all__ = [
     "check_strategy_triggers",
     "record_strategy_moment",
     # Arcs
+    "abandon_arc",
+    "activate_arc",
     "create_arc",
     "get_active_arcs",
     "get_arc",
+    "propose_arc",
     "update_arc",
     # Debt
     "get_narrative_debt",

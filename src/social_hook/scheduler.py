@@ -2,12 +2,16 @@
 
 import logging
 import os
+import random
+from datetime import datetime, timezone
 from pathlib import Path
 
+from social_hook.adapters.platform.factory import resolve_platform_creds
 from social_hook.adapters.platform.registry import AdapterRegistry
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
+from social_hook.error_feed import ErrorSeverity, error_feed
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id, get_base_path, get_db_path
 from social_hook.models import CommitInfo, Decision, Post
@@ -19,8 +23,58 @@ from social_hook.trigger import parse_commit_info, run_trigger
 logger = logging.getLogger(__name__)
 
 # Process-scoped adapter cache — persists rate limit state and token refreshers across ticks.
-# Clears on process restart. When targets lands, key changes from platform to account name.
+# Clears on process restart. Keyed by account name (targets) or platform name (legacy).
 _registry = AdapterRegistry()
+
+# Error feed wiring guard — set_db_path/set_sender once per process
+_error_feed_wired = False
+
+
+def _ensure_error_feed(config, db_path: str) -> None:
+    """Wire the error feed singleton once per process."""
+    global _error_feed_wired
+    if _error_feed_wired:
+        return
+    error_feed.set_db_path(db_path)
+    error_feed.set_sender(lambda sev, msg: send_notification(config, f"[{sev}] {msg}"))
+    _error_feed_wired = True
+
+
+def _check_cross_account_gap(conn, config, draft) -> bool:
+    """Check if posting this draft would violate the cross-account platform gap.
+
+    Reads platform_settings.cross_account_gap_minutes for the draft's platform.
+    Checks last post time across ALL accounts on this platform (not just this account).
+    Applies fixed jitter: ~33% of gap value, random per check.
+    Returns True if gap is satisfied (OK to post), False if too soon.
+    """
+    platform = draft.platform
+    platform_settings = getattr(config, "platform_settings", None)
+    if not platform_settings or not isinstance(platform_settings, dict):
+        return True  # no platform_settings configured
+    gap_config = platform_settings.get(platform)
+    if not gap_config or gap_config.cross_account_gap_minutes <= 0:
+        return True  # disabled
+
+    base_gap = gap_config.cross_account_gap_minutes
+    jitter = random.randint(0, int(base_gap * 0.33))
+    effective_gap = base_gap + jitter
+
+    last_post_time = ops.get_last_post_time_by_platform(conn, platform)
+    if last_post_time is None:
+        return True
+
+    elapsed = (datetime.now(timezone.utc) - last_post_time).total_seconds() / 60
+    if elapsed >= effective_gap:
+        return True
+    else:
+        logger.info(
+            "Cross-account gap not met for %s: %.0f min elapsed, need %d min",
+            platform,
+            elapsed,
+            effective_gap,
+        )
+        return False
 
 
 def record_post_success(conn, draft, result, config, project_name: str, dry_run: bool = False):
@@ -35,6 +89,7 @@ def record_post_success(conn, draft, result, config, project_name: str, dry_run:
         external_id=result.external_id,
         external_url=result.external_url,
         content=draft.content,
+        target_id=draft.target_id,
     )
     ops.insert_post(conn, post)
     ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
@@ -383,56 +438,109 @@ def _run_batch_evaluation(conn, config, project, commit, deferred):
             media_guidance=project_config.media_guidance if project_config else None,
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
+            strategies=config.content_strategies or None,
         )
     except Exception as e:
         logger.error("LLM API error during drain batch evaluation: %s", e)
         return
 
-    target = evaluation.targets.get("default")
-    if not target:
-        logger.info("Drain batch re-evaluation for %s: no default target", project.name)
-        return
-
     def _val(x):
         return x.value if hasattr(x, "value") else x
 
-    if _val(target.action) != "draft":
-        logger.info("Drain batch re-evaluation for %s: %s", project.name, _val(target.action))
-        return
+    # --- New targets path ---
+    if getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets:
+        from social_hook.trigger import _combine_strategy_reasoning, _determine_overall_decision
 
-    # Insert a decision for the batch result
-    decision = Decision(
-        id=generate_id("decision"),
-        project_id=project.id,
-        commit_hash=commit.hash,
-        decision="draft",
-        reasoning=target.reason,
-        angle=target.angle,
-        episode_type=_val(target.episode_type),
-        post_category=_val(target.post_category),
-        media_tool=_val(target.media_tool),
-        trigger_source="drain",
-    )
-    ops.insert_decision(conn, decision)
-    ops.emit_data_event(conn, "decision", "created", decision.id, project.id)
+        decision_type = _determine_overall_decision(evaluation.strategies)
+        if decision_type != "draft":
+            logger.info("Drain batch re-evaluation for %s: %s", project.name, decision_type)
+            return
 
-    # Create drafts per platform via shared pipeline
-    from social_hook.compat import make_eval_compat
-    from social_hook.drafting import draft_for_platforms
+        representative = next(
+            (sd for sd in evaluation.strategies.values() if _val(sd.action) == "draft"),
+            next(iter(evaluation.strategies.values())),
+        )
 
-    eval_compat = make_eval_compat(evaluation, "draft")
-    draft_for_platforms(
-        config,
-        conn,
-        db,
-        project,
-        decision_id=decision.id,
-        evaluation=eval_compat,
-        context=context,
-        commit=commit,
-        project_config=project_config,
-        dry_run=False,
-    )
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash=commit.hash,
+            decision="draft",
+            reasoning=_combine_strategy_reasoning(evaluation.strategies),
+            angle=representative.angle,
+            episode_type=None,
+            post_category=_val(representative.post_category),
+            media_tool=_val(representative.media_tool),
+            targets={k: v.model_dump() for k, v in evaluation.strategies.items()},
+            trigger_source="drain",
+        )
+        ops.insert_decision(conn, decision)
+        ops.emit_data_event(conn, "decision", "created", decision.id, project.id)
+
+        from social_hook.content_sources import content_sources
+        from social_hook.drafting import draft_for_targets
+        from social_hook.routing import route_to_targets
+
+        target_actions = route_to_targets(evaluation.strategies, config, conn)
+        draftable_actions = [a for a in target_actions if a.action == "draft"]
+
+        if draftable_actions:
+            draft_for_targets(
+                draftable_actions,
+                config,
+                conn,
+                db,
+                project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                content_source_registry=content_sources,
+                project_config=project_config,
+                dry_run=False,
+            )
+    else:
+        # --- Legacy path ---
+        target = evaluation.strategies.get("default")
+        if not target:
+            logger.info("Drain batch re-evaluation for %s: no default target", project.name)
+            return
+
+        if _val(target.action) != "draft":
+            logger.info("Drain batch re-evaluation for %s: %s", project.name, _val(target.action))
+            return
+
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash=commit.hash,
+            decision="draft",
+            reasoning=target.reason,
+            angle=target.angle,
+            episode_type=None,
+            post_category=_val(target.post_category),
+            media_tool=_val(target.media_tool),
+            trigger_source="drain",
+        )
+        ops.insert_decision(conn, decision)
+        ops.emit_data_event(conn, "decision", "created", decision.id, project.id)
+
+        from social_hook.compat import make_eval_compat
+        from social_hook.drafting import draft_for_platforms
+
+        eval_compat = make_eval_compat(evaluation, "draft")
+        draft_for_platforms(
+            config,
+            conn,
+            db,
+            project,
+            decision_id=decision.id,
+            evaluation=eval_compat,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            dry_run=False,
+        )
 
 
 def scheduler_tick(
@@ -473,6 +581,9 @@ def scheduler_tick(
         db_path = get_db_path()
         conn = init_database(db_path)
 
+        # Wire error feed once per process
+        _ensure_error_feed(config, str(db_path))
+
         try:
             # --- Post-now mode: single draft, no promote/drain ---
             if draft_id:
@@ -508,6 +619,10 @@ def scheduler_tick(
 
                     if project.paused:
                         logger.info(f"Skipping draft {draft.id}: project {project.name} is paused")
+                        continue
+
+                    # Cross-account gap check: skip if too soon after last post on this platform
+                    if not _check_cross_account_gap(conn, config, draft):
                         continue
 
                     if dry_run:
@@ -571,6 +686,11 @@ def _tick_single_draft(conn, config, draft_id, dry_run, db_path=None) -> int:
         logger.info(f"Post-now: skipping draft {draft_id}, project {project.name} is paused")
         return 0
 
+    # Cross-account gap check: post-now still checks because automated cross-posting can trigger it
+    if not _check_cross_account_gap(conn, config, draft):
+        logger.info(f"Post-now: draft {draft_id} deferred by cross-account gap")
+        return 0
+
     try:
         if dry_run:
             from social_hook.adapters.dry_run import dry_run_post_result
@@ -580,29 +700,7 @@ def _tick_single_draft(conn, config, draft_id, dry_run, db_path=None) -> int:
             result = _post_draft(conn, draft, config, db_path=db_path)
 
         if result.success:
-            ops.update_draft(conn, draft.id, status="posted")
-            ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
-            post = Post(
-                id=generate_id("post"),
-                draft_id=draft.id,
-                project_id=draft.project_id,
-                platform=draft.platform,
-                external_id=result.external_id,
-                external_url=result.external_url,
-                content=draft.content,
-            )
-            ops.insert_post(conn, post)
-            ops.emit_data_event(conn, "post", "created", post.id, draft.project_id)
-
-            send_notification(
-                config,
-                f"*Posted successfully*\n\n"
-                f"Project: {project.name}\n"
-                f"Platform: {draft.platform}\n"
-                f"URL: {result.external_url or 'N/A'}\n\n"
-                f"```\n{draft.content[:300]}\n```",
-                dry_run=dry_run,
-            )
+            record_post_success(conn, draft, result, config, project.name, dry_run=dry_run)
         else:
             _handle_post_failure(conn, draft, result.error or "Unknown error", config, dry_run)
 
@@ -628,15 +726,46 @@ def _post_draft(conn, draft, config, db_path=None):
     """
     from social_hook.adapters.models import PostResult
 
-    if draft.platform == "preview":
+    if draft.preview_mode:
         return PostResult(
             success=False,
-            error="Preview drafts cannot be posted. Promote to a real platform first.",
+            error="No account connected. Run 'social-hook account add' to connect and enable posting.",
         )
 
-    # Get adapter from registry (cached per platform, shares rate limit state)
+    # Get adapter: targets path (draft.target_id set) or legacy path
+    db_path_str = str(db_path) if db_path else None
     try:
-        adapter = _registry.get(draft.platform, config, db_path=db_path)
+        target_id = draft.target_id
+        if target_id is not None and target_id in config.targets:
+            target = config.targets[target_id]
+            account_name = target.account
+            account = config.accounts.get(account_name)
+            if not account:
+                return PostResult(
+                    success=False,
+                    error=f"Account '{account_name}' not found for target '{target_id}'",
+                )
+            platform_creds = resolve_platform_creds(account, config.platform_credentials)
+
+            def on_error(msg, _acct=account_name):
+                error_feed.emit(
+                    ErrorSeverity.ERROR,
+                    msg,
+                    context={"account_name": _acct},
+                    source="auth",
+                )
+
+            adapter = _registry.get_for_account(
+                account_name,
+                account,
+                platform_creds,
+                config.env,
+                db_path_str or "",
+                on_error=on_error,
+            )
+        else:
+            # Legacy path: no target_id or target_id not in config
+            adapter = _registry.get(draft.platform, config, db_path=db_path_str)
     except ConfigError as e:
         return PostResult(success=False, error=str(e))
 
@@ -646,10 +775,10 @@ def _post_draft(conn, draft, config, db_path=None):
         decision = ops.get_decision(conn, draft.decision_id)
 
     if decision and decision.arc_id and not draft.post_format:
-        prior = ops.get_most_recent_posted_for_arc(conn, decision.arc_id, draft.platform)
+        all_arc_posts = ops.get_arc_posts(conn, decision.arc_id)
+        platform_posts = [p for p in all_arc_posts if p.platform == draft.platform]
+        prior = platform_posts[0] if platform_posts else None
         if prior:
-            all_arc_posts = ops.get_arc_posts(conn, decision.arc_id)
-            platform_posts = [p for p in all_arc_posts if p.platform == draft.platform]
             if len(platform_posts) <= 1:
                 draft.post_format = "quote"
             else:

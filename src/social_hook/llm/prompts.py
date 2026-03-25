@@ -247,6 +247,44 @@ def _append_media_guide_section(
                 sections.append(f"  **Spec fields:** {spec_info}")
 
 
+def assemble_strategy_posting_state(
+    strategies: dict[str, Any],
+    recent_posts: list[Any] | None = None,
+) -> str:
+    """Build cross-strategy posting summary for evaluator context.
+
+    Shows what OTHER strategies recently posted (~300 tokens), enabling
+    cross-strategy coordination (e.g. avoid duplicate topics across strategies).
+
+    Args:
+        strategies: Dict of strategy name -> ContentStrategyConfig
+        recent_posts: Recent posts with strategy metadata
+
+    Returns:
+        Formatted string block, or empty string if no data
+    """
+    if not strategies or not recent_posts:
+        return ""
+
+    # Group recent posts by strategy (best-effort from metadata)
+    by_strategy: dict[str, list[str]] = {}
+    for post in recent_posts[:20]:
+        strategy_name = getattr(post, "strategy_name", None) or "default"
+        summary = getattr(post, "content", "")[:80]
+        time_ago = _relative_time(getattr(post, "posted_at", None))
+        by_strategy.setdefault(strategy_name, []).append(f"{summary}... ({time_ago})")
+
+    if not by_strategy:
+        return ""
+
+    lines = ["\n---\n## Cross-Strategy Posting Summary"]
+    for name, posts in by_strategy.items():
+        lines.append(f"\n### {name}")
+        for p in posts[:3]:
+            lines.append(f"- {p}")
+    return "\n".join(lines)
+
+
 def assemble_evaluator_prompt(
     prompt: str,
     project_context: ProjectContext,
@@ -258,6 +296,7 @@ def assemble_evaluator_prompt(
     strategy_config: Optional["StrategyConfig"] = None,
     summary_config: Optional["SummaryConfig"] = None,
     scheduling_state: ProjectSchedulingState | None = None,
+    strategies: dict[str, Any] | None = None,
 ) -> str:
     """Assemble full evaluator system prompt with context.
 
@@ -275,6 +314,7 @@ def assemble_evaluator_prompt(
         strategy_config: Strategy thresholds (portfolio window, episode prefs)
         summary_config: Summary refresh thresholds
         scheduling_state: Per-platform scheduling capacity snapshot
+        strategies: Content strategy definitions keyed by name
 
     Returns:
         Complete system prompt string
@@ -384,6 +424,33 @@ def assemble_evaluator_prompt(
                     f"- NOTE: {pss.pending_drafts} pending drafts for ~{pss.slots_remaining_today} "
                     f"slot(s) today. Review pending drafts for overlap — merge redundant ones."
                 )
+
+    # Content strategies
+    if strategies:
+        sections.append("\n---\n## Content Strategies")
+        sections.append(
+            "For each strategy, decide: skip, draft, or hold. "
+            "Consider the strategy's post_when and avoid fields."
+        )
+        for name, strat in strategies.items():
+            sections.append(f"\n### {name}")
+            if getattr(strat, "audience", None):
+                sections.append(f"- **Audience**: {strat.audience}")
+            if getattr(strat, "voice", None):
+                sections.append(f"- **Voice**: {strat.voice}")
+            if getattr(strat, "angle", None):
+                sections.append(f"- **Angle**: {strat.angle}")
+            if getattr(strat, "post_when", None):
+                sections.append(f"- **Post when**: {strat.post_when}")
+            if getattr(strat, "avoid", None):
+                sections.append(f"- **Avoid**: {strat.avoid}")
+            if getattr(strat, "format_preference", None):
+                sections.append(f"- **Format**: {strat.format_preference}")
+
+        # Cross-strategy posting summary
+        cross_summary = assemble_strategy_posting_state(strategies, project_context.recent_posts)
+        if cross_summary:
+            sections.append(cross_summary)
 
     # Memories
     if project_context.memories:
@@ -725,8 +792,6 @@ def assemble_drafter_prompt(
         sections.append(f"- Reasoning: {decision.reasoning}")
         if hasattr(decision, "angle") and decision.angle:
             sections.append(f"- Angle: {decision.angle}")
-        if hasattr(decision, "episode_type") and decision.episode_type:
-            sections.append(f"- Episode type: {decision.episode_type}")
         if hasattr(decision, "post_category") and decision.post_category:
             sections.append(f"- Post category: {decision.post_category}")
         if hasattr(decision, "media_tool") and decision.media_tool:
@@ -918,13 +983,6 @@ def assemble_gatekeeper_prompt(
         )
         if angle:
             sections.append(f"- Angle: {angle}")
-        episode_type = (
-            linked_decision.episode_type
-            if hasattr(linked_decision, "episode_type")
-            else linked_decision.get("episode_type")
-        )
-        if episode_type:
-            sections.append(f"- Episode type: {episode_type}")
 
     sections.append("\n---\n## Current Draft")
     if hasattr(draft, "content"):

@@ -86,7 +86,9 @@ export default function DraftDetailPage() {
     );
   }
 
-  const platLabel = draft.platform === "preview" ? "Preview (not publishable)" : platformLabel(draft.platform);
+  const platLabel = draft.preview_mode
+    ? `${platformLabel(draft.platform)} (Preview)`
+    : platformLabel(draft.platform);
 
   return (
     <div className="space-y-6">
@@ -97,8 +99,8 @@ export default function DraftDetailPage() {
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-bold">Draft Detail</h1>
         <Badge value={draft.status} variant="status" />
-        {draft.is_intro && <Badge value="INTRO" variant="system" />}
-        {draft.platform === "preview" && <Badge value="Preview" variant="system" />}
+        {!!draft.is_intro && <Badge value="INTRO" variant="system" />}
+        {!!draft.preview_mode && <Badge value="Preview" variant="system" />}
         <code className="text-xs text-muted-foreground">{draft.id}</code>
         {daemonRunning && (
           <button
@@ -135,10 +137,10 @@ export default function DraftDetailPage() {
       )}
 
       {/* Preview banner */}
-      {draft.platform === "preview" && draft.status !== "superseded" && (
+      {!!draft.preview_mode && draft.status !== "superseded" && (
         <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
-          This is a preview draft — it shows what the system would generate, but cannot be
-          published directly. Use the Promote button below to create a platform-specific draft.
+          This draft is in preview mode — it uses real platform constraints but cannot be
+          published until an account is connected. Use Connect Account to enable posting.
         </div>
       )}
 

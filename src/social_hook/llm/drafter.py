@@ -88,8 +88,6 @@ class Drafter:
 
         # Build narrative-aware user message
         episode_info = ""
-        if hasattr(decision, "episode_type") and decision.episode_type:
-            episode_info += f"Episode type: {decision.episode_type}. "
         if hasattr(decision, "post_category") and decision.post_category:
             episode_info += f"Post category: {decision.post_category}. "
 

@@ -35,6 +35,31 @@ Example: social-hook draft cancel draft_abc123
 
 ---
 
+### `social-hook draft connect`
+
+Connect a preview-mode draft to an account.
+
+Links the draft's target to an existing OAuth account, clearing preview mode.
+The account's platform must match the draft's platform.
+
+Example: social-hook draft connect draft-abc123 --account my-x-account
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Preview-mode draft ID to connect |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--account`, `-a` | string |  | Account name to connect (must match draft platform) |
+| `--json` | boolean | false | Output as JSON |
+| `--yes`, `-y` | boolean | false | Skip confirmation |
+
+---
+
 ### `social-hook draft edit`
 
 Edit draft content.

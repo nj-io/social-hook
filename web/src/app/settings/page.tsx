@@ -16,6 +16,11 @@ import { RateLimitsSection } from "@/components/settings/rate-limits-section";
 import { ProjectsSection } from "@/components/settings/projects-section";
 import { InstallationsSection } from "@/components/settings/installations-section";
 import { ChannelsSection } from "@/components/settings/channels-section";
+import { CredentialsSection } from "@/components/settings/credentials-section";
+import { AccountsSection } from "@/components/settings/accounts-section";
+import { TargetsSection } from "@/components/settings/targets-section";
+import { StrategiesSection } from "@/components/settings/strategies-section";
+import { PlatformSettingsSection } from "@/components/settings/platform-settings-section";
 
 const DEFAULT_MODELS: ModelsConfig = {
   evaluator: "anthropic/claude-opus-4-5",
@@ -211,6 +216,22 @@ function SettingsContent() {
             />
           </section>
 
+          <section id="credentials" className="pt-1">
+            <CredentialsSection />
+          </section>
+
+          <section id="accounts" className="pt-1">
+            <AccountsSection />
+          </section>
+
+          <section id="targets" className="pt-1">
+            <TargetsSection />
+          </section>
+
+          <section id="strategies" className="pt-1">
+            <StrategiesSection />
+          </section>
+
           <section id="platforms" className="pt-1">
             <PlatformsSection
               platforms={platforms}
@@ -218,6 +239,10 @@ function SettingsContent() {
               env={envData?.env ?? {}}
               onEnvRefresh={loadAll}
             />
+          </section>
+
+          <section id="platform-settings" className="pt-1">
+            <PlatformSettingsSection />
           </section>
 
           <section id="scheduling" className="pt-1">

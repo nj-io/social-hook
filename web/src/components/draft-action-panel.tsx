@@ -146,9 +146,9 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
   const status = draft.status;
 
   if (status === "draft" || status === "deferred") {
-    const isPreview = draft.platform === "preview";
+    const isPreview = !!draft.preview_mode;
     const realPlatforms = enabledPlatforms
-      ? Object.keys(enabledPlatforms).filter((n) => n !== "preview")
+      ? Object.keys(enabledPlatforms)
       : [];
 
     return (
@@ -156,7 +156,7 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
         {/* Preview info banner */}
         {isPreview && (
           <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
-            Preview drafts cannot be published directly. Use Promote to create a platform-specific draft.
+            No account connected. Connect an account to enable posting, or use Promote to redraft for another platform.
           </div>
         )}
 
