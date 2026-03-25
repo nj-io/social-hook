@@ -783,3 +783,41 @@ export async function fetchOAuthDisconnect(platform: string): Promise<{ disconne
 // Backward-compat aliases
 export const fetchXOAuthAuthorize = () => fetchOAuthAuthorize("x");
 export const fetchXOAuthStatus = () => fetchOAuthStatus("x");
+
+// Connect a preview-mode draft to an account
+export async function connectDraft(draftId: string, accountName: string): Promise<{ status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ account: accountName }),
+  });
+}
+
+// --- Phase 3: Missing CRUD ---
+
+export async function deleteTarget(projectId: string, name: string): Promise<{ status: string; name: string; cancelled_drafts: number }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function createStrategy(
+  projectId: string,
+  data: { name: string; audience?: string; voice?: string; angle?: string; post_when?: string; avoid?: string },
+): Promise<{ status: string; name: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteStrategy(projectId: string, name: string): Promise<{ status: string; name: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function deleteTopic(projectId: string, topicId: string): Promise<{ status: string; topic_id: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}`, { method: "DELETE" });
+}
+
+export async function acceptSuggestion(projectId: string, suggestionId: string): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(suggestionId)}/accept`, { method: "POST" });
+}

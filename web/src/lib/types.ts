@@ -404,6 +404,10 @@ export interface EvaluationCycle {
   status: string;
   strategies: Record<string, CycleStrategyOutcome>;
   created_at: string;
+  draft_count?: number;
+  pending_count?: number;
+  approved_count?: number;
+  posted_count?: number;
 }
 
 export interface CycleStrategyOutcome {
@@ -415,6 +419,9 @@ export interface CycleStrategyOutcome {
   draft_id?: string;
   draft_content?: string;
   draft_status?: string;
+  draft_preview_mode?: boolean;
+  topic_id?: string;
+  episode_tags?: string[];
 }
 
 export interface SystemError {

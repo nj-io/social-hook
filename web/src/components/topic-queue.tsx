@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Topic, Strategy } from "@/lib/types";
 import type { BackgroundTask } from "@/lib/api";
-import { fetchTopics, fetchStrategies, addTopic, updateTopic, reorderTopics, draftNowTopic } from "@/lib/api";
+import { fetchTopics, fetchStrategies, addTopic, updateTopic, reorderTopics, draftNowTopic, deleteTopic, setTopicStatus, combineTopics } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
 import { AsyncButton } from "@/components/async-button";
+import { Modal } from "@/components/ui/modal";
 
 const STATUS_STYLES: Record<string, string> = {
   uncovered: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
@@ -14,6 +15,8 @@ const STATUS_STYLES: Record<string, string> = {
   partial: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
   covered: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
 };
+
+const TOPIC_STATUSES = ["uncovered", "holding", "partial", "covered"];
 
 export function TopicQueue({ projectId }: { projectId: string }) {
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -29,6 +32,10 @@ export function TopicQueue({ projectId }: { projectId: string }) {
   const [editDesc, setEditDesc] = useState("");
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragTo, setDragTo] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [combining, setCombining] = useState(false);
   const loadRef = useRef<() => void>(() => {});
 
   const onTaskCompleted = useCallback((_task: BackgroundTask) => {
@@ -103,6 +110,52 @@ export function TopicQueue({ projectId }: { projectId: string }) {
     }
   }
 
+  async function handleDelete(topicId: string) {
+    setDeleting(true);
+    try {
+      await deleteTopic(projectId, topicId);
+      setConfirmDelete(null);
+      setSelected((prev) => { const next = new Set(prev); next.delete(topicId); return next; });
+      await load();
+    } catch {
+      // silent
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleStatusChange(topicId: string, newStatus: string) {
+    try {
+      await setTopicStatus(projectId, topicId, newStatus);
+      await load();
+    } catch {
+      // silent
+    }
+  }
+
+  async function handleCombine() {
+    if (selected.size < 2) return;
+    setCombining(true);
+    try {
+      const res = await combineTopics(projectId, Array.from(selected));
+      trackTask(res.task_id, `combine:${Array.from(selected)[0]}`, "combine_topics");
+      setSelected(new Set());
+    } catch {
+      // silent
+    } finally {
+      setCombining(false);
+    }
+  }
+
+  function toggleSelect(topicId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(topicId)) next.delete(topicId);
+      else next.add(topicId);
+      return next;
+    });
+  }
+
   async function handleDrop(fromIndex: number, toIndex: number) {
     if (fromIndex === toIndex) return;
     const reordered = [...topics];
@@ -133,6 +186,15 @@ export function TopicQueue({ projectId }: { projectId: string }) {
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Topic Queue</h2>
         <div className="flex items-center gap-2">
+          {selected.size >= 2 && (
+            <button
+              onClick={handleCombine}
+              disabled={combining}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {combining ? "Combining..." : `Combine (${selected.size})`}
+            </button>
+          )}
           <select
             value={filterStrategy}
             onChange={(e) => setFilterStrategy(e.target.value)}
@@ -180,17 +242,30 @@ export function TopicQueue({ projectId }: { projectId: string }) {
                       dragTo === index ? "border-accent bg-accent/5" : "hover:bg-muted/30"
                     }`}
                   >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(topic.id)}
+                      onChange={() => toggleSelect(topic.id)}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-border"
+                      title="Select for combine"
+                    />
                     <span className="cursor-grab text-muted-foreground" title="Drag to reorder">
                       &#x2630;
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{topic.topic}</span>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                          STATUS_STYLES[topic.status] ?? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-                        }`}>
-                          {topic.status}
-                        </span>
+                        <select
+                          value={topic.status}
+                          onChange={(e) => handleStatusChange(topic.id, e.target.value)}
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium border-0 cursor-pointer ${
+                            STATUS_STYLES[topic.status] ?? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                          }`}
+                        >
+                          {TOPIC_STATUSES.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
                       </div>
                       {editingTopic === topic.id ? (
                         <div className="mt-1 flex items-center gap-2">
@@ -235,17 +310,26 @@ export function TopicQueue({ projectId }: { projectId: string }) {
                         )}
                       </div>
                     </div>
-                    {(topic.status === "holding" || topic.status === "uncovered") && (
-                      <AsyncButton
-                        loading={isDrafting}
-                        startTime={task?.created_at}
-                        loadingText="Drafting"
-                        onClick={() => handleDraftNow(topic.id)}
-                        className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                    <div className="flex shrink-0 items-center gap-2">
+                      {(topic.status === "holding" || topic.status === "uncovered") && (
+                        <AsyncButton
+                          loading={isDrafting}
+                          startTime={task?.created_at}
+                          loadingText="Drafting"
+                          onClick={() => handleDraftNow(topic.id)}
+                          className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                        >
+                          Draft Now
+                        </AsyncButton>
+                      )}
+                      <button
+                        onClick={() => setConfirmDelete(topic.id)}
+                        className="text-xs text-muted-foreground hover:text-destructive"
+                        title="Delete topic"
                       >
-                        Draft Now
-                      </AsyncButton>
-                    )}
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -310,6 +394,24 @@ export function TopicQueue({ projectId }: { projectId: string }) {
           </div>
         </div>
       )}
+
+      {/* Delete confirmation */}
+      <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="max-w-sm">
+        <h3 className="text-sm font-semibold">Delete Topic</h3>
+        <p className="mt-2 text-sm text-muted-foreground">Are you sure you want to delete this topic? This cannot be undone.</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={() => setConfirmDelete(null)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+            Cancel
+          </button>
+          <button
+            onClick={() => confirmDelete && handleDelete(confirmDelete)}
+            disabled={deleting}
+            className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80 disabled:opacity-50"
+          >
+            {deleting ? "Deleting..." : "Delete"}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

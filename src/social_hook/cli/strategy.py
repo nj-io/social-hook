@@ -6,6 +6,7 @@ import logging
 import typer
 
 from social_hook.cli.utils import resolve_project
+from social_hook.filesystem import get_config_path
 
 app = typer.Typer(no_args_is_help=True)
 logger = logging.getLogger(__name__)
@@ -312,6 +313,182 @@ def edit(
             )
         else:
             typer.echo(f"Strategy '{name}' updated.")
+    finally:
+        conn.close()
+
+
+@app.command()
+def add(
+    ctx: typer.Context,
+    name: str = typer.Option(..., "--name", "-n", help="Strategy name"),
+    template: str | None = typer.Option(
+        None, "--template", "-t", help="Built-in template ID to base on"
+    ),
+    audience: str | None = typer.Option(None, "--audience", help="Target audience"),
+    voice: str | None = typer.Option(None, "--voice", help="Voice/tone"),
+    angle: str | None = typer.Option(None, "--angle", help="Content angle"),
+    post_when: str | None = typer.Option(None, "--post-when", help="When to post"),
+    avoid: str | None = typer.Option(None, "--avoid", help="What to avoid"),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Create a new custom content strategy.
+
+    Creates a strategy in the project's config. Optionally base it on a
+    built-in template to inherit defaults, then override specific fields.
+
+    Example: social-hook strategy add --name dev-community --audience "open-source developers" --voice casual
+    """
+    from social_hook.config.yaml import save_config
+
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn = _get_conn()
+    try:
+        proj = _resolve_proj(conn, project_path)
+        strategies = _get_merged_strategies(proj.repo_path)
+
+        # Check for duplicate
+        for s in strategies:
+            if s["name"] == name:
+                msg = f"Strategy '{name}' already exists"
+                if json_output:
+                    typer.echo(json_mod.dumps({"error": msg}))
+                else:
+                    typer.echo(msg)
+                raise typer.Exit(1)
+
+        fields: dict[str, str] = {}
+
+        # If template, copy its defaults
+        if template:
+            found_template = None
+            for s in strategies:
+                if s["name"] == template and s.get("template"):
+                    found_template = s
+                    break
+            if not found_template:
+                msg = f"Template not found: {template}"
+                if json_output:
+                    typer.echo(json_mod.dumps({"error": msg}))
+                else:
+                    typer.echo(msg)
+                raise typer.Exit(1)
+            for field in ("audience", "voice", "angle", "post_when", "avoid"):
+                if found_template.get(field):
+                    fields[field] = found_template[field]
+
+        # Override with explicit flags
+        if audience is not None:
+            fields["audience"] = audience
+        if voice is not None:
+            fields["voice"] = voice
+        if angle is not None:
+            fields["angle"] = angle
+        if post_when is not None:
+            fields["post_when"] = post_when
+        if avoid is not None:
+            fields["avoid"] = avoid
+
+        save_config(
+            {"content_strategies": {name: fields}},
+            config_path=get_config_path(),
+            deep_merge=True,
+        )
+
+        if json_output:
+            typer.echo(
+                json_mod.dumps({"created": True, "strategy": name, "fields": fields}, indent=2)
+            )
+        else:
+            typer.echo(f"Strategy '{name}' created.")
+    finally:
+        conn.close()
+
+
+@app.command()
+def delete(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Strategy name to delete"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Delete a custom strategy from the project config.
+
+    Fails if any targets reference the strategy (409 Conflict).
+    Built-in template strategies cannot be deleted — use 'reset' instead.
+
+    Example: social-hook strategy delete dev-community --yes
+    """
+    import yaml
+
+    from social_hook.constants import CONFIG_DIR_NAME
+
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn = _get_conn()
+    try:
+        proj = _resolve_proj(conn, project_path)
+
+        # Check strategy exists
+        strategies = _get_merged_strategies(proj.repo_path)
+        found = None
+        for s in strategies:
+            if s["name"] == name:
+                found = s
+                break
+
+        if not found:
+            msg = f"Strategy not found: {name}"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        # Check if any targets reference this strategy
+        from social_hook.config.yaml import load_full_config
+
+        config = load_full_config()
+        referencing = [tgt_name for tgt_name, tgt in config.targets.items() if tgt.strategy == name]
+        if referencing:
+            msg = f"Cannot delete strategy '{name}': referenced by targets {referencing}"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if not yes and not typer.confirm(f"Delete strategy '{name}'?"):
+            typer.echo("Cancelled.")
+            return
+
+        from pathlib import Path
+
+        config_path = Path(proj.repo_path) / CONFIG_DIR_NAME / "content-config.yaml"
+        if config_path.exists():
+            config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        else:
+            config_data = {}
+
+        strategies_section = config_data.get("strategies", {})
+        if name in strategies_section:
+            del strategies_section[name]
+            config_data["strategies"] = strategies_section
+            config_path.write_text(
+                yaml.dump(config_data, default_flow_style=False, allow_unicode=True),
+                encoding="utf-8",
+            )
+
+        if json_output:
+            typer.echo(json_mod.dumps({"deleted": True, "strategy": name}, indent=2))
+        else:
+            typer.echo(f"Strategy '{name}' deleted.")
     finally:
         conn.close()
 

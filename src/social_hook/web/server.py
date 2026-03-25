@@ -3869,6 +3869,45 @@ async def api_enable_target(project_id: str, name: str):
     return {"status": "enabled", "name": name}
 
 
+@app.delete("/api/projects/{project_id}/targets/{name}")
+async def api_delete_target(project_id: str, name: str):
+    """Remove a target from config and cancel its pending drafts."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        config = _get_config()
+        if name not in config.targets:
+            raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+        # Cancel pending drafts for this target
+        pending = conn.execute(
+            "SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ('draft', 'approved', 'scheduled')",
+            (project_id, name),
+        ).fetchall()
+        for row in pending:
+            ops.update_draft(conn, row["id"], status="cancelled")
+            ops.emit_data_event(conn, "draft", "updated", row["id"], project_id)
+
+        ops.emit_data_event(conn, "config", "updated", "targets", project_id)
+    finally:
+        conn.close()
+
+    # Remove from config.yaml
+    yaml_path = get_config_path()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
+    targets = raw.get("targets", {})
+    targets.pop(name, None)
+    raw["targets"] = targets
+    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    _invalidate_config()
+
+    return {"status": "deleted", "name": name, "cancelled_drafts": len(pending)}
+
+
 # =============================================================================
 # Strategies (per-project)
 # =============================================================================
@@ -4002,6 +4041,101 @@ async def api_reset_strategy(project_id: str, name: str):
     finally:
         conn.close()
     return {"status": "reset", "name": name}
+
+
+@app.post("/api/projects/{project_id}/strategies")
+async def api_create_strategy(project_id: str, body: dict[str, Any] = Body(...)):
+    """Create a new custom strategy."""
+    from social_hook.config.yaml import save_config
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    known_keys = {
+        "name",
+        "audience",
+        "voice",
+        "angle",
+        "post_when",
+        "avoid",
+        "format_preference",
+        "media_preference",
+        "min_length",
+        "requires",
+    }
+    try:
+        check_unknown_keys(body, known_keys, "create_strategy", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    name = body.get("name")
+    if not name:
+        raise HTTPException(status_code=400, detail="'name' is required")
+
+    config = _get_config()
+    if name in config.content_strategies:
+        raise HTTPException(status_code=409, detail=f"Strategy '{name}' already exists")
+
+    fields = {k: v for k, v in body.items() if k != "name" and v is not None}
+
+    try:
+        save_config(
+            {"content_strategies": {name: fields}},
+            config_path=get_config_path(),
+            deep_merge=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
+    finally:
+        conn.close()
+    return JSONResponse(status_code=201, content={"status": "created", "name": name})
+
+
+@app.delete("/api/projects/{project_id}/strategies/{name}")
+async def api_delete_strategy(project_id: str, name: str):
+    """Delete a strategy. Returns 409 if any targets reference it."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    config = _get_config()
+    if name not in config.content_strategies:
+        raise HTTPException(status_code=404, detail=f"Strategy '{name}' not found")
+
+    # Check if any targets reference this strategy
+    referencing = [tgt_name for tgt_name, tgt in config.targets.items() if tgt.strategy == name]
+    if referencing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete strategy '{name}': referenced by targets {referencing}",
+        )
+
+    # Remove from config.yaml
+    yaml_path = get_config_path()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
+    strategies = raw.get("content_strategies", {})
+    strategies.pop(name, None)
+    raw["content_strategies"] = strategies
+    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
+    finally:
+        conn.close()
+    return {"status": "deleted", "name": name}
 
 
 # =============================================================================
@@ -4163,6 +4297,26 @@ async def api_set_topic_status(project_id: str, topic_id: str, body: dict[str, A
         conn.close()
 
 
+@app.delete("/api/projects/{project_id}/topics/{topic_id}")
+async def api_delete_topic(project_id: str, topic_id: str):
+    """Delete a topic from the queue."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        topic = ops.get_topic(conn, topic_id)
+        if not topic:
+            raise HTTPException(status_code=404, detail="Topic not found")
+        if topic.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Topic not found in this project")
+
+        conn.execute("DELETE FROM content_topics WHERE id = ?", (topic_id,))
+        conn.commit()
+        ops.emit_data_event(conn, "topic", "deleted", topic_id, project_id)
+        return {"status": "deleted", "topic_id": topic_id}
+    finally:
+        conn.close()
+
+
 @app.post("/api/projects/{project_id}/topics/{topic_id}/draft-now")
 async def api_draft_now_topic(project_id: str, topic_id: str):
     """Force draft on a topic. 202 — LLM call."""
@@ -4276,12 +4430,31 @@ async def api_update_brief(project_id: str, body: dict[str, Any] = Body(...)):
 
 @app.get("/api/projects/{project_id}/suggestions")
 async def api_list_suggestions(project_id: str):
-    """List content suggestions for a project."""
+    """List content suggestions for a project, enriched with cycle IDs."""
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
         suggestions = ops.get_suggestions_by_project(conn, project_id)
-        return {"suggestions": [s.to_dict() for s in suggestions]}
+
+        # Look up evaluation_cycle_id for suggestions that have been evaluated
+        sug_ids = [s.id for s in suggestions]
+        cycle_map: dict[str, str] = {}
+        if sug_ids:
+            placeholders = ",".join("?" for _ in sug_ids)
+            rows = conn.execute(
+                f"SELECT suggestion_id, evaluation_cycle_id FROM drafts WHERE suggestion_id IN ({placeholders}) AND evaluation_cycle_id IS NOT NULL",
+                sug_ids,
+            ).fetchall()
+            for row in rows:
+                cycle_map[row["suggestion_id"]] = row["evaluation_cycle_id"]
+
+        result = []
+        for s in suggestions:
+            d = s.to_dict()
+            d["evaluation_cycle_id"] = cycle_map.get(s.id)
+            result.append(d)
+
+        return {"suggestions": result}
     finally:
         conn.close()
 
@@ -4367,6 +4540,58 @@ async def api_dismiss_suggestion(project_id: str, suggestion_id: str):
         return {"status": "dismissed", "suggestion_id": suggestion_id}
     finally:
         conn.close()
+
+
+@app.post("/api/projects/{project_id}/suggestions/{suggestion_id}/accept")
+async def api_accept_suggestion(project_id: str, suggestion_id: str):
+    """Accept a pending suggestion and trigger evaluation. 202 — LLM call."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        suggestions = ops.get_suggestions_by_project(conn, project_id)
+        suggestion = None
+        for s in suggestions:
+            if s.id == suggestion_id:
+                suggestion = s
+                break
+        if not suggestion:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+        if suggestion.status != "pending":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Suggestion has status '{suggestion.status}', only 'pending' can be accepted",
+            )
+
+        # Check for already-running task
+        existing = conn.execute(
+            "SELECT id FROM background_tasks WHERE type='evaluate_suggestion' AND ref_id=? AND status='running'",
+            (suggestion_id,),
+        ).fetchone()
+        if existing:
+            raise HTTPException(
+                status_code=409, detail="Evaluation already in progress for this suggestion"
+            )
+
+        ops.update_suggestion_status(conn, suggestion_id, "evaluated")
+        ops.emit_data_event(conn, "suggestion", "updated", suggestion_id, project_id)
+        pid = project_id
+    finally:
+        conn.close()
+
+    sid = suggestion_id
+
+    def _blocking_evaluate():
+        from social_hook.trigger import run_suggestion_trigger
+
+        return {"exit_code": run_suggestion_trigger(sid, pid)}
+
+    task_id = _run_background_task(
+        "evaluate_suggestion",
+        ref_id=sid,
+        project_id=pid,
+        fn=_blocking_evaluate,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "evaluating"})
 
 
 @app.post("/api/projects/{project_id}/content/combine")
@@ -4470,76 +4695,94 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
         enriched = []
         for c in cycles:
             cd = c.to_dict()
-            # Build human-readable trigger
-            trigger_parts = [c.trigger_type or "unknown"]
-            if c.trigger_ref:
-                trigger_parts.append(c.trigger_ref[:8])
-            cd["trigger"] = " ".join(trigger_parts)
 
             # Get drafts for this cycle to derive strategies and status
             drafts = ops.get_drafts_by_cycle(conn, c.id)
 
             # Get the decision for strategy info (via first draft's decision_id)
-            strategies: dict[str, dict] = {}
+            decision = None
             if drafts:
                 decision_id = drafts[0].decision_id
                 decision = ops.get_decision(conn, decision_id)
-                if decision and decision.targets:
-                    # targets is a dict of {strategy_name: {action, reason, ...}}
-                    from social_hook.parsing import safe_json_loads
 
-                    targets_data = decision.targets
-                    if isinstance(targets_data, str):
-                        targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
+            # --- 2.3: Richer trigger descriptions ---
+            cd["trigger"] = _enrich_cycle_trigger(conn, c, decision)
 
-                    # Build strategy_to_draft map: draft.target_id → config target → strategy name
-                    config = _get_config()
-                    strategy_to_draft: dict[str, object] = {}
-                    for d in drafts:
-                        if d.target_id and config.targets.get(d.target_id):
-                            target_strategy = config.targets[d.target_id].strategy
-                            if target_strategy and target_strategy not in strategy_to_draft:
-                                strategy_to_draft[target_strategy] = d
-                        else:
-                            # Legacy drafts without target_id → assign to "default"
-                            if "default" not in strategy_to_draft:
-                                strategy_to_draft["default"] = d
+            # --- Strategy outcomes ---
+            strategies: dict[str, dict] = {}
+            if drafts and decision and decision.targets:
+                # targets is a dict of {strategy_name: {action, reason, ...}}
+                from social_hook.parsing import safe_json_loads
 
-                    for strat_name, strat_data in (targets_data or {}).items():
-                        action = (
-                            strat_data.get("action", "skip")
-                            if isinstance(strat_data, dict)
-                            else "skip"
-                        )
-                        if hasattr(action, "value"):
-                            action = action.value
-                        reasoning = (
-                            strat_data.get("reason", "") if isinstance(strat_data, dict) else ""
-                        )
-                        # Find a draft matching this strategy via target_id → config target → strategy
-                        strat_draft = strategy_to_draft.get(strat_name)
-                        strategies[strat_name] = {
-                            "decision": action,
-                            "reasoning": reasoning,
-                            "draft_id": strat_draft.id if strat_draft else None,
-                            "draft_status": strat_draft.status if strat_draft else None,
-                            "draft_content": strat_draft.content[:200] if strat_draft else None,
-                        }
-                elif decision:
-                    # Legacy: single "default" strategy
-                    strategies["default"] = {
-                        "decision": decision.decision,
-                        "reasoning": decision.reasoning[:200] if decision.reasoning else "",
-                        "draft_id": drafts[0].id if drafts else None,
-                        "draft_status": drafts[0].status if drafts else None,
-                        "draft_content": drafts[0].content[:200] if drafts else None,
+                targets_data = decision.targets
+                if isinstance(targets_data, str):
+                    targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
+
+                # Build strategy_to_draft map: draft.target_id → config target → strategy name
+                config = _get_config()
+                strategy_to_draft: dict[str, object] = {}
+                for d in drafts:
+                    if d.target_id and config.targets.get(d.target_id):
+                        target_strategy = config.targets[d.target_id].strategy
+                        if target_strategy and target_strategy not in strategy_to_draft:
+                            strategy_to_draft[target_strategy] = d
+                    else:
+                        # Legacy drafts without target_id → assign to "default"
+                        if "default" not in strategy_to_draft:
+                            strategy_to_draft["default"] = d
+
+                # Parse episode_tags once from the decision
+                ep_tags = decision.episode_tags
+                if isinstance(ep_tags, str):
+                    ep_tags = safe_json_loads(ep_tags, "decision.episode_tags", default=[])
+
+                for strat_name, strat_data in (targets_data or {}).items():
+                    action = (
+                        strat_data.get("action", "skip") if isinstance(strat_data, dict) else "skip"
+                    )
+                    if hasattr(action, "value"):
+                        action = action.value
+                    reasoning = strat_data.get("reason", "") if isinstance(strat_data, dict) else ""
+                    topic_id = strat_data.get("topic_id") if isinstance(strat_data, dict) else None
+                    # Find a draft matching this strategy via target_id → config target → strategy
+                    strat_draft = strategy_to_draft.get(strat_name)
+                    strategies[strat_name] = {
+                        "decision": action,
+                        "reasoning": reasoning,
+                        "draft_id": strat_draft.id if strat_draft else None,
+                        "draft_status": strat_draft.status if strat_draft else None,
+                        "draft_content": strat_draft.content[:200] if strat_draft else None,
+                        "draft_preview_mode": strat_draft.preview_mode if strat_draft else None,
+                        "topic_id": topic_id,
+                        "episode_tags": ep_tags if ep_tags else None,
                     }
+            elif drafts and decision:
+                from social_hook.parsing import safe_json_loads
+
+                ep_tags = decision.episode_tags
+                if isinstance(ep_tags, str):
+                    ep_tags = safe_json_loads(ep_tags, "decision.episode_tags", default=[])
+                # Legacy: single "default" strategy
+                strategies["default"] = {
+                    "decision": decision.decision,
+                    "reasoning": decision.reasoning[:200] if decision.reasoning else "",
+                    "draft_id": drafts[0].id if drafts else None,
+                    "draft_status": drafts[0].status if drafts else None,
+                    "draft_content": drafts[0].content[:200] if drafts else None,
+                    "draft_preview_mode": drafts[0].preview_mode if drafts else None,
+                    "topic_id": None,
+                    "episode_tags": ep_tags if ep_tags else None,
+                }
 
             cd["strategies"] = strategies
 
-            # Derive overall status from draft statuses
+            # --- 2.6: Status with counts ---
             if not drafts:
                 cd["status"] = "no drafts"
+                cd["draft_count"] = 0
+                cd["pending_count"] = 0
+                cd["approved_count"] = 0
+                cd["posted_count"] = 0
             else:
                 statuses = {d.status for d in drafts}
                 if "posted" in statuses:
@@ -4550,11 +4793,63 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                     cd["status"] = "review"
                 else:
                     cd["status"] = drafts[0].status
+                cd["draft_count"] = len(drafts)
+                cd["pending_count"] = sum(1 for d in drafts if d.status in ("draft", "deferred"))
+                cd["approved_count"] = sum(
+                    1 for d in drafts if d.status in ("approved", "scheduled")
+                )
+                cd["posted_count"] = sum(1 for d in drafts if d.status == "posted")
 
             enriched.append(cd)
         return {"cycles": enriched}
     finally:
         conn.close()
+
+
+def _enrich_cycle_trigger(conn, cycle, decision) -> str:
+    """Build a human-readable trigger description for a cycle."""
+    trigger_type = cycle.trigger_type or "unknown"
+    trigger_ref = cycle.trigger_ref
+
+    if trigger_type == "commit":
+        short_hash = trigger_ref[:7] if trigger_ref else "unknown"
+        parts = [f"Commit {short_hash}"]
+        if decision:
+            from social_hook.parsing import safe_json_loads
+
+            ep_tags = decision.episode_tags
+            if isinstance(ep_tags, str):
+                ep_tags = safe_json_loads(ep_tags, "trigger.episode_tags", default=[])
+            if ep_tags:
+                parts.append(f"({', '.join(ep_tags)})")
+            if decision.commit_message:
+                msg = decision.commit_message[:80]
+                parts.append(f"\u2014 {msg}")
+        return " ".join(parts)
+    elif trigger_type == "topic_maturity":
+        if trigger_ref:
+            topic = ops.get_topic(conn, trigger_ref)
+            if topic:
+                return f"Topic matured: {topic.topic}"
+        return "Topic matured"
+    elif trigger_type == "operator_suggestion":
+        if trigger_ref:
+            suggestions = ops.get_suggestions_by_project(conn, cycle.project_id)
+            for s in suggestions:
+                if s.id == trigger_ref:
+                    idea_preview = s.idea[:60] + ("..." if len(s.idea) > 60 else "")
+                    return f"Suggestion: {idea_preview}"
+        return "Operator suggestion"
+    elif trigger_type == "hero_launch":
+        return "Hero launch"
+    elif trigger_type == "draft_now":
+        return "Manual draft"
+    else:
+        logger.warning("Unknown trigger_type in cycle: %s", trigger_type)
+        parts = [trigger_type]
+        if trigger_ref:
+            parts.append(trigger_ref[:8])
+        return " ".join(parts)
 
 
 @app.get("/api/projects/{project_id}/cycles/{cycle_id}")
