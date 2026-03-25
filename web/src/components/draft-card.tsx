@@ -21,8 +21,8 @@ export function DraftCard({ draft }: { draft: Draft }) {
               {platformLabel(draft.platform)}
             </span>
             <Badge value={draft.status} variant="status" />
-            {draft.is_intro && <Badge value="INTRO" variant="system" />}
-            {draft.platform === "preview" && <Badge value="Preview" variant="system" />}
+            {!!draft.is_intro && <Badge value="INTRO" variant="system" />}
+            {!!draft.preview_mode && <Badge value="Preview" variant="system" />}
           </div>
           <p className="text-sm text-foreground">{preview}</p>
           {draft.decision && (

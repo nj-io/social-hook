@@ -372,7 +372,6 @@ class TestAssembleDrafterPrompt:
             commit_hash="abc123",
             decision="draft",
             reasoning="Important feature",
-            episode_type="milestone",
         )
         result = assemble_drafter_prompt(
             "# Drafter",
@@ -383,7 +382,6 @@ class TestAssembleDrafterPrompt:
         )
         assert "draft" in result
         assert "Important feature" in result
-        assert "milestone" in result
 
     def test_includes_arc_context(self, sample_project_context, sample_commit):
         decision = Decision(

@@ -25,7 +25,18 @@ def test_commits(
         False, "--show-prompt", help="Print the full LLM prompt to stderr"
     ),
 ):
-    """Test commit evaluation with real LLM calls, no DB writes."""
+    """Test commit evaluation.
+
+    Dry-run evaluation with real LLM calls but no database writes.
+    Tests whether the AI considers commits post-worthy. Use --output
+    to save results as JSON, and --compare to diff against a previous
+    run for regression testing.
+
+    Example: social-hook test --repo . --last 3
+    Example: social-hook test --repo . --commit abc123 --show-prompt
+    Example: social-hook test --repo . --last 5 --output golden.json
+    Example: social-hook test --repo . --last 5 --compare golden.json
+    """
     from social_hook.trigger import run_trigger
 
     commits = []

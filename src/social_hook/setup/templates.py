@@ -95,6 +95,36 @@ STRATEGY_TEMPLATES: list[StrategyTemplate] = [
         ),
     ),
     StrategyTemplate(
+        id="brand-primary",
+        name="Brand & Marketing",
+        description="High-level marketing content — hooks, outcomes, visual proof. Scroll-stoppers.",
+        defaults=StrategyDefaults(
+            identity="company",
+            voice_tone=(
+                "Confident, concise, visual-first. Every post earns the scroll-stop. "
+                "Open with an outcome or provocation, never a description of what changed."
+            ),
+            audience="Developers and engineering leaders evaluating tools in this space",
+            technical_level="intermediate",
+            platform_filter="significant",
+            platform_frequency="low",
+            post_when=(
+                "Only when a user-facing feature demonstrates a core value prop. "
+                "Skip all internal work, refactoring, and incremental improvements. "
+                "During pre-launch: hold all content until hero launch is ready. "
+                "Post-launch: feature spotlights with visual proof and concrete outcomes."
+            ),
+            avoid=(
+                "Developer diary tone, implementation details, anything without visual proof, "
+                "anything that doesn't earn a scroll-stop. Never post just because a commit landed."
+            ),
+            example_intro_hook=(
+                "At [company], we're solving [pain point] for [audience]. "
+                "Here's what that looks like."
+            ),
+        ),
+    ),
+    StrategyTemplate(
         id="custom",
         name="Custom",
         description="Start from scratch with your own content strategy",
@@ -119,6 +149,29 @@ def get_template(template_id: str) -> StrategyTemplate | None:
         if t.id == template_id:
             return t
     return None
+
+
+def get_template_defaults(strategy_name: str) -> dict | None:
+    """Get the default field values for a strategy that was derived from a built-in template.
+
+    Returns None if the strategy doesn't match any template.
+    Used by 'strategy reset' CLI command and web UI reset button.
+    """
+    template = get_template(strategy_name)
+    if template is None:
+        return None
+    d = template.defaults
+    return {
+        "identity": d.identity,
+        "voice_tone": d.voice_tone,
+        "audience": d.audience,
+        "technical_level": d.technical_level,
+        "platform_filter": d.platform_filter,
+        "platform_frequency": d.platform_frequency,
+        "post_when": d.post_when,
+        "avoid": d.avoid,
+        "example_intro_hook": d.example_intro_hook,
+    }
 
 
 def templates_to_dicts() -> list[dict[str, Any]]:

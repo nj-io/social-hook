@@ -137,7 +137,7 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
         return namedIdentities.length <= 1;
       }
       if (label === "Voice" || label === "Audience") return true;
-      if (label === "Credentials") return hasClaudeCli && !data.platforms.some((p) => p.enabled && p.name !== "preview");
+      if (label === "Credentials") return hasClaudeCli && !data.platforms.some((p) => p.enabled);
       return false;
     },
     [isTemplateSelected, data.identities, data.platforms, hasClaudeCli, STEP_LABELS],
@@ -165,20 +165,9 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
   }
 
   function handleNext() {
-    // Default to preview if no platforms selected
+    // Require at least one platform
     if (activeStep === "Platforms" && !data.platforms.some((p) => p.enabled)) {
-      const next = data.platforms.map((p) => ({ ...p }));
-      const preview = next.find((p) => p.name === "preview");
-      if (preview) {
-        preview.enabled = true;
-      } else {
-        next.push({ name: "preview", enabled: true, priority: "secondary", accountTier: "", introduce: false, identity: "" });
-      }
-      // Disable all real platforms
-      for (const p of next) {
-        if (p.name !== "preview") p.enabled = false;
-      }
-      updateData({ platforms: next });
+      return; // validation error shown in StepPlatforms
     }
 
     markStepComplete(currentStep);
@@ -220,7 +209,7 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
         platforms[p.name] = {
           enabled: true,
           priority: p.priority,
-          type: p.name === "x" || p.name === "linkedin" || p.name === "preview" ? "builtin" : "custom",
+          type: p.name === "x" || p.name === "linkedin" ? "builtin" : "custom",
           ...(p.identity ? { identity: p.identity } : {}),
           ...(p.accountTier ? { account_tier: p.accountTier } : {}),
         };
@@ -443,6 +432,7 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
               disabled={
                 (activeStep === "Strategy" && !data.strategyId) ||
                 (activeStep === "Identity" && data.identities.some((i) => !i.name)) ||
+                (activeStep === "Platforms" && !data.platforms.some((p) => p.enabled)) ||
                 (activeStep === "Project" && !data.repoPath)
               }
               className="rounded-md bg-accent px-6 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"

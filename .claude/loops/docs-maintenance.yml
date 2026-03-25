@@ -1,0 +1,23 @@
+loop_name: docs-maintenance
+branch: develop
+state_file: site-docs/DOC_STATUS.md
+
+setup:
+  - "pip install -e '.[dev]'"
+
+checks:
+  - "python scripts/generate_cli_docs.py && git diff --exit-code site-docs/cli/"
+  - "ruff check src/ tests/"
+  - "mypy src/social_hook/"
+
+autonomous:
+  - Update existing docs to match code changes
+  - Regenerate CLI reference when commands change
+  - Enrich CLI docstrings in source code
+  - Fix stale descriptions or outdated examples
+
+approval_required:
+  - New doc pages (web dashboard guide, tutorials, etc.)
+  - New sections in existing pages
+  - Changes to product messaging or framing
+  - All backlog items that haven't been started

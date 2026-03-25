@@ -242,7 +242,13 @@ def trigger(
     commit: str = typer.Option(..., "--commit", help="Commit hash to evaluate"),
     repo: str = typer.Option(..., "--repo", help="Repository path"),
 ):
-    """Evaluate a commit and create draft if post-worthy (called by hook)."""
+    """Run the full evaluation-to-draft pipeline for a single commit.
+
+    Evaluates the commit with the LLM, records a decision, and creates
+    drafts for each enabled platform if the commit is post-worthy.
+    This is the same pipeline the git post-commit hook runs automatically.
+    Use 'social-hook test' for dry-run evaluation without database writes.
+    """
     from social_hook.trigger import run_trigger
 
     dry_run = ctx.obj.get("dry_run", False)
@@ -266,7 +272,17 @@ def trigger(
 def scheduler_tick(
     ctx: typer.Context,
 ):
-    """Run one scheduler tick: post all due drafts."""
+    """Post scheduled drafts whose time has arrived and promote deferred drafts.
+
+    Checks for drafts with status 'scheduled' past their scheduled time and
+    posts them to their platform. Also promotes deferred drafts when scheduling
+    slots open up, and drains rate-limited evaluations.
+
+    Typically run on a cron (e.g. every minute) or by the bot daemon.
+
+    Example: social-hook scheduler-tick
+    Example: social-hook --dry-run scheduler-tick
+    """
     from social_hook.scheduler import scheduler_tick as do_tick
 
     dry_run = ctx.obj.get("dry_run", False)
@@ -284,7 +300,17 @@ def scheduler_tick(
 def consolidation_tick_cmd(
     ctx: typer.Context,
 ):
-    """Run one consolidation tick: process batched decisions."""
+    """Process held decisions — commits not post-worthy alone but interesting together.
+
+    When the evaluator marks a commit as 'hold', it means the commit isn't worth
+    a standalone post but could be combined with others. This command batches
+    those held decisions and either sends a summary notification (notify_only mode)
+    or re-evaluates the batch as a group (re_evaluate mode).
+
+    Typically run on a cron (e.g. every few hours) or by the bot daemon.
+
+    Example: social-hook consolidation-tick
+    """
     from social_hook.consolidation import consolidation_tick as do_tick
 
     dry_run = ctx.obj.get("dry_run", False)
@@ -306,7 +332,17 @@ def web(
     host: str = typer.Option("127.0.0.1", "--host", help="Host to bind to"),
     install: bool = typer.Option(False, "--install", help="Run npm install before starting"),
 ):
-    """Start the web dashboard (Next.js + FastAPI)."""
+    """Start the web dashboard for managing your social-hook workflow visually.
+
+    Launches a Next.js frontend and FastAPI backend. From the dashboard you can
+    review and edit drafts, approve or reject posts, manage projects, configure
+    settings, monitor the pipeline in real time, and more.
+
+    Requires Node.js. Use --install to run npm install on first launch.
+
+    Example: social-hook web
+    Example: social-hook web --port 8080 --install
+    """
     import shutil
     import subprocess as sp
 
@@ -506,7 +542,18 @@ def discover(
     ctx: typer.Context,
     project_id: str = typer.Argument(..., help="Project ID to discover"),
 ):
-    """Run two-pass project discovery and print results."""
+    """Analyse your repo with LLM-powered two-pass discovery.
+
+    Pass 1: the AI selects the most important files from your repo listing.
+    Pass 2: reads those files and generates a project summary, per-file
+    summaries, and identifies key documentation. This context is used by
+    the evaluator and drafter in all future pipeline runs.
+
+    Usually run automatically by quickstart, but can be re-run to refresh
+    the project summary after significant changes.
+
+    Example: social-hook discover my-project-id
+    """
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
     from social_hook.db.connection import init_database
@@ -881,6 +928,43 @@ from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
 app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+
+from social_hook.cli.account import app as account_app
+from social_hook.cli.brief import app as brief_app
+from social_hook.cli.content import app as content_app
+from social_hook.cli.credentials import app as credentials_app
+from social_hook.cli.cycles import app as cycles_app
+from social_hook.cli.strategy import app as strategy_app
+from social_hook.cli.system import app as system_app
+from social_hook.cli.target import app as target_app
+from social_hook.cli.topics import app as topics_app
+
+# Platform credentials: list, add, validate, remove
+app.add_typer(credentials_app, name="credentials", help="Platform credential management.")
+
+# Account management: list, add, validate, remove
+app.add_typer(account_app, name="account", help="Platform account management.")
+
+# Target management: list, add, disable, enable
+app.add_typer(target_app, name="target", help="Content distribution targets.")
+
+# Strategy management: list, show, edit, reset
+app.add_typer(strategy_app, name="strategy", help="Content strategy management.")
+
+# Topic queue: list, add, reorder, status, draft-now
+app.add_typer(topics_app, name="topics", help="Content topic queue.")
+
+# Brief management: show, edit
+app.add_typer(brief_app, name="brief", help="Project brief management.")
+
+# Content suggestions: suggest, list, dismiss, combine, hero-launch
+app.add_typer(content_app, name="content", help="Content suggestions and operations.")
+
+# Evaluation cycles: list, show
+app.add_typer(cycles_app, name="cycles", help="Evaluation cycle history.")
+
+# System health: errors, health
+app.add_typer(system_app, name="system", help="System health and errors.")
 
 from social_hook.cli.events import events as events_cmd
 from social_hook.cli.quickstart import quickstart as quickstart_cmd

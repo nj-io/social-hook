@@ -56,7 +56,6 @@ const STORAGE_KEY = "social-hook-wizard";
 const DEFAULT_PLATFORMS: PlatformEntry[] = [
   { name: "x", enabled: false, priority: "primary", accountTier: "free", introduce: true, identity: "" },
   { name: "linkedin", enabled: false, priority: "primary", accountTier: "", introduce: true, identity: "" },
-  { name: "preview", enabled: false, priority: "secondary", accountTier: "", introduce: false, identity: "" },
 ];
 
 export function createDefaultWizardData(): WizardData {

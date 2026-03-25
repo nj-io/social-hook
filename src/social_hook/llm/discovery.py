@@ -214,6 +214,7 @@ def discover_project(
     db: object | None = None,
     project_id: str | None = None,
     on_progress: Callable | None = None,
+    strategies: list[str] | None = None,
 ) -> tuple[str | None, list[str], list[dict[str, str]], list[str]]:
     """Two-pass project discovery: select files then generate summary.
 
@@ -359,7 +360,37 @@ def discover_project(
     file_summaries = summary_input.get("file_summaries", [])
     prompt_docs = summary_input.get("prompt_docs", [])[:5]
 
+    # Generate structured brief from discovery summary
+    project_summary = summary_input["project_summary"]
+    try:
+        from social_hook.llm.brief import generate_initial_brief
+
+        brief = generate_initial_brief(
+            discovery_summary=project_summary,
+            client=client,
+            db=db,
+            project_id=project_id,
+        )
+        if brief:
+            project_summary = brief
+    except Exception:
+        logger.warning("Brief generation failed, using raw summary", exc_info=True)
+
+    # Seed topics from the brief's Key Capabilities section
+    if strategies and project_id and db is not None:
+        try:
+            import sqlite3
+
+            from social_hook.topics import seed_topics_from_brief
+
+            # Extract connection from db (may be a DryRunContext or raw connection)
+            raw_conn = getattr(db, "conn", db) if not isinstance(db, sqlite3.Connection) else db
+            if isinstance(raw_conn, sqlite3.Connection):
+                seed_topics_from_brief(raw_conn, project_id, project_summary, strategies)
+        except Exception:
+            logger.warning("Topic seeding from brief failed", exc_info=True)
+
     if on_progress:
         on_progress("discovered")
 
-    return summary_input["project_summary"], files_loaded, file_summaries, prompt_docs
+    return project_summary, files_loaded, file_summaries, prompt_docs

@@ -44,7 +44,12 @@ def quickstart(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip all confirmation prompts"),
     json_output: bool = typer.Option(False, "--json", help="JSON output"),
 ) -> None:
-    """Run the quickstart flow."""
+    """Run the quickstart flow.
+
+    Zero-to-first-draft onboarding. Auto-detects your LLM provider,
+    registers your repo, imports commit history, runs AI project discovery,
+    and generates an introductory draft — all in one command.
+    """
     # Resolve JSON output from global or local flag
     is_json = json_output or (ctx.obj or {}).get("json", False)
     dry_run = (ctx.obj or {}).get("dry_run", False)
@@ -257,8 +262,23 @@ def _auto_configure(base: Path, api_key: str | None, is_json: bool, verbose: boo
     # Write minimal config
     config_data: dict[str, Any] = {"models": models}
 
-    # Preview platform (explicit)
-    config_data["platforms"] = {"preview": {"enabled": True}}
+    # Default platform: X in preview mode (no account connected)
+    config_data["platforms"] = {
+        "x": {"enabled": True, "priority": "primary", "type": "builtin", "account_tier": "free"}
+    }
+
+    # Default strategy so auto-migration can create valid targets
+    from social_hook.setup.templates import get_template
+
+    template = get_template("building-public")
+    if template:
+        config_data["content_strategies"] = {
+            "building-public": {
+                "audience": template.defaults.audience,
+                "post_when": template.defaults.post_when,
+            }
+        }
+        config_data["content_strategy"] = "building-public"
 
     config_path = base / "config.yaml"
     config_path.write_text(yaml.dump(config_data, default_flow_style=False))

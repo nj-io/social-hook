@@ -6,7 +6,6 @@ from social_hook.errors import MalformedResponseError
 from social_hook.llm.base import ToolExtractionError, extract_tool_call
 from social_hook.llm.schemas import (
     CreateDraftInput,
-    EpisodeTypeSchema,
     ExpertAction,
     ExpertResponseInput,
     GatekeeperOperation,
@@ -24,11 +23,6 @@ from social_hook.llm.schemas import (
 
 class TestSchemaEnums:
     """T12: Verify schema enums have correct values."""
-
-    def test_episode_type_schema_values(self):
-        assert EpisodeTypeSchema.decision.value == "decision"
-        assert EpisodeTypeSchema.before_after.value == "before_after"
-        assert EpisodeTypeSchema.synthesis.value == "synthesis"
 
     def test_media_tool_values(self):
         assert MediaTool.mermaid.value == "mermaid"

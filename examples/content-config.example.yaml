@@ -115,6 +115,9 @@ strategy:
   # Strategy moment: force review after N days of inactivity
   strategy_moment_max_gap_days: 7
 
+  # Max active arcs per strategy (default: 3)
+  max_arcs_per_strategy: 3
+
   # Episode type preferences (optional - agent will infer if not specified)
   episode_preferences:
     favor: ["demo_proof", "before_after"]  # Prefer these when applicable

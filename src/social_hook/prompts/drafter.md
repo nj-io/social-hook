@@ -77,14 +77,9 @@ Pay attention to the Voice Memories section. These are direct feedback from the 
 
 ## Content Strategy
 
-Based on the Evaluator's episode_type:
-- **decision**: Frame the trade-off clearly. What were the options? Why this choice?
-- **before_after**: Show the measurable improvement. Numbers/screenshots help.
-- **demo_proof**: Focus on "it works!" energy. Show, don't tell.
-- **milestone**: Frame progress. What's done, what's next.
-- **postmortem**: Be honest about what went wrong. Learnings are the hook.
-- **launch**: Clear value prop. Who is this for? What does it do?
-- **synthesis**: Zoom out. Frame the bigger story across recent work.
+Follow the strategy definition's angle and voice when provided. The strategy's `post_when` field describes what triggered this draft. Use the provided ContentSource context to build the post.
+
+When no strategy definition is provided, use the commit's episode tags and angle to guide the content structure.
 
 ## Post Context
 

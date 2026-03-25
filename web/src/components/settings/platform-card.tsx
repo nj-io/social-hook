@@ -149,6 +149,16 @@ export function PlatformCard({ name, config, onChange, onRemove, env, onEnvRefre
             {config.type === "custom" && (
               <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">custom</span>
             )}
+            {isOAuthPlatform && oauthStatus && !oauthStatus.connected && (
+              <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                Preview mode
+              </span>
+            )}
+            {isOAuthPlatform && oauthStatus?.connected && (
+              <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                Connected
+              </span>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">
             {effectiveFilter !== "smart default" ? effectiveFilter : ""}
