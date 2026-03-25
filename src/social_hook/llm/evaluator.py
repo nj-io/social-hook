@@ -39,6 +39,10 @@ class Evaluator:
         summary_config: Optional["SummaryConfig"] = None,
         scheduling_state: ProjectSchedulingState | None = None,
         strategies: dict[str, "ContentStrategyConfig"] | None = None,
+        held_topics: list | None = None,
+        active_arcs_all: list | None = None,
+        targets: dict | None = None,
+        all_topics: list | None = None,
     ) -> LogEvaluationInput:
         """Evaluate a commit for post-worthiness.
 
@@ -54,6 +58,10 @@ class Evaluator:
             strategy_config: Strategy thresholds (portfolio window, episode prefs)
             summary_config: Summary refresh thresholds
             strategies: Content strategy definitions (audience, voice, angle, etc.)
+            held_topics: Held topics for per-strategy posting state
+            active_arcs_all: Active arcs across all strategies
+            targets: Target definitions for post-to-strategy mapping
+            all_topics: All topics for topic queue section
 
         Returns:
             Validated LogEvaluationInput from the LLM
@@ -71,6 +79,10 @@ class Evaluator:
             summary_config=summary_config,
             scheduling_state=scheduling_state,
             strategies=strategies,
+            held_topics=held_topics,
+            active_arcs_all=active_arcs_all,
+            targets=targets,
+            all_topics=all_topics,
         )
 
         # Check summary freshness and include hint

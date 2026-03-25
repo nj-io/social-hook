@@ -247,41 +247,146 @@ def _append_media_guide_section(
                 sections.append(f"  **Spec fields:** {spec_info}")
 
 
+def _resolve_post_strategy(
+    post: Any,
+    targets: dict[str, Any] | None,
+) -> str:
+    """Map a post to its strategy name via target_id -> target -> strategy.
+
+    Falls back to "default" when the chain cannot be resolved.
+    """
+    target_id = getattr(post, "target_id", None)
+    if target_id and targets:
+        target = targets.get(target_id)
+        if target:
+            strategy = getattr(target, "strategy", None)
+            if strategy:
+                return strategy
+            else:
+                logger.warning("Target '%s' has no strategy field", target_id)
+        else:
+            logger.warning("Post references unknown target '%s'", target_id)
+    return "default"
+
+
 def assemble_strategy_posting_state(
     strategies: dict[str, Any],
     recent_posts: list[Any] | None = None,
+    pending_drafts: list[Any] | None = None,
+    held_topics: list[Any] | None = None,
+    active_arcs: list[Any] | None = None,
+    targets: dict[str, Any] | None = None,
 ) -> str:
-    """Build cross-strategy posting summary for evaluator context.
+    """Build per-strategy posting state for evaluator context.
 
-    Shows what OTHER strategies recently posted (~300 tokens), enabling
-    cross-strategy coordination (e.g. avoid duplicate topics across strategies).
+    Shows recent posts (with target attribution + URLs), pending drafts
+    (with scheduling info), held topics (with duration), and active arcs
+    (with post counts) grouped by strategy.
 
     Args:
         strategies: Dict of strategy name -> ContentStrategyConfig
-        recent_posts: Recent posts with strategy metadata
+        recent_posts: Recent posts (Post objects with target_id, external_url)
+        pending_drafts: Pending drafts (Draft objects with target_id, suggested_time)
+        held_topics: Held topics (ContentTopic objects with strategy, commit_count)
+        active_arcs: Active arcs (Arc objects with strategy, post_count)
+        targets: Dict of target name -> TargetConfig for post-to-strategy mapping
 
     Returns:
         Formatted string block, or empty string if no data
     """
-    if not strategies or not recent_posts:
+    if not strategies:
         return ""
 
-    # Group recent posts by strategy (best-effort from metadata)
-    by_strategy: dict[str, list[str]] = {}
-    for post in recent_posts[:20]:
-        strategy_name = getattr(post, "strategy_name", None) or "default"
-        summary = getattr(post, "content", "")[:80]
+    has_data = recent_posts or pending_drafts or held_topics or active_arcs
+    if not has_data:
+        return ""
+
+    # --- Group recent posts by strategy ---
+    posts_by_strategy: dict[str, list[str]] = {}
+    for post in (recent_posts or [])[:20]:
+        strategy_name = _resolve_post_strategy(post, targets)
+        target_id = getattr(post, "target_id", None) or ""
+        url = getattr(post, "external_url", None) or ""
+        content = getattr(post, "content", "")[:80]
         time_ago = _relative_time(getattr(post, "posted_at", None))
-        by_strategy.setdefault(strategy_name, []).append(f"{summary}... ({time_ago})")
+        url_part = f" {url}" if url else ""
+        target_part = f" -> {target_id}" if target_id else ""
+        posts_by_strategy.setdefault(strategy_name, []).append(
+            f'"{content}..."{target_part} ({time_ago}){url_part}'
+        )
 
-    if not by_strategy:
+    # --- Group pending drafts by strategy ---
+    drafts_by_strategy: dict[str, list[str]] = {}
+    for draft in (pending_drafts or [])[:20]:
+        target_id = getattr(draft, "target_id", None)
+        strategy_name = "default"
+        if target_id and targets:
+            target = targets.get(target_id)
+            if target:
+                strategy_name = getattr(target, "strategy", None) or "default"
+            else:
+                logger.warning("Draft references unknown target '%s'", target_id)
+        content = getattr(draft, "content", "")[:60]
+        suggested = getattr(draft, "suggested_time", None)
+        sched_part = f" (suggested {_relative_time(suggested)})" if suggested else ""
+        drafts_by_strategy.setdefault(strategy_name, []).append(f'"{content}..."{sched_part}')
+
+    # --- Group held topics by strategy ---
+    topics_by_strategy: dict[str, list[str]] = {}
+    for topic in held_topics or []:
+        strategy_name = getattr(topic, "strategy", "") or "default"
+        name = getattr(topic, "topic", "")
+        commit_count = getattr(topic, "commit_count", 0)
+        last_commit = getattr(topic, "last_commit_at", None)
+        since_part = f", since {_relative_time(last_commit)}" if last_commit else ""
+        topics_by_strategy.setdefault(strategy_name, []).append(
+            f"{name} ({commit_count} commits{since_part})"
+        )
+
+    # --- Group active arcs by strategy ---
+    arcs_by_strategy: dict[str, list[str]] = {}
+    for arc in active_arcs or []:
+        strategy_name = getattr(arc, "strategy", "") or "default"
+        theme = getattr(arc, "theme", "")
+        post_count = getattr(arc, "post_count", 0)
+        arcs_by_strategy.setdefault(strategy_name, []).append(f'"{theme}" ({post_count} posts)')
+
+    # --- Build output per strategy ---
+    lines = ["\n---\n## Per-Strategy Posting State"]
+    for name in strategies:
+        section_parts: list[str] = []
+
+        posts = posts_by_strategy.get(name, [])
+        if posts:
+            section_parts.append("Recent posts:")
+            for p in posts[:3]:
+                section_parts.append(f"  - {p}")
+
+        drafts = drafts_by_strategy.get(name, [])
+        if drafts:
+            section_parts.append(f"Pending drafts: {len(drafts)}")
+            for d in drafts[:3]:
+                section_parts.append(f"  - {d}")
+
+        topics = topics_by_strategy.get(name, [])
+        if topics:
+            section_parts.append("Held topics:")
+            for t in topics:
+                section_parts.append(f"  - {t}")
+
+        arcs = arcs_by_strategy.get(name, [])
+        if arcs:
+            section_parts.append("Active arcs:")
+            for a in arcs:
+                section_parts.append(f"  - {a}")
+
+        if section_parts:
+            lines.append(f"\n### {name}")
+            lines.extend(section_parts)
+
+    # Only return if we actually added per-strategy content
+    if len(lines) <= 1:
         return ""
-
-    lines = ["\n---\n## Cross-Strategy Posting Summary"]
-    for name, posts in by_strategy.items():
-        lines.append(f"\n### {name}")
-        for p in posts[:3]:
-            lines.append(f"- {p}")
     return "\n".join(lines)
 
 
@@ -297,6 +402,10 @@ def assemble_evaluator_prompt(
     summary_config: Optional["SummaryConfig"] = None,
     scheduling_state: ProjectSchedulingState | None = None,
     strategies: dict[str, Any] | None = None,
+    held_topics: list[Any] | None = None,
+    active_arcs_all: list[Any] | None = None,
+    targets: dict[str, Any] | None = None,
+    all_topics: list[Any] | None = None,
 ) -> str:
     """Assemble full evaluator system prompt with context.
 
@@ -315,6 +424,10 @@ def assemble_evaluator_prompt(
         summary_config: Summary refresh thresholds
         scheduling_state: Per-platform scheduling capacity snapshot
         strategies: Content strategy definitions keyed by name
+        held_topics: Held topics for per-strategy posting state (ContentTopic objects)
+        active_arcs_all: Active arcs across all strategies (Arc objects)
+        targets: Target definitions for post-to-strategy mapping
+        all_topics: All topics for the topic queue section (ContentTopic objects)
 
     Returns:
         Complete system prompt string
@@ -447,10 +560,37 @@ def assemble_evaluator_prompt(
             if getattr(strat, "format_preference", None):
                 sections.append(f"- **Format**: {strat.format_preference}")
 
-        # Cross-strategy posting summary
-        cross_summary = assemble_strategy_posting_state(strategies, project_context.recent_posts)
-        if cross_summary:
-            sections.append(cross_summary)
+        # Per-strategy posting state (posts, pending drafts, topics, arcs)
+        posting_state = assemble_strategy_posting_state(
+            strategies,
+            recent_posts=project_context.recent_posts,
+            pending_drafts=project_context.pending_drafts,
+            held_topics=held_topics,
+            active_arcs=active_arcs_all,
+            targets=targets,
+        )
+        if posting_state:
+            sections.append(posting_state)
+
+    # Content Topic Queue (per-strategy, capped at ~500 tokens)
+    if all_topics:
+        topic_lines = ["\n---\n## Content Topic Queue"]
+        topics_by_strat: dict[str, list[str]] = {}
+        for t in all_topics:
+            strat = getattr(t, "strategy", "") or "default"
+            status = getattr(t, "status", "")
+            name = getattr(t, "topic", "")
+            commits = getattr(t, "commit_count", 0)
+            topics_by_strat.setdefault(strat, []).append(f"{name} [{status}] ({commits} commits)")
+        for strat_name, topic_items in topics_by_strat.items():
+            topic_lines.append(f"\n### {strat_name}")
+            for item in topic_items:
+                topic_lines.append(f"- {item}")
+        topic_section = "\n".join(topic_lines)
+        # Cap at ~500 tokens (~2000 chars)
+        if len(topic_section) > 2000:
+            topic_section = topic_section[:2000] + "\n[...topic queue truncated]"
+        sections.append(topic_section)
 
     # Memories
     if project_context.memories:

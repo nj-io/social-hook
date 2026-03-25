@@ -411,6 +411,11 @@ def run_trigger(
         logger.warning(f"Failed to get scheduling state (non-fatal): {e}")
         scheduling_state = None
 
+    # Fetch topics and arcs for evaluator context
+    all_topics = ops.get_topics_by_project(conn, project.id)
+    held_topics = [t for t in all_topics if t.status == "holding"]
+    active_arcs_all = ops.get_arcs_by_project(conn, project.id, status="active")
+
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(
@@ -425,6 +430,10 @@ def run_trigger(
             summary_config=project_config.summary if project_config else None,
             scheduling_state=scheduling_state,
             strategies=config.content_strategies or None,
+            held_topics=held_topics or None,
+            active_arcs_all=active_arcs_all or None,
+            targets=config.targets or None,
+            all_topics=all_topics or None,
         )
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")

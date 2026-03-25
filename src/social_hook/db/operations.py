@@ -2216,6 +2216,37 @@ def get_topics_by_strategy(
     return [ContentTopic.from_dict(dict(row)) for row in rows]
 
 
+def get_topics_by_project(
+    conn: sqlite3.Connection, project_id: str, status: str | None = None
+) -> list[ContentTopic]:
+    """Get all topics for a project, optionally filtered by status.
+
+    Args:
+        conn: Database connection
+        project_id: Project to query
+        status: Filter by status (e.g. "holding"), or None for all
+    """
+    if status is not None:
+        rows = conn.execute(
+            """
+            SELECT * FROM content_topics
+            WHERE project_id = ? AND status = ?
+            ORDER BY strategy, priority_rank DESC, created_at ASC
+            """,
+            (project_id, status),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT * FROM content_topics
+            WHERE project_id = ?
+            ORDER BY strategy, priority_rank DESC, created_at ASC
+            """,
+            (project_id,),
+        ).fetchall()
+    return [ContentTopic.from_dict(dict(row)) for row in rows]
+
+
 def get_topic(conn: sqlite3.Connection, topic_id: str) -> ContentTopic | None:
     """Get a content topic by ID."""
     row = conn.execute("SELECT * FROM content_topics WHERE id = ?", (topic_id,)).fetchone()

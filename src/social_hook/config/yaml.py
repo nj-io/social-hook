@@ -201,6 +201,45 @@ class ContentStrategyConfig:
     requires: list[str] | None = None  # tool dependencies
 
 
+def resolve_strategy_with_defaults(
+    strategy: ContentStrategyConfig,
+    defaults: ContentStrategyConfig | None = None,
+) -> ContentStrategyConfig:
+    """Resolve a strategy's optional fields by falling back to defaults.
+
+    Required fields (audience, voice, angle, post_when, avoid) are set per-strategy
+    and never inherited. Optional fields (format_preference, media_preference,
+    min_length, requires) fall back to defaults when unset (None) on the strategy.
+
+    Args:
+        strategy: Per-strategy config (may have None optional fields)
+        defaults: Default values to inherit from (e.g. global content-config)
+
+    Returns:
+        New ContentStrategyConfig with optional fields resolved
+    """
+    if defaults is None:
+        return strategy
+
+    return ContentStrategyConfig(
+        # Required fields — always from strategy
+        audience=strategy.audience,
+        voice=strategy.voice,
+        angle=strategy.angle,
+        post_when=strategy.post_when,
+        avoid=strategy.avoid,
+        # Optional fields — fall back to defaults when unset
+        format_preference=strategy.format_preference
+        if strategy.format_preference is not None
+        else defaults.format_preference,
+        media_preference=strategy.media_preference
+        if strategy.media_preference is not None
+        else defaults.media_preference,
+        min_length=strategy.min_length if strategy.min_length is not None else defaults.min_length,
+        requires=strategy.requires if strategy.requires is not None else defaults.requires,
+    )
+
+
 @dataclass
 class Config:
     """Main configuration object."""
