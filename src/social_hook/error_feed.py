@@ -258,3 +258,21 @@ class ErrorFeed:
 
 # Module-level singleton — db_path set at startup via set_db_path()
 error_feed = ErrorFeed()
+
+# Wiring guard — set_db_path/set_sender once per process
+_error_feed_wired = False
+
+
+def ensure_error_feed(config, db_path: str) -> None:
+    """Wire the error feed singleton once per process.
+
+    Safe to call repeatedly — only the first call takes effect.
+    """
+    global _error_feed_wired
+    if _error_feed_wired:
+        return
+    from social_hook.notifications import send_notification
+
+    error_feed.set_db_path(db_path)
+    error_feed.set_sender(lambda sev, msg: send_notification(config, f"[{sev}] {msg}"))
+    _error_feed_wired = True

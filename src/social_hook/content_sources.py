@@ -139,12 +139,14 @@ def _get_commit_diff(repo_path: str, commit_hash: str, max_file_size: int) -> st
 def _assemble_diffs(
     diffs: list[tuple[str, str]],
     max_doc_tokens: int,
+    header: str = "## Recent Commit Diffs\n\n",
 ) -> str:
     """Assemble commit diffs into a single context string within token budget.
 
     Args:
         diffs: List of (commit_hash, diff_text) tuples.
         max_doc_tokens: Maximum token budget for the output.
+        header: Header text prepended to the assembled output.
 
     Returns:
         Assembled context string.
@@ -152,7 +154,6 @@ def _assemble_diffs(
     max_chars = max_doc_tokens * _CHARS_PER_TOKEN
     parts: list[str] = []
     used_chars = 0
-    header = "## Recent Commit Diffs\n\n"
     used_chars += len(header)
 
     for commit_hash, diff_text in diffs:
@@ -175,6 +176,25 @@ def _assemble_diffs(
     return header + "".join(parts).rstrip()
 
 
+def _load_context_config(repo_path: str, project_id: str):
+    """Load ContextConfig for a project, falling back to defaults on error.
+
+    Returns:
+        A ContextConfig instance.
+    """
+    from social_hook.config.project import ContextConfig
+
+    ctx_cfg = ContextConfig()
+    try:
+        from social_hook.config.project import load_project_config
+
+        pcfg = load_project_config(repo_path)
+        ctx_cfg = pcfg.context
+    except Exception:
+        logger.warning("Could not load project config for %s, using defaults", project_id)
+    return ctx_cfg
+
+
 def resolve_commits(
     conn: sqlite3.Connection,
     project_id: str,
@@ -186,7 +206,6 @@ def resolve_commits(
     Fetches commit diffs via git show, capped at token limits.
     Prefers notable/significant commits when classifications are available.
     """
-    from social_hook.config.project import ContextConfig
     from social_hook.db import operations as ops
 
     repo_path = _get_repo_path(conn, project_id)
@@ -198,14 +217,7 @@ def resolve_commits(
         return ""
 
     # Load context config for token/size limits
-    ctx_cfg = ContextConfig()
-    try:
-        from social_hook.config.project import load_project_config
-
-        pcfg = load_project_config(repo_path)
-        ctx_cfg = pcfg.context
-    except Exception:
-        logger.warning("Could not load project config for %s, using defaults", project_id)
+    ctx_cfg = _load_context_config(repo_path, project_id)
 
     # Try to get classifications from cached analysis to prioritize commits
     _prioritized = _prioritize_decisions(conn, project_id, decisions)
@@ -333,8 +345,6 @@ def resolve_topic_commits(
     if not topic_id:
         return ""
 
-    from social_hook.config.project import ContextConfig
-
     repo_path = _get_repo_path(conn, project_id)
     if not repo_path:
         return ""
@@ -359,14 +369,7 @@ def resolve_topic_commits(
     commit_hashes = [row[0] for row in rows]
 
     # Load context config for limits
-    ctx_cfg = ContextConfig()
-    try:
-        from social_hook.config.project import load_project_config
-
-        pcfg = load_project_config(repo_path)
-        ctx_cfg = pcfg.context
-    except Exception:
-        logger.warning("Could not load project config for %s, using defaults", project_id)
+    ctx_cfg = _load_context_config(repo_path, project_id)
 
     # Fetch diffs for each commit
     diffs: list[tuple[str, str]] = []
@@ -386,33 +389,11 @@ def resolve_topic_commits(
         topic = ops.get_topic(conn, topic_id)
         if topic:
             topic_name = topic.topic
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to look up topic %s: %s", topic_id, e)
 
-    # Assemble with custom header
-    max_chars = ctx_cfg.max_doc_tokens * _CHARS_PER_TOKEN
     header = f"## Code changes across {len(diffs)} commits for topic '{topic_name}'\n\n"
-    parts: list[str] = []
-    used_chars = len(header)
-
-    for commit_hash, diff_text in diffs:
-        entry_header = f"### Commit {commit_hash[:8]}\n```diff\n"
-        entry_footer = "\n```\n\n"
-        entry_overhead = len(entry_header) + len(entry_footer)
-
-        remaining = max_chars - used_chars - entry_overhead
-        if remaining <= 0:
-            break
-
-        if len(diff_text) > remaining:
-            diff_text = diff_text[:remaining] + "\n... [truncated at token budget]"
-
-        parts.append(entry_header + diff_text + entry_footer)
-        used_chars += len(parts[-1])
-
-    if not parts:
-        return ""
-    return header + "".join(parts).rstrip()
+    return _assemble_diffs(diffs, ctx_cfg.max_doc_tokens, header=header)
 
 
 # =============================================================================

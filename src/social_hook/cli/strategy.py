@@ -476,10 +476,10 @@ def delete(
         else:
             config_data = {}
 
-        strategies_section = config_data.get("strategies", {})
+        strategies_section = config_data.get("content_strategies", {})
         if name in strategies_section:
             del strategies_section[name]
-            config_data["strategies"] = strategies_section
+            config_data["content_strategies"] = strategies_section
             config_path.write_text(
                 yaml.dump(config_data, default_flow_style=False, allow_unicode=True),
                 encoding="utf-8",

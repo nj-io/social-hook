@@ -6,6 +6,7 @@ import logging
 import typer
 
 from social_hook.cli.utils import resolve_project
+from social_hook.models import PENDING_STATUSES
 
 app = typer.Typer(no_args_is_help=True)
 logger = logging.getLogger(__name__)
@@ -195,9 +196,10 @@ def delete(
             return
 
         # Cancel pending drafts
+        placeholders = ",".join("?" for _ in PENDING_STATUSES)
         pending = conn.execute(
-            "SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ('draft', 'approved', 'scheduled')",
-            (proj.id, name),
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({placeholders})",
+            (proj.id, name, *PENDING_STATUSES),
         ).fetchall()
         for row in pending:
             ops.update_draft(conn, row["id"], status="cancelled")

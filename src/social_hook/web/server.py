@@ -41,6 +41,20 @@ logger = logging.getLogger(__name__)
 _STALE_TASK_TIMEOUT_SECONDS = 600  # 10 min; longest expected task is ~5 min (LLM subprocess)
 _STALE_CHECK_INTERVAL_TICKS = 60  # every 60 bridge-loop ticks (60 × 0.5s = 30s)
 
+
+def _parse_episode_tags(decision) -> list | None:
+    """Parse episode_tags from a Decision, handling both list and JSON-string forms.
+
+    Returns a list (possibly empty), or None if the decision has no tags.
+    """
+    if decision is None:
+        return None
+    ep_tags = decision.episode_tags
+    if isinstance(ep_tags, str):
+        ep_tags = safe_json_loads(ep_tags, "decision.episode_tags", default=[])
+    return ep_tags or None
+
+
 # ---------------------------------------------------------------------------
 # WebSocket gateway
 # ---------------------------------------------------------------------------
@@ -1404,16 +1418,15 @@ async def api_project_decisions(
             ).fetchall()
             classification_by_hash: dict[str, str] = {}
             for cr in cycle_rows:
-                try:
-                    import json as _json
-
-                    analysis_data = _json.loads(cr["commit_analysis_json"])
-                    ca = analysis_data.get("commit_analysis", {})
-                    cls_val = ca.get("classification")
-                    if cls_val:
-                        classification_by_hash[cr["trigger_ref"]] = cls_val
-                except Exception:
-                    pass
+                analysis_data = safe_json_loads(
+                    cr["commit_analysis_json"],
+                    "cycle_commit_analysis_json",
+                    default={},
+                )
+                ca = analysis_data.get("commit_analysis", {})
+                cls_val = ca.get("classification")
+                if cls_val:
+                    classification_by_hash[cr["trigger_ref"]] = cls_val
             for d in decisions_list:
                 d["classification"] = classification_by_hash.get(d.get("commit_hash", ""))
 
@@ -3911,9 +3924,10 @@ async def api_delete_target(project_id: str, name: str):
             raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
 
         # Cancel pending drafts for this target
+        _placeholders = ",".join("?" for _ in PENDING_STATUSES)
         pending = conn.execute(
-            "SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ('draft', 'approved', 'scheduled')",
-            (project_id, name),
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({_placeholders})",
+            (project_id, name, *PENDING_STATUSES),
         ).fetchall()
         for row in pending:
             ops.update_draft(conn, row["id"], status="cancelled")
@@ -4579,12 +4593,7 @@ async def api_accept_suggestion(project_id: str, suggestion_id: str):
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
-        suggestions = ops.get_suggestions_by_project(conn, project_id)
-        suggestion = None
-        for s in suggestions:
-            if s.id == suggestion_id:
-                suggestion = s
-                break
+        suggestion = ops.get_suggestion(conn, suggestion_id)
         if not suggestion:
             raise HTTPException(status_code=404, detail="Suggestion not found")
         if suggestion.status != "pending":
@@ -4762,10 +4771,7 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                         if "default" not in strategy_to_draft:
                             strategy_to_draft["default"] = d
 
-                # Parse episode_tags once from the decision
-                ep_tags = decision.episode_tags
-                if isinstance(ep_tags, str):
-                    ep_tags = safe_json_loads(ep_tags, "decision.episode_tags", default=[])
+                ep_tags = _parse_episode_tags(decision)
 
                 for strat_name, strat_data in (targets_data or {}).items():
                     action = (
@@ -4785,14 +4791,10 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                         "draft_content": strat_draft.content[:200] if strat_draft else None,
                         "draft_preview_mode": strat_draft.preview_mode if strat_draft else None,
                         "topic_id": topic_id,
-                        "episode_tags": ep_tags if ep_tags else None,
+                        "episode_tags": ep_tags,
                     }
             elif drafts and decision:
-                from social_hook.parsing import safe_json_loads
-
-                ep_tags = decision.episode_tags
-                if isinstance(ep_tags, str):
-                    ep_tags = safe_json_loads(ep_tags, "decision.episode_tags", default=[])
+                ep_tags = _parse_episode_tags(decision)
                 # Legacy: single "default" strategy
                 strategies["default"] = {
                     "decision": decision.decision,
@@ -4802,7 +4804,7 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                     "draft_content": drafts[0].content[:200] if drafts else None,
                     "draft_preview_mode": drafts[0].preview_mode if drafts else None,
                     "topic_id": None,
-                    "episode_tags": ep_tags if ep_tags else None,
+                    "episode_tags": ep_tags,
                 }
 
             cd["strategies"] = strategies
@@ -4846,11 +4848,7 @@ def _enrich_cycle_trigger(conn, cycle, decision) -> str:
         short_hash = trigger_ref[:7] if trigger_ref else "unknown"
         parts = [f"Commit {short_hash}"]
         if decision:
-            from social_hook.parsing import safe_json_loads
-
-            ep_tags = decision.episode_tags
-            if isinstance(ep_tags, str):
-                ep_tags = safe_json_loads(ep_tags, "trigger.episode_tags", default=[])
+            ep_tags = _parse_episode_tags(decision)
             if ep_tags:
                 parts.append(f"({', '.join(ep_tags)})")
             if decision.commit_message:
@@ -4865,11 +4863,10 @@ def _enrich_cycle_trigger(conn, cycle, decision) -> str:
         return "Topic matured"
     elif trigger_type == "operator_suggestion":
         if trigger_ref:
-            suggestions = ops.get_suggestions_by_project(conn, cycle.project_id)
-            for s in suggestions:
-                if s.id == trigger_ref:
-                    idea_preview = s.idea[:60] + ("..." if len(s.idea) > 60 else "")
-                    return f"Suggestion: {idea_preview}"
+            s = ops.get_suggestion(conn, trigger_ref)
+            if s:
+                idea_preview = s.idea[:60] + ("..." if len(s.idea) > 60 else "")
+                return f"Suggestion: {idea_preview}"
         return "Operator suggestion"
     elif trigger_type == "hero_launch":
         return "Hero launch"

@@ -218,9 +218,9 @@ def run_trigger(
         return 2
 
     # Wire error feed once per process (needs both config and db_path)
-    from social_hook.scheduler import _ensure_error_feed
+    from social_hook.error_feed import ensure_error_feed
 
-    _ensure_error_feed(config, str(db_path))
+    ensure_error_feed(config, str(db_path))
 
     db = DryRunContext(conn, dry_run=dry_run)
     db.trigger_source = trigger_source
@@ -470,8 +470,6 @@ def run_trigger(
                 project=project,
                 commit=commit,
                 commit_hash=commit_hash,
-                context=context,
-                evaluator_client=evaluator_client,
                 current_branch=current_branch,
                 dry_run=dry_run,
                 verbose=verbose,
@@ -778,8 +776,6 @@ def _run_trivial_skip(
     project,
     commit,
     commit_hash: str,
-    context,
-    evaluator_client,
     current_branch: str | None,
     dry_run: bool,
     verbose: bool,
@@ -809,10 +805,14 @@ def _run_trivial_skip(
         logger.warning(f"Failed to cache analysis JSON (non-fatal): {e}")
 
     # Tag-to-topic matching (even trivial commits may match topics)
+    # Deduplicate: a topic matching multiple tags should only be incremented once
+    incremented_topic_ids: set[str] = set()
     for tag in analysis.episode_tags:
         matching_topics = ops.get_topics_matching_tag(conn, project.id, tag)
         for topic in matching_topics:
-            ops.increment_topic_commit_count(conn, topic.id)
+            if topic.id not in incremented_topic_ids:
+                ops.increment_topic_commit_count(conn, topic.id)
+                incremented_topic_ids.add(topic.id)
             ops.insert_topic_commit(conn, topic.id, commit_hash, matched_tag=tag)
 
     # Create skip decision
@@ -857,9 +857,8 @@ def _run_commit_analyzer(
 
     Returns CommitAnalysisResult if analysis was run or cached, None on error.
     """
-    import json
-
     from social_hook.llm.schemas import CommitAnalysisResult
+    from social_hook.parsing import safe_json_loads
 
     # 1. Increment commit count
     new_count = ops.increment_analysis_commit_count(conn, project.id)
@@ -875,15 +874,21 @@ def _run_commit_analyzer(
         # Interval not met — use cached analysis from most recent cycle
         cached_cycle = ops.get_latest_cycle_with_analysis(conn, project.id)
         if cached_cycle and cached_cycle.commit_analysis_json:
-            try:
-                cached_data = json.loads(cached_cycle.commit_analysis_json)
-                result = CommitAnalysisResult.model_validate(cached_data)
-                if verbose:
-                    print(f"Using cached analysis (count {new_count}/{interval})")
-                return result
-            except Exception as e:
-                logger.warning(f"Failed to load cached analysis, running fresh: {e}")
-                # Fall through to run fresh analysis
+            cached_data = safe_json_loads(
+                cached_cycle.commit_analysis_json,
+                "cached_commit_analysis_json",
+                default=None,
+            )
+            if cached_data is not None:
+                try:
+                    result = CommitAnalysisResult.model_validate(cached_data)
+                    if verbose:
+                        print(f"Using cached analysis (count {new_count}/{interval})")
+                    return result
+                except Exception as e:
+                    logger.warning("Failed to validate cached analysis, running fresh: %s", e)
+            else:
+                logger.warning("Failed to parse cached analysis JSON, running fresh")
         else:
             # No cache (first commit case) — run fresh analysis
             if verbose:

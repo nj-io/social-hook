@@ -1163,6 +1163,25 @@ def insert_post(conn: sqlite3.Connection, post: Post) -> str:
     return post.id
 
 
+def _parse_posted_at(raw: str | None):
+    """Parse a posted_at TEXT column into a timezone-aware datetime.
+
+    SQLite stores datetimes as TEXT. This helper normalises to UTC if
+    the stored value is naive (no tzinfo).
+
+    Returns:
+        datetime or None if *raw* is falsy.
+    """
+    from datetime import datetime, timezone
+
+    if not raw:
+        return None
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def get_last_post_time_by_platform(conn: sqlite3.Connection, platform: str):
     """Get the most recent post time across all projects for a platform.
 
@@ -1172,20 +1191,13 @@ def get_last_post_time_by_platform(conn: sqlite3.Connection, platform: str):
     Returns:
         datetime or None
     """
-    from datetime import datetime, timezone
-
     row = conn.execute(
         "SELECT posted_at FROM posts WHERE platform = ? ORDER BY posted_at DESC LIMIT 1",
         (platform,),
     ).fetchone()
     if not row or not row[0]:
         return None
-
-    raw = row[0]
-    dt = datetime.fromisoformat(raw)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
+    return _parse_posted_at(row[0])
 
 
 def get_last_post_time_by_account(conn: sqlite3.Connection, target_ids: list[str]):
@@ -1197,8 +1209,6 @@ def get_last_post_time_by_account(conn: sqlite3.Connection, target_ids: list[str
     Returns:
         datetime or None
     """
-    from datetime import datetime, timezone
-
     if not target_ids:
         return None
 
@@ -1210,12 +1220,7 @@ def get_last_post_time_by_account(conn: sqlite3.Connection, target_ids: list[str
     ).fetchone()
     if not row or not row[0]:
         return None
-
-    raw = row[0]
-    dt = datetime.fromisoformat(raw)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
+    return _parse_posted_at(row[0])
 
 
 def get_drafts_by_cycle(conn: sqlite3.Connection, cycle_id: str) -> list[Draft]:
@@ -2384,6 +2389,17 @@ def insert_content_suggestion(conn: sqlite3.Connection, suggestion: ContentSugge
     )
     conn.commit()
     return suggestion.id
+
+
+def get_suggestion(conn: sqlite3.Connection, suggestion_id: str) -> ContentSuggestion | None:
+    """Get a single suggestion by ID. Returns None if not found."""
+    row = conn.execute(
+        "SELECT * FROM content_suggestions WHERE id = ?",
+        (suggestion_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return ContentSuggestion.from_dict(dict(row))
 
 
 def get_suggestions_by_project(
