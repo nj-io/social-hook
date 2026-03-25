@@ -163,4 +163,86 @@ interactions:
     status:
       code: 200
       message: OK
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.32.3
+    method: GET
+    uri: https://api.x.com/2/users/me
+  response:
+    body:
+      string: "{\"data\":{\"id\":\"149464644\",\"name\":\"NJ \u2699\uFE0F\",\"username\":\"fitdegen\"}}"
+    headers:
+      CF-RAY:
+      - 9e1bbf708b5fd32c-BKK
+      Cache-Control:
+      - no-cache, no-store, max-age=0
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Length:
+      - '86'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Wed, 25 Mar 2026 06:09:37 GMT
+      Server:
+      - cloudflare envoy
+      Set-Cookie:
+      - guest_id_marketing=v1%3A177441897746878638; Max-Age=63072000; Expires=Fri,
+        24 Mar 2028 06:09:37 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177441897746878638; Max-Age=63072000; Expires=Fri, 24 Mar
+        2028 06:09:37 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_UbAp6/DbS3MTAoV7dORe1g=="; Max-Age=63072000; Expires=Fri,
+        24 Mar 2028 06:09:37 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177441897746878638; Max-Age=63072000; Expires=Fri, 24 Mar 2028
+        06:09:37 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - __cf_bm=8cOziohizT139O6wabgQsPWUNbB3DdvUD3ZGTdlCbGE-1774418977.3628519-1.0.1.1-s7sE7DEearZYZl1deOdP0Y5E7PMrAEonIOpSYCMdG8rbyPvClzeYbuPbHwCfbEs0m8lew.nQu4L1n2YK6z_2DY3vRQWdMfRIzbKkNDX8dhlS0j.kAqYbM_vO13tCz8NC;
+        HttpOnly; Secure; Path=/; Domain=x.com; Expires=Wed, 25 Mar 2026 06:39:37
+        GMT
+      api-version:
+      - '2.160'
+      cf-cache-status:
+      - DYNAMIC
+      content-disposition:
+      - attachment; filename=json.json
+      origin-cf-ray:
+      - 9e1bbf708b5fd32c-SEA
+      perf:
+      - '7402827104'
+      strict-transport-security:
+      - max-age=631138519; includeSubdomains
+      vary:
+      - accept-encoding
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '75'
+      x-rate-limit-remaining:
+      - '74'
+      x-rate-limit-reset:
+      - '1774419877'
+      x-response-time:
+      - '32'
+      x-served-by:
+      - t4_p
+      x-transaction-id:
+      - b4e4f73cb19aa7a8
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
 version: 1

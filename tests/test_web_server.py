@@ -295,7 +295,7 @@ class TestBotEndpoints:
         conn.commit()
         conn.close()
 
-        resp = client.get("/api/events?lastId=0")
+        resp = client.get("/api/events?lastId=0&max_empty=1")
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/event-stream")
 
