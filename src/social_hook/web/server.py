@@ -182,7 +182,7 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
 
         # Reset decisions stuck in 'evaluating' (retrigger was interrupted)
         eval_cursor = conn.execute(
-            "UPDATE decisions SET decision = 'imported' WHERE decision = 'evaluating'"
+            "UPDATE decisions SET decision = 'imported', reasoning = '' WHERE decision = 'evaluating'"
         )
         conn.commit()
         eval_count = eval_cursor.rowcount
@@ -1837,7 +1837,7 @@ async def api_retrigger_decision(decision_id: str):
         conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
         # Mark as evaluating — row stays visible in the UI
         conn.execute(
-            "UPDATE decisions SET decision = 'evaluating', reasoning = 'Re-evaluating...' WHERE id = ?",
+            "UPDATE decisions SET decision = 'evaluating' WHERE id = ?",
             (decision_id,),
         )
         conn.commit()

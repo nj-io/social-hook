@@ -619,7 +619,7 @@ export default function ProjectDetailPage() {
                           </div>
                         </td>
                         <td className="py-2 pr-4 text-xs">
-                          <p className="whitespace-pre-wrap">{d.reasoning || "-"}</p>
+                          <p className="whitespace-pre-wrap">{d.decision === "evaluating" ? "" : (d.reasoning || "-")}</p>
                         </td>
                         <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
                         <td className="hidden py-2 pr-4 sm:table-cell">
