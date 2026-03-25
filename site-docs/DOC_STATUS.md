@@ -90,3 +90,5 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] Scheduling deep-dive (how optimal times are calculated, posting windows, rate limits)
 - [ ] Agent-first CLI equivalents — interactive commands like `setup` need non-interactive agent equivalents, then documented
 - [x] ~~Enrich docstrings for 9 new CLI command groups~~ (done — group help enriched, subcommands already well-documented)
+- [ ] Testing guide — unit tests, E2E test suite, snapshots, VCR cassettes, verification scripts (source: docs/E2E_TESTING.md, docs/CLAUDE.md E2E section)
+- [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)
