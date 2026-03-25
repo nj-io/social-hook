@@ -70,6 +70,14 @@ async def lifespan(app_instance: FastAPI):
     db_path = get_db_path()
     init_database(db_path)
     _cleanup_stale_tasks(db_path)
+    # Initialize error feed so background tasks can emit errors
+    from social_hook.error_feed import ensure_error_feed
+
+    try:
+        config = _get_config()
+        ensure_error_feed(config, str(db_path))
+    except Exception:
+        logger.debug("Error feed init failed (non-fatal)", exc_info=True)
     task = asyncio.create_task(_event_bridge_loop())
     yield
     task.cancel()
@@ -323,13 +331,26 @@ def _run_background_task(
             try:
                 import traceback
 
+                error_msg = traceback.format_exc()[-500:]
                 conn2.execute(
                     "UPDATE background_tasks SET status='failed', error=?,"
                     " updated_at=datetime('now') WHERE id=?",
-                    (traceback.format_exc()[-500:], task_id),
+                    (error_msg, task_id),
                 )
                 conn2.commit()
                 ops.emit_data_event(conn2, "task", "failed", task_id, project_id)
+                # Emit to error feed for visibility in System > Errors
+                try:
+                    from social_hook.error_feed import ErrorSeverity, error_feed
+
+                    error_feed.emit(
+                        ErrorSeverity.ERROR,
+                        f"Background task '{task_type}' failed: {error_msg[:200]}",
+                        source="background_task",
+                        context={"task_id": task_id, "ref_id": ref_id, "project_id": project_id},
+                    )
+                except Exception:
+                    pass  # error feed itself may not be initialized
             finally:
                 conn2.close()
 
