@@ -19,14 +19,14 @@ These options can be placed before any command.
 
 | Group | Description |
 |-------|-------------|
-| [`account`](account.md) | Platform account management. |
+| [`account`](account.md) | Manage OAuth-authenticated platform accounts (X, LinkedIn). |
 | [`arc`](arc.md) | Manage narrative arcs. |
 | [`bot`](bot.md) | Bot daemon management. |
-| [`brief`](brief.md) | Project brief management. |
+| [`brief`](brief.md) | View and edit the project brief used by the evaluator and drafter. |
 | [`config`](config.md) | View and modify configuration. |
-| [`content`](content.md) | Content suggestions and operations. |
-| [`credentials`](credentials.md) | Platform credential management. |
-| [`cycles`](cycles.md) | Evaluation cycle history. |
+| [`content`](content.md) | Submit content ideas, combine topics, and trigger hero launch drafts. |
+| [`credentials`](credentials.md) | Manage API keys and secrets in ~/.social-hook/.env. |
+| [`cycles`](cycles.md) | Inspect evaluation cycle history and per-strategy outcomes. |
 | [`decision`](decision.md) | Decision management. |
 | [`draft`](draft.md) | Draft lifecycle management. |
 | [`inspect`](inspect.md) | Inspect system state. |
@@ -36,10 +36,10 @@ These options can be placed before any command.
 | [`memory`](memory.md) | Manage voice memories. |
 | [`project`](project.md) | Project management. |
 | [`snapshot`](snapshot.md) | DB snapshot management. |
-| [`strategy`](strategy.md) | Content strategy management. |
-| [`system`](system.md) | System health and errors. |
-| [`target`](target.md) | Content distribution targets. |
-| [`topics`](topics.md) | Content topic queue. |
+| [`strategy`](strategy.md) | View and customize content strategies (voice, audience, editorial rules). |
+| [`system`](system.md) | Monitor system health, view error feed, and check process status. |
+| [`target`](target.md) | Configure where content is distributed (account + destination + strategy). |
+| [`topics`](topics.md) | Manage the prioritised content topic queue per strategy. |
 
 ## Commands
 

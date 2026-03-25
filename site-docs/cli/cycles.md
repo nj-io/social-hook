@@ -1,6 +1,6 @@
 # social-hook cycles
 
-Evaluation cycle history.
+Inspect evaluation cycle history and per-strategy outcomes.
 
 ---
 

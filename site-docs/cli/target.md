@@ -1,6 +1,6 @@
 # social-hook target
 
-Content distribution targets.
+Configure where content is distributed (account + destination + strategy).
 
 ---
 

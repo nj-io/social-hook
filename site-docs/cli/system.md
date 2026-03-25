@@ -1,6 +1,6 @@
 # social-hook system
 
-System health and errors.
+Monitor system health, view error feed, and check process status.
 
 ---
 

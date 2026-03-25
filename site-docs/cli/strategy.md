@@ -1,6 +1,6 @@
 # social-hook strategy
 
-Content strategy management.
+View and customize content strategies (voice, audience, editorial rules).
 
 ---
 
