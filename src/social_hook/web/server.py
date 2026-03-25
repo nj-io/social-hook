@@ -4748,18 +4748,30 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
             # Get drafts for this cycle to derive strategies and status
             drafts = ops.get_drafts_by_cycle(conn, c.id)
 
-            # Get the decision for strategy info (via first draft's decision_id)
+            # Get the decision for strategy info
+            # Try via drafts first, then fall back to cycle's trigger_ref (commit hash)
             decision = None
             if drafts:
                 decision_id = drafts[0].decision_id
                 decision = ops.get_decision(conn, decision_id)
+            if not decision and c.trigger_ref:
+                # No drafts — look up decision by commit hash directly
+                from social_hook.models import Decision
+
+                row = conn.execute(
+                    "SELECT * FROM decisions WHERE project_id = ? AND commit_hash = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (project_id, c.trigger_ref),
+                ).fetchone()
+                if row:
+                    decision = Decision.from_dict(dict(row))
 
             # --- 2.3: Richer trigger descriptions ---
             cd["trigger"] = _enrich_cycle_trigger(conn, c, decision)
 
             # --- Strategy outcomes ---
             strategies: dict[str, dict] = {}
-            if drafts and decision and decision.targets:
+            if decision and decision.targets:
                 # targets is a dict of {strategy_name: {action, reason, ...}}
                 from social_hook.parsing import safe_json_loads
 
@@ -4802,7 +4814,7 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                         "topic_id": topic_id,
                         "episode_tags": ep_tags,
                     }
-            elif drafts and decision:
+            elif decision:
                 ep_tags = _parse_episode_tags(decision)
                 # Legacy: single "default" strategy
                 strategies["default"] = {
