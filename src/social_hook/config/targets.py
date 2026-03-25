@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from social_hook.config.platforms import FREQUENCY_PRESETS, SMART_DEFAULTS
+from social_hook.config.platforms import FREQUENCY_PRESETS, PLATFORM_THREAD_SUPPORT, SMART_DEFAULTS
 from social_hook.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -255,13 +255,6 @@ def validate_targets_config(config: Config) -> None:
 
     # --- Strategy constraint validation ---
     validate_strategy_constraints(config)
-
-
-# Static platform thread support map (kept in sync with adapter implementations)
-PLATFORM_THREAD_SUPPORT: dict[str, bool] = {
-    "x": True,
-    "linkedin": False,
-}
 
 
 def validate_strategy_constraints(config: Config) -> None:

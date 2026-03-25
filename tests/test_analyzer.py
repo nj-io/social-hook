@@ -374,6 +374,23 @@ class TestCommitAnalyzerIntervalGating:
             ),
         )
 
+    def _make_ctx(self, temp_db, project, commit, project_config=None):
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.trigger import TriggerContext
+
+        return TriggerContext(
+            config=MagicMock(),
+            conn=temp_db,
+            db=DryRunContext(temp_db, dry_run=False),
+            project=project,
+            commit=commit,
+            project_config=project_config,
+            current_branch="main",
+            dry_run=False,
+            verbose=False,
+            show_prompt=False,
+        )
+
     def test_first_commit_always_runs_fresh(self, temp_db):
         """First commit (no cache) should run fresh analysis regardless of interval."""
         from social_hook.db import operations as ops
@@ -390,20 +407,14 @@ class TestCommitAnalyzerIntervalGating:
 
         # Set interval to 3 — normally would cache, but no cache exists
         project_config = SimpleNamespace(context=SimpleNamespace(commit_analysis_interval=3))
+        ctx = self._make_ctx(temp_db, project, commit, project_config)
 
         with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
             MockAnalyzer.return_value.analyze.return_value = mock_result
             result = _run_commit_analyzer(
-                conn=temp_db,
-                db=MagicMock(),
-                project=project,
-                commit=commit,
+                ctx=ctx,
                 context=context,
                 evaluator_client=mock_client,
-                project_config=project_config,
-                show_prompt=False,
-                dry_run=False,
-                verbose=False,
             )
 
         assert result is not None
@@ -437,19 +448,13 @@ class TestCommitAnalyzerIntervalGating:
         mock_client = MagicMock()
 
         project_config = SimpleNamespace(context=SimpleNamespace(commit_analysis_interval=3))
+        ctx = self._make_ctx(temp_db, project, commit, project_config)
 
         with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
             result = _run_commit_analyzer(
-                conn=temp_db,
-                db=MagicMock(),
-                project=project,
-                commit=commit,
+                ctx=ctx,
                 context=context,
                 evaluator_client=mock_client,
-                project_config=project_config,
-                show_prompt=False,
-                dry_run=False,
-                verbose=False,
             )
             # Analyzer should NOT be called — using cache
             MockAnalyzer.return_value.analyze.assert_not_called()
@@ -475,20 +480,14 @@ class TestCommitAnalyzerIntervalGating:
 
         mock_result = self._make_mock_analyzer_result()
         project_config = SimpleNamespace(context=SimpleNamespace(commit_analysis_interval=3))
+        ctx = self._make_ctx(temp_db, project, commit, project_config)
 
         with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
             MockAnalyzer.return_value.analyze.return_value = mock_result
             result = _run_commit_analyzer(
-                conn=temp_db,
-                db=MagicMock(),
-                project=project,
-                commit=commit,
+                ctx=ctx,
                 context=context,
                 evaluator_client=mock_client,
-                project_config=project_config,
-                show_prompt=False,
-                dry_run=False,
-                verbose=False,
             )
             MockAnalyzer.return_value.analyze.assert_called_once()
 
@@ -505,20 +504,14 @@ class TestCommitAnalyzerIntervalGating:
 
         commit = CommitInfo(hash="jkl012", message="test", diff="")
         context = SimpleNamespace(project=project)
+        ctx = self._make_ctx(temp_db, project, commit, project_config=None)
 
         with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
             MockAnalyzer.return_value.analyze.side_effect = Exception("LLM error")
             result = _run_commit_analyzer(
-                conn=temp_db,
-                db=MagicMock(),
-                project=project,
-                commit=commit,
+                ctx=ctx,
                 context=context,
                 evaluator_client=MagicMock(),
-                project_config=None,
-                show_prompt=False,
-                dry_run=False,
-                verbose=False,
             )
 
         assert result is None

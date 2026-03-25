@@ -1,8 +1,13 @@
 """One-shot trigger: commit evaluation and draft creation pipeline."""
 
+from __future__ import annotations
+
 import logging
+import sqlite3
 import subprocess
 import sys
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
@@ -16,7 +21,33 @@ from social_hook.models import CommitInfo, Decision, Draft, is_draftable
 from social_hook.parsing import safe_int
 from social_hook.rate_limits import check_rate_limit
 
+if TYPE_CHECKING:
+    from social_hook.config.project import ProjectConfig
+    from social_hook.config.yaml import Config
+    from social_hook.models import Project
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TriggerContext:
+    """Shared context for trigger pipeline functions.
+
+    Groups the parameters that flow through _run_commit_analyzer,
+    _run_trivial_skip, and _run_targets_path.
+    """
+
+    config: Config
+    conn: sqlite3.Connection
+    db: DryRunContext
+    project: Project
+    commit: CommitInfo
+    project_config: ProjectConfig | None
+    current_branch: str | None
+    dry_run: bool
+    verbose: bool
+    show_prompt: bool
+    existing_decision_id: str | None = None
 
 
 def parse_commit_info(commit_hash: str, repo_path: str) -> CommitInfo:
@@ -446,34 +477,32 @@ def run_trigger(
         getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets
     )
     if has_targets:
-        analyzer_result = _run_commit_analyzer(
+        ctx = TriggerContext(
+            config=config,
             conn=conn,
             db=db,
             project=project,
             commit=commit,
-            context=context,
-            evaluator_client=evaluator_client,
             project_config=project_config,
-            show_prompt=show_prompt,
+            current_branch=current_branch,
             dry_run=dry_run,
             verbose=verbose,
+            show_prompt=show_prompt,
+            existing_decision_id=existing_decision_id,
+        )
+        analyzer_result = _run_commit_analyzer(
+            ctx=ctx,
+            context=context,
+            evaluator_client=evaluator_client,
         )
 
         # Stage 1 trivial skip: if analyzer classified as trivial, skip stage 2
         if analyzer_result is not None and _is_trivial_classification(analyzer_result):
             logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
             result = _run_trivial_skip(
+                ctx=ctx,
                 analyzer_result=analyzer_result,
-                config=config,
-                conn=conn,
-                db=db,
-                project=project,
-                commit=commit,
                 commit_hash=commit_hash,
-                current_branch=current_branch,
-                dry_run=dry_run,
-                verbose=verbose,
-                existing_decision_id=existing_decision_id,
             )
             conn.close()
             return result
@@ -511,21 +540,12 @@ def run_trigger(
     # --- New targets path: when config.targets has real target entries ---
     if has_targets:
         result = _run_targets_path(
+            ctx=ctx,
             evaluation=evaluation,
             analysis=analysis,
-            config=config,
-            conn=conn,
-            db=db,
-            project=project,
-            commit=commit,
             commit_hash=commit_hash,
             context=context,
-            project_config=project_config,
-            current_branch=current_branch,
             evaluator_client=evaluator_client,
-            dry_run=dry_run,
-            verbose=verbose,
-            existing_decision_id=existing_decision_id,
             analyzer_result=analyzer_result,
         )
         conn.close()
@@ -769,17 +789,9 @@ def _is_trivial_classification(analyzer_result) -> bool:
 
 
 def _run_trivial_skip(
+    ctx: TriggerContext,
     analyzer_result,
-    config,
-    conn,
-    db,
-    project,
-    commit,
     commit_hash: str,
-    current_branch: str | None,
-    dry_run: bool,
-    verbose: bool,
-    existing_decision_id: str | None = None,
 ) -> int:
     """Handle trivial commits: create cycle, do tag matching, skip stage 2."""
     import json
@@ -791,16 +803,16 @@ def _run_trivial_skip(
     # Create evaluation cycle record
     cycle = EvaluationCycle(
         id=generate_id("cycle"),
-        project_id=project.id,
+        project_id=ctx.project.id,
         trigger_type="commit",
         trigger_ref=commit_hash,
     )
-    db.insert_evaluation_cycle(cycle)
+    ctx.db.insert_evaluation_cycle(cycle)
 
     # Store analysis JSON on the cycle for caching
     try:
         analysis_json = json.dumps(analyzer_result.model_dump(), default=str)
-        ops.update_cycle_analysis_json(conn, cycle.id, analysis_json)
+        ops.update_cycle_analysis_json(ctx.conn, cycle.id, analysis_json)
     except Exception as e:
         logger.warning(f"Failed to cache analysis JSON (non-fatal): {e}")
 
@@ -808,33 +820,33 @@ def _run_trivial_skip(
     # Deduplicate: a topic matching multiple tags should only be incremented once
     incremented_topic_ids: set[str] = set()
     for tag in analysis.episode_tags:
-        matching_topics = ops.get_topics_matching_tag(conn, project.id, tag)
+        matching_topics = ops.get_topics_matching_tag(ctx.conn, ctx.project.id, tag)
         for topic in matching_topics:
             if topic.id not in incremented_topic_ids:
-                ops.increment_topic_commit_count(conn, topic.id)
+                ops.increment_topic_commit_count(ctx.conn, topic.id)
                 incremented_topic_ids.add(topic.id)
-            ops.insert_topic_commit(conn, topic.id, commit_hash, matched_tag=tag)
+            ops.insert_topic_commit(ctx.conn, topic.id, commit_hash, matched_tag=tag)
 
     # Create skip decision
     decision = Decision(
-        id=existing_decision_id or generate_id("decision"),
-        project_id=project.id,
+        id=ctx.existing_decision_id or generate_id("decision"),
+        project_id=ctx.project.id,
         commit_hash=commit_hash,
         decision="skip",
         reasoning="Trivial commit — skipped strategy evaluation",
-        commit_message=commit.message,
+        commit_message=ctx.commit.message,
         episode_tags=analysis.episode_tags,
         commit_summary=analysis.summary,
-        branch=current_branch,
+        branch=ctx.current_branch,
     )
 
-    if existing_decision_id:
-        ops.upsert_decision(conn, decision)
+    if ctx.existing_decision_id:
+        ops.upsert_decision(ctx.conn, decision)
     else:
-        db.insert_decision(decision)
-    db.emit_data_event("decision", "created", decision.id, project.id)
+        ctx.db.insert_decision(decision)
+    ctx.db.emit_data_event("decision", "created", decision.id, ctx.project.id)
 
-    if verbose:
+    if ctx.verbose:
         print("Decision: skip (trivial commit)")
         print(f"Summary: {analysis.summary}")
 
@@ -842,16 +854,9 @@ def _run_trivial_skip(
 
 
 def _run_commit_analyzer(
-    conn,
-    db,
-    project,
-    commit,
+    ctx: TriggerContext,
     context,
     evaluator_client,
-    project_config,
-    show_prompt: bool,
-    dry_run: bool,
-    verbose: bool,
 ):
     """Run stage 1 commit analyzer with interval gating.
 
@@ -861,18 +866,18 @@ def _run_commit_analyzer(
     from social_hook.parsing import safe_json_loads
 
     # 1. Increment commit count
-    new_count = ops.increment_analysis_commit_count(conn, project.id)
+    new_count = ops.increment_analysis_commit_count(ctx.conn, ctx.project.id)
 
     # 2. Check interval threshold
     interval = 1
-    if project_config and hasattr(project_config, "context") and project_config.context:
-        interval = getattr(project_config.context, "commit_analysis_interval", 1)
+    if ctx.project_config and hasattr(ctx.project_config, "context") and ctx.project_config.context:
+        interval = getattr(ctx.project_config.context, "commit_analysis_interval", 1)
     if interval < 1:
         interval = 1
 
     if new_count < interval:
         # Interval not met — use cached analysis from most recent cycle
-        cached_cycle = ops.get_latest_cycle_with_analysis(conn, project.id)
+        cached_cycle = ops.get_latest_cycle_with_analysis(ctx.conn, ctx.project.id)
         if cached_cycle and cached_cycle.commit_analysis_json:
             cached_data = safe_json_loads(
                 cached_cycle.commit_analysis_json,
@@ -882,7 +887,7 @@ def _run_commit_analyzer(
             if cached_data is not None:
                 try:
                     result = CommitAnalysisResult.model_validate(cached_data)
-                    if verbose:
+                    if ctx.verbose:
                         print(f"Using cached analysis (count {new_count}/{interval})")
                     return result
                 except Exception as e:
@@ -891,7 +896,7 @@ def _run_commit_analyzer(
                 logger.warning("Failed to parse cached analysis JSON, running fresh")
         else:
             # No cache (first commit case) — run fresh analysis
-            if verbose:
+            if ctx.verbose:
                 print(f"No cached analysis available, running fresh (count {new_count}/{interval})")
 
     # 3. Run fresh analysis
@@ -900,16 +905,16 @@ def _run_commit_analyzer(
 
         analyzer = CommitAnalyzer(evaluator_client)
         result = analyzer.analyze(
-            commit=commit,
+            commit=ctx.commit,
             context=context,
-            db=db,
-            show_prompt=show_prompt,
+            db=ctx.db,
+            show_prompt=ctx.show_prompt,
         )
 
         # Reset counter after successful analysis
-        ops.reset_analysis_commit_count(conn, project.id)
+        ops.reset_analysis_commit_count(ctx.conn, ctx.project.id)
 
-        if verbose:
+        if ctx.verbose:
             print(
                 f"Commit analysis complete (classification: "
                 f"{result.commit_analysis.classification.value if result.commit_analysis.classification else 'unknown'})"
@@ -918,27 +923,18 @@ def _run_commit_analyzer(
         return result
     except Exception as e:
         logger.warning(f"Commit analyzer failed (non-fatal, evaluator will proceed): {e}")
-        if verbose:
+        if ctx.verbose:
             print(f"Commit analyzer skipped: {e}", file=sys.stderr)
         return None
 
 
 def _run_targets_path(
+    ctx: TriggerContext,
     evaluation,
     analysis,
-    config,
-    conn,
-    db,
-    project,
-    commit,
     commit_hash: str,
     context,
-    project_config,
-    current_branch: str | None,
     evaluator_client,
-    dry_run: bool,
-    verbose: bool,
-    existing_decision_id: str | None = None,
     analyzer_result=None,
 ) -> int:
     """New targets pipeline path: multi-strategy -> multi-target routing."""
@@ -950,11 +946,11 @@ def _run_targets_path(
     # Create evaluation cycle record
     cycle = EvaluationCycle(
         id=generate_id("cycle"),
-        project_id=project.id,
+        project_id=ctx.project.id,
         trigger_type="commit",
         trigger_ref=commit_hash,
     )
-    db.insert_evaluation_cycle(cycle)
+    ctx.db.insert_evaluation_cycle(cycle)
 
     # If stage 1 analyzer produced a result, use it for enrichment
     if analyzer_result is not None:
@@ -963,7 +959,7 @@ def _run_targets_path(
         # Store analysis JSON on the cycle for caching
         try:
             analysis_json = json.dumps(analyzer_result.model_dump(), default=str)
-            ops.update_cycle_analysis_json(conn, cycle.id, analysis_json)
+            ops.update_cycle_analysis_json(ctx.conn, cycle.id, analysis_json)
         except Exception as e:
             logger.warning(f"Failed to cache analysis JSON (non-fatal): {e}")
 
@@ -975,7 +971,7 @@ def _run_targets_path(
         if not analysis.episode_tags and analyzer_result.commit_analysis.episode_tags:
             analysis.episode_tags = analyzer_result.commit_analysis.episode_tags
 
-        if verbose:
+        if ctx.verbose:
             classification = (
                 analyzer_result.commit_analysis.classification.value
                 if analyzer_result.commit_analysis.classification
@@ -987,26 +983,26 @@ def _run_targets_path(
     _trigger_brief_update(
         evaluation=evaluation,
         analysis=analysis,
-        conn=conn,
-        db=db,
-        project=project,
+        conn=ctx.conn,
+        db=ctx.db,
+        project=ctx.project,
         evaluator_client=evaluator_client,
-        dry_run=dry_run,
-        verbose=verbose,
+        dry_run=ctx.dry_run,
+        verbose=ctx.verbose,
     )
 
     # Tag-to-topic matching: increment commit counts and record junction
     for tag in analysis.episode_tags:
-        matching_topics = ops.get_topics_matching_tag(conn, project.id, tag)
+        matching_topics = ops.get_topics_matching_tag(ctx.conn, ctx.project.id, tag)
         for topic in matching_topics:
-            ops.increment_topic_commit_count(conn, topic.id)
-            ops.insert_topic_commit(conn, topic.id, commit_hash, matched_tag=tag)
+            ops.increment_topic_commit_count(ctx.conn, topic.id)
+            ops.insert_topic_commit(ctx.conn, topic.id, commit_hash, matched_tag=tag)
 
     # Update content topic statuses for held topics
     for _strategy_name, strat_decision in evaluation.strategies.items():
         action = _val(strat_decision.action)
         if action == "hold" and strat_decision.topic_id:
-            ops.update_topic_status(conn, strat_decision.topic_id, "holding")
+            ops.update_topic_status(ctx.conn, strat_decision.topic_id, "holding")
 
     # Derive overall decision from per-strategy decisions
     decision_type = _determine_overall_decision(evaluation.strategies)
@@ -1020,12 +1016,12 @@ def _run_targets_path(
     representative = first_draft_strategy or next(iter(evaluation.strategies.values()))
 
     decision = Decision(
-        id=existing_decision_id or generate_id("decision"),
-        project_id=project.id,
+        id=ctx.existing_decision_id or generate_id("decision"),
+        project_id=ctx.project.id,
         commit_hash=commit_hash,
         decision=decision_type,
         reasoning=_combine_strategy_reasoning(evaluation.strategies),
-        commit_message=commit.message,
+        commit_message=ctx.commit.message,
         angle=representative.angle,
         episode_type=None,
         episode_tags=analysis.episode_tags,
@@ -1036,23 +1032,23 @@ def _run_targets_path(
         commit_summary=analysis.summary,
         consolidate_with=representative.consolidate_with,
         reference_posts=representative.reference_posts,
-        branch=current_branch,
+        branch=ctx.current_branch,
     )
 
     # Hold count enforcement
     if decision_type == "hold":
-        max_hold = project_config.context.max_hold_count if project_config else 5
-        current_held = ops.get_held_decisions(conn, project.id)
+        max_hold = ctx.project_config.context.max_hold_count if ctx.project_config else 5
+        current_held = ops.get_held_decisions(ctx.conn, ctx.project.id)
         if len(current_held) >= max_hold:
             logger.warning(f"Hold limit reached ({max_hold}), forcing skip for {commit_hash[:8]}")
             decision.decision = "skip"
             decision_type = "skip"
 
-    if existing_decision_id:
-        ops.upsert_decision(conn, decision)
+    if ctx.existing_decision_id:
+        ops.upsert_decision(ctx.conn, decision)
     else:
-        db.insert_decision(decision)
-    db.emit_data_event("decision", "created", decision.id, project.id)
+        ctx.db.insert_decision(decision)
+    ctx.db.emit_data_event("decision", "created", decision.id, ctx.project.id)
 
     # Arc activation for draftable strategies
     if is_draftable(decision.decision):
@@ -1063,10 +1059,10 @@ def _run_targets_path(
                 try:
                     from social_hook.narrative.arcs import create_arc as _create_arc
 
-                    new_arc_id = _create_arc(db.conn, project.id, sd.new_arc_theme)
-                    db.update_decision(decision.id, arc_id=new_arc_id)
+                    new_arc_id = _create_arc(ctx.db.conn, ctx.project.id, sd.new_arc_theme)
+                    ctx.db.update_decision(decision.id, arc_id=new_arc_id)
                     decision.arc_id = new_arc_id
-                    if verbose:
+                    if ctx.verbose:
                         print(f"Created new arc: {new_arc_id} ({sd.new_arc_theme})")
                 except Exception as e:
                     logger.warning(f"Arc creation failed (non-fatal): {e}")
@@ -1076,9 +1072,9 @@ def _run_targets_path(
     if is_draftable(decision.decision) and representative.consolidate_with:
         valid_ids = [d.id for d in context.held_decisions]
         absorbed = [cid for cid in representative.consolidate_with if cid in valid_ids]
-        if absorbed and not dry_run:
+        if absorbed and not ctx.dry_run:
             batch_id = generate_id("batch")
-            ops.mark_decisions_processed(conn, absorbed, batch_id)
+            ops.mark_decisions_processed(ctx.conn, absorbed, batch_id)
 
     # Queue actions (same as legacy path)
     executed_queue_actions: list[dict[str, str]] = []
@@ -1088,13 +1084,13 @@ def _run_targets_path(
                 action_type = qa.action
                 if action_type == "merge":
                     continue
-                if not dry_run:
-                    draft_ref = ops.get_draft(conn, qa.draft_id)
+                if not ctx.dry_run:
+                    draft_ref = ops.get_draft(ctx.conn, qa.draft_id)
                     if not draft_ref or draft_ref.status not in ("draft", "approved", "scheduled"):
-                        if verbose:
+                        if ctx.verbose:
                             print(f"Queue action skipped: draft {qa.draft_id} not actionable")
                         continue
-                    ops.execute_queue_action(conn, action_type, qa.draft_id, qa.reason)
+                    ops.execute_queue_action(ctx.conn, action_type, qa.draft_id, qa.reason)
                     executed_queue_actions.append(
                         {
                             "type": action_type,
@@ -1102,31 +1098,31 @@ def _run_targets_path(
                             "reason": qa.reason or "",
                         }
                     )
-                if verbose:
+                if ctx.verbose:
                     print(f"Queue action: {action_type} draft {qa.draft_id}")
 
-        if not dry_run:
+        if not ctx.dry_run:
             _execute_merge_groups(
                 evaluation.queue_actions,
-                config,
-                conn,
-                db,
-                project,
+                ctx.config,
+                ctx.conn,
+                ctx.db,
+                ctx.project,
                 context,
-                project_config,
-                dry_run,
-                verbose,
+                ctx.project_config,
+                ctx.dry_run,
+                ctx.verbose,
             )
 
     # Send decision notification for non-draftable decisions
     if (
-        not dry_run
-        and config.notification_level == "all_decisions"
+        not ctx.dry_run
+        and ctx.config.notification_level == "all_decisions"
         and not is_draftable(decision.decision)
     ):
-        _send_decision_notification(config, project, commit, decision)
+        _send_decision_notification(ctx.config, ctx.project, ctx.commit, decision)
 
-    if verbose:
+    if ctx.verbose:
         print(f"Decision: {decision_type}")
         print(f"Reasoning: {decision.reasoning}")
 
@@ -1136,26 +1132,26 @@ def _run_targets_path(
         from social_hook.drafting import draft_for_targets
         from social_hook.routing import route_to_targets
 
-        db.emit_data_event("pipeline", "drafting", commit_hash[:8], project.id)
+        ctx.db.emit_data_event("pipeline", "drafting", commit_hash[:8], ctx.project.id)
 
-        target_actions = route_to_targets(evaluation.strategies, config, conn)
+        target_actions = route_to_targets(evaluation.strategies, ctx.config, ctx.conn)
         draftable_actions = [a for a in target_actions if a.action == "draft"]
 
         if draftable_actions:
             draft_results = draft_for_targets(
                 draftable_actions,
-                config,
-                conn,
-                db,
-                project,
+                ctx.config,
+                ctx.conn,
+                ctx.db,
+                ctx.project,
                 decision_id=decision.id,
                 evaluation=evaluation,
                 context=context,
-                commit=commit,
+                commit=ctx.commit,
                 content_source_registry=content_sources,
-                project_config=project_config,
-                dry_run=dry_run,
-                verbose=verbose,
+                project_config=ctx.project_config,
+                dry_run=ctx.dry_run,
+                verbose=ctx.verbose,
             )
 
             # Increment arc post count if drafts were created for an arc
@@ -1163,19 +1159,19 @@ def _run_targets_path(
                 try:
                     from social_hook.narrative.arcs import increment_arc_post_count
 
-                    increment_arc_post_count(db.conn, decision.arc_id)
-                    if verbose:
+                    increment_arc_post_count(ctx.db.conn, decision.arc_id)
+                    if ctx.verbose:
                         print(f"Incremented post count for arc: {decision.arc_id}")
                 except Exception as e:
                     logger.warning(f"Arc post count increment failed (non-fatal): {e}")
 
             # Update topic status for strategies that drafted with a topic_id
-            if draft_results and not dry_run:
+            if draft_results and not ctx.dry_run:
                 for _sn, sd in evaluation.strategies.items():
                     if _val(sd.action) == "draft" and sd.topic_id:
                         new_status = "partial" if sd.arc_id else "covered"
-                        ops.update_topic_status(conn, sd.topic_id, new_status)
-                        if verbose:
+                        ops.update_topic_status(ctx.conn, sd.topic_id, new_status)
+                        if ctx.verbose:
                             print(f"Topic {sd.topic_id} status -> {new_status}")
 
             draft_results_for_notification = draft_results
@@ -1188,7 +1184,9 @@ def _run_targets_path(
             if draft_results_for_notification
             else []
         )
-        should_notify = not dry_run and (cycle_drafts or config.notification_level != "drafts_only")
+        should_notify = not ctx.dry_run and (
+            cycle_drafts or ctx.config.notification_level != "drafts_only"
+        )
         if should_notify:
             from social_hook.notifications import notify_evaluation_cycle
 
@@ -1202,15 +1200,15 @@ def _run_targets_path(
                 for sn, sd in evaluation.strategies.items()
             }
             notify_evaluation_cycle(
-                config,
-                project_name=project.name,
-                project_id=project.id,
+                ctx.config,
+                project_name=ctx.project.name,
+                project_id=ctx.project.id,
                 cycle_id=cycle.id,
-                trigger_description=f"Commit {commit.hash[:8]} — {commit.message}",
+                trigger_description=f"Commit {ctx.commit.hash[:8]} — {ctx.commit.message}",
                 strategy_outcomes=strategy_outcomes,
                 drafts=cycle_drafts,
                 queue_actions=executed_queue_actions or None,
-                dry_run=dry_run,
+                dry_run=ctx.dry_run,
             )
 
     return 0

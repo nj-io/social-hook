@@ -3939,15 +3939,9 @@ async def api_delete_target(project_id: str, name: str):
         conn.close()
 
     # Remove from config.yaml
-    yaml_path = get_config_path()
-    try:
-        raw = yaml.safe_load(yaml_path.read_text()) or {}
-    except yaml.YAMLError:
-        raw = {}
-    targets = raw.get("targets", {})
-    targets.pop(name, None)
-    raw["targets"] = targets
-    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    from social_hook.config.yaml import delete_config_key
+
+    delete_config_key(get_config_path(), "targets", name)
     _invalidate_config()
 
     return {"status": "deleted", "name": name, "cancelled_drafts": cancelled_count}
@@ -4165,15 +4159,9 @@ async def api_delete_strategy(project_id: str, name: str):
         )
 
     # Remove from config.yaml
-    yaml_path = get_config_path()
-    try:
-        raw = yaml.safe_load(yaml_path.read_text()) or {}
-    except yaml.YAMLError:
-        raw = {}
-    strategies = raw.get("content_strategies", {})
-    strategies.pop(name, None)
-    raw["content_strategies"] = strategies
-    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    from social_hook.config.yaml import delete_config_key
+
+    delete_config_key(get_config_path(), "content_strategies", name)
     _invalidate_config()
     conn = _get_conn()
     try:

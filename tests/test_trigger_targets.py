@@ -170,7 +170,7 @@ class TestTargetsPathIntegration:
     def test_evaluation_cycle_created(self, temp_db):
         """An evaluation cycle record is created when targets path runs."""
         from social_hook.db import operations as ops
-        from social_hook.trigger import _run_targets_path
+        from social_hook.trigger import TriggerContext, _run_targets_path
 
         project = Project(id="proj-1", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -190,21 +190,25 @@ class TestTargetsPathIntegration:
             from social_hook.llm.dry_run import DryRunContext
 
             db = DryRunContext(temp_db, dry_run=False)
-            _run_targets_path(
-                evaluation=evaluation,
-                analysis=evaluation.commit_analysis,
+            ctx = TriggerContext(
                 config=config,
                 conn=temp_db,
                 db=db,
                 project=project,
                 commit=commit,
-                commit_hash="abc123",
-                context=context,
                 project_config=None,
                 current_branch="main",
-                evaluator_client=MagicMock(),
                 dry_run=False,
                 verbose=False,
+                show_prompt=False,
+            )
+            _run_targets_path(
+                ctx=ctx,
+                evaluation=evaluation,
+                analysis=evaluation.commit_analysis,
+                commit_hash="abc123",
+                context=context,
+                evaluator_client=MagicMock(),
             )
 
         cycles = ops.get_recent_cycles(temp_db, "proj-1")
@@ -215,7 +219,7 @@ class TestTargetsPathIntegration:
     def test_topic_commit_counts_incremented(self, temp_db):
         """Tag-to-topic matching increments topic commit counts."""
         from social_hook.db import operations as ops
-        from social_hook.trigger import _run_targets_path
+        from social_hook.trigger import TriggerContext, _run_targets_path
 
         project = Project(id="proj-2", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -245,21 +249,25 @@ class TestTargetsPathIntegration:
             from social_hook.llm.dry_run import DryRunContext
 
             db = DryRunContext(temp_db, dry_run=False)
-            _run_targets_path(
-                evaluation=evaluation,
-                analysis=evaluation.commit_analysis,
+            ctx = TriggerContext(
                 config=config,
                 conn=temp_db,
                 db=db,
                 project=project,
                 commit=commit,
-                commit_hash="def456",
-                context=context,
                 project_config=None,
                 current_branch="main",
-                evaluator_client=MagicMock(),
                 dry_run=False,
                 verbose=False,
+                show_prompt=False,
+            )
+            _run_targets_path(
+                ctx=ctx,
+                evaluation=evaluation,
+                analysis=evaluation.commit_analysis,
+                commit_hash="def456",
+                context=context,
+                evaluator_client=MagicMock(),
             )
 
         # "auth" tag should match "authentication system" topic
@@ -269,7 +277,7 @@ class TestTargetsPathIntegration:
     def test_hold_action_sets_topic_status(self, temp_db):
         """Hold action sets topic status to 'holding'."""
         from social_hook.db import operations as ops
-        from social_hook.trigger import _run_targets_path
+        from social_hook.trigger import TriggerContext, _run_targets_path
 
         project = Project(id="proj-3", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -306,21 +314,25 @@ class TestTargetsPathIntegration:
             from social_hook.llm.dry_run import DryRunContext
 
             db = DryRunContext(temp_db, dry_run=False)
-            _run_targets_path(
-                evaluation=evaluation,
-                analysis=evaluation.commit_analysis,
+            ctx = TriggerContext(
                 config=config,
                 conn=temp_db,
                 db=db,
                 project=project,
                 commit=commit,
-                commit_hash="ghi789",
-                context=context,
                 project_config=None,
                 current_branch="main",
-                evaluator_client=MagicMock(),
                 dry_run=False,
                 verbose=False,
+                show_prompt=False,
+            )
+            _run_targets_path(
+                ctx=ctx,
+                evaluation=evaluation,
+                analysis=evaluation.commit_analysis,
+                commit_hash="ghi789",
+                context=context,
+                evaluator_client=MagicMock(),
             )
 
         updated_topic = ops.get_topic(temp_db, "topic-2")
@@ -329,7 +341,7 @@ class TestTargetsPathIntegration:
     def test_mixed_decisions_correct_overall(self, temp_db):
         """Mixed draft/skip -> overall 'draft', routes correctly."""
         from social_hook.db import operations as ops
-        from social_hook.trigger import _run_targets_path
+        from social_hook.trigger import TriggerContext, _run_targets_path
 
         project = Project(id="proj-4", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -364,21 +376,25 @@ class TestTargetsPathIntegration:
             from social_hook.llm.dry_run import DryRunContext
 
             db = DryRunContext(temp_db, dry_run=False)
-            _run_targets_path(
-                evaluation=evaluation,
-                analysis=evaluation.commit_analysis,
+            ctx = TriggerContext(
                 config=config,
                 conn=temp_db,
                 db=db,
                 project=project,
                 commit=commit,
-                commit_hash="jkl012",
-                context=context,
                 project_config=None,
                 current_branch="main",
-                evaluator_client=MagicMock(),
                 dry_run=False,
                 verbose=False,
+                show_prompt=False,
+            )
+            _run_targets_path(
+                ctx=ctx,
+                evaluation=evaluation,
+                analysis=evaluation.commit_analysis,
+                commit_hash="jkl012",
+                context=context,
+                evaluator_client=MagicMock(),
             )
 
         # Decision should be "draft" (any draft -> overall draft)
@@ -407,7 +423,7 @@ class TestTargetsPathIntegration:
     def test_source_dependency_skip(self, temp_db):
         """Dependent target is skipped when source strategy's target didn't fire."""
         from social_hook.db import operations as ops
-        from social_hook.trigger import _run_targets_path
+        from social_hook.trigger import TriggerContext, _run_targets_path
 
         project = Project(id="proj-6", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -435,21 +451,25 @@ class TestTargetsPathIntegration:
             from social_hook.llm.dry_run import DryRunContext
 
             db = DryRunContext(temp_db, dry_run=False)
-            _run_targets_path(
-                evaluation=evaluation,
-                analysis=evaluation.commit_analysis,
+            ctx = TriggerContext(
                 config=config,
                 conn=temp_db,
                 db=db,
                 project=project,
                 commit=commit,
-                commit_hash="src123",
-                context=context,
                 project_config=None,
                 current_branch="main",
-                evaluator_client=MagicMock(),
                 dry_run=False,
                 verbose=False,
+                show_prompt=False,
+            )
+            _run_targets_path(
+                ctx=ctx,
+                evaluation=evaluation,
+                analysis=evaluation.commit_analysis,
+                commit_hash="src123",
+                context=context,
+                evaluator_client=MagicMock(),
             )
 
         decisions = ops.get_recent_decisions(temp_db, "proj-6")

@@ -205,17 +205,9 @@ def delete(
             ops.update_draft(conn, row["id"], status="cancelled")
 
         # Remove from config
-        import yaml
+        from social_hook.config.yaml import delete_config_key
 
-        yaml_path = get_config_path()
-        try:
-            raw = yaml.safe_load(yaml_path.read_text()) or {}
-        except yaml.YAMLError:
-            raw = {}
-        targets = raw.get("targets", {})
-        targets.pop(name, None)
-        raw["targets"] = targets
-        yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+        delete_config_key(get_config_path(), "targets", name)
 
         if json_output:
             typer.echo(

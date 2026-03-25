@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
-from social_hook.parsing import safe_json_loads
+from social_hook.parsing import safe_int, safe_json_loads
 
 # =============================================================================
 # Enums (must match DB CHECK constraints)
@@ -191,7 +191,9 @@ class Project:
             prompt_docs=d.get("prompt_docs"),
             trigger_branch=d.get("trigger_branch"),
             brief_section_metadata=brief_meta,
-            analysis_commit_count=int(d.get("analysis_commit_count", 0)),
+            analysis_commit_count=safe_int(
+                d.get("analysis_commit_count"), 0, "Project.analysis_commit_count"
+            ),
             created_at=_from_iso(d.get("created_at")),
         )
 

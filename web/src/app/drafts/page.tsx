@@ -27,9 +27,6 @@ export default function DraftsPage() {
   const [tagFilter, setTagFilter] = useState(tagParam || "");
   const filterRef = useRef(filter);
   filterRef.current = filter;
-  const tagFilterRef = useRef(tagFilter);
-  tagFilterRef.current = tagFilter;
-
   function removeParam(key: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.delete(key);
@@ -44,10 +41,10 @@ export default function DraftsPage() {
     if (fromProjectId) filters.project_id = fromProjectId;
     if (decisionFilter) filters.decision_id = decisionFilter;
     if (commitFilter) filters.commit = commitFilter;
-    const tag = tagFilterRef.current.trim();
+    const tag = tagFilter.trim();
     if (tag) filters.tag = tag;
     return filters;
-  }, [fromProjectId, decisionFilter, commitFilter]);
+  }, [fromProjectId, decisionFilter, commitFilter, tagFilter]);
 
   const reload = useCallback(async () => {
     try {

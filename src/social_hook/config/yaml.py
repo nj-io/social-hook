@@ -357,6 +357,40 @@ def save_config(
     return (current, hook_warning)
 
 
+def delete_config_key(
+    config_path: str | Path,
+    section: str,
+    key: str,
+) -> bool:
+    """Delete a key from a YAML config section and write back.
+
+    Args:
+        config_path: Path to the YAML config file
+        section: Top-level section name (e.g., "targets", "content_strategies")
+        key: Key to delete within the section
+
+    Returns:
+        True if the key existed and was deleted, False otherwise
+    """
+    config_path = Path(config_path)
+    if config_path.exists():
+        try:
+            raw = yaml.safe_load(config_path.read_text()) or {}
+        except yaml.YAMLError:
+            raw = {}
+    else:
+        raw = {}
+
+    section_data = raw.get(section, {})
+    if not isinstance(section_data, dict) or key not in section_data:
+        return False
+
+    del section_data[key]
+    raw[section] = section_data
+    config_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    return True
+
+
 def load_config(config_path: str | Path | None = None) -> Config:
     """Load configuration from YAML file.
 

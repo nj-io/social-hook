@@ -425,7 +425,6 @@ def delete(
 
     Example: social-hook strategy delete dev-community --yes
     """
-    import yaml
 
     from social_hook.constants import CONFIG_DIR_NAME
 
@@ -470,20 +469,10 @@ def delete(
 
         from pathlib import Path
 
-        config_path = Path(proj.repo_path) / CONFIG_DIR_NAME / "content-config.yaml"
-        if config_path.exists():
-            config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        else:
-            config_data = {}
+        from social_hook.config.yaml import delete_config_key
 
-        strategies_section = config_data.get("content_strategies", {})
-        if name in strategies_section:
-            del strategies_section[name]
-            config_data["content_strategies"] = strategies_section
-            config_path.write_text(
-                yaml.dump(config_data, default_flow_style=False, allow_unicode=True),
-                encoding="utf-8",
-            )
+        config_path = Path(proj.repo_path) / CONFIG_DIR_NAME / "content-config.yaml"
+        delete_config_key(config_path, "content_strategies", name)
 
         if json_output:
             typer.echo(json_mod.dumps({"deleted": True, "strategy": name}, indent=2))

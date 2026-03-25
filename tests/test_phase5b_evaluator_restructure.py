@@ -116,30 +116,39 @@ class TestRunTrivialSkip:
             brief_update=BriefUpdateInstructions(),
         )
 
+    def _make_ctx(self, temp_db, project, commit):
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.trigger import TriggerContext
+
+        config = MagicMock()
+        config.notification_level = "drafts_only"
+        return TriggerContext(
+            config=config,
+            conn=temp_db,
+            db=DryRunContext(temp_db, dry_run=False),
+            project=project,
+            commit=commit,
+            project_config=None,
+            current_branch="main",
+            dry_run=False,
+            verbose=False,
+            show_prompt=False,
+        )
+
     def test_creates_skip_decision(self, temp_db):
         """Trivial commits create a skip decision."""
         from social_hook.db import operations as ops
-        from social_hook.llm.dry_run import DryRunContext
         from social_hook.trigger import _run_trivial_skip
 
         project = Project(id="proj-trivial-1", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
 
-        config = MagicMock()
-        config.notification_level = "drafts_only"
-
-        db = DryRunContext(temp_db, dry_run=False)
+        commit = CommitInfo(hash="aaa111", message="fix whitespace", diff="")
+        ctx = self._make_ctx(temp_db, project, commit)
         result = _run_trivial_skip(
+            ctx=ctx,
             analyzer_result=self._make_trivial_result(),
-            config=config,
-            conn=temp_db,
-            db=db,
-            project=project,
-            commit=CommitInfo(hash="aaa111", message="fix whitespace", diff=""),
             commit_hash="aaa111",
-            current_branch="main",
-            dry_run=False,
-            verbose=False,
         )
 
         assert result == 0
@@ -154,24 +163,17 @@ class TestRunTrivialSkip:
     def test_creates_evaluation_cycle(self, temp_db):
         """Trivial skip still creates an evaluation cycle record."""
         from social_hook.db import operations as ops
-        from social_hook.llm.dry_run import DryRunContext
         from social_hook.trigger import _run_trivial_skip
 
         project = Project(id="proj-trivial-2", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
 
-        db = DryRunContext(temp_db, dry_run=False)
+        commit = CommitInfo(hash="bbb222", message="fix typo", diff="")
+        ctx = self._make_ctx(temp_db, project, commit)
         _run_trivial_skip(
+            ctx=ctx,
             analyzer_result=self._make_trivial_result(),
-            config=MagicMock(notification_level="drafts_only"),
-            conn=temp_db,
-            db=db,
-            project=project,
-            commit=CommitInfo(hash="bbb222", message="fix typo", diff=""),
             commit_hash="bbb222",
-            current_branch="main",
-            dry_run=False,
-            verbose=False,
         )
 
         cycles = ops.get_recent_cycles(temp_db, "proj-trivial-2")
@@ -182,24 +184,17 @@ class TestRunTrivialSkip:
     def test_stores_analysis_json_on_cycle(self, temp_db):
         """Trivial skip stores the analysis JSON on the cycle for caching."""
         from social_hook.db import operations as ops
-        from social_hook.llm.dry_run import DryRunContext
         from social_hook.trigger import _run_trivial_skip
 
         project = Project(id="proj-trivial-3", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
 
-        db = DryRunContext(temp_db, dry_run=False)
+        commit = CommitInfo(hash="ccc333", message="fix typo", diff="")
+        ctx = self._make_ctx(temp_db, project, commit)
         _run_trivial_skip(
+            ctx=ctx,
             analyzer_result=self._make_trivial_result(),
-            config=MagicMock(notification_level="drafts_only"),
-            conn=temp_db,
-            db=db,
-            project=project,
-            commit=CommitInfo(hash="ccc333", message="fix typo", diff=""),
             commit_hash="ccc333",
-            current_branch="main",
-            dry_run=False,
-            verbose=False,
         )
 
         cycle = ops.get_latest_cycle_with_analysis(temp_db, "proj-trivial-3")
@@ -210,24 +205,17 @@ class TestRunTrivialSkip:
     def test_preserves_episode_tags(self, temp_db):
         """Trivial skip preserves the episode tags from the analyzer."""
         from social_hook.db import operations as ops
-        from social_hook.llm.dry_run import DryRunContext
         from social_hook.trigger import _run_trivial_skip
 
         project = Project(id="proj-trivial-4", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
 
-        db = DryRunContext(temp_db, dry_run=False)
+        commit = CommitInfo(hash="ddd444", message="fix formatting", diff="")
+        ctx = self._make_ctx(temp_db, project, commit)
         _run_trivial_skip(
+            ctx=ctx,
             analyzer_result=self._make_trivial_result(),
-            config=MagicMock(notification_level="drafts_only"),
-            conn=temp_db,
-            db=db,
-            project=project,
-            commit=CommitInfo(hash="ddd444", message="fix formatting", diff=""),
             commit_hash="ddd444",
-            current_branch="main",
-            dry_run=False,
-            verbose=False,
         )
 
         decisions = ops.get_recent_decisions(temp_db, "proj-trivial-4")

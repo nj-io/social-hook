@@ -39,6 +39,14 @@ SMART_DEFAULTS: dict[str, dict[str, dict[str, str]]] = {
 }
 
 
+# Platform thread support — used at config validation time when adapter
+# instances are unavailable. Must stay in sync with PlatformAdapter.supports_threads().
+PLATFORM_THREAD_SUPPORT: dict[str, bool] = {
+    "x": True,
+    "linkedin": False,
+}
+
+
 @dataclass
 class OutputPlatformConfig:
     """Configuration for a single output platform."""
