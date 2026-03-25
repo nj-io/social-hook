@@ -318,14 +318,7 @@ def assemble_strategy_posting_state(
     # --- Group pending drafts by strategy ---
     drafts_by_strategy: dict[str, list[str]] = {}
     for draft in (pending_drafts or [])[:20]:
-        target_id = getattr(draft, "target_id", None)
-        strategy_name = "default"
-        if target_id and targets:
-            target = targets.get(target_id)
-            if target:
-                strategy_name = getattr(target, "strategy", None) or "default"
-            else:
-                logger.warning("Draft references unknown target '%s'", target_id)
+        strategy_name = _resolve_post_strategy(draft, targets)
         content = getattr(draft, "content", "")[:60]
         suggested = getattr(draft, "suggested_time", None)
         sched_part = f" (suggested {_relative_time(suggested)})" if suggested else ""

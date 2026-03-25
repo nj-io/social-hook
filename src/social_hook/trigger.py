@@ -511,7 +511,7 @@ def run_trigger(
     analysis = evaluation.commit_analysis
 
     # --- New targets path: when config.targets has real target entries ---
-    if getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets:
+    if has_targets:
         result = _run_targets_path(
             evaluation=evaluation,
             analysis=analysis,
@@ -1173,56 +1173,40 @@ def _run_targets_path(
                         if verbose:
                             print(f"Topic {sd.topic_id} status -> {new_status}")
 
-            # Cycle notification
-            if not dry_run and (draft_results or config.notification_level != "drafts_only"):
-                from social_hook.notifications import notify_evaluation_cycle
-
-                strategy_outcomes = {
-                    sn: {
-                        "action": _val(sd.action),
-                        "reason": sd.reason,
-                        "arc_id": sd.arc_id,
-                        "topic_id": sd.topic_id,
-                    }
-                    for sn, sd in evaluation.strategies.items()
-                }
-                drafts = [r.draft for r in draft_results] if draft_results else []
-                notify_evaluation_cycle(
-                    config,
-                    project_name=project.name,
-                    project_id=project.id,
-                    cycle_id=cycle.id,
-                    trigger_description=f"Commit {commit.hash[:8]} — {commit.message}",
-                    strategy_outcomes=strategy_outcomes,
-                    drafts=drafts,
-                    queue_actions=executed_queue_actions or None,
-                    dry_run=dry_run,
-                )
+            draft_results_for_notification = draft_results
         else:
-            # Non-draftable path (all skip/hold) — still send cycle notification
-            if not dry_run and config.notification_level != "drafts_only":
-                from social_hook.notifications import notify_evaluation_cycle
+            draft_results_for_notification = None
 
-                strategy_outcomes = {
-                    sn: {
-                        "action": _val(sd.action),
-                        "reason": sd.reason,
-                        "arc_id": sd.arc_id,
-                        "topic_id": sd.topic_id,
-                    }
-                    for sn, sd in evaluation.strategies.items()
+        # Cycle notification (both draftable and non-draftable paths)
+        cycle_drafts = (
+            [r.draft for r in draft_results_for_notification]
+            if draft_results_for_notification
+            else []
+        )
+        should_notify = not dry_run and (cycle_drafts or config.notification_level != "drafts_only")
+        if should_notify:
+            from social_hook.notifications import notify_evaluation_cycle
+
+            strategy_outcomes = {
+                sn: {
+                    "action": _val(sd.action),
+                    "reason": sd.reason,
+                    "arc_id": sd.arc_id,
+                    "topic_id": sd.topic_id,
                 }
-                notify_evaluation_cycle(
-                    config,
-                    project_name=project.name,
-                    project_id=project.id,
-                    cycle_id=cycle.id,
-                    trigger_description=f"Commit {commit.hash[:8]} — {commit.message}",
-                    strategy_outcomes=strategy_outcomes,
-                    drafts=[],
-                    queue_actions=executed_queue_actions or None,
-                    dry_run=dry_run,
-                )
+                for sn, sd in evaluation.strategies.items()
+            }
+            notify_evaluation_cycle(
+                config,
+                project_name=project.name,
+                project_id=project.id,
+                cycle_id=cycle.id,
+                trigger_description=f"Commit {commit.hash[:8]} — {commit.message}",
+                strategy_outcomes=strategy_outcomes,
+                drafts=cycle_drafts,
+                queue_actions=executed_queue_actions or None,
+                dry_run=dry_run,
+            )
 
     return 0
 

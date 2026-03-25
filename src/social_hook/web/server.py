@@ -3901,6 +3901,7 @@ async def api_enable_target(project_id: str, name: str):
 @app.delete("/api/projects/{project_id}/targets/{name}")
 async def api_delete_target(project_id: str, name: str):
     """Remove a target from config and cancel its pending drafts."""
+    cancelled_count = 0
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
@@ -3917,6 +3918,7 @@ async def api_delete_target(project_id: str, name: str):
         for row in pending:
             ops.update_draft(conn, row["id"], status="cancelled")
             ops.emit_data_event(conn, "draft", "updated", row["id"], project_id)
+        cancelled_count = len(pending)
 
         ops.emit_data_event(conn, "config", "updated", "targets", project_id)
     finally:
@@ -3934,7 +3936,7 @@ async def api_delete_target(project_id: str, name: str):
     yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
     _invalidate_config()
 
-    return {"status": "deleted", "name": name, "cancelled_drafts": len(pending)}
+    return {"status": "deleted", "name": name, "cancelled_drafts": cancelled_count}
 
 
 # =============================================================================
