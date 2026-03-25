@@ -70,7 +70,13 @@ def approve(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to approve"),
 ):
-    """Approve a draft for posting."""
+    """Mark a draft as approved for posting.
+
+    The scheduler will post it when its scheduled time arrives.
+    Preview drafts must be promoted to a platform first.
+
+    Example: social-hook draft approve draft_abc123
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -149,7 +155,15 @@ def schedule(
     draft_id: str = typer.Argument(..., help="Draft ID to schedule"),
     time: str | None = typer.Option(None, "--time", "-t", help="Schedule time (ISO format)"),
 ):
-    """Schedule a draft for posting."""
+    """Schedule a draft for posting at a specific or optimal time.
+
+    With --time, posts at that exact ISO datetime. Without --time,
+    automatically picks the next optimal slot based on your configured
+    posting limits, time windows, and minimum gap between posts.
+
+    Example: social-hook draft schedule draft_abc123
+    Example: social-hook draft schedule draft_abc123 --time 2026-03-25T10:00:00
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -202,7 +216,10 @@ def cancel(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to cancel"),
 ):
-    """Cancel a draft."""
+    """Cancel a pending draft, removing it from the posting queue.
+
+    Example: social-hook draft cancel draft_abc123
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -300,7 +317,13 @@ def retry(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to retry"),
 ):
-    """Retry a failed draft."""
+    """Re-queue a failed draft for another posting attempt.
+
+    Resets the retry counter and sets status back to scheduled so
+    the scheduler will try posting it again.
+
+    Example: social-hook draft retry draft_abc123
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -587,7 +610,13 @@ def quick_approve(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to approve and schedule"),
 ):
-    """Approve and schedule at optimal time in one step."""
+    """Approve and schedule a draft for the next optimal posting time in one step.
+
+    Combines approve + schedule. Considers your configured posting limits,
+    preferred time windows, and minimum gap between posts to pick the best slot.
+
+    Example: social-hook draft quick-approve draft_abc123
+    """
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
     from social_hook.scheduling import calculate_optimal_time

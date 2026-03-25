@@ -533,13 +533,12 @@ async def api_clear_events(x_session_id: str = Header("web")):
 
 
 @app.get("/api/events")
-async def api_events(lastId: int = Query(0)):
+async def api_events(lastId: int = Query(0), max_empty: int = Query(10)):
     """Server-Sent Events stream polling web_events."""
 
     def event_stream():
         current_id = lastId
         empty_polls = 0
-        max_empty = 10  # ~10 seconds of no data -> close stream
 
         while empty_polls < max_empty:
             events = _get_events_since(current_id)

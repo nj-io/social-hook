@@ -175,14 +175,22 @@ def refresh_and_get_token(
 
         logger.info("Token expired for %s, refreshing...", account_name)
         try:
+            # Use Basic Auth for confidential clients (client_secret present).
+            # Matches the initial code exchange in setup/oauth.py._exchange_code.
+            # X rejects refresh requests with client_id/secret as form data.
+            refresh_data: dict = {
+                "grant_type": "refresh_token",
+                "refresh_token": current_refresh_token,
+            }
+            if client_secret:
+                refresh_auth: tuple | None = (client_id, client_secret)
+            else:
+                refresh_data["client_id"] = client_id
+                refresh_auth = None
             response = requests.post(
                 token_url,
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": current_refresh_token,
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                },
+                data=refresh_data,
+                auth=refresh_auth,
                 timeout=15,
             )
         except requests.RequestException as e:

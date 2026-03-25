@@ -62,50 +62,72 @@ def _safe_delete(adapter, external_id, label="post"):
 
 
 def _copy_real_tokens(harness):
-    """Copy oauth_tokens from the real DB into the harness's isolated DB.
+    """Copy the freshest oauth_tokens from any real DB into the harness DB.
 
-    In --live mode, the harness uses a temp directory with a fresh DB.
-    Tokens saved by oauth2_setup.py live in the user's real ~/.social-hook/ DB.
-    This copies them so the harness can create authenticated adapters.
+    The harness overrides HOME, so the factory's get_db_path() resolves to the
+    harness DB. Tokens set up by the operator live in the real worktree DB.
+    Scans all DBs and picks the freshest (most recently updated) tokens per account.
     """
+    import glob
     import sqlite3
 
-    # Use harness.real_base (captured before HOME is overridden)
-    real_db = harness.real_base / "social-hook.db"
-    if not real_db.exists():
-        log.warning("Real DB not found at %s — skipping token copy", real_db)
+    from social_hook.adapters.auth import is_expired
+
+    candidate_dbs = [str(harness.real_base / "social-hook.db")]
+    candidate_dbs.extend(glob.glob(str(harness.real_base / "social-hook-*.db")))
+
+    # Collect best tokens per account across all DBs (prefer non-expired, most recent)
+    best: dict[str, dict] = {}
+    for db_file in candidate_dbs:
+        try:
+            conn = sqlite3.connect(db_file)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT account_name, platform, access_token, refresh_token, expires_at, updated_at "
+                "FROM oauth_tokens"
+            ).fetchall()
+            conn.close()
+
+            for row in rows:
+                name = row["account_name"]
+                expired = is_expired(row["expires_at"])
+                existing = best.get(name)
+                # Prefer non-expired over expired, then most recent updated_at
+                if existing is None:
+                    best[name] = {"row": row, "expired": expired, "source": db_file}
+                elif expired and not existing["expired"]:
+                    pass  # keep existing non-expired
+                elif (
+                    not expired
+                    and existing["expired"]
+                    or (row["updated_at"] or "") > (existing["row"]["updated_at"] or "")
+                ):
+                    best[name] = {"row": row, "expired": expired, "source": db_file}
+        except Exception:
+            continue
+
+    if not best:
+        log.info("No tokens found in any real DB — re-auth will be needed")
         return
 
-    try:
-        real_conn = sqlite3.connect(str(real_db))
-        real_conn.row_factory = sqlite3.Row
-        rows = real_conn.execute(
-            "SELECT account_name, platform, access_token, refresh_token, expires_at, updated_at FROM oauth_tokens"
-        ).fetchall()
-        real_conn.close()
-
-        if not rows:
-            log.warning("No tokens in real DB — run oauth2_setup.py first")
-            return
-
-        for row in rows:
-            harness.conn.execute(
-                """INSERT OR REPLACE INTO oauth_tokens
-                   (account_name, platform, access_token, refresh_token, expires_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    row["account_name"],
-                    row["platform"],
-                    row["access_token"],
-                    row["refresh_token"],
-                    row["expires_at"],
-                    row["updated_at"],
-                ),
-            )
-        harness.conn.commit()
-        print(f"       Copied {len(rows)} token(s) from real DB for live testing")
-    except Exception as e:
-        log.warning("Failed to copy tokens from real DB: %s", e)
+    for _name, entry in best.items():
+        row = entry["row"]
+        harness.conn.execute(
+            """INSERT OR REPLACE INTO oauth_tokens
+               (account_name, platform, access_token, refresh_token, expires_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                row["account_name"],
+                row["platform"],
+                row["access_token"],
+                row["refresh_token"],
+                row["expires_at"],
+                row["updated_at"],
+            ),
+        )
+    harness.conn.commit()
+    sources = {e["source"] for e in best.values()}
+    print(f"       Copied {len(best)} token(s) from {', '.join(sources)}")
 
 
 # ---------------------------------------------------------------------------
@@ -113,17 +135,19 @@ def _copy_real_tokens(harness):
 # ---------------------------------------------------------------------------
 
 
-def get_enabled_platforms(config, db_path=None):
+def get_enabled_platforms(config, db_path=None, *, live=False, harness=None, headless=False):
     """Discover which platforms have valid credentials configured.
 
-    Iterates config.platforms (instead of a hardcoded list), attempts
-    create_adapter(), catches ConfigError for missing credentials, returns
-    list of platform names that succeed.
+    Iterates config.platforms, attempts create_adapter(). In --live mode,
+    offers inline OAuth re-authorization when tokens are missing or expired.
 
     Args:
         config: Global Config object.
         db_path: Path to SQLite database (passed through to create_adapter).
+        live: If True, offer inline re-authorization on token errors.
+        harness: E2EHarness instance (needed for re-auth to save tokens to harness DB).
     """
+    from social_hook.adapters.auth import TokenRefreshError
     from social_hook.adapters.platform.factory import create_adapter
     from social_hook.errors import ConfigError
 
@@ -134,9 +158,196 @@ def get_enabled_platforms(config, db_path=None):
         try:
             create_adapter(name, config, db_path=db_path)
             platforms.append(name)
+        except TokenRefreshError as e:
+            if not live:
+                log.warning("Skipping %s: %s", name, e)
+                continue
+            # Offer inline re-authorization
+            if _try_inline_reauth(name, config, db_path, harness, headless=headless):
+                try:
+                    create_adapter(name, config, db_path=db_path)
+                    platforms.append(name)
+                except (ConfigError, TokenRefreshError) as retry_err:
+                    log.warning("Skipping %s after re-auth: %s", name, retry_err)
         except ConfigError:
             pass
     return platforms
+
+
+def _find_web_server():
+    """Find the running web server port. Returns port number or None.
+
+    Scans the default port range (8741-8750, matching _find_free_port in cli/__init__.py).
+    Verifies by hitting /api/oauth/x/status — a regular TCP connection isn't enough
+    since other services might be on those ports.
+    """
+    import requests as _requests
+
+    for port in range(8741, 8751):
+        try:
+            resp = _requests.get(f"http://localhost:{port}/api/oauth/x/status", timeout=0.5)
+            if resp.status_code in (200, 400):  # 400 = platform not configured, but server is there
+                return port
+        except Exception:
+            continue
+    return None
+
+
+def _is_interactive():
+    """Check if running in an interactive terminal (TTY)."""
+    import sys
+
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _try_inline_reauth(platform, config, db_path, harness, *, headless=False):
+    """Offer inline OAuth re-authorization for a platform.
+
+    TTY mode (human): prompts, opens browser, [c] copy URL.
+    Headless mode (agent): prints auth URL, polls silently.
+
+    Requires the web server to be running — the callback URL on the web
+    server port is already registered in the Developer Portal.
+
+    Returns True if re-authorization succeeded, False if skipped or failed.
+    """
+    from social_hook.setup.oauth import OAUTH_PLATFORMS
+
+    if platform not in OAUTH_PLATFORMS:
+        print(f"       {platform}: no OAuth flow available")
+        return False
+
+    interactive = not headless and _is_interactive()
+
+    print(f"       {platform}: tokens expired or missing.")
+
+    # In interactive mode, ask before proceeding
+    if interactive:
+        try:
+            response = input("       Authorize now? [Y/n]: ").strip().lower()
+        except EOFError:
+            return False
+        if response in ("n", "no"):
+            print(f"       Skipping {platform} (no valid tokens)")
+            return False
+    else:
+        print("       Headless mode — attempting automatic re-authorization")
+
+    client_id = config.env.get(f"{platform.upper()}_CLIENT_ID", "")
+    if not client_id:
+        print(f"       {platform.upper()}_CLIENT_ID not configured — skipping")
+        return False
+
+    # Require the web server for re-auth (its callback URL is registered)
+    web_port = _find_web_server()
+    if not web_port:
+        if interactive:
+            # Fallback: standalone PKCE flow (interactive only)
+            from social_hook.setup.oauth import run_pkce_flow
+
+            client_secret = config.env.get(f"{platform.upper()}_CLIENT_SECRET", "")
+            plat_config = OAUTH_PLATFORMS[platform]
+            print(
+                f"       No web server — using standalone PKCE on port {plat_config.default_port}"
+            )
+            print(
+                f"       (ensure http://localhost:{plat_config.default_port}/callback is in Developer Portal)"
+            )
+            try:
+                result = run_pkce_flow(platform, client_id, client_secret)
+                print(f"       Authenticated as @{result.get('username', 'unknown')}")
+                if harness and harness.conn:
+                    _copy_real_tokens(harness)
+                return True
+            except Exception as e:
+                print(f"       Authorization failed: {e}")
+                return False
+        else:
+            print("       No web server detected — cannot re-authorize in headless mode")
+            print("       Start the web server: social-hook web")
+            return False
+
+    print(f"       Web server detected on localhost:{web_port}")
+    result = _reauth_via_web(platform, web_port, interactive=interactive)
+    if result and harness and harness.conn:
+        _copy_real_tokens(harness)  # refresh harness DB with new tokens
+    return result
+
+
+def _reauth_via_web(platform, port, *, interactive=True):
+    """Re-authorize via the running web server's OAuth flow.
+
+    Interactive (TTY): opens browser, [c] copy URL, keypress wait.
+    Headless (agent): prints URL, polls silently.
+    """
+    import time
+
+    import requests as _requests
+
+    base = f"http://localhost:{port}"
+    auth_resp = _requests.get(f"{base}/api/oauth/{platform}/authorize", timeout=5)
+    if auth_resp.status_code != 200:
+        print(f"       Web OAuth failed: {auth_resp.text[:100]}")
+        return False
+
+    data = auth_resp.json()
+    auth_url = data["auth_url"]
+
+    if interactive:
+        import webbrowser
+
+        print(f"       Opening browser for {platform} authorization...")
+        webbrowser.open(auth_url)
+
+        # Interactive wait with [c] copy URL
+        import select
+        import sys
+
+        from social_hook.terminal import copy_to_clipboard
+
+        prompt = "       [c] copy URL  — Waiting for browser authorization..."
+        print(prompt, end="", flush=True)
+
+        for _ in range(300):
+            time.sleep(1)
+            ready, _, _ = select.select([sys.stdin], [], [], 0)
+            if ready:
+                ch = sys.stdin.read(1)
+                if ch == "c":
+                    if copy_to_clipboard(auth_url):
+                        print("\r\033[2K       Copied to clipboard!", end="", flush=True)
+                    else:
+                        print("\r\033[2K       (clipboard not available)", end="", flush=True)
+                    time.sleep(0.8)
+                    print(f"\r\033[2K{prompt}", end="", flush=True)
+
+            try:
+                status = _requests.get(f"{base}/api/oauth/{platform}/status", timeout=5).json()
+                if status.get("connected"):
+                    print(f"\r\033[2K       Authenticated as @{status.get('username', 'unknown')}")
+                    return True
+            except Exception:
+                pass
+    else:
+        # Headless: print URL and poll silently
+        print("       Authorize this URL to continue:")
+        print(f"       {auth_url}")
+        print("       Polling for authorization (timeout: 5 minutes)...")
+
+        for i in range(300):
+            time.sleep(1)
+            try:
+                status = _requests.get(f"{base}/api/oauth/{platform}/status", timeout=5).json()
+                if status.get("connected"):
+                    print(f"       Authenticated as @{status.get('username', 'unknown')}")
+                    return True
+            except Exception:
+                pass
+            if i > 0 and i % 30 == 0:
+                print(f"       Still waiting... ({i}s)")
+
+    print("       Authorization timed out")
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +559,7 @@ CAPABILITY_EXERCISES: dict[str, callable] = {
 # ---------------------------------------------------------------------------
 
 
-def run(harness, runner, live=False, pause=False):
+def run(harness, runner, live=False, pause=False, headless=False):
     """U: Platform posting scenarios.
 
     Args:
@@ -357,21 +568,24 @@ def run(harness, runner, live=False, pause=False):
         live: Use real API calls (vs VCR cassettes).
         pause: Pause after each live post for manual verification before deletion.
             Implies --live. Use with: python scripts/e2e_test.py --only platform-posting --pause
+        headless: Non-interactive mode for agents/CI. Skips prompts, prints auth URLs.
     """
     from social_hook.db import operations as ops
 
     if not harness.project_id:
         harness.seed_project()
 
-    # For --live mode, copy OAuth tokens from the real DB into the harness DB.
-    # The harness creates an isolated temp environment, so tokens saved via
-    # oauth2_setup.py (in the real ~/.social-hook/) aren't available.
-    if live and harness.db_path and harness.conn:
+    # Copy tokens from the real worktree DB into the harness's isolated DB.
+    # The harness overrides HOME, so get_db_path() inside the factory resolves
+    # to the harness DB. Tokens set up by the operator live in the real DB.
+    if live and harness.conn:
         _copy_real_tokens(harness)
 
     config = harness.load_config()
     db_path = str(harness.db_path) if harness.db_path else None
-    enabled = get_enabled_platforms(config, db_path=db_path)
+    enabled = get_enabled_platforms(
+        config, db_path=db_path, live=live, harness=harness, headless=headless
+    )
 
     if not enabled:
         print("       No platform credentials configured -- skipping Section U")

@@ -48,6 +48,8 @@ site-src/
 
 # Claude Code internals
 .claude/
+!.claude/agents/
+!.claude/loops/
 
 # Local project config
 .social-hook/

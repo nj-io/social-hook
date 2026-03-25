@@ -6,7 +6,12 @@ Draft lifecycle management.
 
 ### `social-hook draft approve`
 
-Approve a draft for posting.
+Mark a draft as approved for posting.
+
+The scheduler will post it when its scheduled time arrives.
+Preview drafts must be promoted to a platform first.
+
+Example: social-hook draft approve draft_abc123
 
 **Arguments:**
 
@@ -18,7 +23,9 @@ Approve a draft for posting.
 
 ### `social-hook draft cancel`
 
-Cancel a draft.
+Cancel a pending draft, removing it from the posting queue.
+
+Example: social-hook draft cancel draft_abc123
 
 **Arguments:**
 
@@ -191,7 +198,12 @@ Example: social-hook draft promote draft-abc123 --platform x
 
 ### `social-hook draft quick-approve`
 
-Approve and schedule at optimal time in one step.
+Approve and schedule a draft for the next optimal posting time in one step.
+
+Combines approve + schedule. Considers your configured posting limits,
+preferred time windows, and minimum gap between posts to pick the best slot.
+
+Example: social-hook draft quick-approve draft_abc123
 
 **Arguments:**
 
@@ -257,7 +269,12 @@ Example: social-hook draft reopen draft-abc123
 
 ### `social-hook draft retry`
 
-Retry a failed draft.
+Re-queue a failed draft for another posting attempt.
+
+Resets the retry counter and sets status back to scheduled so
+the scheduler will try posting it again.
+
+Example: social-hook draft retry draft_abc123
 
 **Arguments:**
 
@@ -269,7 +286,14 @@ Retry a failed draft.
 
 ### `social-hook draft schedule`
 
-Schedule a draft for posting.
+Schedule a draft for posting at a specific or optimal time.
+
+With --time, posts at that exact ISO datetime. Without --time,
+automatically picks the next optimal slot based on your configured
+posting limits, time windows, and minimum gap between posts.
+
+Example: social-hook draft schedule draft_abc123
+Example: social-hook draft schedule draft_abc123 --time 2026-03-25T10:00:00
 
 **Arguments:**
 

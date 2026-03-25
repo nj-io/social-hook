@@ -44,7 +44,12 @@ def quickstart(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip all confirmation prompts"),
     json_output: bool = typer.Option(False, "--json", help="JSON output"),
 ) -> None:
-    """Run the quickstart flow."""
+    """Run the quickstart flow.
+
+    Zero-to-first-draft onboarding. Auto-detects your LLM provider,
+    registers your repo, imports commit history, runs AI project discovery,
+    and generates an introductory draft — all in one command.
+    """
     # Resolve JSON output from global or local flag
     is_json = json_output or (ctx.obj or {}).get("json", False)
     dry_run = (ctx.obj or {}).get("dry_run", False)
