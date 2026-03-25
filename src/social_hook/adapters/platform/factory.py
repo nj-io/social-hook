@@ -28,7 +28,8 @@ def create_adapter(platform: str, config, db_path: str | None = None) -> Platfor
     Args:
         platform: Platform name (e.g., "x", "linkedin").
         config: Global Config object (for credentials via config.env).
-        db_path: Path to SQLite database (required for X OAuth 2.0 tokens).
+        db_path: Ignored for token operations (tokens always use the main DB).
+            Kept for backward compatibility with callers that pass it.
 
     Returns:
         Configured PlatformAdapter instance.
@@ -38,15 +39,16 @@ def create_adapter(platform: str, config, db_path: str | None = None) -> Platfor
     """
     if platform == "x":
         from social_hook.adapters.platform.x import XAdapter
+        from social_hook.filesystem import get_db_path
 
         client_id = config.env.get("X_CLIENT_ID", "")
         client_secret = config.env.get("X_CLIENT_SECRET", "")
 
         if not client_id:
             raise ConfigError("X_CLIENT_ID not configured in .env")
-        if not db_path:
-            raise ConfigError("db_path required for X adapter (OAuth 2.0 tokens stored in DB)")
 
+        # Tokens live in the current context's DB (worktree-aware)
+        token_db = str(get_db_path())
         x_config = config.platforms.get("x")
         tier = (x_config.account_tier if x_config else None) or "free"
 
@@ -54,10 +56,10 @@ def create_adapter(platform: str, config, db_path: str | None = None) -> Platfor
         token_kwargs = dict(
             client_id=client_id, client_secret=client_secret, token_url=_REFRESH_URLS["x"]
         )
-        access_token = auth.refresh_and_get_token(db_path, account_name, "x", **token_kwargs)
+        access_token = auth.refresh_and_get_token(token_db, account_name, "x", **token_kwargs)
 
         def refresher():
-            return auth.refresh_and_get_token(db_path, account_name, "x", **token_kwargs)
+            return auth.refresh_and_get_token(token_db, account_name, "x", **token_kwargs)
 
         return XAdapter(access_token, tier=tier, token_refresher=refresher)
 
