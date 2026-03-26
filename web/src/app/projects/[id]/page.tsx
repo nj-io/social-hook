@@ -1055,8 +1055,12 @@ export default function ProjectDetailPage() {
                           setActionLoading(true);
                           setActionError(null);
                           try {
-                            for (const did of Array.from(selectedDecisions)) {
-                              const res = await retriggerDecision(did);
+                            const results = await Promise.all(
+                              Array.from(selectedDecisions).map((did) => retriggerDecision(did))
+                            );
+                            for (let i = 0; i < results.length; i++) {
+                              const res = results[i];
+                              const did = Array.from(selectedDecisions)[i];
                               if (res.task_id) {
                                 trackTask(res.task_id, `retrigger-${did}`, "retrigger");
                               }
