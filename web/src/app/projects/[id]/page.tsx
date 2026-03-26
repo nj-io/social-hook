@@ -28,6 +28,7 @@ import { SimpleMarkdown } from "@/components/simple-markdown";
 import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
 import { RateLimitCard } from "@/components/rate-limit-card";
+import { AnalysisQueueCard } from "@/components/analysis-queue-card";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
 import { EvaluationCycles } from "@/components/evaluation-cycles";
@@ -430,9 +431,10 @@ export default function ProjectDetailPage() {
           </Link>
         </div>
 
-        {/* Rate Limits + Journey Capture status */}
-        <div className="mt-4">
+        {/* Rate Limits + Analysis Queue + Journey Capture status */}
+        <div className="mt-4 flex gap-4">
           <RateLimitCard />
+          <AnalysisQueueCard projectId={id} />
         </div>
         <div className="mt-2">
           {project.journey_capture_enabled ? (
