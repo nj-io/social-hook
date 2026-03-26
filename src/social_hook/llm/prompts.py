@@ -15,7 +15,7 @@ from social_hook.config.project import (
     _parse_memories,
 )
 from social_hook.constants import CONFIG_DIR_NAME, PROJECT_SLUG
-from social_hook.errors import PromptNotFoundError
+from social_hook.errors import ConfigError, PromptNotFoundError
 from social_hook.models import CommitInfo, ProjectContext
 from social_hook.scheduling import ProjectSchedulingState
 
@@ -534,6 +534,8 @@ def assemble_evaluator_prompt(
                 )
 
     # Content strategies
+    if targets and not strategies:
+        raise ConfigError("No strategies provided to evaluator prompt")
     if strategies:
         sections.append("\n---\n## Content Strategies")
         sections.append(
@@ -745,11 +747,17 @@ def assemble_evaluator_prompt(
     if commit.files_changed:
         sections.append(f"- Files: {', '.join(commit.files_changed[:20])}")
     if commit.diff:
-        if analysis is not None:
-            # When stage 1 analysis is available, use a reduced diff budget
-            # since the analysis already summarizes the commit
+        if analysis is not None and getattr(analysis, "commit_analysis", None):
+            # Stage 1 analysis present — skip raw diff entirely.
+            # The Pre-Computed Commit Analysis section provides classification,
+            # tags, summary, and technical_detail. Commit metadata (hash,
+            # message, files_changed) is already included above.
+            pass
+        elif analysis is not None:
+            # Analysis present but missing commit_analysis — include diff at reduced budget
+            logger.warning("Analysis present but commit_analysis missing, including diff")
             diff_text = commit.diff
-            max_diff_tokens = config.max_tokens // 8  # Reduced budget with analysis
+            max_diff_tokens = config.max_tokens // 8
             if count_tokens(diff_text) > max_diff_tokens:
                 diff_text = (
                     diff_text[: max_diff_tokens * 4]
@@ -757,6 +765,7 @@ def assemble_evaluator_prompt(
                 )
             sections.append(f"\n### Diff\n```\n{diff_text}\n```")
         else:
+            # No analysis — include full diff at standard budget
             diff_text = commit.diff
             max_diff_tokens = config.max_tokens // 4  # Reserve budget for diff
             if count_tokens(diff_text) > max_diff_tokens:

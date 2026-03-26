@@ -647,3 +647,36 @@ class CommitAnalysisResult(BaseModel):
             return cls.model_validate(data)
         except ValidationError as e:
             raise MalformedResponseError(f"Invalid log_commit_analysis input: {e}") from e
+
+
+# =============================================================================
+# Topic Extraction (LLM-assisted topic seeding from brief)
+# =============================================================================
+
+TOPIC_EXTRACTION_TOOL: dict[str, Any] = {
+    "name": "extract_topics",
+    "description": "Extract content topics from a project brief for a specific strategy",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "topics": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Short topic title (2-5 words)",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "2-3 sentence description of what this topic covers",
+                        },
+                    },
+                    "required": ["title", "description"],
+                },
+            },
+        },
+        "required": ["topics"],
+    },
+}

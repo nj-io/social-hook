@@ -32,10 +32,22 @@ def _resolve_proj(conn, project_path: str | None):
     return proj
 
 
+def _fail(msg: str, json_output: bool, exit_code: int = 1) -> None:
+    """Print error (JSON or plain) and raise typer.Exit."""
+    if json_output:
+        typer.echo(json_mod.dumps({"error": msg}))
+    else:
+        typer.echo(msg)
+    raise typer.Exit(exit_code)
+
+
 @app.command("list")
 def list_cmd(
     ctx: typer.Context,
     strategy: str | None = typer.Option(None, "--strategy", "-s", help="Filter by strategy name"),
+    include_dismissed: bool = typer.Option(
+        False, "--include-dismissed", help="Include dismissed topics in output"
+    ),
     project_path: str | None = typer.Option(
         None, "--project", "-p", help="Repository path (default: cwd)"
     ),
@@ -44,7 +56,8 @@ def list_cmd(
     """List all topics, grouped by strategy.
 
     Shows the content topic queue with status, commit count, and priority.
-    Use --strategy to filter by a specific strategy.
+    Use --strategy to filter by a specific strategy. Dismissed topics are
+    hidden by default; use --include-dismissed to show them.
 
     Example: social-hook topics list --strategy building-public
     """
@@ -57,25 +70,22 @@ def list_cmd(
         proj = _resolve_proj(conn, project_path)
 
         if strategy:
-            topics = ops.get_topics_by_strategy(conn, proj.id, strategy)
+            all_topics = ops.get_topics_by_strategy(conn, proj.id, strategy, include_dismissed=True)
         else:
-            # Get all topics for the project
-            rows = conn.execute(
-                """
-                SELECT * FROM content_topics
-                WHERE project_id = ?
-                ORDER BY strategy, priority_rank DESC, created_at ASC
-                """,
-                (proj.id,),
-            ).fetchall()
-            from social_hook.models import ContentTopic
+            all_topics = ops.get_topics_by_project(conn, proj.id, include_dismissed=True)
 
-            topics = [ContentTopic.from_dict(dict(r)) for r in rows]
+        dismissed_count = sum(1 for t in all_topics if t.status == "dismissed")
+        topics = (
+            all_topics if include_dismissed else [t for t in all_topics if t.status != "dismissed"]
+        )
 
         if json_output:
             typer.echo(
                 json_mod.dumps(
-                    {"topics": [t.to_dict() for t in topics]},
+                    {
+                        "topics": [t.to_dict() for t in topics],
+                        "dismissed_count": dismissed_count,
+                    },
                     indent=2,
                 )
             )
@@ -84,6 +94,10 @@ def list_cmd(
         if not topics:
             filter_msg = f" for strategy '{strategy}'" if strategy else ""
             typer.echo(f"No topics found{filter_msg}.")
+            if dismissed_count and not include_dismissed:
+                typer.echo(
+                    f"({dismissed_count} dismissed topic(s) hidden. Use --include-dismissed to show.)"
+                )
             return
 
         # Group by strategy
@@ -93,14 +107,21 @@ def list_cmd(
 
         for strat_name, strat_topics in sorted(by_strategy.items()):
             typer.echo(f"\n  {strat_name}:")
-            typer.echo(f"  {'ID':<16} {'Topic':<30} {'Status':<12} {'Commits':<9} {'Rank'}")
-            typer.echo("  " + "-" * 75)
-            for t in strat_topics:
+            typer.echo(
+                f"  {'#':<4} {'ID':<16} {'Topic':<30} {'Status':<12} {'Commits':<9} {'Rank'}"
+            )
+            typer.echo("  " + "-" * 79)
+            for idx, t in enumerate(strat_topics, start=1):
                 tid = t.id[:14]
                 topic_name = t.topic[:28]
                 typer.echo(
-                    f"  {tid:<16} {topic_name:<30} {t.status:<12} {t.commit_count:<9} {t.priority_rank}"
+                    f"  {f'#{idx}':<4} {tid:<16} {topic_name:<30} {t.status:<12} {t.commit_count:<9} {t.priority_rank}"
                 )
+
+        if dismissed_count and not include_dismissed:
+            typer.echo(
+                f"\n  ({dismissed_count} dismissed topic(s) hidden. Use --include-dismissed to show.)"
+            )
     finally:
         conn.close()
 
@@ -123,6 +144,7 @@ def add(
 
     Example: social-hook topics add --strategy technical --topic "evaluation pipeline" --description "How we built the evaluation system"
     """
+    from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
     from social_hook.models import ContentTopic
@@ -132,6 +154,18 @@ def add(
     conn = _get_conn()
     try:
         proj = _resolve_proj(conn, project_path)
+
+        # Validate strategy exists in config (if config is available)
+        try:
+            config_path = ctx.obj.get("config") if ctx.obj else None
+            config = load_full_config(str(config_path) if config_path else None)
+            if config.content_strategies and strategy not in config.content_strategies:
+                valid = ", ".join(sorted(config.content_strategies.keys()))
+                _fail(f"Unknown strategy '{strategy}'. Available: {valid}", json_output)
+        except typer.Exit:
+            raise
+        except Exception:
+            logger.debug("Could not load config for strategy validation, skipping")
 
         new_topic = ContentTopic(
             id=generate_id("topic"),
@@ -182,28 +216,11 @@ def reorder(
 
         topic = ops.get_topic(conn, id)
         if not topic:
-            msg = f"Topic not found: {id}"
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
-
+            _fail(f"Topic not found: {id}", json_output)
         if topic.project_id != proj.id:
-            msg = "Topic does not belong to this project"
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
-
+            _fail("Topic does not belong to this project", json_output)
         if topic.strategy != strategy:
-            msg = f"Topic belongs to strategy '{topic.strategy}', not '{strategy}'"
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
+            _fail(f"Topic belongs to strategy '{topic.strategy}', not '{strategy}'", json_output)
 
         ops.update_topic_priority(conn, id, rank)
         ops.emit_data_event(conn, "topic", "updated", id, proj.id)
@@ -223,7 +240,9 @@ def reorder(
 def status(
     ctx: typer.Context,
     topic_id: str = typer.Argument(..., help="Topic ID"),
-    new_status: str = typer.Argument(..., help="New status (uncovered, holding, partial, covered)"),
+    new_status: str = typer.Argument(
+        ..., help="New status (uncovered, holding, partial, covered, dismissed)"
+    ),
     project_path: str | None = typer.Option(
         None, "--project", "-p", help="Repository path (default: cwd)"
     ),
@@ -231,7 +250,7 @@ def status(
 ):
     """Set a topic's status.
 
-    Valid statuses: uncovered, holding, partial, covered.
+    Valid statuses: uncovered, holding, partial, covered, dismissed.
 
     Example: social-hook topics status topic_abc123 covered
     """
@@ -241,12 +260,7 @@ def status(
 
     if new_status not in TOPIC_STATUSES:
         valid = ", ".join(sorted(TOPIC_STATUSES))
-        msg = f"Invalid status: {new_status}. Valid: {valid}"
-        if json_output:
-            typer.echo(json_mod.dumps({"error": msg}))
-        else:
-            typer.echo(msg)
-        raise typer.Exit(1)
+        _fail(f"Invalid status: {new_status}. Valid: {valid}", json_output)
 
     conn = _get_conn()
     try:
@@ -254,20 +268,9 @@ def status(
 
         topic = ops.get_topic(conn, topic_id)
         if not topic:
-            msg = f"Topic not found: {topic_id}"
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
-
+            _fail(f"Topic not found: {topic_id}", json_output)
         if topic.project_id != proj.id:
-            msg = "Topic does not belong to this project"
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
+            _fail("Topic does not belong to this project", json_output)
 
         ops.update_topic_status(conn, topic_id, new_status)
         ops.emit_data_event(conn, "topic", "updated", topic_id, proj.id)
@@ -312,20 +315,9 @@ def delete(
 
         topic = ops.get_topic(conn, topic_id)
         if not topic:
-            msg = f"Topic not found: {topic_id}"
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
-
+            _fail(f"Topic not found: {topic_id}", json_output)
         if topic.project_id != proj.id:
-            msg = "Topic does not belong to this project"
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
+            _fail("Topic does not belong to this project", json_output)
 
         if not yes and not typer.confirm(f"Delete topic '{topic.topic}'?"):
             typer.echo("Cancelled.")
@@ -343,6 +335,54 @@ def delete(
         conn.close()
 
 
+@app.command()
+def dismiss(
+    ctx: typer.Context,
+    topic_id: str = typer.Argument(..., help="Topic ID to dismiss"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Dismiss a topic so no posts are created about it.
+
+    Dismissed topics are hidden from the queue and will not be recreated
+    by auto-seeding. Use 'topics list --include-dismissed' to see them.
+
+    Example: social-hook topics dismiss topic_abc123
+    """
+    from social_hook.db import operations as ops
+
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn = _get_conn()
+    try:
+        proj = _resolve_proj(conn, project_path)
+
+        topic = ops.get_topic(conn, topic_id)
+        if not topic:
+            _fail(f"Topic not found: {topic_id}", json_output)
+        if topic.project_id != proj.id:
+            _fail("Topic does not belong to this project", json_output)
+        if topic.status == "dismissed":
+            _fail(f"Topic '{topic.topic}' is already dismissed.", json_output)
+
+        if not yes and not typer.confirm(f"Dismiss topic '{topic.topic}'?"):
+            typer.echo("Cancelled.")
+            return
+
+        ops.update_topic_status(conn, topic_id, "dismissed")
+        ops.emit_data_event(conn, "topic", "updated", topic_id, proj.id)
+
+        if json_output:
+            typer.echo(json_mod.dumps({"dismissed": True, "topic_id": topic_id}, indent=2))
+        else:
+            typer.echo(f"Topic '{topic.topic}' dismissed.")
+    finally:
+        conn.close()
+
+
 @app.command("draft-now")
 def draft_now(
     ctx: typer.Context,
@@ -352,10 +392,10 @@ def draft_now(
     ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """Force a draft on a held topic via LLM evaluation and drafting.
+    """Force-draft a held or uncovered topic via LLM evaluation and drafting.
 
-    Only topics with status 'holding' can be force-drafted. Runs the full
-    evaluation and drafting pipeline (same as the web UI "Draft Now" button).
+    Topics with status 'holding' or 'uncovered' can be force-drafted. Runs the
+    full evaluation and drafting pipeline (same as the web UI "Draft Now" button).
     This is an LLM operation — may take a moment.
 
     Example: social-hook topics draft-now topic_abc123
@@ -372,28 +412,14 @@ def draft_now(
 
         topic = ops.get_topic(conn, topic_id)
         if not topic:
-            msg = f"Topic not found: {topic_id}"
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
-
+            _fail(f"Topic not found: {topic_id}", json_output)
         if topic.project_id != proj.id:
-            msg = "Topic does not belong to this project"
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
-
-        if topic.status != "holding":
-            msg = f"Topic has status '{topic.status}'. Only held topics can be force-drafted."
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
+            _fail("Topic does not belong to this project", json_output)
+        if topic.status not in ("holding", "uncovered"):
+            _fail(
+                f"Topic has status '{topic.status}'. Only held or uncovered topics can be force-drafted.",
+                json_output,
+            )
 
         # Resolve strategy: topic.strategy, then config.content_strategy fallback
         strategy = topic.strategy
@@ -403,12 +429,10 @@ def draft_now(
         if not strategy:
             strategy = getattr(config, "content_strategy", None) or ""
         if not strategy:
-            msg = "Topic has no strategy and no content_strategy configured. Set a strategy first."
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(1)
+            _fail(
+                "Topic has no strategy and no content_strategy configured. Set a strategy first.",
+                json_output,
+            )
 
         if not json_output:
             typer.echo(f"Creating draft for topic '{topic.topic}'...")
@@ -416,12 +440,7 @@ def draft_now(
         cycle_id = force_draft_topic(conn, config, proj.id, topic_id, strategy)
 
         if cycle_id is None:
-            msg = "Failed to create draft. Check logs for details."
-            if json_output:
-                typer.echo(json_mod.dumps({"error": msg}))
-            else:
-                typer.echo(msg)
-            raise typer.Exit(2)
+            _fail("Failed to create draft. Check logs for details.", json_output, exit_code=2)
 
         if json_output:
             typer.echo(

@@ -645,8 +645,11 @@ export async function resetStrategy(projectId: string, name: string): Promise<{ 
 }
 
 // Topics
-export async function fetchTopics(projectId: string, strategy?: string): Promise<{ topics: Topic[] }> {
-  const params = strategy ? `?strategy=${encodeURIComponent(strategy)}` : "";
+export async function fetchTopics(projectId: string, strategy?: string, includeDismissed?: boolean): Promise<{ topics: Topic[] }> {
+  const parts: string[] = [];
+  if (strategy) parts.push(`strategy=${encodeURIComponent(strategy)}`);
+  if (includeDismissed) parts.push("include_dismissed=true");
+  const params = parts.length > 0 ? `?${parts.join("&")}` : "";
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics${params}`);
 }
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { SystemError, SystemHealth } from "@/lib/types";
 import { fetchSystemErrors, fetchSystemHealth } from "@/lib/api";
+import { useDataEvents } from "@/lib/use-data-events";
 
 const SEVERITY_STYLES: Record<string, string> = {
   info: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
@@ -31,7 +32,12 @@ export function ErrorFeed() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 30_000);
+    return () => clearInterval(interval);
+  }, [load]);
+  useDataEvents(["error"], load);
 
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading system status...</p>;

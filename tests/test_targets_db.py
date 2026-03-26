@@ -828,7 +828,8 @@ class TestStatusConstants:
         assert "holding" in TOPIC_STATUSES
         assert "partial" in TOPIC_STATUSES
         assert "covered" in TOPIC_STATUSES
-        assert len(TOPIC_STATUSES) == 4
+        assert "dismissed" in TOPIC_STATUSES
+        assert len(TOPIC_STATUSES) == 5
 
     def test_suggestion_statuses(self):
         assert "pending" in SUGGESTION_STATUSES

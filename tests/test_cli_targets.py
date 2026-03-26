@@ -570,7 +570,7 @@ class TestTopicsAdd:
                     "topics",
                     "add",
                     "--strategy",
-                    "technical",
+                    "building-public",
                     "--topic",
                     "pipeline design",
                     "--project",
@@ -581,7 +581,7 @@ class TestTopicsAdd:
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["topic"] == "pipeline design"
-            assert data["strategy"] == "technical"
+            assert data["strategy"] == "building-public"
 
 
 class TestTopicsStatus:
@@ -742,8 +742,14 @@ class TestTopicsDraftNow:
             assert data["cycle_id"] == "cycle_mock1"
             assert data["topic_id"] == "topic_test1"
 
-    def test_draft_now_not_holding(self, db_env_with_topic):
-        """Topic with status != 'holding' should be rejected."""
+    def test_draft_now_wrong_status(self, db_env_with_topic):
+        """Topic with non-draftable status should be rejected."""
+        # Set status to 'covered' — not draftable
+        conn = sqlite3.connect(str(db_env_with_topic["db_path"]))
+        conn.execute("UPDATE content_topics SET status = 'covered' WHERE id = 'topic_test1'")
+        conn.commit()
+        conn.close()
+
         with _patch_paths(db_env_with_topic):
             result = runner.invoke(
                 app,
@@ -756,7 +762,7 @@ class TestTopicsDraftNow:
                 ],
             )
             assert result.exit_code == 1
-            assert "Only held topics" in result.output
+            assert "Only held or uncovered topics" in result.output
 
     def test_draft_now_not_found(self, db_env):
         with _patch_paths(db_env):

@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Strategy, Project } from "@/lib/types";
-import { fetchStrategies, updateStrategy, resetStrategy, fetchProjects } from "@/lib/api";
+import { fetchStrategies, updateStrategy, resetStrategy, fetchProjects, createStrategy, deleteStrategy } from "@/lib/api";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/lib/toast-context";
 
 const EDITABLE_FIELDS: (keyof Strategy)[] = ["audience", "voice", "angle", "post_when", "avoid", "format_preference", "media_preference"];
 const FIELD_LABELS: Record<string, string> = {
@@ -26,6 +27,13 @@ export function StrategiesSection() {
   const [saving, setSaving] = useState(false);
   const [confirmReset, setConfirmReset] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createFields, setCreateFields] = useState<Partial<Strategy>>({});
+  const [creating, setCreating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const { addToast } = useToast();
 
   const loadProjects = useCallback(async () => {
     try {
@@ -35,7 +43,7 @@ export function StrategiesSection() {
         setSelectedProject(res.projects[0].id);
       }
     } catch {
-      // silent
+      // silent — failed initial load
     } finally {
       setLoading(false);
     }
@@ -67,7 +75,7 @@ export function StrategiesSection() {
         setStrategies([]);
       }
     } catch {
-      // silent
+      // silent — failed fetch during refresh
     }
   }, []);
 
@@ -95,8 +103,8 @@ export function StrategiesSection() {
       await updateStrategy(selectedProject, editing, editDraft);
       setEditing(null);
       await loadStrategies(selectedProject);
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to save strategy", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     } finally {
       setSaving(false);
     }
@@ -108,18 +116,67 @@ export function StrategiesSection() {
       await resetStrategy(selectedProject, name);
       setConfirmReset(null);
       await loadStrategies(selectedProject);
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to reset strategy", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     } finally {
       setResetting(false);
     }
   }
 
+  async function handleCreate() {
+    if (!createName.trim()) return;
+    setCreating(true);
+    try {
+      await createStrategy(selectedProject, {
+        name: createName.trim(),
+        audience: (createFields.audience as string) || undefined,
+        voice: (createFields.voice as string) || undefined,
+        angle: (createFields.angle as string) || undefined,
+        post_when: (createFields.post_when as string) || undefined,
+        avoid: (createFields.avoid as string) || undefined,
+      });
+      setCreateOpen(false);
+      setCreateName("");
+      setCreateFields({});
+      await loadStrategies(selectedProject);
+    } catch (e) {
+      addToast("Failed to create strategy", { variant: "error", detail: e instanceof Error ? e.message : undefined });
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleDelete(name: string) {
+    setDeleting(true);
+    try {
+      await deleteStrategy(selectedProject, name);
+      setConfirmDelete(null);
+      await loadStrategies(selectedProject);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("409") || msg.toLowerCase().includes("referenced") || msg.toLowerCase().includes("target")) {
+        addToast("Cannot delete strategy", { variant: "error", detail: "Strategy is referenced by targets. Remove targets first." });
+      } else {
+        addToast("Failed to delete strategy", { variant: "error", detail: msg || undefined });
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold">Strategies</h2>
-        <p className="text-sm text-muted-foreground">Content strategies define audience, voice, and posting rules.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Strategies</h2>
+          <p className="text-sm text-muted-foreground">Content strategies define audience, voice, and posting rules.</p>
+        </div>
+        <button
+          onClick={() => setCreateOpen(true)}
+          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80"
+        >
+          New Strategy
+        </button>
       </div>
 
       {projects.length > 1 && (
@@ -134,6 +191,51 @@ export function StrategiesSection() {
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
+        </div>
+      )}
+
+      {/* Create form */}
+      {createOpen && (
+        <div className="rounded-lg border border-border p-4">
+          <h3 className="text-sm font-semibold">New Strategy</h3>
+          <div className="mt-3 space-y-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium">Name</label>
+              <input
+                type="text"
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                placeholder="e.g., brand-primary"
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-accent"
+              />
+            </div>
+            {(["audience", "voice", "angle", "post_when", "avoid"] as const).map((field) => (
+              <div key={field}>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">{FIELD_LABELS[field]}</label>
+                <input
+                  type="text"
+                  value={(createFields[field] as string) ?? ""}
+                  onChange={(e) => setCreateFields((prev) => ({ ...prev, [field]: e.target.value }))}
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-accent"
+                />
+              </div>
+            ))}
+            <div className="flex gap-2">
+              <button
+                onClick={handleCreate}
+                disabled={creating || !createName.trim()}
+                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+              >
+                {creating ? "Creating..." : "Create"}
+              </button>
+              <button
+                onClick={() => { setCreateOpen(false); setCreateName(""); setCreateFields({}); }}
+                className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -189,6 +291,12 @@ export function StrategiesSection() {
                           Reset to Default
                         </button>
                       )}
+                      <button
+                        onClick={() => setConfirmDelete(s.name)}
+                        className="text-xs text-muted-foreground hover:text-destructive"
+                      >
+                        Delete
+                      </button>
                     </>
                   )}
                 </div>
@@ -243,6 +351,26 @@ export function StrategiesSection() {
             className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80 disabled:opacity-50"
           >
             {resetting ? "Resetting..." : "Reset"}
+          </button>
+        </div>
+      </Modal>
+
+      {/* Delete confirmation */}
+      <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="max-w-sm">
+        <h3 className="text-sm font-semibold">Delete Strategy</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Delete &ldquo;{confirmDelete}&rdquo;? This will remove the strategy and its configuration. Targets using this strategy will need to be reassigned.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={() => setConfirmDelete(null)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+            Cancel
+          </button>
+          <button
+            onClick={() => confirmDelete && handleDelete(confirmDelete)}
+            disabled={deleting}
+            className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80 disabled:opacity-50"
+          >
+            {deleting ? "Deleting..." : "Delete"}
           </button>
         </div>
       </Modal>

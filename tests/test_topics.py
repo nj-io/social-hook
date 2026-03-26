@@ -120,7 +120,7 @@ class TestSeedTopicsFromBrief:
     def test_warns_when_no_capabilities(self, db, project_id, caplog):
         created = seed_topics_from_brief(db, project_id, BRIEF_NO_CAPABILITIES, ["brand-primary"])
         assert len(created) == 0
-        assert "No 'Key Capabilities' section found" in caplog.text
+        assert "No topics extracted for strategy" in caplog.text
 
     def test_empty_strategies_creates_zero(self, db, project_id):
         created = seed_topics_from_brief(db, project_id, SAMPLE_BRIEF, [])
@@ -322,7 +322,7 @@ class TestForceDraftTopic:
         with pytest.raises(ConfigError, match="Topic not found"):
             force_draft_topic(db, None, project_id, "topic_nonexistent", "brand-primary")
 
-    def test_returns_none_for_non_holding_topic(self, db, project_id):
+    def test_allows_uncovered_topic(self, db, project_id):
         topic = ContentTopic(
             id="topic_unc1",
             project_id=project_id,
@@ -333,6 +333,19 @@ class TestForceDraftTopic:
         ops.insert_content_topic(db, topic)
 
         cycle_id = force_draft_topic(db, None, project_id, "topic_unc1", "brand-primary")
+        assert cycle_id is not None  # uncovered topics can be force-drafted
+
+    def test_returns_none_for_covered_topic(self, db, project_id):
+        topic = ContentTopic(
+            id="topic_cov1",
+            project_id=project_id,
+            strategy="brand-primary",
+            topic="Covered thing",
+            status="covered",
+        )
+        ops.insert_content_topic(db, topic)
+
+        cycle_id = force_draft_topic(db, None, project_id, "topic_cov1", "brand-primary")
         assert cycle_id is None
 
     def test_dry_run_does_not_insert(self, db, project_id):

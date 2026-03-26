@@ -51,7 +51,7 @@ EDITABLE_STATUSES = frozenset(
     }
 )
 
-TOPIC_STATUSES = frozenset({"uncovered", "holding", "partial", "covered"})
+TOPIC_STATUSES = frozenset({"uncovered", "holding", "partial", "covered", "dismissed"})
 SUGGESTION_STATUSES = frozenset({"pending", "evaluated", "drafted", "dismissed"})
 
 

@@ -184,9 +184,9 @@ class TestForceDraftTopicNoConfig:
 
 
 class TestForceDraftTopicWrongStatus:
-    """force_draft_topic rejects topics not in 'holding' status."""
+    """force_draft_topic rejects topics not in 'holding' or 'uncovered' status."""
 
-    def test_uncovered_topic_returns_none(self, temp_db):
+    def test_uncovered_topic_succeeds(self, temp_db):
         from social_hook.db import operations as ops
 
         project = Project(id="proj-wrong", name="test", repo_path="/tmp/test")
@@ -197,7 +197,7 @@ class TestForceDraftTopicWrongStatus:
             project_id="proj-wrong",
             strategy="s1",
             topic="Test",
-            status="uncovered",  # Not 'holding'
+            status="uncovered",
         )
         ops.insert_content_topic(temp_db, topic)
 
@@ -206,6 +206,30 @@ class TestForceDraftTopicWrongStatus:
             config=None,
             project_id="proj-wrong",
             topic_id="topic-wrong",
+            strategy="s1",
+        )
+        assert result is not None  # uncovered topics can be force-drafted
+
+    def test_covered_topic_returns_none(self, temp_db):
+        from social_hook.db import operations as ops
+
+        project = Project(id="proj-cov", name="test", repo_path="/tmp/test")
+        ops.insert_project(temp_db, project)
+
+        topic = ContentTopic(
+            id="topic-cov",
+            project_id="proj-cov",
+            strategy="s1",
+            topic="Test",
+            status="covered",
+        )
+        ops.insert_content_topic(temp_db, topic)
+
+        result = force_draft_topic(
+            conn=temp_db,
+            config=None,
+            project_id="proj-cov",
+            topic_id="topic-cov",
             strategy="s1",
         )
         assert result is None

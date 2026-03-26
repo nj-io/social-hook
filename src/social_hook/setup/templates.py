@@ -142,6 +142,13 @@ STRATEGY_TEMPLATES: list[StrategyTemplate] = [
     ),
 ]
 
+# Strategy template classification for topic scoping.
+# Positioning strategies get product topics (seeded from brief).
+# Code-driven strategies get implementation topics (created from commit tags).
+# Custom and unrecognized strategies default to code-driven.
+POSITIONING_TEMPLATES = frozenset({"brand-primary", "product-news"})
+CODE_DRIVEN_TEMPLATES = frozenset({"building-public", "technical-deep-dive"})
+
 
 def get_template(template_id: str) -> StrategyTemplate | None:
     """Look up a template by id."""
