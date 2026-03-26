@@ -92,9 +92,9 @@ def tail(
     Example: social-hook logs tail trigger
     Example: social-hook logs tail
     """
-    from social_hook.filesystem import get_base_path
+    from social_hook.filesystem import get_logs_path
 
-    logs_dir = get_base_path() / "logs"
+    logs_dir = get_logs_path()
     if not logs_dir.exists():
         typer.echo(f"Logs directory not found: {logs_dir}")
         raise typer.Exit(1)

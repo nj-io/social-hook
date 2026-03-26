@@ -8,13 +8,16 @@ from social_hook import __version__
 from social_hook.constants import PROJECT_DESCRIPTION, PROJECT_NAME, PROJECT_SLUG
 
 
-def _init_logging(component: str, *, console: bool = True, notify: bool = False) -> None:
+def _init_logging(
+    component: str, *, console: bool = True, notify: bool = False, run_id: bool = False
+) -> None:
     """Initialize unified logging pipeline for a CLI entry point.
 
     Args:
         component: Component name (e.g., "trigger", "scheduler", "bot")
         console: Whether to show ERROR+ on stderr
         notify: Whether to send ERROR/CRITICAL to notification channels
+        run_id: Whether to generate and set a correlation run_id
     """
     import sys
 
@@ -38,8 +41,10 @@ def _init_logging(component: str, *, console: bool = True, notify: bool = False)
     if notify and config:
         from social_hook.notifications import send_notification
 
-        def sender(sev, msg):
-            send_notification(config, f"[{sev}] {msg}")
+        # NotificationSink already formats as "[SEVERITY] (source) message"
+        # so the sender just passes through — no extra wrapping needed.
+        def sender(_sev, msg):
+            send_notification(config, msg)
 
     setup_logging(
         component,
@@ -47,6 +52,12 @@ def _init_logging(component: str, *, console: bool = True, notify: bool = False)
         notification_sender=sender,
         console=console,
     )
+
+    if run_id:
+        from social_hook.filesystem import generate_id
+        from social_hook.logging import set_run_id
+
+        set_run_id(generate_id("run"))
 
 
 # Create main Typer app
@@ -293,11 +304,7 @@ def trigger(
     """
     from social_hook.trigger import run_trigger
 
-    _init_logging("trigger", notify=True)
-    from social_hook.filesystem import generate_id
-    from social_hook.logging import set_run_id
-
-    set_run_id(generate_id("run"))
+    _init_logging("trigger", notify=True, run_id=True)
 
     dry_run = ctx.obj.get("dry_run", False)
     verbose = ctx.obj.get("verbose", False)
@@ -333,11 +340,7 @@ def scheduler_tick(
     """
     from social_hook.scheduler import scheduler_tick as do_tick
 
-    _init_logging("scheduler", notify=True)
-    from social_hook.filesystem import generate_id
-    from social_hook.logging import set_run_id
-
-    set_run_id(generate_id("run"))
+    _init_logging("scheduler", notify=True, run_id=True)
 
     dry_run = ctx.obj.get("dry_run", False)
     config_path = ctx.obj.get("config")
@@ -367,11 +370,7 @@ def consolidation_tick_cmd(
     """
     from social_hook.consolidation import consolidation_tick as do_tick
 
-    _init_logging("consolidation", notify=True)
-    from social_hook.filesystem import generate_id
-    from social_hook.logging import set_run_id
-
-    set_run_id(generate_id("run"))
+    _init_logging("consolidation", notify=True, run_id=True)
 
     dry_run = ctx.obj.get("dry_run", False)
     config_path = ctx.obj.get("config")

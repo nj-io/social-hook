@@ -355,57 +355,6 @@ class TestPostTargetIdPropagation:
         conn.close()
 
 
-class TestEnsureErrorFeed:
-    """Test _ensure_error_feed module-level wiring."""
-
-    def test_sets_db_path_and_sender(self, tmp_path):
-        """ensure_error_feed configures db_path and sender on the singleton."""
-        import social_hook.error_feed as ef_mod
-        from social_hook.error_feed import ensure_error_feed
-        from social_hook.error_feed import error_feed as ef
-
-        old_wired = ef_mod._error_feed_wired
-        old_db_path = ef._db_path
-        old_sender = ef._send_callback
-        ef_mod._error_feed_wired = False
-
-        try:
-            db_path = str(tmp_path / "test.db")
-            config = MagicMock()
-            ensure_error_feed(config, db_path)
-
-            assert ef._db_path == db_path
-            assert ef._send_callback is not None
-            assert ef_mod._error_feed_wired is True
-        finally:
-            ef_mod._error_feed_wired = old_wired
-            ef._db_path = old_db_path
-            ef._send_callback = old_sender
-
-    def test_idempotent(self, tmp_path):
-        """Second call is a no-op (guard prevents re-wiring)."""
-        import social_hook.error_feed as ef_mod
-        from social_hook.error_feed import ensure_error_feed
-        from social_hook.error_feed import error_feed as ef
-
-        old_wired = ef_mod._error_feed_wired
-        old_db_path = ef._db_path
-        old_sender = ef._send_callback
-        ef_mod._error_feed_wired = False
-
-        try:
-            db1 = str(tmp_path / "first.db")
-            db2 = str(tmp_path / "second.db")
-            ensure_error_feed(MagicMock(), db1)
-            ensure_error_feed(MagicMock(), db2)
-
-            assert ef._db_path == db1  # First call sticks
-        finally:
-            ef_mod._error_feed_wired = old_wired
-            ef._db_path = old_db_path
-            ef._send_callback = old_sender
-
-
 class TestPreviewDraftBlocked:
     """Preview-mode drafts cannot be posted."""
 

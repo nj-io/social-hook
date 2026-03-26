@@ -2584,17 +2584,25 @@ def get_recent_system_errors(
     conn: sqlite3.Connection,
     limit: int = 50,
     *,
-    severity: str | None = None,
+    severity: str | list[str] | None = None,
     component: str | None = None,
     source: str | None = None,
 ) -> list[SystemErrorRecord]:
-    """Get recent system errors, newest first. Optional filters narrow results."""
+    """Get recent system errors, newest first. Optional filters narrow results.
+
+    severity can be a single string or a list of strings for IN queries.
+    """
     query = "SELECT * FROM system_errors"
     conditions: list[str] = []
     params: list = []
     if severity is not None:
-        conditions.append("severity = ?")
-        params.append(severity)
+        if isinstance(severity, list):
+            placeholders = ",".join("?" for _ in severity)
+            conditions.append(f"severity IN ({placeholders})")
+            params.extend(severity)
+        else:
+            conditions.append("severity = ?")
+            params.append(severity)
     if component is not None:
         conditions.append("component = ?")
         params.append(component)

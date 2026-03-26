@@ -82,16 +82,23 @@ async def lifespan(app_instance: FastAPI):
         try:
             from social_hook.notifications import send_notification
 
-            def sender(sev, msg):
-                send_notification(config, f"[{sev}] {msg}")
+            # NotificationSink already formats as "[SEVERITY] (source) message"
+            def sender(_sev, msg):
+                send_notification(config, msg)
         except Exception:
             sender = None
         setup_logging("web", error_feed=error_feed, notification_sender=sender, console=False)
     except Exception:
         logger.debug("Logging init failed (non-fatal)", exc_info=True)
 
-    # Wire on_persist callback for WebSocket live updates (fire-and-forget)
+    # Wire on_persist callback for WebSocket live updates (fire-and-forget).
+    # Bounded to 10 concurrent threads to avoid storms.
+    _persist_semaphore = threading.Semaphore(10)
+
     def _on_error_persisted(error_id, severity, component):
+        if not _persist_semaphore.acquire(blocking=False):
+            return  # drop under storm conditions
+
         def _emit():
             try:
                 conn = sqlite3.connect(str(db_path), timeout=2)
@@ -108,6 +115,8 @@ async def lifespan(app_instance: FastAPI):
                     conn.close()
             except Exception:
                 pass  # fire-and-forget: never block logging
+            finally:
+                _persist_semaphore.release()
 
         t = threading.Thread(target=_emit, daemon=True)
         t.start()

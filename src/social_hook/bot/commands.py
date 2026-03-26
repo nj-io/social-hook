@@ -1692,15 +1692,9 @@ def cmd_errors(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
     # Default to ERROR/CRITICAL when no severity specified
     conn = _get_conn()
     try:
-        if severity:
-            errors = ops.get_recent_system_errors(conn, limit=limit, severity=severity)
-        else:
-            # Get ERROR + CRITICAL from last 24h
-            errors_err = ops.get_recent_system_errors(conn, limit=limit, severity="error")
-            errors_crit = ops.get_recent_system_errors(conn, limit=limit, severity="critical")
-            errors = sorted(
-                errors_err + errors_crit, key=lambda e: e.created_at or "", reverse=True
-            )[:limit]
+        errors = ops.get_recent_system_errors(
+            conn, limit=limit, severity=severity or ["error", "critical"]
+        )
 
         if not errors:
             _send(adapter, chat_id, "No recent errors found.")
