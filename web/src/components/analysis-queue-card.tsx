@@ -61,11 +61,12 @@ export function AnalysisQueueCard({ projectId }: { projectId: string }) {
       </div>
 
       <p className="mt-2 text-xs text-muted-foreground">
-        {data.count === 0
-          ? "Next commit triggers full evaluation"
-          : pct >= 100
-            ? "Threshold reached — next commit evaluates"
-            : `${data.interval - data.count} more commit${data.interval - data.count !== 1 ? "s" : ""} until evaluation`}
+        {(() => {
+          const remaining = data.interval - data.count;
+          if (remaining <= 0) return "Threshold reached — next commit evaluates";
+          if (remaining === 1) return "Next commit triggers full evaluation";
+          return `${remaining} more commit${remaining !== 1 ? "s" : ""} until evaluation`;
+        })()}
       </p>
     </Link>
   );
