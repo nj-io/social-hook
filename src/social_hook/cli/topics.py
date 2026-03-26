@@ -290,52 +290,6 @@ def status(
 
 
 @app.command()
-def delete(
-    ctx: typer.Context,
-    topic_id: str = typer.Argument(..., help="Topic ID to delete"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
-    project_path: str | None = typer.Option(
-        None, "--project", "-p", help="Repository path (default: cwd)"
-    ),
-    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
-):
-    """Delete a topic from the queue.
-
-    Permanently removes the topic. This cannot be undone.
-
-    Example: social-hook topics delete topic_abc123 --yes
-    """
-    from social_hook.db import operations as ops
-
-    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
-
-    conn = _get_conn()
-    try:
-        proj = _resolve_proj(conn, project_path)
-
-        topic = ops.get_topic(conn, topic_id)
-        if not topic:
-            _fail(f"Topic not found: {topic_id}", json_output)
-        if topic.project_id != proj.id:
-            _fail("Topic does not belong to this project", json_output)
-
-        if not yes and not typer.confirm(f"Delete topic '{topic.topic}'?"):
-            typer.echo("Cancelled.")
-            return
-
-        conn.execute("DELETE FROM content_topics WHERE id = ?", (topic_id,))
-        conn.commit()
-        ops.emit_data_event(conn, "topic", "deleted", topic_id, proj.id)
-
-        if json_output:
-            typer.echo(json_mod.dumps({"deleted": True, "topic_id": topic_id}, indent=2))
-        else:
-            typer.echo(f"Topic '{topic.topic}' deleted.")
-    finally:
-        conn.close()
-
-
-@app.command()
 def dismiss(
     ctx: typer.Context,
     topic_id: str = typer.Argument(..., help="Topic ID to dismiss"),

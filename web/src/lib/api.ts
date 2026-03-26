@@ -819,10 +819,6 @@ export async function deleteStrategy(projectId: string, name: string): Promise<{
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`, { method: "DELETE" });
 }
 
-export async function deleteTopic(projectId: string, topicId: string): Promise<{ status: string; topic_id: string }> {
-  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}`, { method: "DELETE" });
-}
-
 export async function acceptSuggestion(projectId: string, suggestionId: string): Promise<{ task_id: string; status: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(suggestionId)}/accept`, { method: "POST" });
 }

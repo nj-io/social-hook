@@ -3,11 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Topic, Strategy } from "@/lib/types";
 import type { BackgroundTask } from "@/lib/api";
-import { fetchTopics, fetchStrategies, addTopic, updateTopic, reorderTopics, draftNowTopic, deleteTopic, setTopicStatus, combineTopics } from "@/lib/api";
+import { fetchTopics, fetchStrategies, addTopic, updateTopic, reorderTopics, draftNowTopic, setTopicStatus, combineTopics } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
 import { AsyncButton } from "@/components/async-button";
-import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/lib/toast-context";
 
 const STATUS_STYLES: Record<string, string> = {
@@ -34,11 +33,19 @@ export function TopicQueue({ projectId }: { projectId: string }) {
   const [editDesc, setEditDesc] = useState("");
   const [dragFrom, setDragFrom] = useState<{ strategy: string; index: number } | null>(null);
   const [dragTo, setDragTo] = useState<{ strategy: string; index: number } | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [combining, setCombining] = useState(false);
-  const [dismissedOpen, setDismissedOpen] = useState(false);
+  const [collapsedStrategies, setCollapsedStrategies] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const saved = localStorage.getItem("topic-queue-collapsed");
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
+  const [dismissedOpen, setDismissedOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("topic-queue-dismissed-open") === "true";
+  });
   const loadRef = useRef<() => void>(() => {});
   const { addToast } = useToast();
 
@@ -126,20 +133,6 @@ export function TopicQueue({ projectId }: { projectId: string }) {
     }
   }
 
-  async function handleDelete(topicId: string) {
-    setDeleting(true);
-    try {
-      await deleteTopic(projectId, topicId);
-      setConfirmDelete(null);
-      setSelected((prev) => { const next = new Set(prev); next.delete(topicId); return next; });
-      await load();
-    } catch (e) {
-      addToast("Failed to delete topic", { variant: "error", detail: e instanceof Error ? e.message : undefined });
-    } finally {
-      setDeleting(false);
-    }
-  }
-
   async function handleStatusChange(topicId: string, newStatus: string) {
     try {
       await setTopicStatus(projectId, topicId, newStatus);
@@ -210,6 +203,24 @@ export function TopicQueue({ projectId }: { projectId: string }) {
     return acc;
   }, {});
 
+  function toggleStrategyCollapsed(stratName: string) {
+    setCollapsedStrategies((prev) => {
+      const next = new Set(prev);
+      if (next.has(stratName)) next.delete(stratName);
+      else next.add(stratName);
+      localStorage.setItem("topic-queue-collapsed", JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  function toggleDismissedOpen() {
+    setDismissedOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem("topic-queue-dismissed-open", String(next));
+      return next;
+    });
+  }
+
   function createdByLabel(createdBy?: string): string | null {
     if (!createdBy) return null;
     if (createdBy === "discovery" || createdBy === "track1") return "auto";
@@ -259,10 +270,19 @@ export function TopicQueue({ projectId }: { projectId: string }) {
           <p className="text-sm text-muted-foreground">No topics in the queue.</p>
         </div>
       ) : (
-        Object.entries(activeGrouped).map(([stratName, stratTopics]) => (
+        Object.entries(activeGrouped).map(([stratName, stratTopics]) => {
+          const isCollapsed = collapsedStrategies.has(stratName);
+          return (
           <div key={stratName}>
-            <h3 className="mb-2 text-sm font-medium text-muted-foreground">{stratName}</h3>
-            <div className="space-y-1">
+            <button
+              onClick={() => toggleStrategyCollapsed(stratName)}
+              className="mb-2 flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
+              <span className={`transition-transform ${isCollapsed ? "" : "rotate-90"}`}>&#x25B6;</span>
+              {stratName}
+              <span className="ml-1 text-xs font-normal">({stratTopics.length})</span>
+            </button>
+            {!isCollapsed && <div className="space-y-1">
               {stratTopics.map((topic, index) => {
                 const refId = `draft-now:${topic.id}`;
                 const isDrafting = isRunning(refId);
@@ -376,27 +396,21 @@ export function TopicQueue({ projectId }: { projectId: string }) {
                       >
                         Dismiss
                       </button>
-                      <button
-                        onClick={() => setConfirmDelete(topic.id)}
-                        className="text-xs text-muted-foreground hover:text-destructive"
-                        title="Delete topic"
-                      >
-                        Delete
-                      </button>
                     </div>
                   </div>
                 );
               })}
-            </div>
+            </div>}
           </div>
-        ))
+          );
+        })
       )}
 
       {/* Dismissed topics collapsed section */}
       {dismissedTopics.length > 0 && (
         <div>
           <button
-            onClick={() => setDismissedOpen(!dismissedOpen)}
+            onClick={toggleDismissedOpen}
             className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
           >
             <span className={`transition-transform ${dismissedOpen ? "rotate-90" : ""}`}>&#x25B6;</span>
@@ -491,23 +505,6 @@ export function TopicQueue({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      {/* Delete confirmation */}
-      <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="max-w-sm">
-        <h3 className="text-sm font-semibold">Delete Topic</h3>
-        <p className="mt-2 text-sm text-muted-foreground">Are you sure you want to delete this topic? This cannot be undone.</p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={() => setConfirmDelete(null)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
-            Cancel
-          </button>
-          <button
-            onClick={() => confirmDelete && handleDelete(confirmDelete)}
-            disabled={deleting}
-            className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80 disabled:opacity-50"
-          >
-            {deleting ? "Deleting..." : "Delete"}
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 }
