@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS content_topics (
     description TEXT,
     priority_rank INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'uncovered'
-        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered')),
+        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered', 'dismissed')),
     commit_count INTEGER NOT NULL DEFAULT 0,
     last_commit_at TEXT,
     last_posted_at TEXT,
