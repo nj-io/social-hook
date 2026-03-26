@@ -335,7 +335,7 @@ class Decision:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (19 columns)."""
+        """Return tuple for INSERT (20 columns)."""
         import json
 
         return (
@@ -358,6 +358,7 @@ class Decision:
             json.dumps(self.reference_posts) if self.reference_posts is not None else None,
             self.branch,
             self.trigger_source,
+            1 if self.processed else 0,
         )
 
 
