@@ -230,6 +230,31 @@ function SettingsContent() {
 
           <section id="strategies" className="pt-1">
             <StrategiesSection />
+            <div className="mt-6 border-t border-border pt-4">
+              <h3 className="mb-1 text-sm font-semibold">Topic Generation</h3>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Controls how the system auto-creates content topics for strategies.
+              </p>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Topic granularity</label>
+                <select
+                  value={contextConfig.topic_granularity ?? "low"}
+                  onChange={async (e) => {
+                    const val = e.target.value;
+                    setContextConfig((prev) => ({ ...prev, topic_granularity: val }));
+                    await updateContentConfigParsed({ context: { ...contextConfig, topic_granularity: val } });
+                  }}
+                  className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Low: broad themes (~3-5 per strategy). Medium: feature-level (~5-10). High: implementation-specific (~10-20).
+                </p>
+              </div>
+            </div>
           </section>
 
           <section id="platforms" className="pt-1">
@@ -268,6 +293,33 @@ function SettingsContent() {
               rateLimits={rateLimits}
               onChange={(r) => saveConfig({ rate_limits: r } as Partial<Config>)}
             />
+            <div className="mt-6 border-t border-border pt-4">
+              <h3 className="mb-1 text-sm font-semibold">Per-Project Evaluation</h3>
+              <p className="mb-3 text-xs text-muted-foreground">
+                How often commits trigger full evaluations. Stored per-project in content-config.yaml.
+              </p>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Commit analysis interval</label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={contextConfig.commit_analysis_interval ?? 1}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (isNaN(val)) return;
+                    setContextConfig((prev) => ({ ...prev, commit_analysis_interval: val }));
+                  }}
+                  onBlur={async () => {
+                    await updateContentConfigParsed({ context: { ...contextConfig } });
+                  }}
+                  className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  How many commits to accumulate before running a full evaluation. Set to 1 to evaluate every commit.
+                </p>
+              </div>
+            </div>
           </section>
 
           <section id="consolidation" className="pt-1">
@@ -513,51 +565,6 @@ function SettingsContent() {
                 />
               </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium">Commit Analysis Interval</label>
-                <p className="mb-2 text-xs text-muted-foreground">
-                  Number of commits to accumulate before running a full evaluation. At interval 1, every
-                  non-trivial commit triggers evaluation. Higher values batch commits for less frequent,
-                  more comprehensive evaluations. Default: 1.
-                </p>
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={contextConfig.commit_analysis_interval ?? 1}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (isNaN(val)) return;
-                    setContextConfig((prev) => ({ ...prev, commit_analysis_interval: val }));
-                  }}
-                  onBlur={async () => {
-                    await updateContentConfigParsed({ context: { ...contextConfig } });
-                  }}
-                  className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium">Topic Granularity</label>
-                <p className="mb-2 text-xs text-muted-foreground">
-                  Controls how granular auto-created topics are. Low produces broad themes (~3-5 topics per
-                  strategy), medium produces feature-level topics (~5-10), and high produces
-                  implementation-specific topics (~10-20).
-                </p>
-                <select
-                  value={contextConfig.topic_granularity ?? "low"}
-                  onChange={async (e) => {
-                    const val = e.target.value;
-                    setContextConfig((prev) => ({ ...prev, topic_granularity: val }));
-                    await updateContentConfigParsed({ context: { ...contextConfig, topic_granularity: val } });
-                  }}
-                  className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-              </div>
             </div>
           </section>
         </div>
