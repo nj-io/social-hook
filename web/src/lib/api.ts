@@ -748,12 +748,36 @@ export async function approveAllCycleDrafts(
 }
 
 // System
-export async function fetchSystemErrors(): Promise<{ errors: SystemError[] }> {
-  return apiFetch("/api/system/errors");
+export async function fetchSystemErrors(params?: {
+  severity?: string;
+  component?: string;
+  source?: string;
+  limit?: number;
+}): Promise<{ errors: SystemError[] }> {
+  const qs = new URLSearchParams();
+  if (params?.severity) qs.set("severity", params.severity);
+  if (params?.component) qs.set("component", params.component);
+  if (params?.source) qs.set("source", params.source);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const query = qs.toString();
+  return apiFetch(`/api/system/errors${query ? `?${query}` : ""}`);
 }
 
 export async function fetchSystemHealth(): Promise<SystemHealth> {
   return apiFetch("/api/system/health");
+}
+
+export async function reportFrontendError(error: {
+  severity: string;
+  message: string;
+  source: string;
+  context?: Record<string, unknown>;
+}): Promise<{ id: string; status: string }> {
+  return apiFetch("/api/system/errors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(error),
+  });
 }
 
 // Platform Settings

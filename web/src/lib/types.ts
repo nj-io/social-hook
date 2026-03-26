@@ -429,14 +429,17 @@ export interface SystemError {
   id: string;
   severity: string;
   message: string;
+  context?: string;
   source?: string;
+  component?: string;
+  run_id?: string;
   created_at: string;
 }
 
 export interface SystemHealth {
   status: string;
-  error_count: number;
-  recent_errors: SystemError[];
+  total_errors_24h: number;
+  error_counts_24h: Record<string, number>;
 }
 
 export interface PlatformSettings {

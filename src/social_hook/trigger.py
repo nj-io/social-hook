@@ -248,11 +248,6 @@ def run_trigger(
             print(f"Database error: {e}", file=sys.stderr)
         return 2
 
-    # Wire error feed once per process (needs both config and db_path)
-    from social_hook.error_feed import ensure_error_feed
-
-    ensure_error_feed(config, str(db_path))
-
     db = DryRunContext(conn, dry_run=dry_run)
     db.trigger_source = trigger_source
 

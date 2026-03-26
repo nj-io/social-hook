@@ -2571,8 +2571,8 @@ def insert_system_error(conn: sqlite3.Connection, error: SystemErrorRecord) -> s
     """Insert a system error record. Returns the error ID."""
     conn.execute(
         """
-        INSERT INTO system_errors (id, severity, message, context, source)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO system_errors (id, severity, message, context, source, component, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         error.to_row(),
     )
@@ -2580,16 +2580,32 @@ def insert_system_error(conn: sqlite3.Connection, error: SystemErrorRecord) -> s
     return error.id
 
 
-def get_recent_system_errors(conn: sqlite3.Connection, limit: int = 50) -> list[SystemErrorRecord]:
-    """Get recent system errors, newest first."""
-    rows = conn.execute(
-        """
-        SELECT * FROM system_errors
-        ORDER BY created_at DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
+def get_recent_system_errors(
+    conn: sqlite3.Connection,
+    limit: int = 50,
+    *,
+    severity: str | None = None,
+    component: str | None = None,
+    source: str | None = None,
+) -> list[SystemErrorRecord]:
+    """Get recent system errors, newest first. Optional filters narrow results."""
+    query = "SELECT * FROM system_errors"
+    conditions: list[str] = []
+    params: list = []
+    if severity is not None:
+        conditions.append("severity = ?")
+        params.append(severity)
+    if component is not None:
+        conditions.append("component = ?")
+        params.append(component)
+    if source is not None:
+        conditions.append("source = ?")
+        params.append(source)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(query, params).fetchall()
     return [SystemErrorRecord.from_dict(dict(row)) for row in rows]
 
 
@@ -2607,3 +2623,17 @@ def get_error_health_status(conn: sqlite3.Connection) -> dict:
     for row in rows:
         result[row[0]] = row[1]
     return result
+
+
+def compute_health_status(error_counts: dict[str, int]) -> str:
+    """Derive overall health status string from severity counts.
+
+    Returns one of: "critical", "degraded", "warning", "healthy".
+    """
+    if error_counts.get("critical", 0) > 0:
+        return "critical"
+    if error_counts.get("error", 0) > 0:
+        return "degraded"
+    if error_counts.get("warning", 0) > 0:
+        return "warning"
+    return "healthy"

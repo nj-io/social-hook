@@ -18,8 +18,12 @@ CREATE TABLE IF NOT EXISTS system_errors (
     message TEXT NOT NULL,
     context TEXT DEFAULT '{}',
     source TEXT DEFAULT '',
+    component TEXT DEFAULT '',
+    run_id TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_system_errors_severity ON system_errors(severity, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_errors_component ON system_errors(component, created_at DESC);
 """
 
 
@@ -28,8 +32,7 @@ def db_path(tmp_path: Path) -> str:
     """Create a temp DB with the system_errors table."""
     path = str(tmp_path / "test_errors.db")
     conn = sqlite3.connect(path)
-    conn.execute(_CREATE_TABLE_SQL)
-    conn.commit()
+    conn.executescript(_CREATE_TABLE_SQL)
     conn.close()
     return path
 
@@ -283,3 +286,129 @@ class TestModuleSingleton:
         from social_hook.error_feed import error_feed
 
         assert isinstance(error_feed, ErrorFeed)
+
+
+# =============================================================================
+# Component and run_id fields
+# =============================================================================
+
+
+class TestComponentRunId:
+    def test_component_and_run_id_persisted(self, db_feed: ErrorFeed, db_path: str):
+        db_feed.emit(
+            ErrorSeverity.ERROR,
+            "comp test",
+            source="test",
+            component="trigger",
+            run_id="run_123",
+        )
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM system_errors").fetchone()
+        conn.close()
+        assert row["component"] == "trigger"
+        assert row["run_id"] == "run_123"
+
+    def test_component_and_run_id_readable(self, db_feed: ErrorFeed):
+        db_feed.emit(
+            ErrorSeverity.WARNING,
+            "readable test",
+            component="scheduler",
+            run_id="run_456",
+        )
+        recent = db_feed.get_recent()
+        assert recent[0].component == "scheduler"
+        assert recent[0].run_id == "run_456"
+
+    def test_defaults_to_empty_string(self, db_feed: ErrorFeed, db_path: str):
+        db_feed.emit(ErrorSeverity.INFO, "no component")
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM system_errors").fetchone()
+        conn.close()
+        assert row["component"] == ""
+        assert row["run_id"] == ""
+
+
+# =============================================================================
+# set_on_persist callback
+# =============================================================================
+
+
+class TestOnPersist:
+    def test_callback_fires_after_db_write(self, db_feed: ErrorFeed):
+        callback = MagicMock()
+        db_feed.set_on_persist(callback)
+        db_feed.emit(ErrorSeverity.ERROR, "persist test", component="web")
+
+        callback.assert_called_once()
+        args = callback.call_args[0]
+        assert len(args[0]) == 36  # UUID
+        assert args[1] == "error"
+        assert args[2] == "web"
+
+    def test_callback_not_called_without_db(self, feed: ErrorFeed):
+        callback = MagicMock()
+        feed.set_on_persist(callback)
+        feed.emit(ErrorSeverity.ERROR, "no db")
+        callback.assert_not_called()
+
+    def test_callback_failure_does_not_break_emit(self, db_feed: ErrorFeed):
+        def bad_callback(error_id, severity, component):
+            raise RuntimeError("callback exploded")
+
+        db_feed.set_on_persist(bad_callback)
+        # Should not raise
+        db_feed.emit(ErrorSeverity.CRITICAL, "survive callback failure")
+        # Error still persisted
+        recent = db_feed.get_recent()
+        assert len(recent) == 1
+        assert recent[0].message == "survive callback failure"
+
+
+# =============================================================================
+# Filter params in get_recent / _read_from_db
+# =============================================================================
+
+
+class TestFilterParams:
+    def test_filter_by_severity(self, db_feed: ErrorFeed):
+        db_feed.emit(ErrorSeverity.INFO, "info msg")
+        db_feed.emit(ErrorSeverity.ERROR, "error msg")
+        db_feed.emit(ErrorSeverity.WARNING, "warn msg")
+
+        results = db_feed.get_recent(severity="error")
+        assert len(results) == 1
+        assert results[0].message == "error msg"
+
+    def test_filter_by_component(self, db_feed: ErrorFeed):
+        db_feed.emit(ErrorSeverity.ERROR, "trigger err", component="trigger")
+        db_feed.emit(ErrorSeverity.ERROR, "web err", component="web")
+        db_feed.emit(ErrorSeverity.ERROR, "trigger err2", component="trigger")
+
+        results = db_feed.get_recent(component="trigger")
+        assert len(results) == 2
+        assert all(r.component == "trigger" for r in results)
+
+    def test_filter_by_source(self, db_feed: ErrorFeed):
+        db_feed.emit(ErrorSeverity.ERROR, "auth err", source="auth")
+        db_feed.emit(ErrorSeverity.ERROR, "db err", source="database")
+
+        results = db_feed.get_recent(source="auth")
+        assert len(results) == 1
+        assert results[0].source == "auth"
+
+    def test_combined_filters(self, db_feed: ErrorFeed):
+        db_feed.emit(ErrorSeverity.ERROR, "e1", component="trigger", source="auth")
+        db_feed.emit(ErrorSeverity.WARNING, "w1", component="trigger", source="auth")
+        db_feed.emit(ErrorSeverity.ERROR, "e2", component="web", source="auth")
+
+        results = db_feed.get_recent(severity="error", component="trigger")
+        assert len(results) == 1
+        assert results[0].message == "e1"
+
+    def test_no_filters_returns_all(self, db_feed: ErrorFeed):
+        db_feed.emit(ErrorSeverity.INFO, "i1")
+        db_feed.emit(ErrorSeverity.ERROR, "e1")
+        results = db_feed.get_recent()
+        assert len(results) == 2

@@ -1095,26 +1095,26 @@ class TestCyclesShow:
 class TestSystemErrors:
     def test_errors_empty(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["system", "errors"])
+            result = runner.invoke(app, ["logs"])
             assert result.exit_code == 0
             assert "No system errors" in result.output
 
     def test_errors_with_records(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "errors"])
+            result = runner.invoke(app, ["logs"])
             assert result.exit_code == 0
             assert "Test error message" in result.output
 
     def test_errors_json(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "errors", "--json"])
+            result = runner.invoke(app, ["logs", "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data["errors"]) == 2
 
     def test_errors_limit(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "errors", "--limit", "1", "--json"])
+            result = runner.invoke(app, ["logs", "--limit", "1", "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data["errors"]) == 1
@@ -1123,13 +1123,13 @@ class TestSystemErrors:
 class TestSystemHealth:
     def test_health_empty(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["system", "health"])
+            result = runner.invoke(app, ["logs", "health"])
             assert result.exit_code == 0
             assert "healthy" in result.output
 
     def test_health_json(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["system", "health", "--json"])
+            result = runner.invoke(app, ["logs", "health", "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["status"] == "healthy"
@@ -1137,7 +1137,7 @@ class TestSystemHealth:
 
     def test_health_with_errors(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "health"])
+            result = runner.invoke(app, ["logs", "health"])
             assert result.exit_code == 0
             # Errors in last 24h should show some status
 
@@ -1161,7 +1161,7 @@ class TestHelpTexts:
             ["brief", "--help"],
             ["content", "--help"],
             ["cycles", "--help"],
-            ["system", "--help"],
+            ["logs", "--help"],
         ],
     )
     def test_help_available(self, cmd):

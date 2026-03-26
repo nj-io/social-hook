@@ -289,6 +289,8 @@ def handle_command(
         "retry": cmd_retry,
         "pause": cmd_pause,
         "resume": cmd_resume,
+        "errors": cmd_errors,
+        "health": cmd_health,
     }
 
     handler = handlers.get(cmd)
@@ -1171,6 +1173,8 @@ HELP_DETAILS = {
     "retry": "Retry a failed draft. Usage: /retry <draft\\_id>",
     "pause": "Pause a project (stops evaluating commits). Usage: /pause <project\\_id>",
     "resume": "Resume a paused project. Usage: /resume <project\\_id>",
+    "errors": "Show recent system errors (ERROR/CRITICAL, last 24h). Usage: /errors [limit|severity]",
+    "health": "Show system health status with error counts from last 24h.",
     "help": "Show help. For details on a command: /help <command>",
 }
 
@@ -1202,6 +1206,8 @@ def cmd_help(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) ->
         "/retry <draft\\_id> - Retry a failed draft\n"
         "/pause <project\\_id> - Pause a project\n"
         "/resume <project\\_id> - Resume a project\n"
+        "/errors [limit|severity] - Recent system errors\n"
+        "/health - System health status\n"
         "/help [command] - Show this message"
     )
     _send(adapter, chat_id, text)
@@ -1658,5 +1664,83 @@ def cmd_resume(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
         conn.execute("UPDATE projects SET paused = 0 WHERE id = ?", (project_id,))
         conn.commit()
         _send(adapter, chat_id, f"Project `{project.name}` resumed.")
+    finally:
+        conn.close()
+
+
+def cmd_errors(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
+    """Show recent system errors. Optional: /errors <limit> or /errors <severity>."""
+    from social_hook.db import operations as ops
+
+    # Parse args: could be a number (limit) or a severity string
+    limit = 10
+    severity = None
+    arg = args.strip().lower()
+    if arg:
+        if arg.isdigit():
+            limit = min(int(arg), 50)
+        elif arg in ("info", "warning", "error", "critical"):
+            severity = arg
+        else:
+            _send(
+                adapter,
+                chat_id,
+                "Usage: /errors [limit|severity]\nSeverity: info, warning, error, critical",
+            )
+            return
+
+    # Default to ERROR/CRITICAL when no severity specified
+    conn = _get_conn()
+    try:
+        if severity:
+            errors = ops.get_recent_system_errors(conn, limit=limit, severity=severity)
+        else:
+            # Get ERROR + CRITICAL from last 24h
+            errors_err = ops.get_recent_system_errors(conn, limit=limit, severity="error")
+            errors_crit = ops.get_recent_system_errors(conn, limit=limit, severity="critical")
+            errors = sorted(
+                errors_err + errors_crit, key=lambda e: e.created_at or "", reverse=True
+            )[:limit]
+
+        if not errors:
+            _send(adapter, chat_id, "No recent errors found.")
+            return
+
+        lines = [f"*Recent Errors* ({len(errors)})"]
+        for e in errors:
+            ts = ""
+            if e.created_at:
+                ts = e.created_at.replace("T", " ")[:16]
+            source = f" [{e.source}]" if e.source else ""
+            msg = e.message[:80] + ("..." if len(e.message) > 80 else "")
+            lines.append(f"- {e.severity.upper()}{source} {ts}\n  {msg}")
+
+        _send(adapter, chat_id, "\n".join(lines))
+    finally:
+        conn.close()
+
+
+def cmd_health(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
+    """Show system health status and error counts."""
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        error_counts = ops.get_error_health_status(conn)
+        total = sum(error_counts.values())
+        status = ops.compute_health_status(error_counts).upper()
+
+        lines = [
+            f"*System Health: {status}*",
+            "",
+            f"Errors in last 24h: {total}",
+        ]
+        if total > 0:
+            for sev in ("critical", "error", "warning", "info"):
+                count = error_counts.get(sev, 0)
+                if count > 0:
+                    lines.append(f"  {sev}: {count}")
+
+        _send(adapter, chat_id, "\n".join(lines))
     finally:
         conn.close()
