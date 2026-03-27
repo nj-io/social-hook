@@ -680,3 +680,33 @@ class CommitAnalysisResult(BaseModel):
             return cls.model_validate(data)
         except ValidationError as e:
             raise MalformedResponseError(f"Invalid log_commit_analysis input: {e}") from e
+
+
+# =============================================================================
+# Strategy Classification (one-time LLM classification for custom strategies)
+# =============================================================================
+
+STRATEGY_CLASSIFICATION_TOOL: dict[str, Any] = {
+    "name": "classify_strategy",
+    "description": "Classify a content strategy as code-driven or positioning-driven",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "strategy_type": {
+                "type": "string",
+                "enum": ["code-driven", "positioning"],
+                "description": (
+                    "code-driven: content sourced from commits/code — aimed at developers "
+                    "who want to see how things are built. "
+                    "positioning: content sourced from product brief — aimed at users/buyers "
+                    "who care about what the product does for them."
+                ),
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation for the classification",
+            },
+        },
+        "required": ["strategy_type"],
+    },
+}

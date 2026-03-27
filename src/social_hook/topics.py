@@ -21,32 +21,6 @@ logger = logging.getLogger(__name__)
 # Strategy type resolution
 # =============================================================================
 
-# Tool schema for LLM-based strategy classification (used by SingleToolAgent)
-_CLASSIFY_STRATEGY_TOOL: dict[str, Any] = {
-    "name": "classify_strategy",
-    "description": "Classify a content strategy as code-driven or positioning-driven",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "strategy_type": {
-                "type": "string",
-                "enum": ["code-driven", "positioning"],
-                "description": (
-                    "code-driven: content sourced from commits/code — aimed at developers "
-                    "who want to see how things are built. "
-                    "positioning: content sourced from product brief — aimed at users/buyers "
-                    "who care about what the product does for them."
-                ),
-            },
-            "reasoning": {
-                "type": "string",
-                "description": "Brief explanation for the classification",
-            },
-        },
-        "required": ["strategy_type"],
-    },
-}
-
 
 def resolve_strategy_type(
     strategy_name: str,
@@ -58,14 +32,11 @@ def resolve_strategy_type(
     Resolution order:
     1. Explicit strategy_type field on the strategy config (set by previous classification)
     2. Known template names (POSITIONING_TEMPLATES / CODE_DRIVEN_TEMPLATES)
-    3. LLM classification based on audience/voice/post_when fields (result cached on config)
+    3. LLM classification via StrategyClassifier agent (result cached on config)
     4. Default: "code-driven"
 
     When an LLM classification is made, the result is returned but NOT persisted here —
     the caller should write it back to config via save_config() to cache for future calls.
-
-    Note: This function is reusable for any system that needs to classify content strategies.
-    The LLM call uses SingleToolAgent from the llm layer with a simple binary classification tool.
     """
     # 1. Check explicit strategy_type on config
     if strategy_config is not None:
@@ -82,7 +53,10 @@ def resolve_strategy_type(
     # 3. LLM classification for custom strategies
     if llm_client is not None and strategy_config is not None:
         try:
-            return _classify_strategy_via_llm(strategy_name, strategy_config, llm_client)
+            from social_hook.llm.strategy_classifier import StrategyClassifier
+
+            classifier = StrategyClassifier(llm_client)
+            return classifier.classify(strategy_name, strategy_config)
         except Exception:
             logger.warning(
                 "LLM classification failed for strategy '%s', defaulting to code-driven",
@@ -92,58 +66,6 @@ def resolve_strategy_type(
 
     # 4. Default
     return "code-driven"
-
-
-def _classify_strategy_via_llm(
-    strategy_name: str,
-    strategy_config: Any,
-    llm_client: Any,
-) -> str:
-    """Use SingleToolAgent to classify a custom strategy as code-driven or positioning.
-
-    The LLM sees the strategy's audience, voice, post_when, and avoid fields and
-    decides whether it's aimed at developers (code-driven) or users/buyers (positioning).
-    """
-    from social_hook.llm.agent import SingleToolAgent
-
-    audience = getattr(strategy_config, "audience", "") or ""
-    voice = getattr(strategy_config, "voice", "") or ""
-    post_when = getattr(strategy_config, "post_when", "") or ""
-    avoid = getattr(strategy_config, "avoid", "") or ""
-
-    prompt = (
-        f"Classify this content strategy:\n\n"
-        f"Name: {strategy_name}\n"
-        f"Audience: {audience}\n"
-        f"Voice: {voice}\n"
-        f"Post when: {post_when}\n"
-        f"Avoid: {avoid}\n\n"
-        f"Is this strategy aimed at developers/builders who want to see how things are built "
-        f"(code-driven), or at users/buyers who care about product value (positioning)?"
-    )
-
-    agent = SingleToolAgent(llm_client)
-    result, _response = agent.call_tool(
-        messages=[{"role": "user", "content": prompt}],
-        tool_schema=_CLASSIFY_STRATEGY_TOOL,
-        max_tokens=256,
-    )
-
-    strategy_type = result.get("strategy_type", "code-driven")
-    reasoning = result.get("reasoning", "")
-    if strategy_type not in ("code-driven", "positioning"):
-        logger.warning(
-            "LLM returned invalid strategy_type '%s', defaulting to code-driven", strategy_type
-        )
-        strategy_type = "code-driven"
-    else:
-        logger.info(
-            "Classified strategy '%s' as %s: %s",
-            strategy_name,
-            strategy_type,
-            reasoning,
-        )
-    return strategy_type
 
 
 def is_positioning_strategy(strategy_name: str, strategy_config: Any | None = None) -> bool:
