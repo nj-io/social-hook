@@ -770,6 +770,26 @@ export async function fetchSystemHealth(): Promise<SystemHealth> {
   return apiFetch("/api/system/health");
 }
 
+export interface SystemEvent {
+  id: number;
+  entity: string;
+  action: string;
+  entity_id: string | null;
+  project_id: string | null;
+  created_at: string;
+}
+
+export async function fetchSystemEvents(params?: {
+  entity?: string;
+  limit?: number;
+}): Promise<{ events: SystemEvent[] }> {
+  const qs = new URLSearchParams();
+  if (params?.entity) qs.set("entity", params.entity);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const query = qs.toString();
+  return apiFetch(`/api/system/events${query ? `?${query}` : ""}`);
+}
+
 export async function clearSystemErrors(
   olderThanDays?: number
 ): Promise<{ deleted: number }> {

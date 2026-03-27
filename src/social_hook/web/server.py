@@ -5165,6 +5165,55 @@ async def api_system_health():
         conn.close()
 
 
+@app.get("/api/system/events")
+async def api_system_events(
+    entity: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Recent pipeline/system events from web_events.
+
+    Useful for debugging pipeline flow. Filters to pipeline, decision, task,
+    and draft entities by default. Pass ?entity=pipeline to filter further.
+    """
+    conn = _get_conn()
+    try:
+        allowed_entities = {"pipeline", "decision", "task", "draft", "topic", "cycle"}
+        clauses = ["1=1"]
+        params: list = []
+
+        if entity:
+            clauses.append("json_extract(data, '$.entity') = ?")
+            params.append(entity)
+        else:
+            placeholders = ",".join("?" * len(allowed_entities))
+            clauses.append(f"json_extract(data, '$.entity') IN ({placeholders})")
+            params.extend(sorted(allowed_entities))
+
+        where = " AND ".join(clauses)
+        rows = conn.execute(
+            f"SELECT id, data, created_at FROM web_events WHERE {where} "
+            f"ORDER BY created_at DESC LIMIT ?",
+            [*params, limit],
+        ).fetchall()
+
+        events = []
+        for r in rows:
+            parsed = safe_json_loads(r["data"], "web_events.data", default={})
+            events.append(
+                {
+                    "id": r["id"],
+                    "entity": parsed.get("entity"),
+                    "action": parsed.get("action"),
+                    "entity_id": parsed.get("entity_id"),
+                    "project_id": parsed.get("project_id"),
+                    "created_at": r["created_at"],
+                }
+            )
+        return {"events": events}
+    finally:
+        conn.close()
+
+
 # =============================================================================
 # Platform Settings
 # =============================================================================
