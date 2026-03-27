@@ -79,14 +79,17 @@ async def lifespan(app_instance: FastAPI):
         config = _get_config()
         error_feed.set_db_path(str(db_path))
         # Build notification sender
+        sender: Callable | None = None
         try:
             from social_hook.notifications import send_notification
 
             # NotificationSink already formats as "[SEVERITY] (source) message"
-            def sender(_sev, msg):
+            def _send_notification(_sev: str, msg: str) -> None:
                 send_notification(config, msg)
+
+            sender = _send_notification
         except Exception:
-            sender = None
+            pass
         setup_logging("web", error_feed=error_feed, notification_sender=sender, console=False)
     except Exception:
         logger.debug("Logging init failed (non-fatal)", exc_info=True)
