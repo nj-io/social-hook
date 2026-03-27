@@ -407,16 +407,20 @@ def _apply_pragma_migration(conn: sqlite3.Connection, sql: str) -> None:
     pragmas_after: list[str] = []
     other_lines: list[str] = []
 
+    has_ddl = False  # Track whether we've seen actual DDL/DML (not just comments)
     for line in sql.split("\n"):
         stripped = line.strip()
         if stripped.upper().startswith("PRAGMA"):
             # PRAGMAs before DDL go first, PRAGMAs after go last
-            if other_lines:
+            if has_ddl:
                 pragmas_after.append(stripped)
             else:
                 pragmas_before.append(stripped)
         else:
             other_lines.append(line)
+            # Comments and blank lines don't count as DDL
+            if stripped and not stripped.startswith("--"):
+                has_ddl = True
 
     # Execute pre-DDL PRAGMAs outside transaction
     for pragma in pragmas_before:

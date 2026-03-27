@@ -1,8 +1,12 @@
+PRAGMA foreign_keys = OFF;
+
 -- Replace 'evaluating' with 'processing' in decisions CHECK constraint.
 -- Also update any existing 'evaluating' rows to 'processing'.
 -- SQLite requires table recreation to change CHECK constraints.
 
 UPDATE decisions SET decision = 'processing' WHERE decision = 'evaluating';
+
+DROP TABLE IF EXISTS decisions_new;
 
 CREATE TABLE decisions_new (
     id            TEXT PRIMARY KEY,
@@ -35,3 +39,5 @@ DROP TABLE decisions;
 ALTER TABLE decisions_new RENAME TO decisions;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_decisions_project_commit ON decisions(project_id, commit_hash);
+
+PRAGMA foreign_keys = ON;
