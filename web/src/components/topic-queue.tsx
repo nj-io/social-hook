@@ -106,6 +106,7 @@ export function TopicQueue({ projectId }: { projectId: string }) {
       setAddTopic_("");
       setAddDesc("");
       setAddStrategy("");
+      addToast("Topic added");
       await load();
     } catch (e) {
       addToast("Failed to add topic", { variant: "error", detail: e instanceof Error ? e.message : undefined });

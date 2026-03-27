@@ -138,6 +138,7 @@ export function StrategiesSection() {
       setCreateOpen(false);
       setCreateName("");
       setCreateFields({});
+      addToast("Strategy created", { variant: "success" });
       await loadStrategies(selectedProject);
     } catch (e) {
       addToast("Failed to create strategy", { variant: "error", detail: e instanceof Error ? e.message : undefined });
@@ -151,6 +152,7 @@ export function StrategiesSection() {
     try {
       await deleteStrategy(selectedProject, name);
       setConfirmDelete(null);
+      addToast("Strategy deleted");
       await loadStrategies(selectedProject);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
