@@ -32,7 +32,7 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
-from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES
+from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES, PipelineStage
 from social_hook.parsing import check_unknown_keys, safe_json_loads
 
 logger = logging.getLogger(__name__)
@@ -1250,7 +1250,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
                 commit_timestamp=getattr(commit, "timestamp", None),
                 parent_timestamp=getattr(commit, "parent_timestamp", None),
             )
-            db.emit_data_event("pipeline", "promoting", draft_id[:8], project.id)
+            db.emit_data_event("pipeline", PipelineStage.PROMOTING, draft_id[:8], project.id)
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1644,7 +1644,7 @@ async def api_summary_draft(project_id: str):
 
                 project_config = load_project_config(repo_path)
                 client = create_client(config.models.evaluator, config)
-                ops.emit_data_event(conn2, "pipeline", "discovering", pid, pid)
+                ops.emit_data_event(conn2, "pipeline", PipelineStage.DISCOVERING, pid, pid)
                 disc_summary, disc_files, disc_file_summaries, disc_prompt_docs = discover_project(
                     client=client,
                     repo_path=repo_path,
@@ -1848,7 +1848,9 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit_timestamp=commit.timestamp,
                 parent_timestamp=commit.parent_timestamp,
             )
-            db.emit_data_event("pipeline", "drafting", decision.commit_hash[:8], project.id)
+            db.emit_data_event(
+                "pipeline", PipelineStage.DRAFTING, decision.commit_hash[:8], project.id
+            )
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1962,9 +1964,10 @@ async def api_retrigger_decision(decision_id: str):
             (decision_id,),
         )
         conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
-        # Mark as evaluating — row stays visible in the UI
+        # Mark as processing — row stays visible in the UI.
+        # The pipeline will update to the appropriate status (deferred_eval, draft, skip, etc.)
         conn.execute(
-            "UPDATE decisions SET decision = 'evaluating' WHERE id = ?",
+            "UPDATE decisions SET decision = 'processing' WHERE id = ?",
             (decision_id,),
         )
         conn.commit()
@@ -2129,7 +2132,9 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 project.id,
                 project_config,
             )
-            db.emit_data_event("pipeline", "drafting", anchor.commit_hash[:8], project.id)
+            db.emit_data_event(
+                "pipeline", PipelineStage.DRAFTING, anchor.commit_hash[:8], project.id
+            )
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -4623,7 +4628,7 @@ async def api_create_suggestion(project_id: str, body: dict[str, Any] = Body(...
                 status_code=202,
                 content={
                     "task_id": task_id,
-                    "status": "evaluating",
+                    "status": "processing",
                     "suggestion": suggestion.to_dict(),
                 },
             )

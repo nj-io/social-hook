@@ -17,7 +17,7 @@ from social_hook.errors import ConfigError, DatabaseError
 from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
-from social_hook.models import CommitInfo, Decision, Draft, is_draftable
+from social_hook.models import CommitInfo, Decision, Draft, PipelineStage, is_draftable
 from social_hook.parsing import safe_int
 from social_hook.rate_limits import check_rate_limit
 
@@ -349,6 +349,7 @@ def run_trigger(
 
     # 6b. Auto-discovery: seed project summary if missing
     if getattr(context, "project_summary", None) is None:
+        db.emit_data_event("pipeline", PipelineStage.DISCOVERING, commit_hash[:8], project.id)
         try:
             from social_hook.llm.discovery import discover_project
             from social_hook.llm.factory import create_client as _create_client
@@ -440,7 +441,7 @@ def run_trigger(
     if verbose:
         print(f"Evaluating commit {commit.hash[:8]}: {commit.message}")
 
-    db.emit_data_event("pipeline", "evaluating", commit_hash[:8], project.id)
+    db.emit_data_event("pipeline", PipelineStage.EVALUATING, commit_hash[:8], project.id)
 
     # 7. Evaluate
     from social_hook.llm.evaluator import Evaluator
@@ -539,6 +540,7 @@ def run_trigger(
             else:
                 db.insert_decision(decision)
             db.emit_data_event("decision", "created", decision.id, project.id)
+            db.emit_data_event("pipeline", PipelineStage.QUEUED, commit_hash[:8], project.id)
             if verbose:
                 print("Evaluation deferred: interval not met")
             conn.close()
@@ -752,7 +754,7 @@ def run_trigger(
         from social_hook.compat import make_eval_compat
         from social_hook.drafting import draft_for_platforms
 
-        db.emit_data_event("pipeline", "drafting", commit_hash[:8], project.id)
+        db.emit_data_event("pipeline", PipelineStage.DRAFTING, commit_hash[:8], project.id)
         eval_compat = make_eval_compat(evaluation, decision.decision)
 
         draft_results = draft_for_platforms(
@@ -1246,7 +1248,7 @@ def _run_targets_path(
         from social_hook.drafting import draft_for_targets
         from social_hook.routing import route_to_targets
 
-        ctx.db.emit_data_event("pipeline", "drafting", commit_hash[:8], ctx.project.id)
+        ctx.db.emit_data_event("pipeline", PipelineStage.DRAFTING, commit_hash[:8], ctx.project.id)
 
         target_actions = route_to_targets(evaluation.strategies, ctx.config, ctx.conn)
         draftable_actions = [a for a in target_actions if a.action == "draft"]
@@ -1832,7 +1834,7 @@ def run_summary_trigger(
     eval_compat = make_eval_compat(evaluation, "draft")
 
     # Draft
-    db.emit_data_event("pipeline", "drafting", "summary", project.id)
+    db.emit_data_event("pipeline", PipelineStage.DRAFTING, "summary", project.id)
 
     commit = CommitInfo(
         hash="summary",

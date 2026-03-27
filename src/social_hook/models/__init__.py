@@ -63,7 +63,23 @@ class DecisionType(Enum):
     SKIP = "skip"
     IMPORTED = "imported"
     DEFERRED_EVAL = "deferred_eval"
-    EVALUATING = "evaluating"
+    PROCESSING = "processing"  # generic "in progress" — replaced by specific status when done
+
+
+class PipelineStage:
+    """Reusable pipeline stage identifiers for data_change events.
+
+    Emitted as: emit_data_event("pipeline", stage, entity_id, project_id).
+    Frontend PipelineToasts maps these to user-facing messages.
+    Add new stages here when extending the pipeline (e.g. brand discovery).
+    """
+
+    DISCOVERING = "discovering"  # project discovery / brief generation
+    ANALYZING = "analyzing"  # stage 1 commit analysis
+    EVALUATING = "evaluating"  # stage 2 strategy evaluation
+    DRAFTING = "drafting"  # draft creation
+    PROMOTING = "promoting"  # draft promotion / scheduling
+    QUEUED = "queued"  # commit deferred by interval gating
 
 
 class PostCategory(Enum):

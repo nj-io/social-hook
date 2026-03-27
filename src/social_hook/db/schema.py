@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
     commit_message TEXT,
-    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval', 'evaluating')),
+    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval', 'processing')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
     episode_type  TEXT CHECK (episode_type IN ('decision', 'before_after', 'demo_proof', 'milestone', 'postmortem', 'launch', 'synthesis')),
