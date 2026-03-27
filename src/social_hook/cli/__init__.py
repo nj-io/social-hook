@@ -53,6 +53,44 @@ def _init_logging(
         console=console,
     )
 
+    # Wire on_persist so errors from this process trigger WebSocket updates
+    # in the web dashboard (cross-process via web_events table).
+    if config:
+        import sqlite3
+        import threading
+
+        _persist_sem = threading.Semaphore(10)
+        db_path_str = str(get_db_path())
+
+        def _on_error_persisted(error_id, severity, comp):
+            if not _persist_sem.acquire(blocking=False):
+                return
+
+            def _emit():
+                try:
+                    from social_hook.db import operations as ops
+
+                    conn = sqlite3.connect(db_path_str, timeout=2)
+                    conn.row_factory = sqlite3.Row
+                    try:
+                        ops.emit_data_event(
+                            conn,
+                            "system_error",
+                            "created",
+                            error_id,
+                            extra={"severity": severity, "component": comp},
+                        )
+                    finally:
+                        conn.close()
+                except Exception:
+                    pass
+                finally:
+                    _persist_sem.release()
+
+            threading.Thread(target=_emit, daemon=True).start()
+
+        error_feed.set_on_persist(_on_error_persisted)
+
     if run_id:
         from social_hook.filesystem import generate_id
         from social_hook.logging import set_run_id

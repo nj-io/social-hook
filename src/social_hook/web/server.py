@@ -5078,6 +5078,13 @@ async def api_create_system_error(request: Request):
     conn = _get_conn()
     try:
         error_id = ops.insert_system_error(conn, error)
+        ops.emit_data_event(
+            conn,
+            "system_error",
+            "created",
+            error_id,
+            extra={"severity": severity, "component": source},
+        )
         return {"id": error_id, "status": "created"}
     finally:
         conn.close()
