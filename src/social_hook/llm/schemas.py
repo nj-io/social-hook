@@ -78,6 +78,14 @@ class TargetAction(str, Enum):
     hold = "hold"
 
 
+class TopicSuggestion(BaseModel):
+    """A topic suggestion from the commit analyzer."""
+
+    title: str
+    description: str | None = None
+    strategy_type: str = "code-driven"  # "code-driven" or "positioning"
+
+
 class CommitAnalysis(BaseModel):
     """Structured analysis of a commit."""
 
@@ -85,6 +93,7 @@ class CommitAnalysis(BaseModel):
     technical_detail: str | None = None
     episode_tags: list[str] = []
     classification: CommitClassification | None = None
+    topic_suggestions: list[TopicSuggestion] = []
 
 
 class ContextSourceSpec(BaseModel):
@@ -580,10 +589,11 @@ class BriefUpdateInstructions(BaseModel):
 
 
 class CommitAnalysisResult(BaseModel):
-    """Stage 1 analyzer output: commit classification, tags, summary, brief instructions."""
+    """Stage 1 analyzer output: commit classification, tags, summary, brief instructions, topic suggestions."""
 
     commit_analysis: CommitAnalysis
     brief_update: BriefUpdateInstructions
+    topic_suggestions: list[TopicSuggestion] = []
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -619,6 +629,29 @@ class CommitAnalysisResult(BaseModel):
                         },
                         "required": ["summary", "classification", "episode_tags"],
                     },
+                    "topic_suggestions": {
+                        "type": "array",
+                        "description": "Content topics suggested by this commit. Only include when the commit touches a subject area worth writing about.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {
+                                    "type": "string",
+                                    "description": "Short topic title (2-5 words)",
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "1-2 sentences on what this topic covers",
+                                },
+                                "strategy_type": {
+                                    "type": "string",
+                                    "enum": ["code-driven", "positioning"],
+                                    "description": "code-driven for technical audiences, positioning for product/marketing audiences",
+                                },
+                            },
+                            "required": ["title", "strategy_type"],
+                        },
+                    },
                     "brief_update": {
                         "type": "object",
                         "description": "Instructions for updating the project brief",
@@ -647,36 +680,3 @@ class CommitAnalysisResult(BaseModel):
             return cls.model_validate(data)
         except ValidationError as e:
             raise MalformedResponseError(f"Invalid log_commit_analysis input: {e}") from e
-
-
-# =============================================================================
-# Topic Extraction (LLM-assisted topic seeding from brief)
-# =============================================================================
-
-TOPIC_EXTRACTION_TOOL: dict[str, Any] = {
-    "name": "extract_topics",
-    "description": "Extract content topics from a project brief for a specific strategy",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "topics": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {
-                            "type": "string",
-                            "description": "Short topic title (2-5 words)",
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "2-3 sentence description of what this topic covers",
-                        },
-                    },
-                    "required": ["title", "description"],
-                },
-            },
-        },
-        "required": ["topics"],
-    },
-}

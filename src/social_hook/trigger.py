@@ -1072,7 +1072,7 @@ def _run_targets_path(
             print(f"Stage 1 classification: {classification}")
 
     # Brief update: if commit is non-trivial, update the brief
-    brief_changed = _trigger_brief_update(
+    _trigger_brief_update(
         evaluation=evaluation,
         analysis=analysis,
         conn=ctx.conn,
@@ -1082,32 +1082,6 @@ def _run_targets_path(
         dry_run=ctx.dry_run,
         verbose=ctx.verbose,
     )
-
-    # Shared values for topic seeding and tag-based topic creation below
-    strategy_names = (
-        list(ctx.config.content_strategies.keys()) if ctx.config.content_strategies else []
-    )
-    granularity = "low"
-    if ctx.project_config and getattr(ctx.project_config, "context", None):
-        granularity = getattr(ctx.project_config.context, "topic_granularity", "low") or "low"
-
-    # Re-seed topics from brief when it actually changed
-    if brief_changed:
-        try:
-            from social_hook.topics import seed_topics_from_brief
-
-            brief_text = ops.get_project_summary(ctx.conn, ctx.project.id)
-            seed_topics_from_brief(
-                conn=ctx.conn,
-                project_id=ctx.project.id,
-                brief=brief_text or "",
-                strategies=strategy_names,
-                granularity=granularity,
-                strategy_configs=ctx.config.content_strategies,
-                llm_client=evaluator_client,
-            )
-        except Exception:
-            logger.warning("Topic seeding after brief update failed", exc_info=True)
 
     # Tag-to-topic matching: increment commit counts and record junction
     incremented_topic_ids: set[str] = set()
@@ -1119,33 +1093,22 @@ def _run_targets_path(
                 incremented_topic_ids.add(topic.id)
             ops.insert_topic_commit(ctx.conn, topic.id, commit_hash, matched_tag=tag)
 
-    # Create implementation topics from commit tags for code-driven strategies
-    if analysis.episode_tags:
+    # Process topic suggestions from stage 1 analyzer
+    if analyzer_result and getattr(analyzer_result, "topic_suggestions", None):
         try:
-            from social_hook.topics import create_topics_from_tags
+            from social_hook.topics import process_topic_suggestions
 
-            classification_val = ""
-            if analyzer_result and getattr(analyzer_result, "commit_analysis", None):
-                ca = analyzer_result.commit_analysis
-                classification_val = (
-                    ca.classification.value
-                    if hasattr(ca.classification, "value")
-                    else str(ca.classification or "")
-                )
-            else:
-                logger.warning(
-                    "No analyzer result for topic creation, skipping classification gate"
-                )
-            create_topics_from_tags(
+            strategy_names = (
+                list(ctx.config.content_strategies.keys()) if ctx.config.content_strategies else []
+            )
+            process_topic_suggestions(
                 conn=ctx.conn,
                 project_id=ctx.project.id,
-                tags=analysis.episode_tags,
-                classification=classification_val,
+                suggestions=analyzer_result.topic_suggestions,
                 strategies=strategy_names,
-                granularity=granularity,
             )
         except Exception:
-            logger.warning("Topic creation from tags failed", exc_info=True)
+            logger.warning("Topic creation from analyzer suggestions failed", exc_info=True)
 
     # Update content topic statuses for held topics
     for _strategy_name, strat_decision in evaluation.strategies.items():

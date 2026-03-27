@@ -11,7 +11,7 @@ from social_hook.config.targets import (
     resolve_default_platform,
 )
 from social_hook.models import ContentTopic, Project
-from social_hook.topics import force_draft_topic, seed_topics_from_brief
+from social_hook.topics import force_draft_topic, process_topic_suggestions
 
 # =============================================================================
 # resolve_default_platform
@@ -329,19 +329,25 @@ class TestForceDraftTopicTargetsPath:
 
 
 # =============================================================================
-# seed_topics_from_brief: no strategies
+# process_topic_suggestions: edge cases
 # =============================================================================
 
 
-class TestSeedTopicsFromBrief:
-    """seed_topics_from_brief edge cases."""
+class _FakeSuggestion:
+    def __init__(self, title, description=None, strategy_type="code-driven"):
+        self.title = title
+        self.description = description
+        self.strategy_type = strategy_type
 
-    def test_empty_strategies_returns_empty(self, temp_db):
-        result = seed_topics_from_brief(temp_db, "proj-1", "## Key Capabilities\n- Feature", [])
+
+class TestProcessTopicSuggestions:
+    """process_topic_suggestions edge cases."""
+
+    def test_empty_suggestions_returns_empty(self, temp_db):
+        result = process_topic_suggestions(temp_db, "proj-1", [], ["building-public"])
         assert result == []
 
-    def test_no_capabilities_section_returns_empty(self, temp_db):
-        result = seed_topics_from_brief(
-            temp_db, "proj-1", "# Brief\n\nNo caps section here.", ["s1"]
-        )
+    def test_empty_strategies_returns_empty(self, temp_db):
+        suggestions = [_FakeSuggestion("Test Topic")]
+        result = process_topic_suggestions(temp_db, "proj-1", suggestions, [])
         assert result == []

@@ -6,9 +6,7 @@ topics by priority rather than reacting to individual commits.
 """
 
 import logging
-import re
 import sqlite3
-from pathlib import Path
 from typing import Any
 
 from social_hook.db import operations as ops
@@ -18,19 +16,6 @@ from social_hook.models import CommitInfo, ContentTopic, EvaluationCycle
 from social_hook.setup.templates import POSITIONING_TEMPLATES
 
 logger = logging.getLogger(__name__)
-
-_TOPIC_EXTRACTION_PROMPT_PATH = (
-    Path(__file__).resolve().parent / "llm" / "prompts" / "topic_extraction.md"
-)
-_topic_extraction_prompt_cache: str | None = None
-
-
-def _get_topic_extraction_prompt() -> str:
-    """Read and cache the topic extraction prompt template."""
-    global _topic_extraction_prompt_cache
-    if _topic_extraction_prompt_cache is None:
-        _topic_extraction_prompt_cache = _TOPIC_EXTRACTION_PROMPT_PATH.read_text(encoding="utf-8")
-    return _topic_extraction_prompt_cache
 
 
 def is_positioning_strategy(strategy_name: str) -> bool:
@@ -86,304 +71,79 @@ def _insert_topic_if_new(
     return topic
 
 
-def seed_topics_from_brief(
+def process_topic_suggestions(
     conn: sqlite3.Connection,
     project_id: str,
-    brief: str,
+    suggestions: list[Any],
     strategies: list[str],
-    granularity: str = "low",
-    strategy_configs: dict[str, Any] | None = None,
-    llm_client: Any | None = None,
 ) -> list[ContentTopic]:
-    """Seed product-level topics from the project brief.
+    """Process topic suggestions from the commit analyzer (stage 1).
 
-    Uses LLM-assisted extraction when an llm_client is provided, falling
-    back to bullet parsing from the Key Capabilities section.
-
-    Called after discovery generates or updates the brief.
-    Creates topics scoped to positioning-driven strategies.
-    Topics are created_by='discovery' with status='uncovered'.
-    Does not overwrite existing topics -- only adds new ones.
+    Each suggestion has title, description, and strategy_type (code-driven or
+    positioning). Topics are created scoped to the appropriate strategies based
+    on strategy_type.
 
     Args:
         conn: Database connection
         project_id: Project ID
-        brief: Project brief text
-        strategies: List of strategy names
-        granularity: Topic granularity level (low/medium/high)
-        strategy_configs: Dict of strategy name -> config dict with
-            audience, voice_tone, post_when, angle fields
-        llm_client: Optional LLM client for topic extraction
-
-    Returns list of newly created ContentTopic objects.
-    """
-    if not strategies:
-        logger.info("No strategies provided, skipping topic seeding")
-        return []
-
-    # Only seed product topics for positioning-driven strategies
-    positioning_strategies = [s for s in strategies if is_positioning_strategy(s)]
-    if not positioning_strategies:
-        logger.info("No positioning strategies found, skipping brief-based topic seeding")
-        return []
-
-    if not brief:
-        logger.warning("Empty brief for project %s, skipping topic seeding", project_id)
-        return []
-
-    created: list[ContentTopic] = []
-    for strategy in positioning_strategies:
-        # Extract topics via LLM or fallback to bullet parsing
-        extracted = _extract_topics_for_strategy(
-            brief, strategy, granularity, strategy_configs, llm_client
-        )
-        if not extracted:
-            logger.warning(
-                "No topics extracted for strategy %s in project %s",
-                strategy,
-                project_id,
-            )
-            continue
-
-        existing = ops.get_topics_by_strategy(conn, project_id, strategy)
-        existing_names = {t.topic.lower(): t for t in existing}
-
-        for item in extracted:
-            topic = _insert_topic_if_new(
-                conn,
-                project_id,
-                strategy,
-                title=item["title"],
-                created_by="discovery",
-                existing_by_name=existing_names,
-                description=item.get("description"),
-            )
-            if topic is not None:
-                created.append(topic)
-
-    return created
-
-
-def _extract_topics_for_strategy(
-    brief: str,
-    strategy: str,
-    granularity: str,
-    strategy_configs: dict[str, Any] | None,
-    llm_client: Any | None,
-) -> list[dict[str, str]]:
-    """Extract topics for a strategy, using LLM if available, else bullet parsing.
-
-    Returns list of dicts with 'title' and optional 'description' keys.
-    """
-    # Try LLM extraction first
-    if llm_client is not None:
-        try:
-            return _llm_extract_topics(brief, strategy, granularity, strategy_configs, llm_client)
-        except Exception:
-            logger.warning(
-                "LLM topic extraction failed for strategy %s, falling back to bullet parsing",
-                strategy,
-                exc_info=True,
-            )
-
-    # Fallback: parse Key Capabilities bullets (no descriptions)
-    capabilities = _parse_key_capabilities(brief)
-    return [{"title": cap} for cap in capabilities]
-
-
-def _llm_extract_topics(
-    brief: str,
-    strategy: str,
-    granularity: str,
-    strategy_configs: dict[str, Any] | None,
-    llm_client: Any,
-) -> list[dict[str, str]]:
-    """Use SingleToolAgent to extract topics from the brief via LLM."""
-    from social_hook.llm.agent import SingleToolAgent
-    from social_hook.llm.schemas import TOPIC_EXTRACTION_TOOL
-
-    # Load prompt template (cached after first read)
-    prompt_template = _get_topic_extraction_prompt()
-
-    # Get strategy-specific context
-    audience = ""
-    angle = ""
-    post_when = ""
-    if strategy_configs and strategy in strategy_configs:
-        scfg = strategy_configs[strategy]
-        if isinstance(scfg, dict):
-            audience = scfg.get("audience", "")
-            angle = scfg.get("voice_tone", "") or scfg.get("angle", "")
-            post_when = scfg.get("post_when", "")
-        else:
-            audience = getattr(scfg, "audience", "") or ""
-            angle = getattr(scfg, "voice_tone", "") or getattr(scfg, "angle", "") or ""
-            post_when = getattr(scfg, "post_when", "") or ""
-
-    system_prompt = (
-        prompt_template.replace("{{strategy_name}}", strategy)
-        .replace("{{audience}}", audience or "General audience")
-        .replace("{{angle}}", angle or "General")
-        .replace("{{post_when}}", post_when or "When relevant")
-        .replace("{{granularity}}", granularity)
-        .replace("{{brief}}", brief)
-    )
-
-    agent = SingleToolAgent(llm_client)
-    result, _response = agent.call_tool(
-        messages=[{"role": "user", "content": "Extract content topics from this project brief."}],
-        tool_schema=TOPIC_EXTRACTION_TOOL,
-        system=system_prompt,
-        max_tokens=2048,
-    )
-
-    topics = result.get("topics", [])
-    if not isinstance(topics, list):
-        logger.warning("LLM returned non-list topics for strategy %s", strategy)
-        return []
-
-    # Validate and normalize
-    extracted: list[dict[str, str]] = []
-    for item in topics:
-        if not isinstance(item, dict):
-            continue
-        title = item.get("title", "").strip()
-        if not title:
-            continue
-        extracted.append(
-            {
-                "title": title,
-                "description": item.get("description", "").strip() or None,
-            }
-        )
-
-    if not extracted:
-        logger.warning("LLM returned no valid topics for strategy %s", strategy)
-
-    return extracted
-
-
-def _parse_key_capabilities(brief: str) -> list[str]:
-    """Extract bullet points from the Key Capabilities section of a brief.
-
-    Returns list of capability strings (stripped of bullet prefix).
-    """
-    if not brief:
-        return []
-
-    # Find "## Key Capabilities" heading
-    pattern = r"^## Key Capabilities\s*$"
-    match = re.search(pattern, brief, re.MULTILINE)
-    if match is None:
-        return []
-
-    # Extract content until next ## heading or end
-    start = match.end()
-    next_heading = re.search(r"^## ", brief[start:], re.MULTILINE)
-    section = brief[start : start + next_heading.start()] if next_heading else brief[start:]
-
-    # Extract bullet points
-    capabilities = []
-    for line in section.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- ") or stripped.startswith("* "):
-            cap = stripped[2:].strip()
-            if cap:
-                capabilities.append(cap)
-
-    return capabilities
-
-
-# Granularity gating: which commit classifications create new topics
-_GRANULARITY_MIN_CLASSIFICATION = {
-    "low": {"notable", "significant"},
-    "medium": {"routine", "notable", "significant"},
-    "high": {"routine", "notable", "significant"},  # all non-trivial
-}
-
-
-def _classification_meets_granularity(classification: str, granularity: str) -> bool:
-    """Check if a commit classification is significant enough for the granularity level."""
-    allowed = _GRANULARITY_MIN_CLASSIFICATION.get(granularity)
-    if allowed is None:
-        logger.warning("Unknown granularity level: %s, defaulting to 'low'", granularity)
-        allowed = _GRANULARITY_MIN_CLASSIFICATION["low"]
-    return classification in allowed
-
-
-def create_topics_from_tags(
-    conn: sqlite3.Connection,
-    project_id: str,
-    tags: list[str],
-    classification: str,
-    strategies: list[str],
-    granularity: str = "low",
-) -> list[ContentTopic]:
-    """Create implementation topics from commit tags for code-driven strategies.
-
-    Called by the pipeline after stage 1 commit analysis. For each tag that
-    doesn't match an existing topic, creates a new topic scoped to code-driven
-    strategies. Respects granularity gating and skips dismissed topics.
-
-    Args:
-        conn: Database connection
-        project_id: Project ID
-        tags: Episode tags from commit analysis
-        classification: Commit classification (trivial/routine/notable/significant)
+        suggestions: List of TopicSuggestion objects from analyzer
         strategies: All strategy names for the project
-        granularity: Topic granularity level (low/medium/high)
 
     Returns list of newly created ContentTopic objects.
     """
-    if not tags or not strategies:
+    if not suggestions or not strategies:
         return []
 
-    # Gate on classification vs granularity
-    if not _classification_meets_granularity(classification, granularity):
-        logger.info(
-            "Classification %s below threshold for granularity %s, skipping topic creation",
-            classification,
-            granularity,
-        )
-        return []
+    # Split strategies by type
+    positioning = [s for s in strategies if is_positioning_strategy(s)]
+    code_driven = [s for s in strategies if not is_positioning_strategy(s)]
 
-    # Filter to code-driven strategies only (non-positioning)
-    code_strategies = [s for s in strategies if not is_positioning_strategy(s)]
-    if not code_strategies:
-        logger.info("No code-driven strategies, skipping tag-based topic creation")
-        return []
-
-    # Pre-fetch existing topics per strategy (avoids N+1 queries in the loop)
+    # Pre-fetch existing topics per strategy
     existing_by_strategy: dict[str, dict[str, ContentTopic]] = {}
-    for strategy in code_strategies:
+    for strategy in strategies:
         topics_for_strat = ops.get_topics_by_strategy(conn, project_id, strategy)
         existing_by_strategy[strategy] = {t.topic.lower(): t for t in topics_for_strat}
 
     created: list[ContentTopic] = []
-    for tag in tags:
-        # Check if any existing topic already matches this tag
-        matching = ops.get_topics_matching_tag(conn, project_id, tag)
-        if matching:
-            continue
-
-        # Clean up the tag for use as a topic title
-        title = tag.replace("-", " ").replace("_", " ").title().strip()
+    for suggestion in suggestions:
+        title = getattr(suggestion, "title", "").strip()
         if not title:
             continue
+        description = getattr(suggestion, "description", None)
+        if description:
+            description = description.strip() or None
+        strategy_type = getattr(suggestion, "strategy_type", "code-driven")
 
-        for strategy in code_strategies:
-            existing_by_name = existing_by_strategy[strategy]
+        # Route to appropriate strategies
+        if strategy_type == "positioning":
+            target_strategies = positioning
+            created_by = "discovery"
+        else:
+            target_strategies = code_driven
+            created_by = "track1"
+
+        if not target_strategies:
+            logger.info(
+                "No %s strategies for topic suggestion: %s",
+                strategy_type,
+                title,
+            )
+            continue
+
+        for strategy in target_strategies:
+            existing_by_name = existing_by_strategy.get(strategy, {})
             topic = _insert_topic_if_new(
                 conn,
                 project_id,
                 strategy,
                 title=title,
-                created_by="track1",
+                created_by=created_by,
                 existing_by_name=existing_by_name,
+                description=description,
             )
             if topic is not None:
                 created.append(topic)
-                # Update the in-memory index so subsequent tags see this topic
+                # Update cache so next suggestion sees this topic
                 existing_by_name[title.lower()] = topic
 
     return created
@@ -420,30 +180,19 @@ def get_evaluable_topics(
     project_id: str,
     strategy: str,
 ) -> list[ContentTopic]:
-    """Return topics the evaluator should consider for drafting.
+    """Get topics ready for evaluation: holding with commits accumulated.
 
-    Returns topics where status == 'holding' and commit_count > 0.
-    Also includes topics with strategy='_global'.
-    The evaluator decides whether there is enough material to draft;
-    this function does NOT apply a numeric threshold.
+    Returns topics with status='holding' and commit_count > 0 for the
+    given strategy. Also includes _global strategy topics.
     """
     strategy_topics = ops.get_topics_by_strategy(conn, project_id, strategy)
-    global_topics = (
-        ops.get_topics_by_strategy(conn, project_id, "_global") if strategy != "_global" else []
-    )
+    evaluable = [t for t in strategy_topics if t.status == "holding" and t.commit_count > 0]
 
-    result: list[ContentTopic] = []
-    seen: set[str] = set()
+    if strategy != "_global":
+        global_topics = ops.get_topics_by_strategy(conn, project_id, "_global")
+        evaluable.extend(t for t in global_topics if t.status == "holding" and t.commit_count > 0)
 
-    for topic in strategy_topics + global_topics:
-        if topic.id in seen:
-            continue
-        seen.add(topic.id)
-
-        if topic.status == "holding" and topic.commit_count > 0:
-            result.append(topic)
-
-    return result
+    return evaluable
 
 
 def force_draft_topic(
