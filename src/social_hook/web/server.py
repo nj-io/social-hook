@@ -4234,10 +4234,20 @@ async def api_delete_strategy(project_id: str, name: str):
     _invalidate_config()
     conn = _get_conn()
     try:
+        # Dismiss orphaned topics for the deleted strategy
+        dismissed_count = conn.execute(
+            "UPDATE content_topics SET status = 'dismissed' WHERE project_id = ? AND strategy = ? AND status != 'dismissed'",
+            (project_id, name),
+        ).rowcount
+        if dismissed_count:
+            conn.commit()
+            logger.info(
+                "Dismissed %d orphaned topics for deleted strategy '%s'", dismissed_count, name
+            )
         ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
     finally:
         conn.close()
-    return {"status": "deleted", "name": name}
+    return {"status": "deleted", "name": name, "topics_dismissed": dismissed_count}
 
 
 # =============================================================================

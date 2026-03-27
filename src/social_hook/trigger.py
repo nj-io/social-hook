@@ -1101,6 +1101,8 @@ def _run_targets_path(
                 project_id=ctx.project.id,
                 suggestions=analyzer_result.topic_suggestions,
                 strategies=strategy_names,
+                strategy_configs=ctx.config.content_strategies,
+                llm_client=evaluator_client,
             )
         except Exception:
             logger.warning("Topic creation from analyzer suggestions failed", exc_info=True)

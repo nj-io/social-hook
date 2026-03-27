@@ -13,19 +13,191 @@ from social_hook.db import operations as ops
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id
 from social_hook.models import CommitInfo, ContentTopic, EvaluationCycle
-from social_hook.setup.templates import POSITIONING_TEMPLATES
+from social_hook.setup.templates import CODE_DRIVEN_TEMPLATES, POSITIONING_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# Strategy type resolution
+# =============================================================================
 
-def is_positioning_strategy(strategy_name: str) -> bool:
-    """Check if a strategy is positioning-driven based on template name.
+# Tool schema for LLM-based strategy classification (used by SingleToolAgent)
+_CLASSIFY_STRATEGY_TOOL: dict[str, Any] = {
+    "name": "classify_strategy",
+    "description": "Classify a content strategy as code-driven or positioning-driven",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "strategy_type": {
+                "type": "string",
+                "enum": ["code-driven", "positioning"],
+                "description": (
+                    "code-driven: content sourced from commits/code — aimed at developers "
+                    "who want to see how things are built. "
+                    "positioning: content sourced from product brief — aimed at users/buyers "
+                    "who care about what the product does for them."
+                ),
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation for the classification",
+            },
+        },
+        "required": ["strategy_type"],
+    },
+}
 
-    Positioning strategies get product topics (seeded from brief).
-    Code-driven strategies (and custom/unrecognized) get implementation topics
-    (created from commit tags).
+
+def resolve_strategy_type(
+    strategy_name: str,
+    strategy_config: Any | None = None,
+    llm_client: Any | None = None,
+) -> str:
+    """Resolve whether a strategy is code-driven or positioning-driven.
+
+    Resolution order:
+    1. Explicit strategy_type field on the strategy config (set by previous classification)
+    2. Known template names (POSITIONING_TEMPLATES / CODE_DRIVEN_TEMPLATES)
+    3. LLM classification based on audience/voice/post_when fields (result cached on config)
+    4. Default: "code-driven"
+
+    When an LLM classification is made, the result is returned but NOT persisted here —
+    the caller should write it back to config via save_config() to cache for future calls.
+
+    Note: This function is reusable for any system that needs to classify content strategies.
+    The LLM call uses SingleToolAgent from the llm layer with a simple binary classification tool.
     """
-    return strategy_name in POSITIONING_TEMPLATES
+    # 1. Check explicit strategy_type on config
+    if strategy_config is not None:
+        explicit_type = getattr(strategy_config, "strategy_type", None)
+        if explicit_type in ("code-driven", "positioning"):
+            return explicit_type
+
+    # 2. Check known template names
+    if strategy_name in POSITIONING_TEMPLATES:
+        return "positioning"
+    if strategy_name in CODE_DRIVEN_TEMPLATES:
+        return "code-driven"
+
+    # 3. LLM classification for custom strategies
+    if llm_client is not None and strategy_config is not None:
+        try:
+            return _classify_strategy_via_llm(strategy_name, strategy_config, llm_client)
+        except Exception:
+            logger.warning(
+                "LLM classification failed for strategy '%s', defaulting to code-driven",
+                strategy_name,
+                exc_info=True,
+            )
+
+    # 4. Default
+    return "code-driven"
+
+
+def _classify_strategy_via_llm(
+    strategy_name: str,
+    strategy_config: Any,
+    llm_client: Any,
+) -> str:
+    """Use SingleToolAgent to classify a custom strategy as code-driven or positioning.
+
+    The LLM sees the strategy's audience, voice, post_when, and avoid fields and
+    decides whether it's aimed at developers (code-driven) or users/buyers (positioning).
+    """
+    from social_hook.llm.agent import SingleToolAgent
+
+    audience = getattr(strategy_config, "audience", "") or ""
+    voice = getattr(strategy_config, "voice", "") or ""
+    post_when = getattr(strategy_config, "post_when", "") or ""
+    avoid = getattr(strategy_config, "avoid", "") or ""
+
+    prompt = (
+        f"Classify this content strategy:\n\n"
+        f"Name: {strategy_name}\n"
+        f"Audience: {audience}\n"
+        f"Voice: {voice}\n"
+        f"Post when: {post_when}\n"
+        f"Avoid: {avoid}\n\n"
+        f"Is this strategy aimed at developers/builders who want to see how things are built "
+        f"(code-driven), or at users/buyers who care about product value (positioning)?"
+    )
+
+    agent = SingleToolAgent(llm_client)
+    result, _response = agent.call_tool(
+        messages=[{"role": "user", "content": prompt}],
+        tool_schema=_CLASSIFY_STRATEGY_TOOL,
+        max_tokens=256,
+    )
+
+    strategy_type = result.get("strategy_type", "code-driven")
+    reasoning = result.get("reasoning", "")
+    if strategy_type not in ("code-driven", "positioning"):
+        logger.warning(
+            "LLM returned invalid strategy_type '%s', defaulting to code-driven", strategy_type
+        )
+        strategy_type = "code-driven"
+    else:
+        logger.info(
+            "Classified strategy '%s' as %s: %s",
+            strategy_name,
+            strategy_type,
+            reasoning,
+        )
+    return strategy_type
+
+
+def is_positioning_strategy(strategy_name: str, strategy_config: Any | None = None) -> bool:
+    """Check if a strategy is positioning-driven.
+
+    Convenience wrapper around resolve_strategy_type(). For synchronous use
+    without LLM — checks config field and known templates only.
+    """
+    return resolve_strategy_type(strategy_name, strategy_config) == "positioning"
+
+
+def _persist_strategy_types(
+    strategy_types: dict[str, str],
+    strategy_configs: dict[str, Any] | None,
+) -> None:
+    """Write newly-resolved strategy_type values back to config.
+
+    Only writes if the config object has a strategy_type field that is currently
+    unset. Known templates don't need persisting — they're resolved from frozensets.
+    """
+    if not strategy_configs:
+        return
+
+    updates: dict[str, dict[str, str]] = {}
+    for name, resolved_type in strategy_types.items():
+        # Skip known templates — no need to persist
+        if name in POSITIONING_TEMPLATES or name in CODE_DRIVEN_TEMPLATES:
+            continue
+        scfg = strategy_configs.get(name)
+        if scfg is None:
+            continue
+        existing = getattr(scfg, "strategy_type", None)
+        if existing in ("code-driven", "positioning"):
+            continue  # Already persisted
+        updates[name] = {"strategy_type": resolved_type}
+
+    if not updates:
+        return
+
+    try:
+        from social_hook.config.yaml import get_config_path, save_config
+
+        save_config(
+            {"content_strategies": updates},
+            config_path=get_config_path(),
+            deep_merge=True,
+        )
+        logger.info(
+            "Persisted strategy_type for %d custom strategies: %s",
+            len(updates),
+            list(updates.keys()),
+        )
+    except Exception:
+        logger.warning("Failed to persist strategy_type classifications", exc_info=True)
 
 
 def _insert_topic_if_new(
@@ -76,27 +248,39 @@ def process_topic_suggestions(
     project_id: str,
     suggestions: list[Any],
     strategies: list[str],
+    strategy_configs: dict[str, Any] | None = None,
+    llm_client: Any | None = None,
 ) -> list[ContentTopic]:
     """Process topic suggestions from the commit analyzer (stage 1).
 
     Each suggestion has title, description, and strategy_type (code-driven or
     positioning). Topics are created scoped to the appropriate strategies based
-    on strategy_type.
+    on strategy_type. Custom strategies are classified via LLM on first use.
 
     Args:
         conn: Database connection
         project_id: Project ID
         suggestions: List of TopicSuggestion objects from analyzer
         strategies: All strategy names for the project
+        strategy_configs: Dict of strategy name -> ContentStrategyConfig (for LLM classification)
+        llm_client: Optional LLM client for classifying custom strategies
 
     Returns list of newly created ContentTopic objects.
     """
     if not suggestions or not strategies:
         return []
 
-    # Split strategies by type
-    positioning = [s for s in strategies if is_positioning_strategy(s)]
-    code_driven = [s for s in strategies if not is_positioning_strategy(s)]
+    # Resolve each strategy's type (uses config cache, template names, or LLM)
+    strategy_types: dict[str, str] = {}
+    for s in strategies:
+        scfg = strategy_configs.get(s) if strategy_configs else None
+        strategy_types[s] = resolve_strategy_type(s, scfg, llm_client)
+
+    # Persist any newly-classified strategy types back to config
+    _persist_strategy_types(strategy_types, strategy_configs)
+
+    positioning = [s for s in strategies if strategy_types[s] == "positioning"]
+    code_driven = [s for s in strategies if strategy_types[s] == "code-driven"]
 
     # Pre-fetch existing topics per strategy
     existing_by_strategy: dict[str, dict[str, ContentTopic]] = {}

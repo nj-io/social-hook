@@ -195,6 +195,9 @@ class ContentStrategyConfig:
     angle: str | None = None
     post_when: str | None = None
     avoid: str | None = None
+    strategy_type: str | None = (
+        None  # "code-driven" or "positioning" — auto-classified on first use
+    )
     format_preference: str | None = None  # "single", "thread", "long-form"
     media_preference: str | None = None  # "screenshot", "diagram", "video", "code"
     min_length: int | None = None
