@@ -242,7 +242,7 @@ function SettingsContent() {
                   onChange={async (e) => {
                     const val = e.target.value;
                     setContextConfig((prev) => ({ ...prev, topic_granularity: val }));
-                    await updateContentConfigParsed({ context: { ...contextConfig, topic_granularity: val } });
+                    await updateContentConfigParsed({ context: { ...contextConfig, topic_granularity: val } }, selectedProjectPath || undefined);
                   }}
                   className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
                 >
@@ -311,7 +311,7 @@ function SettingsContent() {
                     setContextConfig((prev) => ({ ...prev, commit_analysis_interval: val }));
                   }}
                   onBlur={async () => {
-                    await updateContentConfigParsed({ context: { ...contextConfig } });
+                    await updateContentConfigParsed({ context: { ...contextConfig } }, selectedProjectPath || undefined);
                   }}
                   className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
                 />
@@ -537,7 +537,7 @@ function SettingsContent() {
                     setContextConfig((prev) => ({ ...prev, max_doc_tokens: val }));
                   }}
                   onBlur={async () => {
-                    await updateContentConfigParsed({ context: { ...contextConfig } });
+                    await updateContentConfigParsed({ context: { ...contextConfig } }, selectedProjectPath || undefined);
                   }}
                   className="w-48 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
                 />
@@ -558,7 +558,7 @@ function SettingsContent() {
                     setContextConfig((prev) => ({ ...prev, project_docs: docs }));
                   }}
                   onBlur={async () => {
-                    await updateContentConfigParsed({ context: { ...contextConfig } });
+                    await updateContentConfigParsed({ context: { ...contextConfig } }, selectedProjectPath || undefined);
                   }}
                   placeholder="docs/ARCHITECTURE.md&#10;src/**/README.md"
                   className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-accent"
