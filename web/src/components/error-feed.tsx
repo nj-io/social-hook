@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { SystemError, SystemHealth } from "@/lib/types";
 import { fetchSystemErrors, fetchSystemHealth, clearSystemErrors } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
+import { Modal } from "@/components/ui/modal";
 
 const SEVERITY_STYLES: Record<string, string> = {
   info: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
@@ -21,6 +22,8 @@ export function ErrorFeed() {
   const [severityFilter, setSeverityFilter] = useState("");
   const [componentFilter, setComponentFilter] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -114,11 +117,7 @@ export function ErrorFeed() {
         )}
         {errors.length > 0 && (
           <button
-            onClick={async () => {
-              if (!confirm("Clear all system errors?")) return;
-              await clearSystemErrors();
-              load();
-            }}
+            onClick={() => setShowClearConfirm(true)}
             className="ml-auto rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
           >
             Clear all
@@ -171,6 +170,38 @@ export function ErrorFeed() {
           </div>
         )}
       </div>
+
+      <Modal open={showClearConfirm} onClose={() => !clearing && setShowClearConfirm(false)} maxWidth="max-w-sm">
+        <h3 className="text-sm font-semibold">Clear all system errors?</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This will permanently delete {errors.length} error record{errors.length !== 1 ? "s" : ""}.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={() => setShowClearConfirm(false)}
+            disabled={clearing}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              setClearing(true);
+              try {
+                await clearSystemErrors();
+                setShowClearConfirm(false);
+                load();
+              } finally {
+                setClearing(false);
+              }
+            }}
+            disabled={clearing}
+            className="rounded-md bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {clearing ? "Clearing..." : "Clear all"}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
