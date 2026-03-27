@@ -1584,7 +1584,7 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
 
     task_id = _run_background_task(
         "import_commits",
-        ref_id=project_id,
+        ref_id="__import__",
         project_id=pid,
         fn=_blocking_import,
     )
