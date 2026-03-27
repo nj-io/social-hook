@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { SystemError, SystemHealth } from "@/lib/types";
-import { fetchSystemErrors, fetchSystemHealth } from "@/lib/api";
+import { fetchSystemErrors, fetchSystemHealth, clearSystemErrors } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
 
 const SEVERITY_STYLES: Record<string, string> = {
@@ -87,8 +87,8 @@ export function ErrorFeed() {
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex gap-3">
+      {/* Filters + Clear */}
+      <div className="flex items-center gap-3">
         <select
           value={severityFilter}
           onChange={(e) => setSeverityFilter(e.target.value)}
@@ -111,6 +111,18 @@ export function ErrorFeed() {
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
+        )}
+        {errors.length > 0 && (
+          <button
+            onClick={async () => {
+              if (!confirm("Clear all system errors?")) return;
+              await clearSystemErrors();
+              load();
+            }}
+            className="ml-auto rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+          >
+            Clear all
+          </button>
         )}
       </div>
 

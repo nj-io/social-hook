@@ -121,6 +121,43 @@ def tail(
 
 
 @app.command()
+def clear(
+    ctx: typer.Context,
+    older_than: int | None = typer.Option(
+        None, "--older-than", help="Only delete errors older than N days"
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Clear system errors from the database.
+
+    Without --older-than, deletes all errors. Prompts for confirmation
+    unless --yes is given.
+
+    Example: social-hook logs clear --yes
+    Example: social-hook logs clear --older-than 7
+    """
+    from social_hook.db import operations as ops
+
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    if not yes:
+        scope = f"older than {older_than} days" if older_than else "ALL"
+        if not typer.confirm(f"Delete {scope} system errors?"):
+            raise typer.Abort()
+
+    conn = _get_conn()
+    try:
+        count = ops.clear_system_errors(conn, older_than_days=older_than)
+        if json_output:
+            typer.echo(json_mod.dumps({"deleted": count}))
+        else:
+            typer.echo(f"Deleted {count} error(s).")
+    finally:
+        conn.close()
+
+
+@app.command()
 def health(
     ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),

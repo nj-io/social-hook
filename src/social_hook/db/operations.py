@@ -2633,6 +2633,28 @@ def get_error_health_status(conn: sqlite3.Connection) -> dict:
     return result
 
 
+def clear_system_errors(conn: sqlite3.Connection, *, older_than_days: int | None = None) -> int:
+    """Delete system errors. Returns count of deleted rows.
+
+    If older_than_days is given, only deletes errors older than that.
+    Otherwise deletes all.
+    """
+    if older_than_days is not None:
+        cursor = conn.execute(
+            "DELETE FROM system_errors WHERE created_at < datetime('now', ?)",
+            (f"-{older_than_days} days",),
+        )
+    else:
+        cursor = conn.execute("DELETE FROM system_errors")
+    conn.commit()
+    return cursor.rowcount
+
+
+def prune_system_errors(conn: sqlite3.Connection, retention_days: int = 30) -> int:
+    """Delete system errors older than retention_days. Returns count deleted."""
+    return clear_system_errors(conn, older_than_days=retention_days)
+
+
 def compute_health_status(error_counts: dict[str, int]) -> str:
     """Derive overall health status string from severity counts.
 

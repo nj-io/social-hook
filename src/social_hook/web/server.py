@@ -5090,6 +5090,23 @@ async def api_create_system_error(request: Request):
         conn.close()
 
 
+@app.delete("/api/system/errors")
+async def api_clear_system_errors(
+    older_than_days: int | None = None,
+):
+    """Clear system errors. Optional: ?older_than_days=30 to prune old entries only.
+
+    Without the parameter, deletes all errors.
+    """
+    conn = _get_conn()
+    try:
+        count = ops.clear_system_errors(conn, older_than_days=older_than_days)
+        ops.emit_data_event(conn, "system_error", "cleared", "")
+        return {"deleted": count}
+    finally:
+        conn.close()
+
+
 @app.get("/api/system/health")
 async def api_system_health():
     """Health status summary."""

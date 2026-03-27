@@ -767,6 +767,13 @@ export async function fetchSystemHealth(): Promise<SystemHealth> {
   return apiFetch("/api/system/health");
 }
 
+export async function clearSystemErrors(
+  olderThanDays?: number
+): Promise<{ deleted: number }> {
+  const qs = olderThanDays != null ? `?older_than_days=${olderThanDays}` : "";
+  return apiFetch(`/api/system/errors${qs}`, { method: "DELETE" });
+}
+
 export async function reportFrontendError(error: {
   severity: string;
   message: string;

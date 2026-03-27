@@ -661,6 +661,14 @@ def scheduler_tick(
         db_path = get_db_path()
         conn = init_database(db_path)
 
+        # Prune system errors older than 30 days (lightweight, runs each tick)
+        try:
+            pruned = ops.prune_system_errors(conn, retention_days=30)
+            if pruned:
+                logger.info("Pruned %d system error(s) older than 30 days", pruned)
+        except Exception:
+            logger.debug("System error pruning failed (non-fatal)", exc_info=True)
+
         try:
             # --- Post-now mode: single draft, no promote/drain ---
             if draft_id:
