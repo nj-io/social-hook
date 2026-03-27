@@ -288,7 +288,13 @@ def run_trigger(
 
     current_branch = _get_current_branch(repo_path)
 
-    if project.trigger_branch and current_branch != project.trigger_branch:
+    # Branch filter: skip commits from non-target branches.
+    # Manual retriggers and drain bypass this — the user explicitly chose the commit.
+    if (
+        project.trigger_branch
+        and current_branch != project.trigger_branch
+        and trigger_source not in ("manual", "drain")
+    ):
         branch_desc = current_branch or "(detached HEAD)"
         if verbose:
             print(
