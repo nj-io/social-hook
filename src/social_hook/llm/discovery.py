@@ -376,19 +376,8 @@ def discover_project(
     except Exception:
         logger.warning("Brief generation failed, using raw summary", exc_info=True)
 
-    # Seed topics from the brief's Key Capabilities section
-    if strategies and project_id and db is not None:
-        try:
-            import sqlite3
-
-            from social_hook.topics import seed_topics_from_brief
-
-            # Extract connection from db (may be a DryRunContext or raw connection)
-            raw_conn = getattr(db, "conn", db) if not isinstance(db, sqlite3.Connection) else db
-            if isinstance(raw_conn, sqlite3.Connection):
-                seed_topics_from_brief(raw_conn, project_id, project_summary, strategies)
-        except Exception:
-            logger.warning("Topic seeding from brief failed", exc_info=True)
+    # Topic seeding is now handled by the commit analyzer (stage 1) via
+    # topic_suggestions in the analysis output. Discovery no longer seeds topics.
 
     if on_progress:
         on_progress("discovered")

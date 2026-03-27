@@ -70,14 +70,62 @@ async def lifespan(app_instance: FastAPI):
     db_path = get_db_path()
     init_database(db_path)
     _cleanup_stale_tasks(db_path)
-    # Initialize error feed so background tasks can emit errors
-    from social_hook.error_feed import ensure_error_feed
+
+    # Unified logging pipeline — replaces ensure_error_feed()
+    from social_hook.error_feed import error_feed
+    from social_hook.logging import setup_logging
 
     try:
         config = _get_config()
-        ensure_error_feed(config, str(db_path))
+        error_feed.set_db_path(str(db_path))
+        # Build notification sender
+        sender: Callable | None = None
+        try:
+            from social_hook.notifications import send_notification
+
+            # NotificationSink already formats as "[SEVERITY] (source) message"
+            def _send_notification(_sev: str, msg: str) -> None:
+                send_notification(config, msg)
+
+            sender = _send_notification
+        except Exception:
+            pass
+        setup_logging("web", error_feed=error_feed, notification_sender=sender, console=False)
     except Exception:
-        logger.debug("Error feed init failed (non-fatal)", exc_info=True)
+        logger.debug("Logging init failed (non-fatal)", exc_info=True)
+
+    # Wire on_persist callback for WebSocket live updates (fire-and-forget).
+    # Bounded to 10 concurrent threads to avoid storms.
+    _persist_semaphore = threading.Semaphore(10)
+
+    def _on_error_persisted(error_id, severity, component):
+        if not _persist_semaphore.acquire(blocking=False):
+            return  # drop under storm conditions
+
+        def _emit():
+            try:
+                conn = sqlite3.connect(str(db_path), timeout=2)
+                conn.row_factory = sqlite3.Row
+                try:
+                    ops.emit_data_event(
+                        conn,
+                        "system_error",
+                        "created",
+                        error_id,
+                        extra={"severity": severity, "component": component},
+                    )
+                finally:
+                    conn.close()
+            except Exception:
+                pass  # fire-and-forget: never block logging
+            finally:
+                _persist_semaphore.release()
+
+        t = threading.Thread(target=_emit, daemon=True)
+        t.start()
+
+    error_feed.set_on_persist(_on_error_persisted)
+
     task = asyncio.create_task(_event_bridge_loop())
     yield
     task.cancel()
@@ -4351,26 +4399,6 @@ async def api_set_topic_status(project_id: str, topic_id: str, body: dict[str, A
         conn.close()
 
 
-@app.delete("/api/projects/{project_id}/topics/{topic_id}")
-async def api_delete_topic(project_id: str, topic_id: str):
-    """Delete a topic from the queue."""
-    conn = _get_conn()
-    try:
-        _get_project_or_404(conn, project_id)
-        topic = ops.get_topic(conn, topic_id)
-        if not topic:
-            raise HTTPException(status_code=404, detail="Topic not found")
-        if topic.project_id != project_id:
-            raise HTTPException(status_code=404, detail="Topic not found in this project")
-
-        conn.execute("DELETE FROM content_topics WHERE id = ?", (topic_id,))
-        conn.commit()
-        ops.emit_data_event(conn, "topic", "deleted", topic_id, project_id)
-        return {"status": "deleted", "topic_id": topic_id}
-    finally:
-        conn.close()
-
-
 @app.post("/api/projects/{project_id}/topics/{topic_id}/draft-now")
 async def api_draft_now_topic(project_id: str, topic_id: str):
     """Force draft on a topic. 202 — LLM call."""
@@ -4973,12 +5001,91 @@ async def api_approve_all_cycle_drafts(project_id: str, cycle_id: str):
 
 
 @app.get("/api/system/errors")
-async def api_system_errors(limit: int = Query(50, ge=1, le=500)):
-    """Recent system errors."""
+async def api_system_errors(
+    limit: int = Query(50, ge=1, le=500),
+    severity: str | None = Query(None),
+    component: str | None = Query(None),
+    source: str | None = Query(None),
+):
+    """Recent system errors with optional filters."""
     conn = _get_conn()
     try:
-        errors = ops.get_recent_system_errors(conn, limit=limit)
-        return {"errors": [e.to_dict() for e in errors]}
+        errors = ops.get_recent_system_errors(
+            conn, limit=limit, severity=severity, component=component, source=source
+        )
+        result = []
+        for e in errors:
+            d = e.to_dict()
+            # Ensure timestamps have Z suffix for JS Date parsing
+            if d.get("created_at") and not d["created_at"].endswith("Z"):
+                d["created_at"] = d["created_at"] + "Z"
+            result.append(d)
+        return {"errors": result}
+    finally:
+        conn.close()
+
+
+@app.post("/api/system/errors", status_code=201)
+async def api_create_system_error(request: Request):
+    """Capture a system error (e.g. from frontend)."""
+    from social_hook.filesystem import generate_id
+    from social_hook.models import SystemErrorRecord
+
+    body = await request.json()
+    check_unknown_keys(
+        body, {"severity", "message", "source", "context"}, "system_error", strict=True
+    )
+
+    severity = body.get("severity", "error")
+    if severity not in ("info", "warning", "error", "critical"):
+        raise HTTPException(status_code=400, detail=f"Invalid severity: {severity}")
+
+    message = body.get("message", "")
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    source = body.get("source", "")
+    context_raw = body.get("context", "{}")
+    if isinstance(context_raw, str):
+        context = safe_json_loads(context_raw, "system_error.context", default={})
+    else:
+        context = context_raw
+
+    error = SystemErrorRecord(
+        id=generate_id("err"),
+        severity=severity,
+        message=message,
+        context=json.dumps(context) if isinstance(context, dict) else str(context),
+        source=source,
+    )
+    conn = _get_conn()
+    try:
+        error_id = ops.insert_system_error(conn, error)
+        ops.emit_data_event(
+            conn,
+            "system_error",
+            "created",
+            error_id,
+            extra={"severity": severity, "component": source},
+        )
+        return {"id": error_id, "status": "created"}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/system/errors")
+async def api_clear_system_errors(
+    older_than_days: int | None = None,
+):
+    """Clear system errors. Optional: ?older_than_days=30 to prune old entries only.
+
+    Without the parameter, deletes all errors.
+    """
+    conn = _get_conn()
+    try:
+        count = ops.clear_system_errors(conn, older_than_days=older_than_days)
+        ops.emit_data_event(conn, "system_error", "cleared", "")
+        return {"deleted": count}
     finally:
         conn.close()
 
@@ -4990,16 +5097,7 @@ async def api_system_health():
     try:
         error_counts = ops.get_error_health_status(conn)
         total_errors = sum(error_counts.values())
-
-        # Determine overall health status
-        if error_counts.get("critical", 0) > 0:
-            status = "critical"
-        elif error_counts.get("error", 0) > 0:
-            status = "degraded"
-        elif error_counts.get("warning", 0) > 5:
-            status = "warning"
-        else:
-            status = "healthy"
+        status = ops.compute_health_status(error_counts)
 
         return {
             "status": status,

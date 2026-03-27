@@ -6,7 +6,6 @@ topics by priority rather than reacting to individual commits.
 """
 
 import logging
-import re
 import sqlite3
 from typing import Any
 
@@ -14,97 +13,140 @@ from social_hook.db import operations as ops
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id
 from social_hook.models import CommitInfo, ContentTopic, EvaluationCycle
+from social_hook.setup.templates import POSITIONING_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
 
-def seed_topics_from_brief(
+def is_positioning_strategy(strategy_name: str) -> bool:
+    """Check if a strategy is positioning-driven based on template name.
+
+    Positioning strategies get product topics (seeded from brief).
+    Code-driven strategies (and custom/unrecognized) get implementation topics
+    (created from commit tags).
+    """
+    return strategy_name in POSITIONING_TEMPLATES
+
+
+def _insert_topic_if_new(
     conn: sqlite3.Connection,
     project_id: str,
-    brief: str,
+    strategy: str,
+    title: str,
+    created_by: str,
+    existing_by_name: dict[str, ContentTopic],
+    description: str | None = None,
+) -> ContentTopic | None:
+    """Insert a topic if no existing topic matches the title (case-insensitive).
+
+    Skips creation when a topic with the same name already exists (including
+    dismissed topics, which should not be recreated by auto-seeding).
+
+    Returns the new ContentTopic, or None if skipped.
+    """
+    existing_topic = existing_by_name.get(title.lower())
+    if existing_topic is not None:
+        label = "dismissed" if existing_topic.status == "dismissed" else "existing"
+        logger.info("Skipping %s topic for strategy %s: %s", label, strategy, title)
+        return None
+
+    topic = ContentTopic(
+        id=generate_id("topic"),
+        project_id=project_id,
+        strategy=strategy,
+        topic=title,
+        description=description,
+        status="uncovered",
+        created_by=created_by,
+    )
+    ops.insert_content_topic(conn, topic)
+    ops.emit_data_event(conn, "topic", "created", topic.id, project_id)
+    logger.info(
+        "Created topic for strategy %s: %s (id=%s, created_by=%s)",
+        strategy,
+        title,
+        topic.id,
+        created_by,
+    )
+    return topic
+
+
+def process_topic_suggestions(
+    conn: sqlite3.Connection,
+    project_id: str,
+    suggestions: list[Any],
     strategies: list[str],
 ) -> list[ContentTopic]:
-    """Seed product-level topics from the project brief's Key Capabilities section.
+    """Process topic suggestions from the commit analyzer (stage 1).
 
-    Called after discovery generates or updates the brief.
-    Creates topics scoped to positioning-driven strategies.
-    Topics are created_by='discovery' with status='uncovered'.
-    Does not overwrite existing topics -- only adds new ones.
+    Each suggestion has title, description, and strategy_type (code-driven or
+    positioning). Topics are created scoped to the appropriate strategies based
+    on strategy_type.
+
+    Args:
+        conn: Database connection
+        project_id: Project ID
+        suggestions: List of TopicSuggestion objects from analyzer
+        strategies: All strategy names for the project
 
     Returns list of newly created ContentTopic objects.
     """
-    if not strategies:
-        logger.info("No strategies provided, skipping topic seeding")
+    if not suggestions or not strategies:
         return []
 
-    # Parse Key Capabilities section from brief markdown
-    capabilities = _parse_key_capabilities(brief)
-    if not capabilities:
-        logger.warning(
-            "No 'Key Capabilities' section found in brief for project %s, skipping topic seeding",
-            project_id,
-        )
-        return []
+    # Split strategies by type
+    positioning = [s for s in strategies if is_positioning_strategy(s)]
+    code_driven = [s for s in strategies if not is_positioning_strategy(s)]
+
+    # Pre-fetch existing topics per strategy
+    existing_by_strategy: dict[str, dict[str, ContentTopic]] = {}
+    for strategy in strategies:
+        topics_for_strat = ops.get_topics_by_strategy(conn, project_id, strategy)
+        existing_by_strategy[strategy] = {t.topic.lower(): t for t in topics_for_strat}
 
     created: list[ContentTopic] = []
-    for strategy in strategies:
-        existing = ops.get_topics_by_strategy(conn, project_id, strategy)
-        existing_names = {t.topic.lower() for t in existing}
+    for suggestion in suggestions:
+        title = getattr(suggestion, "title", "").strip()
+        if not title:
+            continue
+        description = getattr(suggestion, "description", None)
+        if description:
+            description = description.strip() or None
+        strategy_type = getattr(suggestion, "strategy_type", "code-driven")
 
-        for cap in capabilities:
-            if cap.lower() in existing_names:
-                logger.info("Topic already exists for strategy %s: %s", strategy, cap)
-                continue
+        # Route to appropriate strategies
+        if strategy_type == "positioning":
+            target_strategies = positioning
+            created_by = "discovery"
+        else:
+            target_strategies = code_driven
+            created_by = "track1"
 
-            topic = ContentTopic(
-                id=generate_id("topic"),
-                project_id=project_id,
-                strategy=strategy,
-                topic=cap,
-                status="uncovered",
-                created_by="discovery",
-            )
-            ops.insert_content_topic(conn, topic)
+        if not target_strategies:
             logger.info(
-                "Created topic for strategy %s: %s (id=%s)",
-                strategy,
-                cap,
-                topic.id,
+                "No %s strategies for topic suggestion: %s",
+                strategy_type,
+                title,
             )
-            created.append(topic)
+            continue
+
+        for strategy in target_strategies:
+            existing_by_name = existing_by_strategy.get(strategy, {})
+            topic = _insert_topic_if_new(
+                conn,
+                project_id,
+                strategy,
+                title=title,
+                created_by=created_by,
+                existing_by_name=existing_by_name,
+                description=description,
+            )
+            if topic is not None:
+                created.append(topic)
+                # Update cache so next suggestion sees this topic
+                existing_by_name[title.lower()] = topic
 
     return created
-
-
-def _parse_key_capabilities(brief: str) -> list[str]:
-    """Extract bullet points from the Key Capabilities section of a brief.
-
-    Returns list of capability strings (stripped of bullet prefix).
-    """
-    if not brief:
-        return []
-
-    # Find "## Key Capabilities" heading
-    pattern = r"^## Key Capabilities\s*$"
-    match = re.search(pattern, brief, re.MULTILINE)
-    if match is None:
-        return []
-
-    # Extract content until next ## heading or end
-    start = match.end()
-    next_heading = re.search(r"^## ", brief[start:], re.MULTILINE)
-    section = brief[start : start + next_heading.start()] if next_heading else brief[start:]
-
-    # Extract bullet points
-    capabilities = []
-    for line in section.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- ") or stripped.startswith("* "):
-            cap = stripped[2:].strip()
-            if cap:
-                capabilities.append(cap)
-
-    return capabilities
 
 
 def match_tags_to_topics(
@@ -138,30 +180,19 @@ def get_evaluable_topics(
     project_id: str,
     strategy: str,
 ) -> list[ContentTopic]:
-    """Return topics the evaluator should consider for drafting.
+    """Get topics ready for evaluation: holding with commits accumulated.
 
-    Returns topics where status == 'holding' and commit_count > 0.
-    Also includes topics with strategy='_global'.
-    The evaluator decides whether there is enough material to draft;
-    this function does NOT apply a numeric threshold.
+    Returns topics with status='holding' and commit_count > 0 for the
+    given strategy. Also includes _global strategy topics.
     """
     strategy_topics = ops.get_topics_by_strategy(conn, project_id, strategy)
-    global_topics = (
-        ops.get_topics_by_strategy(conn, project_id, "_global") if strategy != "_global" else []
-    )
+    evaluable = [t for t in strategy_topics if t.status == "holding" and t.commit_count > 0]
 
-    result: list[ContentTopic] = []
-    seen: set[str] = set()
+    if strategy != "_global":
+        global_topics = ops.get_topics_by_strategy(conn, project_id, "_global")
+        evaluable.extend(t for t in global_topics if t.status == "holding" and t.commit_count > 0)
 
-    for topic in strategy_topics + global_topics:
-        if topic.id in seen:
-            continue
-        seen.add(topic.id)
-
-        if topic.status == "holding" and topic.commit_count > 0:
-            result.append(topic)
-
-    return result
+    return evaluable
 
 
 def force_draft_topic(
@@ -172,9 +203,9 @@ def force_draft_topic(
     strategy: str,
     dry_run: bool = False,
 ) -> str | None:
-    """Force-draft a held topic via a scoped evaluator call.
+    """Force-draft a held or uncovered topic via a scoped evaluator call.
 
-    Called when operator clicks "Draft Now" on a held topic.
+    Called when operator clicks "Draft Now" on a held or uncovered topic.
 
     Creates evaluation cycle with trigger_type='topic_maturity',
     trigger_ref=topic_id. The evaluator receives the topic's accumulated
@@ -188,9 +219,9 @@ def force_draft_topic(
         if topic is None:
             raise ConfigError(f"Topic not found: {topic_id}")
 
-        if topic.status != "holding":
+        if topic.status not in ("holding", "uncovered"):
             logger.warning(
-                "Cannot force-draft topic %s: status is %s, expected 'holding'",
+                "Cannot force-draft topic %s: status is %s, expected 'holding' or 'uncovered'",
                 topic_id,
                 topic.status,
             )
@@ -230,8 +261,9 @@ def force_draft_topic(
         # Run evaluation + drafting if config is available
         if config is None or not getattr(config, "models", None):
             logger.info(
-                "Topic %s: holding -> force-draft requested (cycle=%s, strategy=%s)",
+                "Topic %s: %s -> force-draft requested (cycle=%s, strategy=%s)",
                 topic_id,
+                topic.status,
                 cycle_id,
                 strategy,
             )
@@ -345,8 +377,9 @@ def force_draft_topic(
                 )
 
         logger.info(
-            "Topic %s: holding -> force-draft completed (cycle=%s, strategy=%s)",
+            "Topic %s: %s -> force-draft completed (cycle=%s, strategy=%s)",
             topic_id,
+            topic.status,
             cycle_id,
             strategy,
         )

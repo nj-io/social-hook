@@ -51,7 +51,7 @@ EDITABLE_STATUSES = frozenset(
     }
 )
 
-TOPIC_STATUSES = frozenset({"uncovered", "holding", "partial", "covered"})
+TOPIC_STATUSES = frozenset({"uncovered", "holding", "partial", "covered", "dismissed"})
 SUGGESTION_STATUSES = frozenset({"pending", "evaluated", "drafted", "dismissed"})
 
 
@@ -335,7 +335,7 @@ class Decision:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (19 columns)."""
+        """Return tuple for INSERT (20 columns)."""
         import json
 
         return (
@@ -358,6 +358,7 @@ class Decision:
             json.dumps(self.reference_posts) if self.reference_posts is not None else None,
             self.branch,
             self.trigger_source,
+            1 if self.processed else 0,
         )
 
 
@@ -1208,6 +1209,8 @@ class SystemErrorRecord:
     message: str
     context: str = "{}"
     source: str = ""
+    component: str = ""
+    run_id: str = ""
     created_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -1217,6 +1220,8 @@ class SystemErrorRecord:
             "message": self.message,
             "context": self.context,
             "source": self.source,
+            "component": self.component,
+            "run_id": self.run_id,
             "created_at": self.created_at,
         }
 
@@ -1228,6 +1233,8 @@ class SystemErrorRecord:
             message=d["message"],
             context=d.get("context", "{}"),
             source=d.get("source", ""),
+            component=d.get("component", ""),
+            run_id=d.get("run_id", ""),
             created_at=d.get("created_at"),
         )
 
@@ -1239,6 +1246,8 @@ class SystemErrorRecord:
             self.message,
             self.context,
             self.source,
+            self.component,
+            self.run_id,
         )
 
 

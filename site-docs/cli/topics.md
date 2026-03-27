@@ -25,19 +25,20 @@ Example: social-hook topics add --strategy technical --topic "evaluation pipelin
 
 ---
 
-### `social-hook topics delete`
+### `social-hook topics dismiss`
 
-Delete a topic from the queue.
+Dismiss a topic so no posts are created about it.
 
-Permanently removes the topic. This cannot be undone.
+Dismissed topics are hidden from the queue and will not be recreated
+by auto-seeding. Use 'topics list --include-dismissed' to see them.
 
-Example: social-hook topics delete topic_abc123 --yes
+Example: social-hook topics dismiss topic_abc123
 
 **Arguments:**
 
 | Name | Required | Description |
 |------|----------|-------------|
-| `topic_id` | yes | Topic ID to delete |
+| `topic_id` | yes | Topic ID to dismiss |
 
 **Options:**
 
@@ -51,10 +52,10 @@ Example: social-hook topics delete topic_abc123 --yes
 
 ### `social-hook topics draft-now`
 
-Force a draft on a held topic via LLM evaluation and drafting.
+Force-draft a held or uncovered topic via LLM evaluation and drafting.
 
-Only topics with status 'holding' can be force-drafted. Runs the full
-evaluation and drafting pipeline (same as the web UI "Draft Now" button).
+Topics with status 'holding' or 'uncovered' can be force-drafted. Runs the
+full evaluation and drafting pipeline (same as the web UI "Draft Now" button).
 This is an LLM operation — may take a moment.
 
 Example: social-hook topics draft-now topic_abc123
@@ -79,7 +80,8 @@ Example: social-hook topics draft-now topic_abc123
 List all topics, grouped by strategy.
 
 Shows the content topic queue with status, commit count, and priority.
-Use --strategy to filter by a specific strategy.
+Use --strategy to filter by a specific strategy. Dismissed topics are
+hidden by default; use --include-dismissed to show them.
 
 Example: social-hook topics list --strategy building-public
 
@@ -88,6 +90,7 @@ Example: social-hook topics list --strategy building-public
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--strategy`, `-s` | string |  | Filter by strategy name |
+| `--include-dismissed` | boolean | false | Include dismissed topics in output |
 | `--project`, `-p` | string |  | Repository path (default: cwd) |
 | `--json` | boolean | false | Output as JSON |
 
@@ -117,7 +120,7 @@ Example: social-hook topics reorder --strategy technical --id topic_abc123 --ran
 
 Set a topic's status.
 
-Valid statuses: uncovered, holding, partial, covered.
+Valid statuses: uncovered, holding, partial, covered, dismissed.
 
 Example: social-hook topics status topic_abc123 covered
 
@@ -126,7 +129,7 @@ Example: social-hook topics status topic_abc123 covered
 | Name | Required | Description |
 |------|----------|-------------|
 | `topic_id` | yes | Topic ID |
-| `new_status` | yes | New status (uncovered, holding, partial, covered) |
+| `new_status` | yes | New status (uncovered, holding, partial, covered, dismissed) |
 
 **Options:**
 

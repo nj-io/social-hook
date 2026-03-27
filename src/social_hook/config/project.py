@@ -33,6 +33,7 @@ class ContextConfig:
     pending_drafts_cap: int = 10
     max_hold_count: int = 5
     commit_analysis_interval: int = 1
+    topic_granularity: str = "low"
 
 
 @dataclass
@@ -219,9 +220,17 @@ def _parse_context_config(data: dict) -> ContextConfig:
             "include_readme",
             "include_claude_md",
             "commit_analysis_interval",
+            "topic_granularity",
         },
         "context",
     )
+
+    granularity = data.get("topic_granularity", "low")
+    if granularity not in {"low", "medium", "high"}:
+        raise ConfigError(
+            f"Invalid topic_granularity: {granularity!r}. Must be low, medium, or high."
+        )
+
     return ContextConfig(
         recent_decisions=data.get("recent_decisions", 30),
         recent_posts=data.get("recent_posts", 15),
@@ -236,7 +245,10 @@ def _parse_context_config(data: dict) -> ContextConfig:
         arc_context_chars=data.get("arc_context_chars", 500),
         pending_drafts_cap=data.get("pending_drafts_cap", 10),
         max_hold_count=data.get("max_hold_count", 5),
-        commit_analysis_interval=data.get("commit_analysis_interval", 1),
+        commit_analysis_interval=safe_int(
+            data.get("commit_analysis_interval", 1), 1, "context.commit_analysis_interval"
+        ),
+        topic_granularity=granularity,
     )
 
 

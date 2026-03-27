@@ -15,6 +15,8 @@ from social_hook.bot.commands import (
     _save_rejection_note,
     cmd_approve,
     cmd_cancel,
+    cmd_errors,
+    cmd_health,
     cmd_help,
     cmd_pause,
     cmd_pending,
@@ -3001,3 +3003,173 @@ class TestResyncThreadTweets:
         assert len(tweets) == 2
         assert tweets[0].content == "new A"
         assert tweets[1].content == "new B"
+
+
+class TestCmdErrors:
+    """Tests for /errors command."""
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_no_errors(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        cmd_errors(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "No recent errors" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_shows_errors(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        ops.insert_system_error(
+            conn,
+            SystemErrorRecord(
+                id=generate_id("err"),
+                severity="error",
+                message="Token refresh failed",
+                source="trigger",
+            ),
+        )
+
+        cmd_errors(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "Recent Errors" in text
+        assert "Token refresh failed" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_severity_filter(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        ops.insert_system_error(
+            conn,
+            SystemErrorRecord(
+                id=generate_id("err"),
+                severity="warning",
+                message="Slow query",
+                source="web",
+            ),
+        )
+
+        cmd_errors(mock_adapter, "123", "warning", None)
+        text = mock_send.call_args[0][2]
+        assert "Slow query" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_limit_arg(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        for i in range(5):
+            ops.insert_system_error(
+                conn,
+                SystemErrorRecord(
+                    id=generate_id("err"),
+                    severity="error",
+                    message=f"Error {i}",
+                ),
+            )
+
+        cmd_errors(mock_adapter, "123", "3", None)
+        text = mock_send.call_args[0][2]
+        assert "Recent Errors" in text
+        assert "(3)" in text
+
+    @patch("social_hook.bot.commands._send")
+    def test_invalid_arg(self, mock_send, mock_adapter):
+        cmd_errors(mock_adapter, "123", "bogus", None)
+        text = mock_send.call_args[0][2]
+        assert "Usage" in text
+
+    @patch("social_hook.bot.commands.cmd_errors")
+    def test_route_errors(self, mock_errors, mock_adapter):
+        msg = _make_inbound("/errors")
+        handle_command(msg, mock_adapter)
+        mock_errors.assert_called_once()
+
+    @patch("social_hook.bot.commands.cmd_health")
+    def test_route_health(self, mock_health, mock_adapter):
+        msg = _make_inbound("/health")
+        handle_command(msg, mock_adapter)
+        mock_health.assert_called_once()
+
+
+class TestCmdHealth:
+    """Tests for /health command."""
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_healthy(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        cmd_health(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "HEALTHY" in text
+        assert "Errors in last 24h: 0" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_degraded(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        ops.insert_system_error(
+            conn,
+            SystemErrorRecord(
+                id=generate_id("err"),
+                severity="error",
+                message="Something broke",
+            ),
+        )
+
+        cmd_health(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "DEGRADED" in text
+        assert "error: 1" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_critical(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        ops.insert_system_error(
+            conn,
+            SystemErrorRecord(
+                id=generate_id("err"),
+                severity="critical",
+                message="DB corrupted",
+            ),
+        )
+
+        cmd_health(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "CRITICAL" in text

@@ -7,6 +7,97 @@ import typer
 from social_hook import __version__
 from social_hook.constants import PROJECT_DESCRIPTION, PROJECT_NAME, PROJECT_SLUG
 
+
+def _init_logging(
+    component: str, *, console: bool = True, notify: bool = False, run_id: bool = False
+) -> None:
+    """Initialize unified logging pipeline for a CLI entry point.
+
+    Args:
+        component: Component name (e.g., "trigger", "scheduler", "bot")
+        console: Whether to show ERROR+ on stderr
+        notify: Whether to send ERROR/CRITICAL to notification channels
+        run_id: Whether to generate and set a correlation run_id
+    """
+    import sys
+
+    from social_hook.error_feed import error_feed
+    from social_hook.filesystem import get_db_path
+    from social_hook.logging import setup_logging
+
+    try:
+        from social_hook.config import load_full_config
+
+        config = load_full_config()
+        error_feed.set_db_path(str(get_db_path()))
+    except Exception as e:
+        print(
+            f"Logging init: config not available ({e}), DB/notification sinks disabled",
+            file=sys.stderr,
+        )
+        config = None
+
+    sender = None
+    if notify and config:
+        from social_hook.notifications import send_notification
+
+        # NotificationSink already formats as "[SEVERITY] (source) message"
+        # so the sender just passes through — no extra wrapping needed.
+        def sender(_sev, msg):
+            send_notification(config, msg)
+
+    setup_logging(
+        component,
+        error_feed=error_feed if config else None,
+        notification_sender=sender,
+        console=console,
+    )
+
+    # Wire on_persist so errors from this process trigger WebSocket updates
+    # in the web dashboard (cross-process via web_events table).
+    if config:
+        import sqlite3
+        import threading
+
+        _persist_sem = threading.Semaphore(10)
+        db_path_str = str(get_db_path())
+
+        def _on_error_persisted(error_id, severity, comp):
+            if not _persist_sem.acquire(blocking=False):
+                return
+
+            def _emit():
+                try:
+                    from social_hook.db import operations as ops
+
+                    conn = sqlite3.connect(db_path_str, timeout=2)
+                    conn.row_factory = sqlite3.Row
+                    try:
+                        ops.emit_data_event(
+                            conn,
+                            "system_error",
+                            "created",
+                            error_id,
+                            extra={"severity": severity, "component": comp},
+                        )
+                    finally:
+                        conn.close()
+                except Exception:
+                    pass
+                finally:
+                    _persist_sem.release()
+
+            threading.Thread(target=_emit, daemon=True).start()
+
+        error_feed.set_on_persist(_on_error_persisted)
+
+    if run_id:
+        from social_hook.filesystem import generate_id
+        from social_hook.logging import set_run_id
+
+        set_run_id(generate_id("run"))
+
+
 # Create main Typer app
 app = typer.Typer(
     name=PROJECT_SLUG,
@@ -251,6 +342,8 @@ def trigger(
     """
     from social_hook.trigger import run_trigger
 
+    _init_logging("trigger", notify=True, run_id=True)
+
     dry_run = ctx.obj.get("dry_run", False)
     verbose = ctx.obj.get("verbose", False)
     config_path = ctx.obj.get("config")
@@ -285,6 +378,8 @@ def scheduler_tick(
     """
     from social_hook.scheduler import scheduler_tick as do_tick
 
+    _init_logging("scheduler", notify=True, run_id=True)
+
     dry_run = ctx.obj.get("dry_run", False)
     config_path = ctx.obj.get("config")
 
@@ -312,6 +407,8 @@ def consolidation_tick_cmd(
     Example: social-hook consolidation-tick
     """
     from social_hook.consolidation import consolidation_tick as do_tick
+
+    _init_logging("consolidation", notify=True, run_id=True)
 
     dry_run = ctx.obj.get("dry_run", False)
     config_path = ctx.obj.get("config")
@@ -499,12 +596,7 @@ def bot_start(
         typer.echo(f"Bot started (PID {proc.pid})")
         return
     else:
-        import logging
-
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
+        _init_logging("bot", notify=True)
         typer.echo("Bot starting (foreground mode, Ctrl+C to stop)...")
         bot.run(pid_file=get_pid_file())
 
@@ -558,6 +650,8 @@ def discover(
     from social_hook.db import operations as ops
     from social_hook.db.connection import init_database
     from social_hook.filesystem import get_db_path
+
+    _init_logging("cli")
 
     verbose = ctx.obj.get("verbose", False)
     config_path = ctx.obj.get("config")
@@ -638,6 +732,8 @@ def commit_hook():
     import re
     import sys
 
+    _init_logging("trigger", console=False, notify=True)
+
     try:
         data = json.loads(sys.stdin.read())
     except (json.JSONDecodeError, EOFError):
@@ -677,15 +773,7 @@ def git_hook():
     import logging
     import subprocess
 
-    from social_hook.filesystem import get_base_path
-
-    log_dir = get_base_path() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=str(log_dir / "git-hook.log"),
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    _init_logging("trigger", console=False, notify=True)
     logger = logging.getLogger("social_hook.git_hook")
 
     try:
@@ -728,16 +816,7 @@ def narrative_capture():
     import os
     import sys
 
-    from social_hook.filesystem import get_base_path
-
-    # Set up file logging for this subprocess
-    log_dir = get_base_path() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_dir / "narrative.log")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logging.getLogger().addHandler(file_handler)
-
+    _init_logging("narrative", console=False)
     logger = logging.getLogger("social_hook.narrative_capture")
 
     try:
@@ -934,8 +1013,8 @@ from social_hook.cli.brief import app as brief_app
 from social_hook.cli.content import app as content_app
 from social_hook.cli.credentials import app as credentials_app
 from social_hook.cli.cycles import app as cycles_app
+from social_hook.cli.logs import app as logs_app
 from social_hook.cli.strategy import app as strategy_app
-from social_hook.cli.system import app as system_app
 from social_hook.cli.target import app as target_app
 from social_hook.cli.topics import app as topics_app
 
@@ -963,8 +1042,8 @@ app.add_typer(content_app, name="content", help="Content suggestions and operati
 # Evaluation cycles: list, show
 app.add_typer(cycles_app, name="cycles", help="Evaluation cycle history.")
 
-# System health: errors, health
-app.add_typer(system_app, name="system", help="System health and errors.")
+# Log queries, tailing, and health
+app.add_typer(logs_app, name="logs", help="Log queries, tailing, and health.")
 
 from social_hook.cli.events import events as events_cmd
 from social_hook.cli.quickstart import quickstart as quickstart_cmd

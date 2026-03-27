@@ -645,8 +645,11 @@ export async function resetStrategy(projectId: string, name: string): Promise<{ 
 }
 
 // Topics
-export async function fetchTopics(projectId: string, strategy?: string): Promise<{ topics: Topic[] }> {
-  const params = strategy ? `?strategy=${encodeURIComponent(strategy)}` : "";
+export async function fetchTopics(projectId: string, strategy?: string, includeDismissed?: boolean): Promise<{ topics: Topic[] }> {
+  const parts: string[] = [];
+  if (strategy) parts.push(`strategy=${encodeURIComponent(strategy)}`);
+  if (includeDismissed) parts.push("include_dismissed=true");
+  const params = parts.length > 0 ? `?${parts.join("&")}` : "";
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics${params}`);
 }
 
@@ -748,12 +751,43 @@ export async function approveAllCycleDrafts(
 }
 
 // System
-export async function fetchSystemErrors(): Promise<{ errors: SystemError[] }> {
-  return apiFetch("/api/system/errors");
+export async function fetchSystemErrors(params?: {
+  severity?: string;
+  component?: string;
+  source?: string;
+  limit?: number;
+}): Promise<{ errors: SystemError[] }> {
+  const qs = new URLSearchParams();
+  if (params?.severity) qs.set("severity", params.severity);
+  if (params?.component) qs.set("component", params.component);
+  if (params?.source) qs.set("source", params.source);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const query = qs.toString();
+  return apiFetch(`/api/system/errors${query ? `?${query}` : ""}`);
 }
 
 export async function fetchSystemHealth(): Promise<SystemHealth> {
   return apiFetch("/api/system/health");
+}
+
+export async function clearSystemErrors(
+  olderThanDays?: number
+): Promise<{ deleted: number }> {
+  const qs = olderThanDays != null ? `?older_than_days=${olderThanDays}` : "";
+  return apiFetch(`/api/system/errors${qs}`, { method: "DELETE" });
+}
+
+export async function reportFrontendError(error: {
+  severity: string;
+  message: string;
+  source: string;
+  context?: Record<string, unknown>;
+}): Promise<{ id: string; status: string }> {
+  return apiFetch("/api/system/errors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(error),
+  });
 }
 
 // Platform Settings
@@ -814,10 +848,6 @@ export async function createStrategy(
 
 export async function deleteStrategy(projectId: string, name: string): Promise<{ status: string; name: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`, { method: "DELETE" });
-}
-
-export async function deleteTopic(projectId: string, topicId: string): Promise<{ status: string; topic_id: string }> {
-  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}`, { method: "DELETE" });
 }
 
 export async function acceptSuggestion(projectId: string, suggestionId: string): Promise<{ task_id: string; status: string }> {

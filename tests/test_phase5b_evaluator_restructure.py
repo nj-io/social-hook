@@ -433,8 +433,8 @@ class TestAssembleEvaluatorPromptWithAnalysis:
         assert "Implemented OAuth 2.0 flow" in result
         assert "Added PKCE flow for X platform" in result
 
-    def test_with_analysis_reduces_diff_budget(self):
-        """When analysis is provided, diff is truncated more aggressively."""
+    def test_with_analysis_skips_diff(self):
+        """When analysis with commit_analysis is provided, diff is omitted entirely."""
         from social_hook.llm.prompts import assemble_evaluator_prompt
 
         analysis = CommitAnalysisResult(
@@ -455,7 +455,11 @@ class TestAssembleEvaluatorPromptWithAnalysis:
             commit=commit,
             analysis=analysis,
         )
-        assert "see Pre-Computed Commit Analysis above" in result
+        # Diff should be completely omitted when analysis has commit_analysis
+        assert "### Diff" not in result
+        # But commit metadata should still be present
+        assert "abc123" in result
+        assert "Pre-Computed Commit Analysis" in result
 
     def test_analysis_without_classification(self):
         """Analysis with no classification still renders without error."""

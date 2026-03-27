@@ -30,6 +30,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class AnalyzerOutcome:
+    """Result from stage 1 commit analyzer with evaluation gating signal.
+
+    result: The commit analysis, or None on error.
+    should_evaluate: True = proceed to stage 2, False = defer (interval not met).
+    """
+
+    result: object | None  # CommitAnalysisResult | None (avoids import at module level)
+    should_evaluate: bool
+
+
+@dataclass
 class TriggerContext:
     """Shared context for trigger pipeline functions.
 
@@ -248,11 +260,6 @@ def run_trigger(
             print(f"Database error: {e}", file=sys.stderr)
         return 2
 
-    # Wire error feed once per process (needs both config and db_path)
-    from social_hook.error_feed import ensure_error_feed
-
-    ensure_error_feed(config, str(db_path))
-
     db = DryRunContext(conn, dry_run=dry_run)
     db.trigger_source = trigger_source
 
@@ -466,8 +473,8 @@ def run_trigger(
         logger.warning(f"Failed to get scheduling state (non-fatal): {e}")
         scheduling_state = None
 
-    # Fetch topics and arcs for evaluator context
-    all_topics = ops.get_topics_by_project(conn, project.id)
+    # Fetch topics and arcs for evaluator context (exclude dismissed topics)
+    all_topics = ops.get_topics_by_project(conn, project.id, include_dismissed=False)
     held_topics = [t for t in all_topics if t.status == "holding"]
     active_arcs_all = ops.get_arcs_by_project(conn, project.id, status="active")
 
@@ -490,22 +497,72 @@ def run_trigger(
             show_prompt=show_prompt,
             existing_decision_id=existing_decision_id,
         )
-        analyzer_result = _run_commit_analyzer(
+        outcome = _run_commit_analyzer(
             ctx=ctx,
             context=context,
             evaluator_client=evaluator_client,
         )
+        analyzer_result = outcome.result
 
-        # Stage 1 trivial skip: if analyzer classified as trivial, skip stage 2
-        if analyzer_result is not None and _is_trivial_classification(analyzer_result):
+        # Stage 1 gating: trivial skip, interval deferral, or proceed to stage 2
+        if outcome.result is not None and _is_trivial_classification(outcome.result):
+            # Trivial commit — skip stage 2 entirely
             logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
             result = _run_trivial_skip(
                 ctx=ctx,
-                analyzer_result=analyzer_result,
+                analyzer_result=outcome.result,
                 commit_hash=commit_hash,
             )
             conn.close()
             return result
+        elif not outcome.should_evaluate:
+            # Interval deferral — create informational decision with processed=1
+            decision = Decision(
+                id=existing_decision_id or generate_id("decision"),
+                project_id=project.id,
+                commit_hash=commit_hash,
+                decision="deferred_eval",
+                reasoning="Deferred: commit awaiting batch threshold",
+                commit_message=commit.message,
+                processed=True,  # NOT drained by scheduler
+                trigger_source=trigger_source,
+                branch=current_branch,
+            )
+            if existing_decision_id:
+                ops.upsert_decision(conn, decision)
+            else:
+                db.insert_decision(decision)
+            db.emit_data_event("decision", "created", decision.id, project.id)
+            if verbose:
+                print("Evaluation deferred: interval not met")
+            conn.close()
+            return 0
+        else:
+            # Normal case: should_evaluate=True and non-trivial — proceed to stage 2
+            pass
+
+    # Guard: targets configured but no content strategies defined
+    if has_targets and not config.content_strategies:
+        logger.warning("Targets configured but no content strategies defined — skipping evaluation")
+        decision = Decision(
+            id=existing_decision_id or generate_id("decision"),
+            project_id=project.id,
+            commit_hash=commit_hash,
+            decision="skip",
+            reasoning="Targets configured but no content strategies defined",
+            commit_message=commit.message,
+            trigger_source=trigger_source,
+            branch=current_branch,
+        )
+        if existing_decision_id:
+            ops.upsert_decision(conn, decision)
+        else:
+            db.insert_decision(decision)
+        db.emit_data_event("decision", "created", decision.id, project.id)
+        if verbose:
+            print("Skipped: no content strategies defined for targets")
+        conn.close()
+        return 0
 
     try:
         evaluator = Evaluator(evaluator_client)
@@ -857,10 +914,18 @@ def _run_commit_analyzer(
     ctx: TriggerContext,
     context,
     evaluator_client,
-):
+) -> AnalyzerOutcome:
     """Run stage 1 commit analyzer with interval gating.
 
-    Returns CommitAnalysisResult if analysis was run or cached, None on error.
+    Returns AnalyzerOutcome with:
+    - result: CommitAnalysisResult if analysis was run or cached, None on error.
+    - should_evaluate: True to proceed to stage 2, False to defer.
+
+    Semantics:
+    - count >= interval: run fresh analysis, reset counter, should_evaluate=True
+    - count < interval + cached exists: return cached, should_evaluate=False
+    - count < interval + no cache (first commit): run fresh, do NOT reset, should_evaluate=True
+    - error: result=None, should_evaluate=True (fallback)
     """
     from social_hook.llm.schemas import CommitAnalysisResult
     from social_hook.parsing import safe_json_loads
@@ -876,7 +941,7 @@ def _run_commit_analyzer(
         interval = 1
 
     if new_count < interval:
-        # Interval not met — use cached analysis from most recent cycle
+        # Interval not met — check for cached analysis from most recent cycle
         cached_cycle = ops.get_latest_cycle_with_analysis(ctx.conn, ctx.project.id)
         if cached_cycle and cached_cycle.commit_analysis_json:
             cached_data = safe_json_loads(
@@ -889,17 +954,39 @@ def _run_commit_analyzer(
                     result = CommitAnalysisResult.model_validate(cached_data)
                     if ctx.verbose:
                         print(f"Using cached analysis (count {new_count}/{interval})")
-                    return result
+                    return AnalyzerOutcome(result=result, should_evaluate=False)
                 except Exception as e:
                     logger.warning("Failed to validate cached analysis, running fresh: %s", e)
             else:
                 logger.warning("Failed to parse cached analysis JSON, running fresh")
         else:
-            # No cache (first commit case) — run fresh analysis
+            # No cache (first commit case) — run fresh, do NOT reset counter
             if ctx.verbose:
                 print(f"No cached analysis available, running fresh (count {new_count}/{interval})")
+            try:
+                from social_hook.llm.analyzer import CommitAnalyzer
 
-    # 3. Run fresh analysis
+                analyzer = CommitAnalyzer(evaluator_client)
+                result = analyzer.analyze(
+                    commit=ctx.commit,
+                    context=context,
+                    db=ctx.db,
+                    show_prompt=ctx.show_prompt,
+                )
+                if ctx.verbose:
+                    print(
+                        f"Commit analysis complete (classification: "
+                        f"{result.commit_analysis.classification.value if result.commit_analysis.classification else 'unknown'})"
+                    )
+                # First commit always evaluates — no counter reset
+                return AnalyzerOutcome(result=result, should_evaluate=True)
+            except Exception as e:
+                logger.warning("Commit analyzer failed on first commit (non-fatal): %s", e)
+                if ctx.verbose:
+                    print(f"Commit analyzer skipped: {e}", file=sys.stderr)
+                return AnalyzerOutcome(result=None, should_evaluate=True)
+
+    # 3. Run fresh analysis (count >= interval)
     try:
         from social_hook.llm.analyzer import CommitAnalyzer
 
@@ -920,12 +1007,12 @@ def _run_commit_analyzer(
                 f"{result.commit_analysis.classification.value if result.commit_analysis.classification else 'unknown'})"
             )
 
-        return result
+        return AnalyzerOutcome(result=result, should_evaluate=True)
     except Exception as e:
-        logger.warning(f"Commit analyzer failed (non-fatal, evaluator will proceed): {e}")
+        logger.warning("Commit analyzer failed (non-fatal, evaluator will proceed): %s", e)
         if ctx.verbose:
             print(f"Commit analyzer skipped: {e}", file=sys.stderr)
-        return None
+        return AnalyzerOutcome(result=None, should_evaluate=True)
 
 
 def _run_targets_path(
@@ -992,11 +1079,31 @@ def _run_targets_path(
     )
 
     # Tag-to-topic matching: increment commit counts and record junction
+    incremented_topic_ids: set[str] = set()
     for tag in analysis.episode_tags:
         matching_topics = ops.get_topics_matching_tag(ctx.conn, ctx.project.id, tag)
         for topic in matching_topics:
-            ops.increment_topic_commit_count(ctx.conn, topic.id)
+            if topic.id not in incremented_topic_ids:
+                ops.increment_topic_commit_count(ctx.conn, topic.id)
+                incremented_topic_ids.add(topic.id)
             ops.insert_topic_commit(ctx.conn, topic.id, commit_hash, matched_tag=tag)
+
+    # Process topic suggestions from stage 1 analyzer
+    if analyzer_result and getattr(analyzer_result, "topic_suggestions", None):
+        try:
+            from social_hook.topics import process_topic_suggestions
+
+            strategy_names = (
+                list(ctx.config.content_strategies.keys()) if ctx.config.content_strategies else []
+            )
+            process_topic_suggestions(
+                conn=ctx.conn,
+                project_id=ctx.project.id,
+                suggestions=analyzer_result.topic_suggestions,
+                strategies=strategy_names,
+            )
+        except Exception:
+            logger.warning("Topic creation from analyzer suggestions failed", exc_info=True)
 
     # Update content topic statuses for held topics
     for _strategy_name, strat_decision in evaluation.strategies.items():
@@ -1223,18 +1330,23 @@ def _trigger_brief_update(
     evaluator_client,
     dry_run: bool,
     verbose: bool,
-) -> None:
-    """Update the project brief after commit analysis if the commit is non-trivial."""
+) -> bool:
+    """Update the project brief after commit analysis if the commit is non-trivial.
+
+    Returns True ONLY when the brief content actually changed and the write
+    succeeded. Returns False for all other paths (no tags, ImportError,
+    Exception, brief unchanged, dry_run).
+    """
     # Only update for non-trivial commits (has episode tags beyond trivial markers)
     if not analysis.episode_tags:
-        return
+        return False
 
     try:
         from social_hook.llm.brief import update_brief_from_commit
 
         current_brief = ops.get_project_summary(conn, project.id)
         if not current_brief:
-            return
+            return False
 
         # Get section metadata from the project
         proj = ops.get_project(conn, project.id)
@@ -1253,12 +1365,17 @@ def _trigger_brief_update(
             db.update_project_summary(project.id, updated_brief)
             if verbose:
                 print(f"Brief updated: sections changed: {changed_keys}")
+            return True
+        else:
+            return False
     except ImportError:
         logger.debug("brief.py not available, skipping brief update")
+        return False
     except Exception as e:
-        logger.warning(f"Brief update failed (non-fatal): {e}")
+        logger.warning("Brief update failed (non-fatal): %s", e)
         if verbose:
             print(f"Brief update skipped: {e}", file=sys.stderr)
+        return False
 
 
 def _send_decision_notification(config, project, commit, decision):

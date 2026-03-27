@@ -90,6 +90,25 @@ class TestFilesystemSetup:
 class TestLogging:
     """T5: Logging tests."""
 
+    @pytest.fixture(autouse=True)
+    def _clean_loggers(self):
+        """Remove LogBus handlers from social_hook logger after each test."""
+        import contextlib
+
+        yield
+        from social_hook.logging import _context
+
+        root = logging.getLogger("social_hook")
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+            if hasattr(handler, "close"):
+                handler.close()
+        for f in root.filters[:]:
+            root.removeFilter(f)
+        for attr in ("component", "run_id"):
+            with contextlib.suppress(AttributeError):
+                delattr(_context, attr)
+
     def test_setup_logger(self, temp_dir):
         """setup_logging returns configured logger."""
         log_dir = temp_dir / "logs"
@@ -132,23 +151,15 @@ class TestLogging:
         assert log_entry["component"] == "scheduler"
 
     def test_log_to_correct_file(self, temp_dir):
-        """Each component logs to its own file."""
+        """setup_logging creates component-specific log file."""
         log_dir = temp_dir / "logs"
 
         logger1 = setup_logging("trigger", log_dir=log_dir)
-        logger2 = setup_logging("scheduler", log_dir=log_dir)
-
         logger1.info("trigger message")
-        logger2.info("scheduler message")
 
         trigger_log = log_dir / "trigger.log"
-        scheduler_log = log_dir / "scheduler.log"
-
         assert trigger_log.exists()
-        assert scheduler_log.exists()
-
         assert "trigger message" in trigger_log.read_text()
-        assert "scheduler message" in scheduler_log.read_text()
 
     def test_debug_level_disabled_by_default(self, temp_dir):
         """Debug messages not written at INFO level."""

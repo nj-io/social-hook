@@ -1,7 +1,4 @@
-"""CLI commands for inspecting state (log, pending, usage, logs)."""
-
-import contextlib
-import subprocess
+"""CLI commands for inspecting state (log, pending, usage)."""
 
 import typer
 
@@ -197,42 +194,3 @@ def platforms(
             if p.get("description"):
                 line += f"  -- {p['description']}"
             typer.echo(line)
-
-
-VALID_LOG_COMPONENTS = ("trigger", "scheduler", "bot")
-
-
-@app.command()
-def logs(
-    component: str | None = typer.Argument(
-        None, help=f"Component to tail ({', '.join(VALID_LOG_COMPONENTS)}, or omit for all)"
-    ),
-):
-    """Tail log files. Optionally filter by component."""
-    from social_hook.filesystem import get_base_path
-
-    logs_dir = get_base_path() / "logs"
-    if not logs_dir.exists():
-        typer.echo(f"Logs directory not found: {logs_dir}")
-        raise typer.Exit(1)
-
-    if component:
-        if component not in VALID_LOG_COMPONENTS:
-            typer.echo(
-                f"Unknown component: {component}. Use one of: {', '.join(VALID_LOG_COMPONENTS)}"
-            )
-            raise typer.Exit(1)
-        log_files = [logs_dir / f"{component}.log"]
-    else:
-        log_files = [logs_dir / f"{c}.log" for c in VALID_LOG_COMPONENTS]
-
-    # Filter to files that exist
-    existing = [f for f in log_files if f.exists()]
-    if not existing:
-        typer.echo("No log files found.")
-        return
-
-    # Use tail to follow logs
-    cmd = ["tail", "-f"] + [str(f) for f in existing]
-    with contextlib.suppress(KeyboardInterrupt):
-        subprocess.run(cmd)

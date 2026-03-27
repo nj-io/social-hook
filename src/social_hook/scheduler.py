@@ -11,7 +11,7 @@ from social_hook.adapters.platform.registry import AdapterRegistry
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
-from social_hook.error_feed import ErrorSeverity, ensure_error_feed, error_feed
+from social_hook.error_feed import ErrorSeverity, error_feed
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id, get_base_path, get_db_path
 from social_hook.models import CommitInfo, Decision, Post
@@ -25,9 +25,6 @@ logger = logging.getLogger(__name__)
 # Process-scoped adapter cache — persists rate limit state and token refreshers across ticks.
 # Clears on process restart. Keyed by account name (targets) or platform name (legacy).
 _registry = AdapterRegistry()
-
-# Backwards-compat alias — callers should migrate to error_feed.ensure_error_feed
-_ensure_error_feed = ensure_error_feed
 
 
 def _check_per_account_gap(conn, config, draft) -> bool:
@@ -664,8 +661,13 @@ def scheduler_tick(
         db_path = get_db_path()
         conn = init_database(db_path)
 
-        # Wire error feed once per process
-        ensure_error_feed(config, str(db_path))
+        # Prune system errors older than 30 days (lightweight, runs each tick)
+        try:
+            pruned = ops.prune_system_errors(conn, retention_days=30)
+            if pruned:
+                logger.info("Pruned %d system error(s) older than 30 days", pruned)
+        except Exception:
+            logger.debug("System error pruning failed (non-fatal)", exc_info=True)
 
         try:
             # --- Post-now mode: single draft, no promote/drain ---

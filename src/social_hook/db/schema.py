@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260325094709
+SCHEMA_VERSION = 20260326071918
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS content_topics (
     description TEXT,
     priority_rank INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'uncovered'
-        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered')),
+        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered', 'dismissed')),
     commit_count INTEGER NOT NULL DEFAULT 0,
     last_commit_at TEXT,
     last_posted_at TEXT,
@@ -368,8 +368,13 @@ CREATE TABLE IF NOT EXISTS system_errors (
     message TEXT NOT NULL,
     context TEXT DEFAULT '{}',
     source TEXT DEFAULT '',
+    component TEXT DEFAULT '',
+    run_id TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_system_errors_severity ON system_errors(severity, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_errors_component ON system_errors(component, created_at DESC);
 """
 
 

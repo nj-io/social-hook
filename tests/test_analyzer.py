@@ -411,16 +411,17 @@ class TestCommitAnalyzerIntervalGating:
 
         with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
             MockAnalyzer.return_value.analyze.return_value = mock_result
-            result = _run_commit_analyzer(
+            outcome = _run_commit_analyzer(
                 ctx=ctx,
                 context=context,
                 evaluator_client=mock_client,
             )
 
-        assert result is not None
-        assert result.commit_analysis.classification == CommitClassification.routine
-        # Counter should be reset after fresh analysis
-        assert ops.get_analysis_commit_count(temp_db, "proj-gate-1") == 0
+        assert outcome.result is not None
+        assert outcome.should_evaluate is True
+        assert outcome.result.commit_analysis.classification == CommitClassification.routine
+        # First commit does NOT reset counter — only threshold-crossing does
+        assert ops.get_analysis_commit_count(temp_db, "proj-gate-1") == 1
 
     def test_interval_not_met_uses_cache(self, temp_db):
         """When count < interval and cache exists, return cached result."""
@@ -451,7 +452,7 @@ class TestCommitAnalyzerIntervalGating:
         ctx = self._make_ctx(temp_db, project, commit, project_config)
 
         with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
-            result = _run_commit_analyzer(
+            outcome = _run_commit_analyzer(
                 ctx=ctx,
                 context=context,
                 evaluator_client=mock_client,
@@ -459,8 +460,9 @@ class TestCommitAnalyzerIntervalGating:
             # Analyzer should NOT be called — using cache
             MockAnalyzer.return_value.analyze.assert_not_called()
 
-        assert result is not None
-        assert result.commit_analysis.classification == CommitClassification.routine
+        assert outcome.result is not None
+        assert outcome.should_evaluate is False
+        assert outcome.result.commit_analysis.classification == CommitClassification.routine
 
     def test_interval_met_runs_fresh(self, temp_db):
         """When count >= interval, run fresh analysis and reset counter."""
@@ -484,14 +486,15 @@ class TestCommitAnalyzerIntervalGating:
 
         with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
             MockAnalyzer.return_value.analyze.return_value = mock_result
-            result = _run_commit_analyzer(
+            outcome = _run_commit_analyzer(
                 ctx=ctx,
                 context=context,
                 evaluator_client=mock_client,
             )
             MockAnalyzer.return_value.analyze.assert_called_once()
 
-        assert result is not None
+        assert outcome.result is not None
+        assert outcome.should_evaluate is True
         assert ops.get_analysis_commit_count(temp_db, "proj-gate-3") == 0
 
     def test_analyzer_failure_returns_none(self, temp_db):
@@ -508,10 +511,11 @@ class TestCommitAnalyzerIntervalGating:
 
         with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
             MockAnalyzer.return_value.analyze.side_effect = Exception("LLM error")
-            result = _run_commit_analyzer(
+            outcome = _run_commit_analyzer(
                 ctx=ctx,
                 context=context,
                 evaluator_client=MagicMock(),
             )
 
-        assert result is None
+        assert outcome.result is None
+        assert outcome.should_evaluate is True

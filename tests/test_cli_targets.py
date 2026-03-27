@@ -570,7 +570,7 @@ class TestTopicsAdd:
                     "topics",
                     "add",
                     "--strategy",
-                    "technical",
+                    "building-public",
                     "--topic",
                     "pipeline design",
                     "--project",
@@ -581,7 +581,7 @@ class TestTopicsAdd:
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["topic"] == "pipeline design"
-            assert data["strategy"] == "technical"
+            assert data["strategy"] == "building-public"
 
 
 class TestTopicsStatus:
@@ -742,8 +742,14 @@ class TestTopicsDraftNow:
             assert data["cycle_id"] == "cycle_mock1"
             assert data["topic_id"] == "topic_test1"
 
-    def test_draft_now_not_holding(self, db_env_with_topic):
-        """Topic with status != 'holding' should be rejected."""
+    def test_draft_now_wrong_status(self, db_env_with_topic):
+        """Topic with non-draftable status should be rejected."""
+        # Set status to 'covered' — not draftable
+        conn = sqlite3.connect(str(db_env_with_topic["db_path"]))
+        conn.execute("UPDATE content_topics SET status = 'covered' WHERE id = 'topic_test1'")
+        conn.commit()
+        conn.close()
+
         with _patch_paths(db_env_with_topic):
             result = runner.invoke(
                 app,
@@ -756,7 +762,7 @@ class TestTopicsDraftNow:
                 ],
             )
             assert result.exit_code == 1
-            assert "Only held topics" in result.output
+            assert "Only held or uncovered topics" in result.output
 
     def test_draft_now_not_found(self, db_env):
         with _patch_paths(db_env):
@@ -1095,26 +1101,26 @@ class TestCyclesShow:
 class TestSystemErrors:
     def test_errors_empty(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["system", "errors"])
+            result = runner.invoke(app, ["logs"])
             assert result.exit_code == 0
             assert "No system errors" in result.output
 
     def test_errors_with_records(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "errors"])
+            result = runner.invoke(app, ["logs"])
             assert result.exit_code == 0
             assert "Test error message" in result.output
 
     def test_errors_json(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "errors", "--json"])
+            result = runner.invoke(app, ["logs", "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data["errors"]) == 2
 
     def test_errors_limit(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "errors", "--limit", "1", "--json"])
+            result = runner.invoke(app, ["logs", "--limit", "1", "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data["errors"]) == 1
@@ -1123,13 +1129,13 @@ class TestSystemErrors:
 class TestSystemHealth:
     def test_health_empty(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["system", "health"])
+            result = runner.invoke(app, ["logs", "health"])
             assert result.exit_code == 0
             assert "healthy" in result.output
 
     def test_health_json(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["system", "health", "--json"])
+            result = runner.invoke(app, ["logs", "health", "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["status"] == "healthy"
@@ -1137,7 +1143,7 @@ class TestSystemHealth:
 
     def test_health_with_errors(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "health"])
+            result = runner.invoke(app, ["logs", "health"])
             assert result.exit_code == 0
             # Errors in last 24h should show some status
 
@@ -1161,7 +1167,7 @@ class TestHelpTexts:
             ["brief", "--help"],
             ["content", "--help"],
             ["cycles", "--help"],
-            ["system", "--help"],
+            ["logs", "--help"],
         ],
     )
     def test_help_available(self, cmd):

@@ -23,18 +23,6 @@ View decision log.
 
 ---
 
-### `social-hook inspect logs`
-
-Tail log files. Optionally filter by component.
-
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `component` | no | Component to tail (trigger, scheduler, bot, or omit for all) |
-
----
-
 ### `social-hook inspect pending`
 
 View pending drafts.

@@ -3,17 +3,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Topic, Strategy } from "@/lib/types";
 import type { BackgroundTask } from "@/lib/api";
-import { fetchTopics, fetchStrategies, addTopic, updateTopic, reorderTopics, draftNowTopic, deleteTopic, setTopicStatus, combineTopics } from "@/lib/api";
+import { fetchTopics, fetchStrategies, addTopic, updateTopic, reorderTopics, draftNowTopic, setTopicStatus, combineTopics } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
 import { AsyncButton } from "@/components/async-button";
-import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/lib/toast-context";
 
 const STATUS_STYLES: Record<string, string> = {
   uncovered: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
   holding: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
   partial: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
   covered: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+  dismissed: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
 };
 
 const TOPIC_STATUSES = ["uncovered", "holding", "partial", "covered"];
@@ -30,13 +31,23 @@ export function TopicQueue({ projectId }: { projectId: string }) {
   const [adding, setAdding] = useState(false);
   const [editingTopic, setEditingTopic] = useState<string | null>(null);
   const [editDesc, setEditDesc] = useState("");
-  const [dragFrom, setDragFrom] = useState<number | null>(null);
-  const [dragTo, setDragTo] = useState<number | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [dragFrom, setDragFrom] = useState<{ strategy: string; index: number } | null>(null);
+  const [dragTo, setDragTo] = useState<{ strategy: string; index: number } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [combining, setCombining] = useState(false);
+  const [collapsedStrategies, setCollapsedStrategies] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const saved = localStorage.getItem("topic-queue-collapsed");
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
+  const [dismissedOpen, setDismissedOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("topic-queue-dismissed-open") === "true";
+  });
   const loadRef = useRef<() => void>(() => {});
+  const { addToast } = useToast();
 
   const onTaskCompleted = useCallback((_task: BackgroundTask) => {
     loadRef.current();
@@ -47,7 +58,7 @@ export function TopicQueue({ projectId }: { projectId: string }) {
   const load = useCallback(async () => {
     try {
       const [t, s] = await Promise.all([
-        fetchTopics(projectId, filterStrategy || undefined),
+        fetchTopics(projectId, filterStrategy || undefined, true),
         fetchStrategies(projectId),
       ]);
       setTopics(t.topics);
@@ -61,7 +72,7 @@ export function TopicQueue({ projectId }: { projectId: string }) {
         setStrategies([]);
       }
     } catch {
-      // silent
+      // silent — failed fetch during auto-refresh
     } finally {
       setLoading(false);
     }
@@ -70,6 +81,17 @@ export function TopicQueue({ projectId }: { projectId: string }) {
 
   useEffect(() => { load(); }, [load]);
   useDataEvents(["topic", "draft"], load, projectId);
+
+  // Pre-select strategy when add form opens
+  useEffect(() => {
+    if (addOpen && !addStrategy) {
+      if (filterStrategy) {
+        setAddStrategy(filterStrategy);
+      } else if (strategies.length > 0) {
+        setAddStrategy(strategies[0].name);
+      }
+    }
+  }, [addOpen, addStrategy, filterStrategy, strategies]);
 
   async function handleAdd() {
     if (!addStrategy || !addTopic_.trim()) return;
@@ -83,9 +105,11 @@ export function TopicQueue({ projectId }: { projectId: string }) {
       setAddOpen(false);
       setAddTopic_("");
       setAddDesc("");
+      setAddStrategy("");
+      addToast("Topic added");
       await load();
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to add topic", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     } finally {
       setAdding(false);
     }
@@ -96,8 +120,8 @@ export function TopicQueue({ projectId }: { projectId: string }) {
       await updateTopic(projectId, topicId, { description: editDesc });
       setEditingTopic(null);
       await load();
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to save description", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     }
   }
 
@@ -105,22 +129,8 @@ export function TopicQueue({ projectId }: { projectId: string }) {
     try {
       const res = await draftNowTopic(projectId, topicId);
       trackTask(res.task_id, `draft-now:${topicId}`, "draft_now");
-    } catch {
-      // silent
-    }
-  }
-
-  async function handleDelete(topicId: string) {
-    setDeleting(true);
-    try {
-      await deleteTopic(projectId, topicId);
-      setConfirmDelete(null);
-      setSelected((prev) => { const next = new Set(prev); next.delete(topicId); return next; });
-      await load();
-    } catch {
-      // silent
-    } finally {
-      setDeleting(false);
+    } catch (e) {
+      addToast("Failed to start draft", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     }
   }
 
@@ -128,9 +138,13 @@ export function TopicQueue({ projectId }: { projectId: string }) {
     try {
       await setTopicStatus(projectId, topicId, newStatus);
       await load();
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to update status", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     }
+  }
+
+  function handleDismiss(topicId: string) {
+    return handleStatusChange(topicId, "dismissed");
   }
 
   async function handleCombine() {
@@ -140,8 +154,8 @@ export function TopicQueue({ projectId }: { projectId: string }) {
       const res = await combineTopics(projectId, Array.from(selected));
       trackTask(res.task_id, `combine:${Array.from(selected)[0]}`, "combine_topics");
       setSelected(new Set());
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to combine topics", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     } finally {
       setCombining(false);
     }
@@ -156,12 +170,21 @@ export function TopicQueue({ projectId }: { projectId: string }) {
     });
   }
 
-  async function handleDrop(fromIndex: number, toIndex: number) {
-    if (fromIndex === toIndex) return;
-    const reordered = [...topics];
-    const [moved] = reordered.splice(fromIndex, 1);
-    reordered.splice(toIndex, 0, moved);
-    setTopics(reordered);
+  async function handleDrop(from: { strategy: string; index: number }, to: { strategy: string; index: number }) {
+    // Only allow reorder within the same strategy group
+    if (from.strategy !== to.strategy || from.index === to.index) return;
+    const strategyTopics = activeGrouped[from.strategy];
+    if (!strategyTopics) return;
+    const reordered = [...strategyTopics];
+    const [moved] = reordered.splice(from.index, 1);
+    reordered.splice(to.index, 0, moved);
+    // Optimistic update within the full topics array
+    const reorderedIds = new Set(reordered.map((t) => t.id));
+    const updated = topics.map((t) => {
+      if (!reorderedIds.has(t.id)) return t;
+      return reordered[reordered.findIndex((r) => r.id === t.id)];
+    });
+    setTopics(updated);
     try {
       await reorderTopics(projectId, reordered.map((t) => t.id));
     } catch {
@@ -169,13 +192,42 @@ export function TopicQueue({ projectId }: { projectId: string }) {
     }
   }
 
-  // Group topics by strategy
-  const grouped = topics.reduce<Record<string, Topic[]>>((acc, t) => {
+  // Separate active vs dismissed topics
+  const activeTopics = topics.filter((t) => t.status !== "dismissed");
+  const dismissedTopics = topics.filter((t) => t.status === "dismissed");
+
+  // Group active topics by strategy
+  const activeGrouped = activeTopics.reduce<Record<string, Topic[]>>((acc, t) => {
     const key = t.strategy;
     if (!acc[key]) acc[key] = [];
     acc[key].push(t);
     return acc;
   }, {});
+
+  function toggleStrategyCollapsed(stratName: string) {
+    setCollapsedStrategies((prev) => {
+      const next = new Set(prev);
+      if (next.has(stratName)) next.delete(stratName);
+      else next.add(stratName);
+      localStorage.setItem("topic-queue-collapsed", JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  function toggleDismissedOpen() {
+    setDismissedOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem("topic-queue-dismissed-open", String(next));
+      return next;
+    });
+  }
+
+  function createdByLabel(createdBy?: string): string | null {
+    if (!createdBy) return null;
+    if (createdBy === "discovery" || createdBy === "track1") return "auto";
+    if (createdBy === "user" || createdBy === "operator") return "manual";
+    return null;
+  }
 
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading topics...</p>;
@@ -214,32 +266,42 @@ export function TopicQueue({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      {topics.length === 0 ? (
+      {activeTopics.length === 0 ? (
         <div className="rounded-lg border-2 border-dashed border-border p-6 text-center">
           <p className="text-sm text-muted-foreground">No topics in the queue.</p>
         </div>
       ) : (
-        Object.entries(grouped).map(([stratName, stratTopics]) => (
+        Object.entries(activeGrouped).map(([stratName, stratTopics]) => {
+          const isCollapsed = collapsedStrategies.has(stratName);
+          return (
           <div key={stratName}>
-            <h3 className="mb-2 text-sm font-medium text-muted-foreground">{stratName}</h3>
-            <div className="space-y-1">
+            <button
+              onClick={() => toggleStrategyCollapsed(stratName)}
+              className="mb-2 flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
+              <span className={`transition-transform ${isCollapsed ? "" : "rotate-90"}`}>&#x25B6;</span>
+              {stratName}
+              <span className="ml-1 text-xs font-normal">({stratTopics.length})</span>
+            </button>
+            {!isCollapsed && <div className="space-y-1">
               {stratTopics.map((topic, index) => {
                 const refId = `draft-now:${topic.id}`;
                 const isDrafting = isRunning(refId);
                 const task = getTask(refId);
+                const cbLabel = createdByLabel(topic.created_by);
                 return (
                   <div
                     key={topic.id}
                     draggable
-                    onDragStart={() => setDragFrom(index)}
-                    onDragOver={(e) => { e.preventDefault(); setDragTo(index); }}
+                    onDragStart={() => setDragFrom({ strategy: stratName, index })}
+                    onDragOver={(e) => { e.preventDefault(); setDragTo({ strategy: stratName, index }); }}
                     onDragEnd={() => {
                       if (dragFrom !== null && dragTo !== null) handleDrop(dragFrom, dragTo);
                       setDragFrom(null);
                       setDragTo(null);
                     }}
                     className={`flex items-center gap-3 rounded-lg border border-border p-3 transition-colors ${
-                      dragTo === index ? "border-accent bg-accent/5" : "hover:bg-muted/30"
+                      dragTo?.strategy === stratName && dragTo?.index === index ? "border-accent bg-accent/5" : "hover:bg-muted/30"
                     }`}
                   >
                     <input
@@ -249,6 +311,7 @@ export function TopicQueue({ projectId }: { projectId: string }) {
                       className="h-3.5 w-3.5 shrink-0 rounded border-border"
                       title="Select for combine"
                     />
+                    <span className="shrink-0 text-xs font-mono text-muted-foreground w-6 text-right">#{index + 1}</span>
                     <span className="cursor-grab text-muted-foreground" title="Drag to reorder">
                       &#x2630;
                     </span>
@@ -266,6 +329,11 @@ export function TopicQueue({ projectId }: { projectId: string }) {
                             <option key={s} value={s}>{s}</option>
                           ))}
                         </select>
+                        {cbLabel && (
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                            {cbLabel}
+                          </span>
+                        )}
                       </div>
                       {editingTopic === topic.id ? (
                         <div className="mt-1 flex items-center gap-2">
@@ -323,19 +391,62 @@ export function TopicQueue({ projectId }: { projectId: string }) {
                         </AsyncButton>
                       )}
                       <button
-                        onClick={() => setConfirmDelete(topic.id)}
-                        className="text-xs text-muted-foreground hover:text-destructive"
-                        title="Delete topic"
+                        onClick={() => handleDismiss(topic.id)}
+                        className="text-xs text-muted-foreground hover:text-amber-600"
+                        title="Dismiss topic"
                       >
-                        Delete
+                        Dismiss
                       </button>
                     </div>
                   </div>
                 );
               })}
-            </div>
+            </div>}
           </div>
-        ))
+          );
+        })
+      )}
+
+      {/* Dismissed topics collapsed section */}
+      {dismissedTopics.length > 0 && (
+        <div>
+          <button
+            onClick={toggleDismissedOpen}
+            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <span className={`transition-transform ${dismissedOpen ? "rotate-90" : ""}`}>&#x25B6;</span>
+            Dismissed ({dismissedTopics.length})
+          </button>
+          {dismissedOpen && (
+            <div className="mt-2 space-y-1">
+              {dismissedTopics.map((topic) => (
+                <div
+                  key={topic.id}
+                  className="flex items-center gap-3 rounded-lg border border-border p-3 opacity-50"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">{topic.topic}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES.dismissed}`}>
+                        dismissed
+                      </span>
+                      <span className="text-xs text-muted-foreground">{topic.strategy}</span>
+                    </div>
+                    {topic.description && (
+                      <p className="mt-0.5 text-xs text-muted-foreground">{topic.description}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleStatusChange(topic.id, "uncovered")}
+                    className="shrink-0 text-xs text-muted-foreground hover:text-accent"
+                  >
+                    Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Add topic form */}
@@ -395,23 +506,6 @@ export function TopicQueue({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      {/* Delete confirmation */}
-      <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="max-w-sm">
-        <h3 className="text-sm font-semibold">Delete Topic</h3>
-        <p className="mt-2 text-sm text-muted-foreground">Are you sure you want to delete this topic? This cannot be undone.</p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={() => setConfirmDelete(null)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
-            Cancel
-          </button>
-          <button
-            onClick={() => confirmDelete && handleDelete(confirmDelete)}
-            disabled={deleting}
-            className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80 disabled:opacity-50"
-          >
-            {deleting ? "Deleting..." : "Delete"}
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 }

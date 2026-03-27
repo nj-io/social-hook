@@ -40,7 +40,7 @@ const decisionLabels: Record<string, string> = {
   hold: "Hold",
   skip: "Skip",
   imported: "Imported",
-  deferred_eval: "Deferred",
+  deferred_eval: "Queued",
 };
 
 interface BadgeProps {
@@ -53,9 +53,13 @@ export function Badge({ value, variant = "default", className }: BadgeProps) {
   const styleMap = variantStyles[variant] ?? variantStyles.default;
   const style = styleMap[value] ?? styleMap._default ?? "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300";
   const label = variant === "decision" ? (decisionLabels[value] ?? value) : value;
+  const tooltip = variant === "decision" && value === "deferred_eval" ? "Queued for batch evaluation" : undefined;
 
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${style} ${className ?? ""}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${style} ${className ?? ""}`}
+      title={tooltip}
+    >
       {label}
     </span>
   );
