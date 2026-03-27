@@ -63,7 +63,7 @@ export default function ProjectDetailPage() {
   const [branchFilter, setBranchFilter] = useState<string>("");
   const [decisionBranches, setDecisionBranches] = useState<string[]>([]);
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [importPreview, setImportPreview] = useState<{ total_commits: number; already_tracked: number; importable: number } | null>(null);
+  const [importPreview, setImportPreview] = useState<{ total_commits: number; already_tracked: number; importable: number; branches?: string[] } | null>(null);
   const [importBranch, setImportBranch] = useState<string>("");
   const [importLoading, setImportLoading] = useState(false);
   const [importRefreshKey, setImportRefreshKey] = useState(0);
@@ -872,7 +872,7 @@ export default function ProjectDetailPage() {
             }}
           >
             <option value="">All branches</option>
-            {decisionBranches.map((b) => (
+            {(importPreview?.branches || []).map((b) => (
               <option key={b} value={b}>{b}</option>
             ))}
           </select>

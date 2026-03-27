@@ -1525,6 +1525,23 @@ async def api_import_preview(project_id: str, branch: str | None = Query(None)):
         from social_hook.import_commits import get_import_preview
 
         preview = get_import_preview(conn, project["id"], project["repo_path"], branch)
+
+        # Include git repo branches so the import modal can show them
+        # (decisionBranches is empty on a fresh project)
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["git", "-C", project["repo_path"], "branch", "--format=%(refname:short)"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            git_branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+        except Exception:
+            git_branches = []
+
+        preview["branches"] = git_branches
         return preview
     finally:
         conn.close()
