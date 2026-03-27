@@ -935,8 +935,7 @@ def _run_commit_analyzer(
 
     Semantics:
     - count >= interval: run fresh analysis, reset counter, should_evaluate=True
-    - count < interval + cached exists: return cached, should_evaluate=False
-    - count < interval + no cache (first commit): run fresh, do NOT reset, should_evaluate=True
+    - count < interval: defer (return should_evaluate=False), with or without cache
     - error: result=None, should_evaluate=True (fallback)
     """
     from social_hook.llm.schemas import CommitAnalysisResult
@@ -951,6 +950,13 @@ def _run_commit_analyzer(
         interval = getattr(ctx.project_config.context, "commit_analysis_interval", 1)
     if interval < 1:
         interval = 1
+
+    logger.info(
+        "Commit analyzer: count=%d, interval=%d, project=%s",
+        new_count,
+        interval,
+        ctx.project.id,
+    )
 
     if new_count < interval:
         # Interval not met — check for cached analysis from most recent cycle
