@@ -4396,26 +4396,6 @@ async def api_set_topic_status(project_id: str, topic_id: str, body: dict[str, A
         conn.close()
 
 
-@app.delete("/api/projects/{project_id}/topics/{topic_id}")
-async def api_delete_topic(project_id: str, topic_id: str):
-    """Delete a topic from the queue."""
-    conn = _get_conn()
-    try:
-        _get_project_or_404(conn, project_id)
-        topic = ops.get_topic(conn, topic_id)
-        if not topic:
-            raise HTTPException(status_code=404, detail="Topic not found")
-        if topic.project_id != project_id:
-            raise HTTPException(status_code=404, detail="Topic not found in this project")
-
-        conn.execute("DELETE FROM content_topics WHERE id = ?", (topic_id,))
-        conn.commit()
-        ops.emit_data_event(conn, "topic", "deleted", topic_id, project_id)
-        return {"status": "deleted", "topic_id": topic_id}
-    finally:
-        conn.close()
-
-
 @app.post("/api/projects/{project_id}/topics/{topic_id}/draft-now")
 async def api_draft_now_topic(project_id: str, topic_id: str):
     """Force draft on a topic. 202 — LLM call."""

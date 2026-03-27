@@ -43,7 +43,12 @@ export function ErrorFeed() {
     }
   }, [severityFilter, componentFilter]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 30_000);
+    return () => clearInterval(interval);
+  }, [load]);
+  useDataEvents(["error"], load);
 
   // WebSocket live updates
   useDataEvents(["system_error"], load);

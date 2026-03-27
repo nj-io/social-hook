@@ -8,8 +8,6 @@ import {
   fetchProjectDecisions,
   fetchProjectPosts,
   fetchProjectUsage,
-  updateProjectSummary,
-  regenerateProjectSummary,
   createDraftFromDecision,
   deleteDecision,
   retriggerDecision,
@@ -24,10 +22,10 @@ import {
 import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
-import { SimpleMarkdown } from "@/components/simple-markdown";
 import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
 import { RateLimitCard } from "@/components/rate-limit-card";
+import { AnalysisQueueCard } from "@/components/analysis-queue-card";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
 import { EvaluationCycles } from "@/components/evaluation-cycles";
@@ -52,13 +50,6 @@ export default function ProjectDetailPage() {
   const [decisionOffset, setDecisionOffset] = useState(0);
   const [hasMoreDecisions, setHasMoreDecisions] = useState(false);
   const [totalDecisions, setTotalDecisions] = useState(0);
-  const [editingSummary, setEditingSummary] = useState(false);
-  const [summaryDraft, setSummaryDraft] = useState("");
-  const [summaryLoading, setSummaryLoading] = useState(false);
-  const [summaryExpanded, setSummaryExpanded] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return localStorage.getItem("project-summary-expanded") !== "false";
-  });
   const [expandedDecisions, setExpandedDecisions] = useState<Set<string>>(new Set());
   const [draftResult, setDraftResult] = useState<Record<string, { count?: number; error?: string }>>({});
   const [platformCount, setPlatformCount] = useState<number>(0);
@@ -274,113 +265,6 @@ export default function ProjectDetailPage() {
           {!!project.paused && <Badge value="paused" variant="status" />}
         </div>
         <p className="mt-1 truncate text-sm text-muted-foreground">{project.repo_path}</p>
-        {/* Project Summary */}
-        <div className="mt-4 rounded-lg border border-border">
-          <button
-            type="button"
-            onClick={() => {
-              const next = !summaryExpanded;
-              setSummaryExpanded(next);
-              localStorage.setItem("project-summary-expanded", String(next));
-            }}
-            className="flex w-full items-center justify-between p-4 text-left"
-          >
-            <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-medium text-muted-foreground">Project Summary</h2>
-              {!summaryExpanded && project.summary && (
-                <p className="mt-1 truncate text-xs text-muted-foreground/70">
-                  {project.summary.replace(/[*`#\n]+/g, " ").trim()}
-                </p>
-              )}
-            </div>
-            <span className="ml-3 shrink-0 text-xs text-muted-foreground">{summaryExpanded ? "\u25B2" : "\u25BC"}</span>
-          </button>
-
-          {summaryExpanded && (
-            <div className="border-t border-border px-4 pb-4 pt-3">
-              <div className="mb-2 flex items-center justify-end gap-2">
-                {!editingSummary && (
-                  <>
-                    <button
-                      onClick={() => {
-                        setSummaryDraft(project.summary || "");
-                        setEditingSummary(true);
-                      }}
-                      className="text-xs text-accent hover:underline"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={async () => {
-                        setSummaryLoading(true);
-                        try {
-                          const res = await regenerateProjectSummary(id);
-                          setProject((prev) => prev ? { ...prev, summary: res.summary } : prev);
-                        } catch {
-                          // Silent failure
-                        } finally {
-                          setSummaryLoading(false);
-                        }
-                      }}
-                      disabled={summaryLoading}
-                      className="text-xs text-accent hover:underline disabled:opacity-50"
-                    >
-                      {summaryLoading ? "Regenerating..." : "Regenerate"}
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {editingSummary ? (
-                <div className="space-y-2">
-                  <textarea
-                    rows={4}
-                    value={summaryDraft}
-                    onChange={(e) => setSummaryDraft(e.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={async () => {
-                        setSummaryLoading(true);
-                        try {
-                          await updateProjectSummary(id, summaryDraft);
-                          setProject((prev) => prev ? { ...prev, summary: summaryDraft } : prev);
-                          setEditingSummary(false);
-                        } catch {
-                          // Silent failure
-                        } finally {
-                          setSummaryLoading(false);
-                        }
-                      }}
-                      disabled={summaryLoading}
-                      className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditingSummary(false)}
-                      className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : project.summary ? (
-                <SimpleMarkdown content={project.summary} />
-              ) : (
-                <p className="text-sm text-muted-foreground">No summary yet. Click Regenerate to create one.</p>
-              )}
-
-              <p className="mt-2 text-xs text-muted-foreground">
-                Adjust context depth in{" "}
-                <Link href="/settings?section=context" className="text-accent hover:underline">
-                  Settings &gt; Context
-                </Link>
-              </p>
-            </div>
-          )}
-        </div>
 
         {/* Lifecycle */}
         {project.lifecycle && (
@@ -430,9 +314,10 @@ export default function ProjectDetailPage() {
           </Link>
         </div>
 
-        {/* Rate Limits + Journey Capture status */}
-        <div className="mt-4">
+        {/* Rate Limits + Analysis Queue + Journey Capture status */}
+        <div className="mt-4 flex gap-4">
           <RateLimitCard />
+          <AnalysisQueueCard projectId={id} />
         </div>
         <div className="mt-2">
           {project.journey_capture_enabled ? (

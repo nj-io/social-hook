@@ -645,8 +645,11 @@ export async function resetStrategy(projectId: string, name: string): Promise<{ 
 }
 
 // Topics
-export async function fetchTopics(projectId: string, strategy?: string): Promise<{ topics: Topic[] }> {
-  const params = strategy ? `?strategy=${encodeURIComponent(strategy)}` : "";
+export async function fetchTopics(projectId: string, strategy?: string, includeDismissed?: boolean): Promise<{ topics: Topic[] }> {
+  const parts: string[] = [];
+  if (strategy) parts.push(`strategy=${encodeURIComponent(strategy)}`);
+  if (includeDismissed) parts.push("include_dismissed=true");
+  const params = parts.length > 0 ? `?${parts.join("&")}` : "";
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics${params}`);
 }
 
@@ -845,10 +848,6 @@ export async function createStrategy(
 
 export async function deleteStrategy(projectId: string, name: string): Promise<{ status: string; name: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`, { method: "DELETE" });
-}
-
-export async function deleteTopic(projectId: string, topicId: string): Promise<{ status: string; topic_id: string }> {
-  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}`, { method: "DELETE" });
 }
 
 export async function acceptSuggestion(projectId: string, suggestionId: string): Promise<{ task_id: string; status: string }> {

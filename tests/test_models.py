@@ -261,7 +261,7 @@ class TestDecisionModel:
             reasoning="Test",
             commit_message="Add auth module",
         )
-        assert len(decision.to_row()) == 19
+        assert len(decision.to_row()) == 20
 
     def test_decision_to_dict_includes_commit_message(self):
         """Decision.to_dict() includes commit_message."""
@@ -343,7 +343,7 @@ class TestDecisionNewFields:
         d = Decision(
             id="test", project_id="p", commit_hash="abc", decision="draft", reasoning="test"
         )
-        assert len(d.to_row()) == 19
+        assert len(d.to_row()) == 20
 
     def test_decision_new_types_valid(self):
         """New decision types (draft, hold, skip) are accepted."""
@@ -460,7 +460,7 @@ class TestDecisionReferencePosts:
     def test_to_row_length_with_reference_posts(self):
         """Decision.to_row() returns 18-element tuple."""
         d = Decision(id="t", project_id="p", commit_hash="c", decision="draft", reasoning="r")
-        assert len(d.to_row()) == 19
+        assert len(d.to_row()) == 20
 
 
 class TestDecisionImported:
@@ -625,7 +625,8 @@ class TestDeferredEvalDecision:
             trigger_source="scheduler",
         )
         row = d.to_row()
-        assert row[-1] == "scheduler"
+        assert row[-2] == "scheduler"  # trigger_source is second-to-last, processed is last
+        assert row[-1] == 0  # processed defaults to False → 0
 
 
 class TestUsageLogTriggerSource:
