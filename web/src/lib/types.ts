@@ -203,6 +203,7 @@ export interface Decision {
   draft_count: number;
   draft_ids?: string[];
   branch?: string | null;
+  batch_id?: string | null;
   created_at: string;
 }
 

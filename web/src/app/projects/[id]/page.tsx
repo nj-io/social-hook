@@ -433,6 +433,7 @@ export default function ProjectDetailPage() {
                     <th className="hidden pb-2 pr-4 font-medium sm:table-cell">Episode</th>
                     <th className="hidden pb-2 pr-4 font-medium md:table-cell">Category</th>
                     <th className="pb-2 pr-4 font-medium">Date</th>
+                    <th className="hidden pb-2 pr-4 font-medium lg:table-cell">Branch</th>
                     <th className="pb-2 pr-4 font-medium">Drafts</th>
                     <th className="pb-2 pr-4 font-medium">Actions</th>
                     <th className="pb-2 font-medium">Status</th>
@@ -520,7 +521,11 @@ export default function ProjectDetailPage() {
                           </div>
                         </td>
                         <td className="py-2 pr-4 text-xs">
-                          <p className="whitespace-pre-wrap">{d.decision === "evaluating" ? "" : (d.reasoning || "-")}</p>
+                          {d.decision === "deferred_eval" && d.batch_id ? (
+                            <span className="text-muted-foreground">Included in batch <code className="rounded bg-muted px-1 py-0.5 text-xs">{d.batch_id.slice(0, 12)}</code></span>
+                          ) : (
+                            <p className="whitespace-pre-wrap">{d.decision === "evaluating" ? "" : (d.reasoning || "-")}</p>
+                          )}
                         </td>
                         <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
                         <td className="hidden py-2 pr-4 sm:table-cell">
@@ -531,6 +536,13 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="py-2 pr-4 text-xs text-muted-foreground">
                           {new Date(d.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="hidden py-2 pr-4 lg:table-cell">
+                          {d.branch ? (
+                            <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{d.branch}</code>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">&mdash;</span>
+                          )}
                         </td>
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           {d.draft_count > 0 ? (
@@ -546,7 +558,9 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1.5">
-                            {(d.decision === "imported" || d.decision === "evaluating") ? (
+                            {d.decision === "deferred_eval" && d.batch_id ? (
+                              <span className="text-xs text-muted-foreground">Batched</span>
+                            ) : (d.decision === "imported" || d.decision === "evaluating") ? (
                               <AsyncButton
                                 loading={isEvaluating}
                                 startTime={evalTask?.created_at}

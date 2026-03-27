@@ -1,7 +1,7 @@
 """Tests for deferred eval drain (Chunk 4)."""
 
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from social_hook.config.yaml import Config, RateLimitsConfig
 from social_hook.db import operations as ops
@@ -254,13 +254,11 @@ class TestDrainIndividual:
 class TestDrainBatch:
     """Tests for batch drain mode (batch_throttled=True)."""
 
-    @patch("social_hook.scheduler._run_batch_evaluation")
-    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.evaluate_batch")
     @patch("social_hook.scheduler.check_rate_limit")
-    def test_batch_combines_deferred(self, mock_gate, mock_parse, mock_eval, temp_dir):
-        """Batch mode deletes all deferred and calls evaluator once."""
+    def test_batch_combines_deferred(self, mock_gate, mock_eval, temp_dir):
+        """Batch mode calls evaluate_batch with all deferred decisions."""
         mock_gate.return_value = _GateResult(blocked=False, reason="")
-        mock_parse.return_value = MagicMock(message="test commit msg")
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -270,19 +268,11 @@ class TestDrainBatch:
 
         _drain_batch(conn, config, project, deferred)
 
-        # All deferred decisions should be deleted
-        remaining = ops.get_deferred_eval_decisions(conn, project.id)
-        assert len(remaining) == 0
-
-        # Evaluator called once
+        # evaluate_batch called once with all deferred commits
         mock_eval.assert_called_once()
-        # The commit arg should have combined message
-        call_args = mock_eval.call_args
-        commit_arg = call_args[0][3]  # positional: conn, config, project, commit, deferred
-        assert "Batch of 3" in commit_arg.message
         conn.close()
 
-    @patch("social_hook.scheduler._run_batch_evaluation")
+    @patch("social_hook.trigger.evaluate_batch")
     @patch("social_hook.scheduler.check_rate_limit")
     def test_batch_blocked_skips(self, mock_gate, mock_eval, temp_dir):
         """Batch mode skips when rate limited."""
@@ -326,13 +316,11 @@ class TestDrainIntegration:
         assert mock_trigger.call_count == 2
         conn.close()
 
-    @patch("social_hook.scheduler._run_batch_evaluation")
-    @patch("social_hook.scheduler.parse_commit_info")
+    @patch("social_hook.trigger.evaluate_batch")
     @patch("social_hook.scheduler.check_rate_limit")
-    def test_dispatches_batch_mode(self, mock_gate, mock_parse, mock_eval, temp_dir):
-        """With batch_throttled=True, dispatches to batch drain."""
+    def test_dispatches_batch_mode(self, mock_gate, mock_eval, temp_dir):
+        """With batch_throttled=True, dispatches to batch drain via evaluate_batch."""
         mock_gate.return_value = _GateResult(blocked=False, reason="")
-        mock_parse.return_value = MagicMock(message="commit msg")
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)

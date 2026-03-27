@@ -14,7 +14,7 @@ from social_hook.db.connection import init_database
 from social_hook.error_feed import ErrorSeverity, error_feed
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id, get_base_path, get_db_path
-from social_hook.models import CommitInfo, Decision, Post
+from social_hook.models import Decision, Post
 from social_hook.notifications import send_notification
 from social_hook.rate_limits import check_rate_limit
 from social_hook.scheduling import calculate_optimal_time
@@ -425,202 +425,47 @@ def _drain_individual(conn, config, project, deferred):
 
 
 def _drain_batch(conn, config, project, deferred):
-    """Combine all deferred evals into a single evaluator call."""
+    """Combine all deferred evals into a single evaluation via evaluate_batch()."""
     gate = check_rate_limit(conn, config.rate_limits)
     if gate.blocked:
         return
 
-    # Delete all deferred decisions first
-    for d in deferred:
-        ops.delete_decision(conn, d.id)
-
-    # Parse real commit info for each hash
-    parsed_summaries = []
-    for d in deferred:
-        try:
-            ci = parse_commit_info(d.commit_hash, project.repo_path)
-            parsed_summaries.append(f"- {ci.message.splitlines()[0]}")
-        except Exception:
-            parsed_summaries.append(f"- {d.commit_hash[:8]}")
-
-    commit = CommitInfo(
-        hash=f"batch-{deferred[-1].commit_hash[:8]}",
-        message=f"Batch of {len(deferred)} deferred triggers:\n" + "\n".join(parsed_summaries),
-        diff="",
-        files_changed=[],
-    )
-
     try:
-        _run_batch_evaluation(conn, config, project, commit, deferred)
-    except Exception as e:
-        logger.error("Batch drain failed for project %s: %s", project.id, e)
-        # Re-insert all deferred decisions to avoid permanent loss
-        for d in deferred:
-            existing = conn.execute(
-                "SELECT id FROM decisions WHERE project_id = ? AND commit_hash = ?",
-                (project.id, d.commit_hash),
-            ).fetchone()
-            if not existing:
-                ops.insert_decision(
-                    conn,
-                    Decision(
-                        id=generate_id("decision"),
-                        project_id=project.id,
-                        commit_hash=d.commit_hash,
-                        decision="deferred_eval",
-                        reasoning=f"Batch drain failed: {e}",
-                        trigger_source="commit",
-                    ),
-                )
+        from social_hook.config.project import load_project_config
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.factory import create_client
+        from social_hook.llm.prompts import assemble_evaluator_context
+        from social_hook.trigger import TriggerContext, evaluate_batch
 
+        project_config = load_project_config(project.repo_path)
+        db = DryRunContext(conn, dry_run=False)
+        trigger_hash = deferred[-1].commit_hash
+        commit = parse_commit_info(trigger_hash, project.repo_path)
 
-def _run_batch_evaluation(conn, config, project, commit, deferred):
-    """Run evaluator on a batch of deferred decisions. Follows consolidation.py pattern."""
-    from social_hook.config.project import load_project_config
-    from social_hook.errors import ConfigError
-    from social_hook.llm.dry_run import DryRunContext
-    from social_hook.llm.factory import create_client
-
-    project_config = load_project_config(project.repo_path)
-
-    db = DryRunContext(conn, dry_run=False)
-    db.trigger_source = "drain"
-
-    from social_hook.llm.prompts import assemble_evaluator_context
-
-    context = assemble_evaluator_context(db, project.id, project_config)
-
-    try:
-        evaluator_client = create_client(config.models.evaluator, config)
-    except ConfigError as e:
-        logger.error("Config error creating evaluator client for drain batch: %s", e)
-        return
-
-    from social_hook.llm.evaluator import Evaluator
-
-    try:
-        evaluator = Evaluator(evaluator_client)
-
-        platform_summaries = []
-        for pname, pcfg in config.platforms.items():
-            if pcfg.enabled:
-                summary = f"{pname} ({pcfg.priority})"
-                if pcfg.type == "custom" and pcfg.description:
-                    summary += f" -- {pcfg.description}"
-                platform_summaries.append(summary)
-
-        evaluation = evaluator.evaluate(
-            commit,
-            context,
-            db,
-            platform_summaries=platform_summaries or None,
-            media_config=config.media_generation,
-            media_guidance=project_config.media_guidance if project_config else None,
-            strategy_config=project_config.strategy if project_config else None,
-            summary_config=project_config.summary if project_config else None,
-            strategies=config.content_strategies or None,
-        )
-    except Exception as e:
-        logger.error("LLM API error during drain batch evaluation: %s", e)
-        return
-
-    def _val(x):
-        return x.value if hasattr(x, "value") else x
-
-    # --- New targets path ---
-    if getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets:
-        from social_hook.trigger import _combine_strategy_reasoning, _determine_overall_decision
-
-        decision_type = _determine_overall_decision(evaluation.strategies)
-        if decision_type != "draft":
-            logger.info("Drain batch re-evaluation for %s: %s", project.name, decision_type)
-            return
-
-        representative = next(
-            (sd for sd in evaluation.strategies.values() if _val(sd.action) == "draft"),
-            next(iter(evaluation.strategies.values())),
-        )
-
-        decision = Decision(
-            id=generate_id("decision"),
-            project_id=project.id,
-            commit_hash=commit.hash,
-            decision="draft",
-            reasoning=_combine_strategy_reasoning(evaluation.strategies),
-            angle=representative.angle,
-            episode_type=None,
-            post_category=_val(representative.post_category),
-            media_tool=_val(representative.media_tool),
-            targets={k: v.model_dump() for k, v in evaluation.strategies.items()},
-            trigger_source="drain",
-        )
-        ops.insert_decision(conn, decision)
-        ops.emit_data_event(conn, "decision", "created", decision.id, project.id)
-
-        from social_hook.content_sources import content_sources
-        from social_hook.drafting import draft_for_targets
-        from social_hook.routing import route_to_targets
-
-        target_actions = route_to_targets(evaluation.strategies, config, conn)
-        draftable_actions = [a for a in target_actions if a.action == "draft"]
-
-        if draftable_actions:
-            draft_for_targets(
-                draftable_actions,
-                config,
-                conn,
-                db,
-                project,
-                decision_id=decision.id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit,
-                content_source_registry=content_sources,
-                project_config=project_config,
-                dry_run=False,
-            )
-    else:
-        # --- Legacy path ---
-        target = evaluation.strategies.get("default")
-        if not target:
-            logger.info("Drain batch re-evaluation for %s: no default target", project.name)
-            return
-
-        if _val(target.action) != "draft":
-            logger.info("Drain batch re-evaluation for %s: %s", project.name, _val(target.action))
-            return
-
-        decision = Decision(
-            id=generate_id("decision"),
-            project_id=project.id,
-            commit_hash=commit.hash,
-            decision="draft",
-            reasoning=target.reason,
-            angle=target.angle,
-            episode_type=None,
-            post_category=_val(target.post_category),
-            media_tool=_val(target.media_tool),
-            trigger_source="drain",
-        )
-        ops.insert_decision(conn, decision)
-        ops.emit_data_event(conn, "decision", "created", decision.id, project.id)
-
-        from social_hook.compat import make_eval_compat
-        from social_hook.drafting import draft_for_platforms
-
-        eval_compat = make_eval_compat(evaluation, "draft")
-        draft_for_platforms(
-            config,
-            conn,
-            db,
-            project,
-            decision_id=decision.id,
-            evaluation=eval_compat,
-            context=context,
+        ctx = TriggerContext(
+            config=config,
+            conn=conn,
+            db=db,
+            project=project,
             commit=commit,
             project_config=project_config,
+            current_branch=None,
             dry_run=False,
+            verbose=False,
+            show_prompt=False,
         )
+        context = assemble_evaluator_context(db, project.id, project_config)
+        evaluator_client = create_client(config.models.evaluator, config)
+
+        evaluate_batch(
+            ctx=ctx,
+            deferred_commits=deferred,
+            trigger_commit_hash=trigger_hash,
+            context=context,
+            evaluator_client=evaluator_client,
+        )
+    except Exception as e:
+        logger.error("Batch drain failed for project %s: %s", project.id, e)
 
 
 def scheduler_tick(

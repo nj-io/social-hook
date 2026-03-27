@@ -60,19 +60,25 @@ function SettingsContent() {
 
   const loadAll = useCallback(async () => {
     try {
-      const [cfgRes, envRes, scRes, ccRes, projRes, ccParsed] = await Promise.all([
+      const [cfgRes, envRes, projRes] = await Promise.all([
         fetchConfig(),
         fetchEnv(),
-        fetchSocialContext(),
-        fetchContentConfig(),
         fetchProjects(),
-        fetchContentConfigParsed(),
       ]);
       setConfig(cfgRes.config);
       setEnvData(envRes);
+      setProjects(projRes.projects);
+
+      const firstPath = projRes.projects[0]?.repo_path || "";
+      setSelectedProjectPath(firstPath);
+
+      const [scRes, ccRes, ccParsed] = await Promise.all([
+        fetchSocialContext(firstPath || undefined),
+        fetchContentConfig(firstPath || undefined),
+        fetchContentConfigParsed(firstPath || undefined),
+      ]);
       setSocialCtx(scRes);
       setContentCfg(ccRes);
-      setProjects(projRes.projects);
       setContextConfig(ccParsed.context || {});
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load settings");
@@ -131,12 +137,14 @@ function SettingsContent() {
   async function loadProjectContent(projectPath: string) {
     setSelectedProjectPath(projectPath);
     try {
-      const [scRes, ccRes] = await Promise.all([
+      const [scRes, ccRes, ccParsed] = await Promise.all([
         fetchSocialContext(projectPath || undefined),
         fetchContentConfig(projectPath || undefined),
+        fetchContentConfigParsed(projectPath || undefined),
       ]);
       setSocialCtx(scRes);
       setContentCfg(ccRes);
+      setContextConfig(ccParsed.context || {});
     } catch {
       // Falls back to existing loaded content
     }
@@ -176,6 +184,21 @@ function SettingsContent() {
           </span>
         )}
       </div>
+
+      {projects.length > 0 && (
+        <div className="mb-4 flex items-center gap-3 border-b border-border pb-4">
+          <label className="text-sm font-medium text-muted-foreground">Project:</label>
+          <select
+            value={selectedProjectPath}
+            onChange={(e) => loadProjectContent(e.target.value)}
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+          >
+            {projects.map((p) => (
+              <option key={p.id} value={p.repo_path}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="flex gap-8" style={{ height: contentHeight }}>
         <SettingsSidebar active={activeSection} onSelect={scrollToSection} />
@@ -368,24 +391,6 @@ function SettingsContent() {
           <section id="voice-style" className="pt-1">
             {socialCtx && (
               <div className="space-y-4">
-                {/* Project selector for voice/style */}
-                {projects.length > 0 && (
-                  <div>
-                    <label className="mb-1 block text-sm font-medium">Project</label>
-                    <select
-                      value={selectedProjectPath}
-                      onChange={(e) => loadProjectContent(e.target.value)}
-                      className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
-                    >
-                      <option value="">Global defaults</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={p.repo_path}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
                 <TextEditorSection
                   title="Voice & Style"
                   description="Edit your social-context.md file that defines your writing voice and style."
@@ -404,24 +409,6 @@ function SettingsContent() {
 
           <section id="content-config" className="pt-1">
             <div className="space-y-4">
-              {/* Project selector for content config */}
-              {projects.length > 0 && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Project</label>
-                  <select
-                    value={selectedProjectPath}
-                    onChange={(e) => loadProjectContent(e.target.value)}
-                    className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
-                  >
-                    <option value="">Global defaults</option>
-                    {projects.map((p) => (
-                      <option key={p.id} value={p.repo_path}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
               {contentCfg && contentCfg.content ? (
                 <TextEditorSection
                   title="Content Config"
