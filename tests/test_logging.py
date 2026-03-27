@@ -184,6 +184,38 @@ class TestDbSink:
         call_kwargs = mock_feed.emit.call_args[1]
         assert call_kwargs["context"] == {"project_id": "proj_123", "draft_id": "draft_456"}
 
+    def test_reentrant_guard_prevents_recursion(self):
+        """If ErrorFeed.emit() fails and logs a warning, DbSink must not recurse."""
+        mock_feed = MagicMock()
+        sink = DbSink(mock_feed)
+
+        # Simulate ErrorFeed.emit() failing — this would normally trigger
+        # logger.warning() inside error_feed.py, which flows back through
+        # LogBus → DbSink. The guard should prevent the second call.
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Simulate re-entry: another WARNING record arrives while we're in emit
+                reentrant_record = logging.LogRecord(
+                    "social_hook.error_feed", logging.WARNING, "", 0, "emit failed", (), None
+                )
+                reentrant_record.component = ""  # type: ignore[attr-defined]
+                reentrant_record.run_id = ""  # type: ignore[attr-defined]
+                sink.handle(reentrant_record)
+
+        mock_feed.emit.side_effect = side_effect
+
+        record = logging.LogRecord("social_hook.test", logging.WARNING, "", 0, "original", (), None)
+        record.component = ""  # type: ignore[attr-defined]
+        record.run_id = ""  # type: ignore[attr-defined]
+        sink.handle(record)
+
+        # Only the first call should go through — the reentrant one is dropped
+        assert call_count == 1
+
 
 # =============================================================================
 # NotificationSink

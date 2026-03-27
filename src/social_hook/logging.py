@@ -147,34 +147,44 @@ class DbSink:
 
     def __init__(self, error_feed: ErrorFeed) -> None:
         self._error_feed = error_feed
+        # Re-entrancy guard: ErrorFeed.emit() logs warnings on failure via
+        # logger.warning(), which flows back through LogBus → DbSink → emit().
+        # Without this guard, that creates infinite recursion.
+        self._in_emit = threading.local()
 
     def handle(self, record: logging.LogRecord) -> None:
         if record.levelno < logging.WARNING:
             return
+        if getattr(self._in_emit, "active", False):
+            return  # prevent recursion
 
-        severity_str = self._LEVEL_MAP.get(record.levelno, "error")
+        self._in_emit.active = True
+        try:
+            severity_str = self._LEVEL_MAP.get(record.levelno, "error")
 
-        # Extract context from record's extra dict
-        context: dict[str, Any] = {}
-        for key in ("project_id", "draft_id"):
-            val = getattr(record, key, None)
-            if val is not None:
-                context[key] = val
+            # Extract context from record's extra dict
+            context: dict[str, Any] = {}
+            for key in ("project_id", "draft_id"):
+                val = getattr(record, key, None)
+                if val is not None:
+                    context[key] = val
 
-        component = getattr(record, "component", "")
-        run_id = getattr(record, "run_id", "")
+            component = getattr(record, "component", "")
+            run_id = getattr(record, "run_id", "")
 
-        # Pass severity as string — ErrorFeed.emit() accepts str | ErrorSeverity.
-        # This avoids a runtime import from social_hook.error_feed, preserving
-        # logging.py's reusability (only imports constants.CONFIG_DIR_NAME).
-        self._error_feed.emit(
-            severity_str,
-            record.getMessage(),
-            context=context,
-            source=getattr(record, "name", ""),
-            component=component,
-            run_id=run_id,
-        )
+            # Pass severity as string — ErrorFeed.emit() accepts str | ErrorSeverity.
+            # This avoids a runtime import from social_hook.error_feed, preserving
+            # logging.py's reusability (only imports constants.CONFIG_DIR_NAME).
+            self._error_feed.emit(
+                severity_str,
+                record.getMessage(),
+                context=context,
+                source=getattr(record, "name", ""),
+                component=component,
+                run_id=run_id,
+            )
+        finally:
+            self._in_emit.active = False
 
 
 # Markdown special chars that cause Telegram parse_mode=markdown failures
