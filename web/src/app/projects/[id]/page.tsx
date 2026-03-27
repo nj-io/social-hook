@@ -17,6 +17,7 @@ import {
   fetchDecisionBranches,
   fetchImportPreview,
   importCommits,
+  fetchTasks,
   type BackgroundTask,
 } from "@/lib/api";
 import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
@@ -891,6 +892,21 @@ export default function ProjectDetailPage() {
               try {
                 const res = await importCommits(id, importBranch || null);
                 trackTask(res.task_id, "__import__", "import_commits");
+                // Poll for completion since WebSocket callback can miss fast tasks
+                const poll = setInterval(async () => {
+                  try {
+                    const { tasks: all } = await fetchTasks({ project_id: id });
+                    const task = all.find((t) => t.id === res.task_id);
+                    if (task && task.status !== "running") {
+                      clearInterval(poll);
+                      setImportModalOpen(false);
+                      setImportLoading(false);
+                      setImportRefreshKey((k) => k + 1);
+                    }
+                  } catch { /* keep polling */ }
+                }, 2000);
+                // Safety: stop polling after 5 minutes
+                setTimeout(() => clearInterval(poll), 300_000);
               } catch {
                 setImportLoading(false);
               }
