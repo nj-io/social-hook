@@ -152,7 +152,7 @@ class LogEvaluationInput(BaseModel):
         """Return JSON schema dict for Claude's tools parameter."""
         return {
             "name": "log_evaluation",
-            "description": "Record the evaluation for a commit with per-target decisions and optional queue management",
+            "description": "Record the evaluation for a commit with per-strategy decisions and optional queue management",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -178,7 +178,7 @@ class LogEvaluationInput(BaseModel):
                     },
                     "targets": {
                         "type": "object",
-                        "description": "Per-target decisions. Use 'default' for the primary decision.",
+                        "description": "Per-strategy decisions. Use the exact strategy names from the Content Strategies section (e.g. 'building-public', 'brand-primary'). One entry per strategy.",
                         "additionalProperties": {
                             "type": "object",
                             "properties": {

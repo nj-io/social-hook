@@ -4854,8 +4854,9 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                     }
             elif decision:
                 ep_tags = _parse_episode_tags(decision)
-                # Legacy: single "default" strategy
-                strategies["default"] = {
+                # Legacy decisions without per-strategy targets data
+                label = "legacy" if decision.decision != "deferred_eval" else "deferred"
+                strategies[label] = {
                     "decision": decision.decision,
                     "reasoning": decision.reasoning[:200] if decision.reasoning else "",
                     "draft_id": drafts[0].id if drafts else None,
@@ -4933,20 +4934,21 @@ def _enrich_cycle_trigger(conn, cycle, decision) -> str:
         if not hashes:
             return "Batch evaluation"
         parts = [f"Batch of {len(hashes)} commits"]
-        # Get commit messages for each hash
-        summaries = []
-        for h in hashes[:5]:  # Cap at 5 to avoid huge descriptions
-            d = conn.execute(
-                "SELECT commit_message FROM decisions WHERE project_id = ? AND commit_hash = ? LIMIT 1",
-                (cycle.project_id, h),
-            ).fetchone()
-            msg = d["commit_message"].splitlines()[0][:60] if d and d["commit_message"] else h[:7]
-            summaries.append(msg)
         if decision:
             ep_tags = _parse_episode_tags(decision)
             if ep_tags:
                 parts.append(f"({', '.join(ep_tags)})")
-        parts.append("\u2014 " + "; ".join(summaries))
+        # Get commit hash + first line of message for each
+        commit_lines = []
+        for h in hashes[:5]:  # Cap at 5 to avoid huge descriptions
+            short = h[:7]
+            d = conn.execute(
+                "SELECT commit_message FROM decisions WHERE project_id = ? AND commit_hash = ? LIMIT 1",
+                (cycle.project_id, h),
+            ).fetchone()
+            msg = d["commit_message"].splitlines()[0][:50] if d and d["commit_message"] else ""
+            commit_lines.append(f"{short} {msg}".strip())
+        parts.append("\u2014 " + "; ".join(commit_lines))
         if len(hashes) > 5:
             parts.append(f"(+{len(hashes) - 5} more)")
         return " ".join(parts)
