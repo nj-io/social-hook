@@ -391,8 +391,8 @@ class TestCommitAnalyzerIntervalGating:
             show_prompt=False,
         )
 
-    def test_first_commit_always_runs_fresh(self, temp_db):
-        """First commit (no cache) should run fresh analysis regardless of interval."""
+    def test_first_commit_defers_like_any_other(self, temp_db):
+        """First commit (no cache) still defers when interval > 1."""
         from social_hook.db import operations as ops
         from social_hook.trigger import _run_commit_analyzer
 
@@ -403,24 +403,20 @@ class TestCommitAnalyzerIntervalGating:
         context = SimpleNamespace(project=project)
 
         mock_client = MagicMock()
-        mock_result = self._make_mock_analyzer_result()
 
-        # Set interval to 3 — normally would cache, but no cache exists
+        # Set interval to 3 — first commit should defer, not evaluate
         project_config = SimpleNamespace(context=SimpleNamespace(commit_analysis_interval=3))
         ctx = self._make_ctx(temp_db, project, commit, project_config)
 
-        with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
-            MockAnalyzer.return_value.analyze.return_value = mock_result
-            outcome = _run_commit_analyzer(
-                ctx=ctx,
-                context=context,
-                evaluator_client=mock_client,
-            )
+        outcome = _run_commit_analyzer(
+            ctx=ctx,
+            context=context,
+            evaluator_client=mock_client,
+        )
 
-        assert outcome.result is not None
-        assert outcome.should_evaluate is True
-        assert outcome.result.commit_analysis.classification == CommitClassification.routine
-        # First commit does NOT reset counter — only threshold-crossing does
+        assert outcome.result is None
+        assert outcome.should_evaluate is False
+        # Counter incremented but not reset
         assert ops.get_analysis_commit_count(temp_db, "proj-gate-1") == 1
 
     def test_interval_not_met_uses_cache(self, temp_db):

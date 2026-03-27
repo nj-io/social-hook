@@ -972,31 +972,10 @@ def _run_commit_analyzer(
             else:
                 logger.warning("Failed to parse cached analysis JSON, running fresh")
         else:
-            # No cache (first commit case) — run fresh, do NOT reset counter
+            # No cache yet (first commits on this project) — still defer
             if ctx.verbose:
-                print(f"No cached analysis available, running fresh (count {new_count}/{interval})")
-            try:
-                from social_hook.llm.analyzer import CommitAnalyzer
-
-                analyzer = CommitAnalyzer(evaluator_client)
-                result = analyzer.analyze(
-                    commit=ctx.commit,
-                    context=context,
-                    db=ctx.db,
-                    show_prompt=ctx.show_prompt,
-                )
-                if ctx.verbose:
-                    print(
-                        f"Commit analysis complete (classification: "
-                        f"{result.commit_analysis.classification.value if result.commit_analysis.classification else 'unknown'})"
-                    )
-                # First commit always evaluates — no counter reset
-                return AnalyzerOutcome(result=result, should_evaluate=True)
-            except Exception as e:
-                logger.warning("Commit analyzer failed on first commit (non-fatal): %s", e)
-                if ctx.verbose:
-                    print(f"Commit analyzer skipped: {e}", file=sys.stderr)
-                return AnalyzerOutcome(result=None, should_evaluate=True)
+                print(f"No cached analysis, deferring (count {new_count}/{interval})")
+            return AnalyzerOutcome(result=None, should_evaluate=False)
 
     # 3. Run fresh analysis (count >= interval)
     try:
