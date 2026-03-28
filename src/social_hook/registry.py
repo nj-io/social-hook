@@ -14,6 +14,7 @@ Only stdlib (logging, typing). Copy-paste safe.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -49,14 +50,14 @@ class AdapterRegistry:
                 "media", "messaging"). Used in log messages and exceptions.
         """
         self._kind = kind
-        self._factories: dict[str, Any] = {}
+        self._factories: dict[str, Callable[..., Any]] = {}
         self._metadata: dict[str, dict[str, Any]] = {}
         self._cache: dict[str, Any] = {}
 
     def register(
         self,
         name: str,
-        factory: Any,
+        factory: Callable[..., Any],
         *,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -97,6 +98,11 @@ class AdapterRegistry:
 
         Useful for adapters that should be singletons within a process
         (e.g., media adapters with expensive initialization).
+
+        Note: cache key is ``name`` only — args/kwargs are used only on
+        first creation. Subsequent calls with different args still return
+        the originally cached instance. Use ``invalidate(name)`` first
+        if you need to re-create with different parameters.
 
         Args:
             name: Registered adapter name.

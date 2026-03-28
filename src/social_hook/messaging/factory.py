@@ -15,14 +15,8 @@ from social_hook.registry import AdapterRegistry
 
 # Module-level registry for messaging adapters
 _messaging_registry = AdapterRegistry("messaging")
-_registered = False
 
 KNOWN_PLATFORMS = {"telegram", "slack", "web"}
-
-
-# =============================================================================
-# Per-platform factory functions
-# =============================================================================
 
 
 def _create_telegram(*, config=None, **_kw) -> MessagingAdapter:
@@ -51,26 +45,10 @@ def _create_web(*, db_path: str = "", **_kw) -> MessagingAdapter:
     return WebAdapter(db_path=db_path)
 
 
-# =============================================================================
-# Registration
-# =============================================================================
-
-
-def _ensure_registered():
-    """Lazily register all messaging adapters."""
-    global _registered
-    if _registered:
-        return
-    _registered = True
-
-    _messaging_registry.register("telegram", _create_telegram)
-    _messaging_registry.register("slack", _create_slack)
-    _messaging_registry.register("web", _create_web)
-
-
-# =============================================================================
-# Public API (backward-compatible)
-# =============================================================================
+# Register at module load (lazy imports inside each factory function)
+_messaging_registry.register("telegram", _create_telegram)
+_messaging_registry.register("slack", _create_slack)
+_messaging_registry.register("web", _create_web)
 
 
 def create_adapter(platform: str, config=None, **kwargs) -> MessagingAdapter:
@@ -87,8 +65,6 @@ def create_adapter(platform: str, config=None, **kwargs) -> MessagingAdapter:
     Raises:
         ConfigError: If platform is unknown or required config is missing
     """
-    _ensure_registered()
-
     if not _messaging_registry.has(platform):
         raise ConfigError(f"Unknown messaging platform: {platform}")
 

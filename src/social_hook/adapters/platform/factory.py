@@ -23,12 +23,38 @@ logger = logging.getLogger(__name__)
 
 # Module-level registry for platform adapters
 _platform_registry = AdapterRegistry("platform")
-_registered = False
 
 
-# =============================================================================
-# Per-platform factory functions
-# =============================================================================
+def _get_oauth_token_and_refresher(
+    db_path: str, account_name: str, platform: str, platform_creds
+) -> tuple[str, Callable[[], str]]:
+    """Build an OAuth access token and refresher closure for any platform.
+
+    Args:
+        db_path: Path to SQLite database for token storage.
+        account_name: Account identifier for token lookup.
+        platform: Platform name (e.g., "x", "linkedin").
+        platform_creds: PlatformCredentialConfig with client_id/secret.
+
+    Returns:
+        Tuple of (access_token, refresher_callable).
+    """
+    refresh_urls = {
+        "x": "https://api.x.com/2/oauth2/token",
+        "linkedin": "https://www.linkedin.com/oauth/v2/accessToken",
+    }
+    token_url = refresh_urls.get(platform, "")
+    token_kwargs = dict(
+        client_id=platform_creds.client_id,
+        client_secret=platform_creds.client_secret,
+        token_url=token_url,
+    )
+    access_token = auth.refresh_and_get_token(db_path, account_name, platform, **token_kwargs)
+
+    def refresher():
+        return auth.refresh_and_get_token(db_path, account_name, platform, **token_kwargs)
+
+    return access_token, refresher
 
 
 def _create_x(
@@ -43,26 +69,17 @@ def _create_x(
     """Create an X (Twitter) adapter from either legacy or targets config."""
     from social_hook.adapters.platform.x import XAdapter
 
-    refresh_url = "https://api.x.com/2/oauth2/token"
-
     if account is not None:
         # Targets path
         if not platform_creds.client_id:
             raise ConfigError(f"X client_id not configured for account '{account_name}'")
 
         tier = account.tier or "free"
-        token_kwargs = dict(
-            client_id=platform_creds.client_id,
-            client_secret=platform_creds.client_secret,
-            token_url=refresh_url,
+        access_token, refresher = _get_oauth_token_and_refresher(
+            db_path, account_name, "x", platform_creds
         )
-        access_token = auth.refresh_and_get_token(db_path, account_name, "x", **token_kwargs)
-
-        def x_refresher():
-            return auth.refresh_and_get_token(db_path, account_name, "x", **token_kwargs)
-
         logger.info("Created X adapter for account '%s' (tier=%s)", account_name, tier)
-        return XAdapter(access_token, tier=tier, token_refresher=x_refresher)
+        return XAdapter(access_token, tier=tier, token_refresher=refresher)
 
     # Legacy path
     from social_hook.filesystem import get_db_path
@@ -77,13 +94,15 @@ def _create_x(
     x_config = config.platforms.get("x")
     tier = (x_config.account_tier if x_config else None) or "free"
 
-    account_name_legacy = "x"  # pre-targets: one account per platform
-    token_kwargs = dict(client_id=client_id, client_secret=client_secret, token_url=refresh_url)
-    access_token = auth.refresh_and_get_token(token_db, account_name_legacy, "x", **token_kwargs)
+    # Build a simple creds-like object for the shared helper
+    class _LegacyCreds:
+        def __init__(self, cid, cs):
+            self.client_id = cid
+            self.client_secret = cs
 
-    def refresher():
-        return auth.refresh_and_get_token(token_db, account_name_legacy, "x", **token_kwargs)
-
+    access_token, refresher = _get_oauth_token_and_refresher(
+        token_db, "x", "x", _LegacyCreds(client_id, client_secret)
+    )
     return XAdapter(access_token, tier=tier, token_refresher=refresher)
 
 
@@ -99,30 +118,21 @@ def _create_linkedin(
     """Create a LinkedIn adapter from either legacy or targets config."""
     from social_hook.adapters.platform.linkedin import LinkedInAdapter
 
-    refresh_url = "https://www.linkedin.com/oauth/v2/accessToken"
-
     if account is not None:
         # Targets path
         if not platform_creds.client_id:
             raise ConfigError(f"LinkedIn client_id not configured for account '{account_name}'")
 
-        token_kwargs = dict(
-            client_id=platform_creds.client_id,
-            client_secret=platform_creds.client_secret,
-            token_url=refresh_url,
+        access_token, refresher = _get_oauth_token_and_refresher(
+            db_path, account_name, "linkedin", platform_creds
         )
-        access_token = auth.refresh_and_get_token(db_path, account_name, "linkedin", **token_kwargs)
-
-        def linkedin_refresher():
-            return auth.refresh_and_get_token(db_path, account_name, "linkedin", **token_kwargs)
-
         entity = account.entity
         logger.info(
             "Created LinkedIn adapter for account '%s' (entity=%s)",
             account_name,
             entity or "personal",
         )
-        return LinkedInAdapter(access_token, entity=entity, token_refresher=linkedin_refresher)
+        return LinkedInAdapter(access_token, entity=entity, token_refresher=refresher)
 
     # Legacy path
     access_token = config.env.get("LINKEDIN_ACCESS_TOKEN", "")
@@ -131,33 +141,9 @@ def _create_linkedin(
     return LinkedInAdapter(access_token)
 
 
-# =============================================================================
-# Registration
-# =============================================================================
-
-
-def _ensure_registered():
-    """Lazily register all platform adapters."""
-    global _registered
-    if _registered:
-        return
-    _registered = True
-
-    _platform_registry.register(
-        "x",
-        _create_x,
-        metadata={"display_name": "X/Twitter"},
-    )
-    _platform_registry.register(
-        "linkedin",
-        _create_linkedin,
-        metadata={"display_name": "LinkedIn"},
-    )
-
-
-# =============================================================================
-# Public API (backward-compatible)
-# =============================================================================
+# Register at module load (lazy imports inside each factory function)
+_platform_registry.register("x", _create_x, metadata={"display_name": "X/Twitter"})
+_platform_registry.register("linkedin", _create_linkedin, metadata={"display_name": "LinkedIn"})
 
 
 def create_adapter(platform: str, config, db_path: str | None = None) -> PlatformAdapter:
@@ -175,7 +161,6 @@ def create_adapter(platform: str, config, db_path: str | None = None) -> Platfor
     Raises:
         ConfigError: If platform is unknown or credentials missing.
     """
-    _ensure_registered()
     if not _platform_registry.has(platform):
         raise ConfigError(f"Unknown platform: {platform}")
     return _platform_registry.create(platform, config=config, db_path=db_path)
@@ -242,7 +227,6 @@ def create_adapter_from_account(
     Raises:
         ConfigError: If platform is unknown or credentials missing.
     """
-    _ensure_registered()
     platform = account.platform
 
     if not _platform_registry.has(platform):
