@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 
+from social_hook.parsing import enum_value
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,10 +31,7 @@ def _determine_overall_decision(
 
     actions = set()
     for decision in strategies.values():
-        action = decision.action
-        if hasattr(action, "value"):
-            action = action.value
-        actions.add(action)
+        actions.add(enum_value(decision.action))
 
     if "draft" in actions:
         return "draft"
@@ -64,11 +63,7 @@ def _is_trivial_classification(analyzer_result) -> bool:
         return False
     ca = analyzer_result.commit_analysis
     if ca and ca.classification:
-        return (
-            ca.classification.value == "trivial"
-            if hasattr(ca.classification, "value")
-            else ca.classification == "trivial"
-        )
+        return enum_value(ca.classification) == "trivial"
     else:
         logger.warning("Analyzer result has no classification, treating as non-trivial")
         return False

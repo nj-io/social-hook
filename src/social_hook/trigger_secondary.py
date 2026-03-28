@@ -182,9 +182,11 @@ def run_suggestion_trigger(
             break
 
     if suggestion is None:
+        conn.close()
         raise ConfigError(f"Suggestion '{suggestion_id}' not found in project '{project_id}'")
 
     if suggestion.status != "pending":
+        conn.close()
         raise ConfigError(
             f"Suggestion '{suggestion_id}' has status '{suggestion.status}', expected 'pending'"
         )

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import TYPE_CHECKING
 
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
@@ -17,9 +16,6 @@ from social_hook.llm.prompts import assemble_evaluator_context
 from social_hook.models import Decision, PipelineStage, is_draftable
 from social_hook.parsing import enum_value
 from social_hook.rate_limits import check_rate_limit
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -160,9 +156,7 @@ def run_trigger(
                 branch=current_branch,
             )
             if existing_decision_id:
-                from social_hook.db import operations as _ops
-
-                _ops.upsert_decision(conn, decision)
+                ops.upsert_decision(conn, decision)
             else:
                 db.insert_decision(decision)
             db.emit_data_event("decision", "created", decision.id, project.id)
