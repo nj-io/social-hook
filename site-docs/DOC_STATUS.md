@@ -67,6 +67,11 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | installation.md | complete | Leads with quickstart |
 | quickstart.md | complete | Step-by-step guide |
 
+## Recurring Checks
+
+| Check | Last passed | Notes |
+|-------|-------------|-------|
+
 ## Backlog (waiting_approval)
 
 - [ ] Web dashboard usage guide (#19)
