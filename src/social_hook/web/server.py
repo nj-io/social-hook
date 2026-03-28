@@ -4805,6 +4805,12 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
         for c in cycles:
             cd = c.to_dict()
 
+            # Parse diagnostics JSON column
+            diag_raw = cd.get("diagnostics")
+            cd["diagnostics"] = (
+                safe_json_loads(diag_raw, "cycle.diagnostics", default=[]) if diag_raw else []
+            )
+
             # Get drafts for this cycle to derive strategies and status
             drafts = ops.get_drafts_by_cycle(conn, c.id)
 
@@ -4839,8 +4845,6 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
             strategies: dict[str, dict] = {}
             if decision and decision.targets:
                 # targets is a dict of {strategy_name: {action, reason, ...}}
-                from social_hook.parsing import safe_json_loads
-
                 targets_data = decision.targets
                 if isinstance(targets_data, str):
                     targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
@@ -5011,6 +5015,12 @@ async def api_get_cycle_detail(project_id: str, cycle_id: str):
 
         cycle = EvaluationCycle.from_dict(dict(row))
         cycle_dict = cycle.to_dict()
+
+        # Parse diagnostics JSON column
+        diag_raw = cycle_dict.get("diagnostics")
+        cycle_dict["diagnostics"] = (
+            safe_json_loads(diag_raw, "cycle.diagnostics", default=[]) if diag_raw else []
+        )
 
         # Get associated drafts
         drafts = ops.get_drafts_by_cycle(conn, cycle_id)

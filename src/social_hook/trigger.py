@@ -1015,6 +1015,69 @@ def _run_commit_analyzer(
     return AnalyzerOutcome(result=None, should_evaluate=True)
 
 
+def _run_diagnostics(
+    ctx: TriggerContext,
+    cycle_id: str,
+    evaluation,
+    decision_type: str,
+    *,
+    hold_limit_forced: bool = False,
+) -> list[dict]:
+    """Run pipeline diagnostics and store results on cycle. Returns serialized list."""
+    try:
+        import json
+
+        # Side-effect import registers pipeline checks on the diagnostics_registry
+        import social_hook.pipeline_diagnostics  # noqa: F401
+        from social_hook.diagnostics import diagnostics_registry
+
+        # Build context dict from config, evaluation, and flags
+        strategies = {
+            name: {
+                "action": getattr(sd.action, "value", sd.action),
+                "reason": sd.reason,
+                "arc_id": sd.arc_id,
+                "topic_id": sd.topic_id,
+            }
+            for name, sd in evaluation.strategies.items()
+        }
+
+        diag_context = {
+            "strategies": strategies,
+            "config_targets": {name: cfg for name, cfg in (ctx.config.targets or {}).items()},
+            "config_strategies": ctx.config.content_strategies or {},
+            "config_platforms": ctx.config.platforms or {},
+            "config_accounts": ctx.config.accounts or {},
+            "decision_type": decision_type,
+            "hold_limit_forced": hold_limit_forced,
+            "has_targets": bool(ctx.config.targets),
+            "has_strategies": bool(ctx.config.content_strategies),
+            "legacy_fallback": False,
+        }
+
+        results = diagnostics_registry.run(diag_context)
+
+        serialized = [
+            {
+                "code": d.code,
+                "severity": d.severity.value,
+                "message": d.message,
+                "suggestion": d.suggestion,
+                "context": d.context,
+            }
+            for d in results
+        ]
+
+        if not ctx.dry_run:
+            ops.update_cycle_diagnostics(ctx.conn, cycle_id, json.dumps(serialized))
+            ctx.db.emit_data_event("cycle", "updated", cycle_id, ctx.project.id)
+
+        return serialized
+    except Exception:
+        logger.warning("Pipeline diagnostics failed (non-fatal)", exc_info=True)
+        return []
+
+
 def _run_targets_path(
     ctx: TriggerContext,
     evaluation,
@@ -1147,6 +1210,7 @@ def _run_targets_path(
     )
 
     # Hold count enforcement
+    hold_limit_forced = False
     if decision_type == "hold":
         max_hold = ctx.project_config.context.max_hold_count if ctx.project_config else 5
         current_held = ops.get_held_decisions(ctx.conn, ctx.project.id)
@@ -1154,6 +1218,7 @@ def _run_targets_path(
             logger.warning(f"Hold limit reached ({max_hold}), forcing skip for {commit_hash[:8]}")
             decision.decision = "skip"
             decision_type = "skip"
+            hold_limit_forced = True
 
     if ctx.existing_decision_id:
         ops.upsert_decision(ctx.conn, decision)
@@ -1225,13 +1290,28 @@ def _run_targets_path(
                 ctx.verbose,
             )
 
+    # Run pipeline diagnostics before notification fork
+    diagnostics_list = _run_diagnostics(
+        ctx,
+        cycle.id,
+        evaluation,
+        decision_type,
+        hold_limit_forced=hold_limit_forced,
+    )
+
     # Send decision notification for non-draftable decisions
     if (
         not ctx.dry_run
         and ctx.config.notification_level == "all_decisions"
         and not is_draftable(decision.decision)
     ):
-        _send_decision_notification(ctx.config, ctx.project, ctx.commit, decision)
+        _send_decision_notification(
+            ctx.config,
+            ctx.project,
+            ctx.commit,
+            decision,
+            diagnostics=diagnostics_list,
+        )
 
     if ctx.verbose:
         print(f"Decision: {decision_type}")
@@ -1319,6 +1399,7 @@ def _run_targets_path(
                 strategy_outcomes=strategy_outcomes,
                 drafts=cycle_drafts,
                 queue_actions=executed_queue_actions or None,
+                diagnostics=diagnostics_list,
                 dry_run=ctx.dry_run,
             )
 
@@ -1566,8 +1647,9 @@ def _trigger_brief_update(
         return False
 
 
-def _send_decision_notification(config, project, commit, decision):
+def _send_decision_notification(config, project, commit, decision, diagnostics=None):
     """Send a decision notification to all configured channels."""
+    from social_hook.diagnostics import format_diagnostic_warnings
     from social_hook.messaging.base import OutboundMessage
     from social_hook.notifications import broadcast_notification
 
@@ -1581,6 +1663,10 @@ def _send_decision_notification(config, project, commit, decision):
         f"Decision: {decision.decision}\n"
         f"Reasoning: {reasoning_preview}"
     )
+
+    if diagnostics:
+        msg_text += format_diagnostic_warnings(diagnostics)
+
     broadcast_notification(config, OutboundMessage(text=msg_text))
 
 

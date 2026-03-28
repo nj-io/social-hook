@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { EvaluationCycle, CycleStrategyOutcome } from "@/lib/types";
+import type { EvaluationCycle, CycleStrategyOutcome, DiagnosticItem } from "@/lib/types";
 import type { BackgroundTask } from "@/lib/api";
 import { fetchCycles, approveAllCycleDrafts, sendCallback, connectDraft, draftNowTopic } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
@@ -142,6 +142,9 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                             {approvingCycle === cycle.id ? "Approving..." : "Approve All"}
                           </button>
                         )}
+                        {cycle.diagnostics && cycle.diagnostics.length > 0 && (
+                          <CycleDiagnostics diagnostics={cycle.diagnostics} />
+                        )}
                       </div>
                     )}
                   </td>
@@ -150,13 +153,7 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                       {strategyEntries.map(([name, outcome]) => (
                         <span
                           key={name}
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                            outcome.decision === "draft"
-                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
-                              : outcome.decision === "hold"
-                              ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-                              : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-                          }`}
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${decisionBadgeClass(outcome.decision)}`}
                         >
                           {name}: {outcome.decision}
                         </span>
@@ -192,16 +189,16 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
 /** 2.6: Descriptive status counts — "2 drafts pending", "1 posted, 1 pending", etc. */
 function CycleStatusCounts({ cycle }: { cycle: EvaluationCycle }) {
   const parts: string[] = [];
-  if (!!cycle.posted_count && cycle.posted_count > 0) {
+  if (cycle.posted_count && cycle.posted_count > 0) {
     parts.push(`${cycle.posted_count} posted`);
   }
-  if (!!cycle.approved_count && cycle.approved_count > 0) {
+  if (cycle.approved_count && cycle.approved_count > 0) {
     parts.push(`${cycle.approved_count} approved`);
   }
-  if (!!cycle.pending_count && cycle.pending_count > 0) {
+  if (cycle.pending_count && cycle.pending_count > 0) {
     parts.push(`${cycle.pending_count} pending`);
   }
-  if (parts.length === 0 && !!cycle.draft_count) {
+  if (parts.length === 0 && cycle.draft_count) {
     parts.push(`${cycle.draft_count} draft${cycle.draft_count > 1 ? "s" : ""}`);
   }
   return <>{parts.join(", ")}</>;
@@ -386,6 +383,42 @@ function StrategyOutcomeCard({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function decisionBadgeClass(decision: string): string {
+  switch (decision) {
+    case "draft":
+      return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400";
+    case "hold":
+      return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400";
+    default:
+      return "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
+  }
+}
+
+function CycleDiagnostics({ diagnostics }: { diagnostics: DiagnosticItem[] }) {
+  const warnings = diagnostics.filter(d => d.severity !== "info");
+  if (warnings.length === 0) return null;
+
+  return (
+    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+      <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+        Pipeline Warnings ({warnings.length})
+      </p>
+      <ul className="mt-1 space-y-1">
+        {warnings.map((d, i) => (
+          <li key={i} className="text-xs text-amber-700 dark:text-amber-400">
+            <span className="font-medium">{d.code}:</span> {d.message}
+            {d.suggestion && (
+              <span className="ml-1 text-amber-600 dark:text-amber-500">
+                — {d.suggestion}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

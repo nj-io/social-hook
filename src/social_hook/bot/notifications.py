@@ -21,6 +21,7 @@ def format_evaluation_cycle(
     drafts: list,
     arc_info: dict[str, Any] | None = None,
     queue_actions: list[dict[str, str]] | None = None,
+    diagnostics: list[dict] | None = None,
 ) -> str:
     """Format a grouped evaluation cycle notification.
 
@@ -34,6 +35,8 @@ def format_evaluation_cycle(
             Expected keys: {"arc_id", "theme", "parts", "reasoning"}.
         queue_actions: Optional list of queue action dicts.
             Expected keys per entry: {"type", "draft_id", "reason"}.
+        diagnostics: Optional list of diagnostic result dicts.
+            Expected keys per entry: {"code", "severity", "message", "suggestion"}.
 
     Returns:
         Formatted Markdown message.
@@ -106,6 +109,19 @@ def format_evaluation_cycle(
         lines.append(f'\U0001f517 Arc proposed: "{theme}" ({parts} parts)')
         if reasoning:
             lines.append(f'  \u2192 Reasoning: "{reasoning}"')
+
+    # Pipeline diagnostics (warning+ only)
+    if diagnostics:
+        from social_hook.diagnostics import filter_actionable
+
+        warnings = filter_actionable(diagnostics)
+        if warnings:
+            lines.append("")
+            lines.append("\u26a0\ufe0f *Warnings:*")
+            for d in warnings:
+                lines.append(f"  \u2022 {d['message']}")
+                if d.get("suggestion"):
+                    lines.append(f"    \u2192 {d['suggestion']}")
 
     return "\n".join(lines)
 

@@ -1133,6 +1133,7 @@ class EvaluationCycle:
     trigger_ref: str | None = None
     commit_analysis_id: str | None = None
     commit_analysis_json: str | None = None
+    diagnostics: str | None = None
     created_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -1143,6 +1144,7 @@ class EvaluationCycle:
             "trigger_ref": self.trigger_ref,
             "commit_analysis_id": self.commit_analysis_id,
             "commit_analysis_json": self.commit_analysis_json,
+            "diagnostics": self.diagnostics,
             "created_at": self.created_at,
         }
 
@@ -1155,6 +1157,7 @@ class EvaluationCycle:
             trigger_ref=d.get("trigger_ref"),
             commit_analysis_id=d.get("commit_analysis_id"),
             commit_analysis_json=d.get("commit_analysis_json"),
+            diagnostics=d.get("diagnostics"),
             created_at=d.get("created_at"),
         )
 

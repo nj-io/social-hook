@@ -6,7 +6,8 @@ import logging
 import typer
 
 from social_hook.cli.utils import resolve_project
-from social_hook.parsing import safe_int
+from social_hook.diagnostics import ACTIONABLE_SEVERITIES
+from social_hook.parsing import safe_int, safe_json_loads
 
 app = typer.Typer(no_args_is_help=True)
 logger = logging.getLogger(__name__)
@@ -205,5 +206,24 @@ def show(
                 )
         else:
             typer.echo("\n  No decisions.")
+
+        # Parse and display diagnostics
+        diag_raw = row.get("diagnostics")
+        if diag_raw:
+            diags = safe_json_loads(diag_raw, "cycle.diagnostics", default=[])
+            warnings = [d for d in diags if d.get("severity") in ACTIONABLE_SEVERITIES]
+            if warnings:
+                typer.echo(
+                    f"\n  Diagnostics ({len(warnings)} warning{'s' if len(warnings) != 1 else ''}):"
+                )
+                for d in warnings:
+                    sev = d.get("severity", "?").upper()
+                    typer.echo(f"    [{sev}] {d.get('code', '?')}: {d.get('message', '')}")
+                    if d.get("suggestion"):
+                        typer.echo(f"           → {d['suggestion']}")
+            else:
+                typer.echo("\n  No diagnostics.")
+        else:
+            typer.echo("\n  No diagnostics.")
     finally:
         conn.close()
