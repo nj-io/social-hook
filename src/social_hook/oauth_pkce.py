@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import http.server
 import logging
 import secrets
@@ -153,7 +154,7 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
                     b"<p>You can close this tab and return to the terminal.</p>"
                 )
             else:
-                error_desc = params.get("error_description", ["Unknown error"])[0]
+                error_desc = html.escape(params.get("error_description", ["Unknown error"])[0])
                 self.wfile.write(f"<h1>Authorization failed</h1><p>{error_desc}</p>".encode())
 
             threading.Thread(target=self.server.shutdown, daemon=True).start()

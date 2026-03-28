@@ -2617,13 +2617,14 @@ async def api_oauth_authorize(platform: str, request: Request):
     """
     import secrets as _secrets
 
-    from social_hook.setup.oauth import _build_auth_url, _generate_pkce
+    from social_hook.oauth_pkce import generate_pkce
+    from social_hook.setup.oauth import _build_auth_url
 
     _validate_oauth_platform(platform)
     _cleanup_expired_oauth_states()
 
     client_id, _client_secret = _get_oauth_credentials(platform)
-    code_verifier, code_challenge = _generate_pkce()
+    code_verifier, code_challenge = generate_pkce()
     state = _secrets.token_urlsafe(32)
 
     # Determine redirect_uri from the current request so the port is correct.

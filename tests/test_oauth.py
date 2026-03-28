@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from social_hook.oauth_pkce import generate_pkce
 from social_hook.setup.oauth import (
     OAUTH_PLATFORMS,
     _build_auth_url,
     _CallbackHandler,
     _exchange_code,
-    _generate_pkce,
     _save_tokens,
     run_pkce_flow,
     validate_token,
@@ -41,17 +41,17 @@ class TestOAuthPlatformConfigRegistry:
 
 class TestGeneratePkce:
     def test_returns_non_empty_strings(self):
-        verifier, challenge = _generate_pkce()
+        verifier, challenge = generate_pkce()
         assert isinstance(verifier, str) and len(verifier) > 0
         assert isinstance(challenge, str) and len(challenge) > 0
 
     def test_verifier_length(self):
-        verifier, _ = _generate_pkce()
+        verifier, _ = generate_pkce()
         # RFC 7636: verifier must be 43-128 chars
         assert 43 <= len(verifier) <= 128
 
     def test_challenge_is_base64url(self):
-        _, challenge = _generate_pkce()
+        _, challenge = generate_pkce()
         # base64url characters only (no padding)
         import re
 

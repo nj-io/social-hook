@@ -104,12 +104,7 @@ def _make_noop(name: str) -> Any:
             return None
         elif name.startswith("increment_"):
             return 0
-        elif (
-            name.startswith("update_")
-            or name.startswith("reset_")
-            or name.startswith("set_")
-            or name.startswith("supersede_")
-        ):
+        elif name.startswith(("update_", "reset_", "set_", "supersede_")):
             return False
         return None
 

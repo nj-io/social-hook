@@ -17,7 +17,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-import requests  # noqa: F401 — used by _exchange_code return type
+import requests
 
 from social_hook.adapters.auth import _DT_FORMAT
 from social_hook.adapters.auth import save_tokens as save_tokens_to_db
@@ -119,11 +119,6 @@ def validate_token(platform: str, access_token: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _generate_pkce() -> tuple[str, str]:
-    """Generate PKCE code_verifier and code_challenge."""
-    return generate_pkce()
-
-
 def _build_auth_url(
     client_id: str,
     state: str,
@@ -217,7 +212,7 @@ def run_pkce_flow(
     _CallbackHandler.error = None
 
     # 1. Generate PKCE verifier/challenge
-    code_verifier, code_challenge = _generate_pkce()
+    code_verifier, code_challenge = generate_pkce()
     state = secrets.token_urlsafe(32)
 
     # 2. Build the auth URL
@@ -241,7 +236,7 @@ def run_pkce_flow(
         print(f"  \033[4m{auth_url}\033[0m\n")
 
     # 4. Start HTTP callback server in background thread
-    server, server_thread = start_callback_server(port, CallbackHandler)
+    server, server_thread = start_callback_server(port, _CallbackHandler)
 
     # 5. Wait for callback — user can press [c] to copy URL while waiting
     import select
