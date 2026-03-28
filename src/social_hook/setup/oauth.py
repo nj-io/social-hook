@@ -4,25 +4,33 @@ Reusable module that can be called from the setup wizard or standalone script.
 Starts a local callback server, opens browser to authorization,
 waits for callback, exchanges code for tokens, saves to DB.
 
+PKCE mechanics (verifier/challenge, URL building, code exchange, callback
+server) are delegated to the generic ``social_hook.oauth_pkce`` module.
+This module adds platform configuration, token persistence, and
+interactive CLI UX.
+
 The OAUTH_PLATFORMS registry is the single source of truth for which platforms
 support OAuth 2.0 PKCE and their endpoint configuration.
 """
 
-import base64
-import hashlib
-import http.server
 import secrets
-import threading
-import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-import requests
+import requests  # noqa: F401 — used by _exchange_code return type
 
 from social_hook.adapters.auth import _DT_FORMAT
 from social_hook.adapters.auth import save_tokens as save_tokens_to_db
 from social_hook.db.connection import init_database
 from social_hook.filesystem import get_db_path
+from social_hook.oauth_pkce import (
+    CallbackHandler,
+    OAuthEndpoints,
+    build_auth_url,
+    exchange_code,
+    generate_pkce,
+    start_callback_server,
+)
 
 # ---------------------------------------------------------------------------
 # Platform registry
@@ -37,6 +45,14 @@ class OAuthPlatformConfig:
     token_url: str
     scopes: str
     default_port: int  # for CLI callback server
+
+    def to_endpoints(self) -> OAuthEndpoints:
+        """Convert to generic OAuthEndpoints for the PKCE module."""
+        return OAuthEndpoints(
+            auth_url=self.auth_url,
+            token_url=self.token_url,
+            scopes=self.scopes,
+        )
 
 
 OAUTH_PLATFORMS: dict[str, OAuthPlatformConfig] = {
@@ -99,17 +115,13 @@ def validate_token(platform: str, access_token: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# PKCE helpers
+# Backward-compatible private helpers (delegate to oauth_pkce)
 # ---------------------------------------------------------------------------
 
 
 def _generate_pkce() -> tuple[str, str]:
     """Generate PKCE code_verifier and code_challenge."""
-    verifier = secrets.token_urlsafe(64)[:128]
-    challenge = (
-        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    )
-    return verifier, challenge
+    return generate_pkce()
 
 
 def _build_auth_url(
@@ -124,16 +136,7 @@ def _build_auth_url(
     config = OAUTH_PLATFORMS.get(platform)
     if config is None:
         raise ValueError(f"Unknown OAuth platform: {platform}")
-    params = {
-        "response_type": "code",
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "scope": config.scopes,
-        "state": state,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-    }
-    return f"{config.auth_url}?{urllib.parse.urlencode(params)}"
+    return build_auth_url(config.to_endpoints(), client_id, state, code_challenge, redirect_uri)
 
 
 def _exchange_code(
@@ -149,60 +152,13 @@ def _exchange_code(
     config = OAUTH_PLATFORMS.get(platform)
     if config is None:
         raise ValueError(f"Unknown OAuth platform: {platform}")
-
-    data = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": redirect_uri,
-        "code_verifier": code_verifier,
-    }
-
-    if client_secret:
-        auth = (client_id, client_secret)
-    else:
-        data["client_id"] = client_id
-        auth = None
-
-    return requests.post(config.token_url, data=data, auth=auth, timeout=30)
+    return exchange_code(
+        config.to_endpoints(), code, code_verifier, client_id, client_secret, redirect_uri
+    )
 
 
-class _CallbackHandler(http.server.BaseHTTPRequestHandler):
-    """HTTP handler that captures the OAuth callback."""
-
-    code: str | None = None
-    state: str | None = None
-    error: str | None = None
-
-    def do_GET(self) -> None:
-        parsed = urllib.parse.urlparse(self.path)
-        params = urllib.parse.parse_qs(parsed.query)
-
-        if parsed.path == "/callback":
-            _CallbackHandler.code = params.get("code", [None])[0]
-            _CallbackHandler.state = params.get("state", [None])[0]
-            _CallbackHandler.error = params.get("error", [None])[0]
-
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-
-            if _CallbackHandler.code:
-                self.wfile.write(
-                    b"<h1>Authorization successful!</h1>"
-                    b"<p>You can close this tab and return to the terminal.</p>"
-                )
-            else:
-                error_desc = params.get("error_description", ["Unknown error"])[0]
-                self.wfile.write(f"<h1>Authorization failed</h1><p>{error_desc}</p>".encode())
-
-            # Shutdown server after handling
-            threading.Thread(target=self.server.shutdown, daemon=True).start()
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def log_message(self, format: str, *args: object) -> None:
-        pass  # Suppress default logging
+# Use the generic CallbackHandler
+_CallbackHandler = CallbackHandler
 
 
 def _save_tokens(
@@ -285,9 +241,7 @@ def run_pkce_flow(
         print(f"  \033[4m{auth_url}\033[0m\n")
 
     # 4. Start HTTP callback server in background thread
-    server = http.server.HTTPServer(("", port), _CallbackHandler)
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
+    server, server_thread = start_callback_server(port, CallbackHandler)
 
     # 5. Wait for callback — user can press [c] to copy URL while waiting
     import select

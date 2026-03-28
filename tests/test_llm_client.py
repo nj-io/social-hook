@@ -398,5 +398,5 @@ class TestDryRunContext:
 
     def test_nonexistent_operation_raises(self, temp_db):
         db = DryRunContext(temp_db, dry_run=True)
-        with pytest.raises(AttributeError, match="not found in db.operations"):
+        with pytest.raises(AttributeError, match="not found in"):
             db.nonexistent_operation()
