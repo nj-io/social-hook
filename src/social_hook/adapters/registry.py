@@ -1,20 +1,24 @@
-"""Media adapter registry with lazy initialization."""
+"""Media adapter registry with lazy initialization.
+
+Uses AdapterRegistry for dispatch instead of if/elif chains.
+Each media tool is registered with its factory, metadata, and
+class location for schema introspection.
+"""
 
 import importlib
 import logging
 from typing import Any
 
 from social_hook.adapters.media.base import MediaAdapter
+from social_hook.registry import AdapterRegistry
 
 logger = logging.getLogger(__name__)
 
-# Lazy singleton cache
-_adapter_cache: dict[str, MediaAdapter] = {}
+# Module-level registry for media adapters
+_media_registry = AdapterRegistry("media")
+_registered = False
 
-# All available media adapter names
-MEDIA_ADAPTER_NAMES = ["mermaid", "nano_banana_pro", "playwright", "ray_so"]
-
-# Adapter class locations for lazy import
+# Adapter class locations for lazy import (used by spec_schema introspection)
 _ADAPTER_CLASSES = {
     "mermaid": ("social_hook.adapters.media.mermaid", "MermaidAdapter"),
     "nano_banana_pro": ("social_hook.adapters.media.nanabananapro", "NanaBananaAdapter"),
@@ -22,29 +26,94 @@ _ADAPTER_CLASSES = {
     "playwright": ("social_hook.adapters.media.playwright", "PlaywrightAdapter"),
 }
 
-# Display metadata for each tool
-_TOOL_METADATA = {
-    "mermaid": {
-        "display_name": "Mermaid",
-        "description": "Flowcharts, sequence diagrams, and other Mermaid.js diagrams",
-    },
-    "nano_banana_pro": {
-        "display_name": "Nano Banana Pro",
-        "description": "AI-generated images from text prompts (Gemini)",
-    },
-    "ray_so": {
-        "display_name": "Ray.so",
-        "description": "Beautiful code snippet screenshots via ray.so",
-    },
-    "playwright": {
-        "display_name": "Playwright",
-        "description": "Browser screenshots of any webpage",
-    },
-}
+
+# =============================================================================
+# Per-tool factory functions
+# =============================================================================
+
+
+def _create_mermaid(**_kw) -> MediaAdapter:
+    from social_hook.adapters.media.mermaid import MermaidAdapter
+
+    return MermaidAdapter()
+
+
+def _create_nano_banana_pro(*, api_key: str | None = None, **_kw) -> MediaAdapter:
+    if not api_key:
+        raise ValueError("nano_banana_pro requires api_key (GEMINI_API_KEY)")
+    from social_hook.adapters.media.nanabananapro import NanaBananaAdapter
+
+    return NanaBananaAdapter(api_key=api_key)
+
+
+def _create_playwright(**_kw) -> MediaAdapter:
+    from social_hook.adapters.media.playwright import PlaywrightAdapter
+
+    return PlaywrightAdapter()
+
+
+def _create_ray_so(**_kw) -> MediaAdapter:
+    from social_hook.adapters.media.rayso import RaySoAdapter
+
+    return RaySoAdapter()
+
+
+# =============================================================================
+# Registration
+# =============================================================================
+
+
+def _ensure_registered():
+    """Lazily register all media adapters."""
+    global _registered
+    if _registered:
+        return
+    _registered = True
+
+    _media_registry.register(
+        "mermaid",
+        _create_mermaid,
+        metadata={
+            "display_name": "Mermaid",
+            "description": "Flowcharts, sequence diagrams, and other Mermaid.js diagrams",
+        },
+    )
+    _media_registry.register(
+        "nano_banana_pro",
+        _create_nano_banana_pro,
+        metadata={
+            "display_name": "Nano Banana Pro",
+            "description": "AI-generated images from text prompts (Gemini)",
+        },
+    )
+    _media_registry.register(
+        "ray_so",
+        _create_ray_so,
+        metadata={
+            "display_name": "Ray.so",
+            "description": "Beautiful code snippet screenshots via ray.so",
+        },
+    )
+    _media_registry.register(
+        "playwright",
+        _create_playwright,
+        metadata={
+            "display_name": "Playwright",
+            "description": "Browser screenshots of any webpage",
+        },
+    )
+
+
+# =============================================================================
+# Public API (backward-compatible)
+# =============================================================================
+
+# Backward-compatible constant
+MEDIA_ADAPTER_NAMES = list(_ADAPTER_CLASSES.keys())
 
 
 def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | None:
-    """Get media adapter by name with lazy initialization.
+    """Get media adapter by name with lazy initialization and caching.
 
     Args:
         name: One of "mermaid", "nano_banana_pro", "playwright", "ray_so"
@@ -56,45 +125,22 @@ def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | N
     Raises:
         ValueError: If nano_banana_pro requested without api_key
     """
-    if name in _adapter_cache:
-        return _adapter_cache[name]
+    _ensure_registered()
 
-    adapter: MediaAdapter | None = None
+    if not _media_registry.has(name):
+        logger.warning(
+            "Unknown media adapter: %s (available: %s)",
+            name,
+            _media_registry.names(),
+        )
+        return None
 
-    if name == "mermaid":
-        from social_hook.adapters.media.mermaid import MermaidAdapter
-
-        adapter = MermaidAdapter()
-
-    elif name == "nano_banana_pro":
-        if not api_key:
-            raise ValueError("nano_banana_pro requires api_key (GEMINI_API_KEY)")
-        from social_hook.adapters.media.nanabananapro import NanaBananaAdapter
-
-        adapter = NanaBananaAdapter(api_key=api_key)
-
-    elif name == "playwright":
-        from social_hook.adapters.media.playwright import PlaywrightAdapter
-
-        adapter = PlaywrightAdapter()
-
-    elif name == "ray_so":
-        from social_hook.adapters.media.rayso import RaySoAdapter
-
-        adapter = RaySoAdapter()
-
-    else:
-        logger.warning("Unknown media adapter: %s (available: %s)", name, MEDIA_ADAPTER_NAMES)
-
-    if adapter:
-        _adapter_cache[name] = adapter
-
-    return adapter
+    return _media_registry.get_or_create(name, api_key=api_key)
 
 
 def clear_adapter_cache() -> None:
     """Clear the adapter cache. Useful for testing."""
-    _adapter_cache.clear()
+    _media_registry.clear_cache()
 
 
 def get_tool_spec_schema(name: str) -> dict:
@@ -134,9 +180,10 @@ def list_available_tools() -> list[dict]:
     Returns:
         List of dicts with name, display_name, description, required_fields
     """
+    _ensure_registered()
     result = []
-    for name in MEDIA_ADAPTER_NAMES:
-        meta = _TOOL_METADATA.get(name, {})
+    for name in _media_registry.names():
+        meta = _media_registry.get_metadata(name)
         schema = get_tool_spec_schema(name)
         result.append(
             {
