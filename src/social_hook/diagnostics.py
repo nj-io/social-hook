@@ -12,18 +12,18 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Severity ordering for sort: lower = more severe = listed first
 _SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
-
-# Severities considered "actionable" (warning+) — used by notification
-# formatters and CLI to filter info-level diagnostics out of summaries.
-ACTIONABLE_SEVERITIES = ("warning", "error")
 
 
 class DiagnosticSeverity(Enum):
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
+
+    @classmethod
+    def actionable(cls) -> frozenset[str]:
+        """Severity values considered actionable (warning+)."""
+        return frozenset({cls.WARNING.value, cls.ERROR.value})
 
 
 @dataclass
@@ -36,10 +36,17 @@ class Diagnostic:
     suggestion: str | None = None
     context: dict[str, Any] = field(default_factory=dict)
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "severity": self.severity.value,
+            "message": self.message,
+            "suggestion": self.suggestion,
+            "context": self.context,
+        }
+
 
 DiagnosticContext = dict[str, Any]
-
-# Type alias for check functions
 CheckFn = Callable[[DiagnosticContext], list["Diagnostic"]]
 
 
@@ -116,7 +123,7 @@ def flex_get_action(obj: Any) -> str | None:
 
 def filter_actionable(diagnostics: list[dict]) -> list[dict]:
     """Return only warning+ severity diagnostics from a serialized list."""
-    return [d for d in diagnostics if d.get("severity") in ACTIONABLE_SEVERITIES]
+    return [d for d in diagnostics if d.get("severity") in DiagnosticSeverity.actionable()]
 
 
 def format_diagnostic_warnings(diagnostics: list[dict]) -> str:
@@ -135,5 +142,7 @@ def format_diagnostic_warnings(diagnostics: list[dict]) -> str:
     return "".join(f"\n{line}" if i > 0 else line for i, line in enumerate(lines))
 
 
-# Module-level singleton
+# Backward-compat alias — prefer DiagnosticSeverity.actionable()
+ACTIONABLE_SEVERITIES = DiagnosticSeverity.actionable()
+
 diagnostics_registry = DiagnosticRegistry()

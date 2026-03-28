@@ -3,6 +3,8 @@
 import logging
 from typing import Any
 
+from social_hook.diagnostics import filter_actionable
+
 logger = logging.getLogger(__name__)
 
 
@@ -110,10 +112,7 @@ def format_evaluation_cycle(
         if reasoning:
             lines.append(f'  \u2192 Reasoning: "{reasoning}"')
 
-    # Pipeline diagnostics (warning+ only)
     if diagnostics:
-        from social_hook.diagnostics import filter_actionable
-
         warnings = filter_actionable(diagnostics)
         if warnings:
             lines.append("")

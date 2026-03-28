@@ -134,8 +134,14 @@ class TestNoStrategiesDefined:
 
 
 # =============================================================================
-# preview_mode_targets
+# target_checks (consolidated single-pass: preview_mode, unknown_account,
+#                no_platform, unknown_strategy)
 # =============================================================================
+
+
+def _target_results_by_code(ctx: dict, code: str) -> list:
+    """Run the consolidated target_checks and filter by diagnostic code."""
+    return [r for r in _run_check("target_checks", ctx) if r.code == code]
 
 
 class TestPreviewModeTargets:
@@ -145,7 +151,7 @@ class TestPreviewModeTargets:
                 "preview-x": {"strategy": "building-public"},
             },
         }
-        results = _run_check("preview_mode_targets", ctx)
+        results = _target_results_by_code(ctx, "preview_mode_targets")
         assert len(results) == 1
         assert results[0].severity == DiagnosticSeverity.INFO
         assert "preview-x" in results[0].message
@@ -156,11 +162,11 @@ class TestPreviewModeTargets:
                 "prod-x": {"strategy": "brand", "account": "product"},
             },
         }
-        results = _run_check("preview_mode_targets", ctx)
+        results = _target_results_by_code(ctx, "preview_mode_targets")
         assert results == []
 
     def test_empty_targets(self):
-        results = _run_check("preview_mode_targets", {"config_targets": {}})
+        results = _target_results_by_code({"config_targets": {}}, "preview_mode_targets")
         assert results == []
 
 
@@ -229,7 +235,7 @@ class TestTargetUnknownAccount:
             },
             "config_accounts": {"product": {}},
         }
-        results = _run_check("target_unknown_account", ctx)
+        results = _target_results_by_code(ctx, "target_unknown_account")
         assert len(results) == 1
         assert "missing-account" in results[0].message
 
@@ -240,7 +246,7 @@ class TestTargetUnknownAccount:
             },
             "config_accounts": {"product": {}},
         }
-        results = _run_check("target_unknown_account", ctx)
+        results = _target_results_by_code(ctx, "target_unknown_account")
         assert results == []
 
     def test_no_account_on_target(self):
@@ -250,7 +256,7 @@ class TestTargetUnknownAccount:
             },
             "config_accounts": {},
         }
-        results = _run_check("target_unknown_account", ctx)
+        results = _target_results_by_code(ctx, "target_unknown_account")
         assert results == []
 
 
@@ -266,7 +272,7 @@ class TestTargetNoPlatform:
                 "broken": {"strategy": "brand"},
             },
         }
-        results = _run_check("target_no_platform", ctx)
+        results = _target_results_by_code(ctx, "target_no_platform")
         assert len(results) == 1
         assert "broken" in results[0].message
 
@@ -276,7 +282,7 @@ class TestTargetNoPlatform:
                 "ok": {"strategy": "brand", "account": "prod"},
             },
         }
-        results = _run_check("target_no_platform", ctx)
+        results = _target_results_by_code(ctx, "target_no_platform")
         assert results == []
 
     def test_has_platform(self):
@@ -285,7 +291,7 @@ class TestTargetNoPlatform:
                 "ok": {"strategy": "brand", "platform": "x"},
             },
         }
-        results = _run_check("target_no_platform", ctx)
+        results = _target_results_by_code(ctx, "target_no_platform")
         assert results == []
 
 
@@ -302,7 +308,7 @@ class TestTargetUnknownStrategy:
             },
             "strategies": {"building-public": {"action": "draft"}},
         }
-        results = _run_check("target_unknown_strategy", ctx)
+        results = _target_results_by_code(ctx, "target_unknown_strategy")
         assert len(results) == 1
         assert "nonexistent" in results[0].message
 
@@ -313,7 +319,7 @@ class TestTargetUnknownStrategy:
             },
             "strategies": {"building-public": {"action": "draft"}},
         }
-        results = _run_check("target_unknown_strategy", ctx)
+        results = _target_results_by_code(ctx, "target_unknown_strategy")
         assert results == []
 
     def test_empty_strategies(self):
@@ -323,7 +329,7 @@ class TestTargetUnknownStrategy:
             },
             "strategies": {},
         }
-        results = _run_check("target_unknown_strategy", ctx)
+        results = _target_results_by_code(ctx, "target_unknown_strategy")
         assert len(results) == 1
 
 

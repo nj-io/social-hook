@@ -1027,11 +1027,9 @@ def _run_diagnostics(
     try:
         import json
 
-        # Side-effect import registers pipeline checks on the diagnostics_registry
         import social_hook.pipeline_diagnostics  # noqa: F401
         from social_hook.diagnostics import diagnostics_registry
 
-        # Build context dict from config, evaluation, and flags
         strategies = {
             name: {
                 "action": getattr(sd.action, "value", sd.action),
@@ -1044,7 +1042,7 @@ def _run_diagnostics(
 
         diag_context = {
             "strategies": strategies,
-            "config_targets": {name: cfg for name, cfg in (ctx.config.targets or {}).items()},
+            "config_targets": ctx.config.targets or {},
             "config_strategies": ctx.config.content_strategies or {},
             "config_platforms": ctx.config.platforms or {},
             "config_accounts": ctx.config.accounts or {},
@@ -1057,20 +1055,10 @@ def _run_diagnostics(
 
         results = diagnostics_registry.run(diag_context)
 
-        serialized = [
-            {
-                "code": d.code,
-                "severity": d.severity.value,
-                "message": d.message,
-                "suggestion": d.suggestion,
-                "context": d.context,
-            }
-            for d in results
-        ]
+        serialized = [d.to_dict() for d in results]
 
         if not ctx.dry_run:
             ops.update_cycle_diagnostics(ctx.conn, cycle_id, json.dumps(serialized))
-            ctx.db.emit_data_event("cycle", "updated", cycle_id, ctx.project.id)
 
         return serialized
     except Exception:

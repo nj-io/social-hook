@@ -1,6 +1,6 @@
 """Pipeline-specific diagnostic checks for evaluation cycle health.
 
-Registers 10 checks on the shared diagnostics_registry.
+Registers 7 checks on the shared diagnostics_registry.
 Import this module for side-effect registration.
 """
 
@@ -29,12 +29,9 @@ def _check_draft_without_target(ctx: DiagnosticContext) -> list[Diagnostic]:
     strategies = ctx.get("strategies") or {}
     config_targets = ctx.get("config_targets") or {}
 
-    # Build set of strategies referenced by targets
-    target_strategies: set[str] = set()
-    for _tname, tcfg in config_targets.items():
-        strategy = flex_get(tcfg, "strategy")
-        if strategy:
-            target_strategies.add(strategy)
+    target_strategies = {
+        flex_get(tcfg, "strategy") for tcfg in config_targets.values() if flex_get(tcfg, "strategy")
+    }
 
     for sname, sdata in strategies.items():
         action_str = flex_get_action(sdata)
@@ -67,14 +64,7 @@ def _check_no_platforms_enabled(ctx: DiagnosticContext) -> list[Diagnostic]:
             )
         ]
 
-    # Check if all platforms are disabled
-    any_enabled = False
-    for _pname, pcfg in config_platforms.items():
-        if flex_get(pcfg, "enabled", True):
-            any_enabled = True
-            break
-
-    if not any_enabled:
+    if not any(flex_get(pcfg, "enabled", True) for pcfg in config_platforms.values()):
         return [
             Diagnostic(
                 code="no_platforms_enabled",
@@ -106,14 +96,24 @@ def _check_no_strategies_defined(ctx: DiagnosticContext) -> list[Diagnostic]:
     return []
 
 
-@diagnostics_registry.register("preview_mode_targets")
-def _check_preview_mode_targets(ctx: DiagnosticContext) -> list[Diagnostic]:
-    """Targets drafting in preview mode (no account connected)."""
+@diagnostics_registry.register("target_checks")
+def _check_targets_single_pass(ctx: DiagnosticContext) -> list[Diagnostic]:
+    """Single-pass target validation: preview mode, unknown account/strategy, no platform.
+
+    Consolidates four per-target checks into one iteration of config_targets.
+    """
     results: list[Diagnostic] = []
     config_targets = ctx.get("config_targets") or {}
+    config_accounts = ctx.get("config_accounts") or {}
+    strategies = ctx.get("strategies") or {}
 
     for tname, tcfg in config_targets.items():
-        if not flex_get(tcfg, "account"):
+        account = flex_get(tcfg, "account")
+        platform = flex_get(tcfg, "platform")
+        strategy = flex_get(tcfg, "strategy")
+
+        # preview_mode_targets: no account connected
+        if not account:
             results.append(
                 Diagnostic(
                     code="preview_mode_targets",
@@ -124,62 +124,7 @@ def _check_preview_mode_targets(ctx: DiagnosticContext) -> list[Diagnostic]:
                 )
             )
 
-    return results
-
-
-@diagnostics_registry.register("hold_limit_reached")
-def _check_hold_limit_reached(ctx: DiagnosticContext) -> list[Diagnostic]:
-    """Hold count exceeded, decision forced to skip."""
-    hold_limit_forced = ctx.get("hold_limit_forced", False)
-
-    if hold_limit_forced:
-        return [
-            Diagnostic(
-                code="hold_limit_reached",
-                severity=WARNING,
-                message="Hold limit reached, decision forced to skip",
-                suggestion="Review held decisions or increase max_hold_count",
-            )
-        ]
-
-    return []
-
-
-@diagnostics_registry.register("all_strategies_skipped")
-def _check_all_strategies_skipped(ctx: DiagnosticContext) -> list[Diagnostic]:
-    """Every strategy returned skip."""
-    strategies = ctx.get("strategies") or {}
-
-    if not strategies:
-        return []
-
-    all_skip = True
-    for _sname, sdata in strategies.items():
-        if flex_get_action(sdata) != "skip":
-            all_skip = False
-            break
-
-    if all_skip:
-        return [
-            Diagnostic(
-                code="all_strategies_skipped",
-                severity=INFO,
-                message="All strategies returned skip for this commit",
-            )
-        ]
-
-    return []
-
-
-@diagnostics_registry.register("target_unknown_account")
-def _check_target_unknown_account(ctx: DiagnosticContext) -> list[Diagnostic]:
-    """Target references account not in config.accounts."""
-    results: list[Diagnostic] = []
-    config_targets = ctx.get("config_targets") or {}
-    config_accounts = ctx.get("config_accounts") or {}
-
-    for tname, tcfg in config_targets.items():
-        account = flex_get(tcfg, "account")
+        # target_unknown_account: account not in config.accounts
         if account and account not in config_accounts:
             results.append(
                 Diagnostic(
@@ -191,17 +136,8 @@ def _check_target_unknown_account(ctx: DiagnosticContext) -> list[Diagnostic]:
                 )
             )
 
-    return results
-
-
-@diagnostics_registry.register("target_no_platform")
-def _check_target_no_platform(ctx: DiagnosticContext) -> list[Diagnostic]:
-    """Target has neither account nor platform."""
-    results: list[Diagnostic] = []
-    config_targets = ctx.get("config_targets") or {}
-
-    for tname, tcfg in config_targets.items():
-        if not flex_get(tcfg, "account") and not flex_get(tcfg, "platform"):
+        # target_no_platform: neither account nor platform
+        if not account and not platform:
             results.append(
                 Diagnostic(
                     code="target_no_platform",
@@ -212,18 +148,7 @@ def _check_target_no_platform(ctx: DiagnosticContext) -> list[Diagnostic]:
                 )
             )
 
-    return results
-
-
-@diagnostics_registry.register("target_unknown_strategy")
-def _check_target_unknown_strategy(ctx: DiagnosticContext) -> list[Diagnostic]:
-    """Target's strategy not in strategies dict (no evaluator decision)."""
-    results: list[Diagnostic] = []
-    config_targets = ctx.get("config_targets") or {}
-    strategies = ctx.get("strategies") or {}
-
-    for tname, tcfg in config_targets.items():
-        strategy = flex_get(tcfg, "strategy")
+        # target_unknown_strategy: strategy not in evaluator decisions
         if strategy and strategy not in strategies:
             results.append(
                 Diagnostic(
@@ -236,6 +161,42 @@ def _check_target_unknown_strategy(ctx: DiagnosticContext) -> list[Diagnostic]:
             )
 
     return results
+
+
+@diagnostics_registry.register("hold_limit_reached")
+def _check_hold_limit_reached(ctx: DiagnosticContext) -> list[Diagnostic]:
+    """Hold count exceeded, decision forced to skip."""
+    if not ctx.get("hold_limit_forced", False):
+        return []
+
+    return [
+        Diagnostic(
+            code="hold_limit_reached",
+            severity=WARNING,
+            message="Hold limit reached, decision forced to skip",
+            suggestion="Review held decisions or increase max_hold_count",
+        )
+    ]
+
+
+@diagnostics_registry.register("all_strategies_skipped")
+def _check_all_strategies_skipped(ctx: DiagnosticContext) -> list[Diagnostic]:
+    """Every strategy returned skip."""
+    strategies = ctx.get("strategies") or {}
+
+    if not strategies:
+        return []
+
+    if all(flex_get_action(sdata) == "skip" for sdata in strategies.values()):
+        return [
+            Diagnostic(
+                code="all_strategies_skipped",
+                severity=INFO,
+                message="All strategies returned skip for this commit",
+            )
+        ]
+
+    return []
 
 
 @diagnostics_registry.register("legacy_drafting_fallback")

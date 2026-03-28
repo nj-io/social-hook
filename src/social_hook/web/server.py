@@ -55,6 +55,13 @@ def _parse_episode_tags(decision) -> list | None:
     return ep_tags or None
 
 
+def _parse_diagnostics_column(cycle_dict: dict) -> list:
+    """Parse the diagnostics JSON column on a cycle dict, returning a list."""
+    raw = cycle_dict.get("diagnostics")
+    cycle_dict["diagnostics"] = safe_json_loads(raw, "cycle.diagnostics", default=[]) if raw else []
+    return cycle_dict["diagnostics"]
+
+
 # ---------------------------------------------------------------------------
 # WebSocket gateway
 # ---------------------------------------------------------------------------
@@ -4804,12 +4811,7 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
         enriched = []
         for c in cycles:
             cd = c.to_dict()
-
-            # Parse diagnostics JSON column
-            diag_raw = cd.get("diagnostics")
-            cd["diagnostics"] = (
-                safe_json_loads(diag_raw, "cycle.diagnostics", default=[]) if diag_raw else []
-            )
+            _parse_diagnostics_column(cd)
 
             # Get drafts for this cycle to derive strategies and status
             drafts = ops.get_drafts_by_cycle(conn, c.id)
@@ -5015,12 +5017,7 @@ async def api_get_cycle_detail(project_id: str, cycle_id: str):
 
         cycle = EvaluationCycle.from_dict(dict(row))
         cycle_dict = cycle.to_dict()
-
-        # Parse diagnostics JSON column
-        diag_raw = cycle_dict.get("diagnostics")
-        cycle_dict["diagnostics"] = (
-            safe_json_loads(diag_raw, "cycle.diagnostics", default=[]) if diag_raw else []
-        )
+        _parse_diagnostics_column(cycle_dict)
 
         # Get associated drafts
         drafts = ops.get_drafts_by_cycle(conn, cycle_id)
