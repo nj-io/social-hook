@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 import sys
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from social_hook.config.yaml import load_full_config
@@ -21,46 +19,17 @@ from social_hook.parsing import enum_value
 from social_hook.rate_limits import check_rate_limit
 
 if TYPE_CHECKING:
-    from social_hook.config.project import ProjectConfig
-    from social_hook.config.yaml import Config
-    from social_hook.models import Project
+    pass
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class AnalyzerOutcome:
-    """Result from stage 1 commit analyzer with evaluation gating signal.
-
-    result: The commit analysis, or None on error.
-    should_evaluate: True = proceed to stage 2, False = defer (interval not met).
-    """
-
-    result: object | None  # CommitAnalysisResult | None (avoids import at module level)
-    should_evaluate: bool
-
-
-@dataclass
-class TriggerContext:
-    """Shared context for trigger pipeline functions.
-
-    Groups the parameters that flow through _run_commit_analyzer,
-    _run_trivial_skip, and _run_targets_path.
-    """
-
-    config: Config
-    conn: sqlite3.Connection
-    db: DryRunContext
-    project: Project
-    commit: CommitInfo
-    project_config: ProjectConfig | None
-    current_branch: str | None
-    dry_run: bool
-    verbose: bool
-    show_prompt: bool
-    existing_decision_id: str | None = None
-
-
+from social_hook.trigger_context import (  # noqa: E402, F401
+    AnalyzerOutcome,
+    TriggerContext,
+    build_platform_summaries,
+    fetch_evaluator_extras,
+)
 from social_hook.trigger_git import (  # noqa: E402, F401
     _get_current_branch,
     git_remote_origin,
@@ -332,28 +301,13 @@ def run_trigger(
         conn.close()
         return 1
 
-    # Build platform summaries for evaluator context
-    platform_summaries = []
-    for pname, pcfg in config.platforms.items():
-        if pcfg.enabled:
-            summary = f"{pname} ({pcfg.priority})"
-            if pcfg.type == "custom" and pcfg.description:
-                summary += f" — {pcfg.description}"
-            platform_summaries.append(summary)
-
-    # Gather scheduling state for evaluator awareness
-    from social_hook.scheduling import get_scheduling_state
-
-    try:
-        scheduling_state = get_scheduling_state(conn, project.id, config)
-    except Exception as e:
-        logger.warning(f"Failed to get scheduling state (non-fatal): {e}")
-        scheduling_state = None
-
-    # Fetch topics and arcs for evaluator context (exclude dismissed topics)
-    all_topics = ops.get_topics_by_project(conn, project.id, include_dismissed=False)
-    held_topics = [t for t in all_topics if t.status == "holding"]
-    active_arcs_all = ops.get_arcs_by_project(conn, project.id, status="active")
+    # Build evaluator context helpers (shared with evaluate_batch)
+    platform_summaries = build_platform_summaries(config)
+    extras = fetch_evaluator_extras(conn, project.id, config)
+    scheduling_state = extras.scheduling_state
+    all_topics = extras.all_topics
+    held_topics = extras.held_topics
+    active_arcs_all = extras.active_arcs
 
     # Stage 1: Commit Analyzer (targets path only, with interval gating)
     analyzer_result = None
@@ -1284,28 +1238,12 @@ def evaluate_batch(
             print(f"Batch commit analyzer skipped: {e}", file=sys.stderr)
 
     # 3. Run stage 2: Evaluator on combined diffs
-    # Build platform summaries (same as run_trigger)
-    platform_summaries = []
-    for pname, pcfg in ctx.config.platforms.items():
-        if pcfg.enabled:
-            summary = f"{pname} ({pcfg.priority})"
-            if pcfg.type == "custom" and pcfg.description:
-                summary += f" — {pcfg.description}"
-            platform_summaries.append(summary)
-
-    # Gather scheduling state
-    from social_hook.scheduling import get_scheduling_state
-
-    try:
-        scheduling_state = get_scheduling_state(ctx.conn, ctx.project.id, ctx.config)
-    except Exception as e:
-        logger.warning("Failed to get scheduling state for batch (non-fatal): %s", e)
-        scheduling_state = None
-
-    # Fetch topics and arcs
-    all_topics = ops.get_topics_by_project(ctx.conn, ctx.project.id, include_dismissed=False)
-    held_topics = [t for t in all_topics if t.status == "holding"]
-    active_arcs_all = ops.get_arcs_by_project(ctx.conn, ctx.project.id, status="active")
+    platform_summaries = build_platform_summaries(ctx.config)
+    extras = fetch_evaluator_extras(ctx.conn, ctx.project.id, ctx.config)
+    scheduling_state = extras.scheduling_state
+    all_topics = extras.all_topics
+    held_topics = extras.held_topics
+    active_arcs_all = extras.active_arcs
 
     ctx.db.emit_data_event(
         "pipeline", PipelineStage.EVALUATING, trigger_commit_hash[:8], ctx.project.id
