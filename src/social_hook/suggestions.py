@@ -183,12 +183,10 @@ def evaluate_suggestion(
             from social_hook.compat import make_eval_compat
             from social_hook.drafting import draft_for_platforms
             from social_hook.models import Decision
-
-            def _val(x: Any) -> Any:
-                return x.value if hasattr(x, "value") else x
+            from social_hook.parsing import enum_value
 
             first_strategy = next(iter(evaluation.strategies.values()), None)
-            if first_strategy and _val(first_strategy.action) == "draft":
+            if first_strategy and enum_value(first_strategy.action) == "draft":
                 decision = Decision(
                     id=generate_id("decision"),
                     project_id=project_id,

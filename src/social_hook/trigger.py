@@ -18,7 +18,7 @@ from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
 from social_hook.models import CommitInfo, Decision, Draft, PipelineStage, is_draftable
-from social_hook.parsing import safe_int
+from social_hook.parsing import enum_value, safe_int
 from social_hook.rate_limits import check_rate_limit
 
 if TYPE_CHECKING:
@@ -656,10 +656,7 @@ def run_trigger(
         conn.close()
         return 3
 
-    def _val(x):
-        return x.value if hasattr(x, "value") else x
-
-    decision_type = _val(target.action)  # "draft", "hold", or "skip"
+    decision_type = enum_value(target.action)  # "draft", "hold", or "skip"
 
     decision = Decision(
         id=existing_decision_id or generate_id("decision"),
@@ -671,9 +668,9 @@ def run_trigger(
         angle=target.angle,
         episode_type=None,
         episode_tags=analysis.episode_tags,
-        post_category=_val(target.post_category),
+        post_category=enum_value(target.post_category),
         arc_id=target.arc_id,
-        media_tool=_val(target.media_tool),
+        media_tool=enum_value(target.media_tool),
         targets={"default": target.model_dump()},
         commit_summary=analysis.summary,
         consolidate_with=target.consolidate_with,
@@ -1029,9 +1026,6 @@ def _run_targets_path(
     """New targets pipeline path: multi-strategy -> multi-target routing."""
     from social_hook.models import EvaluationCycle
 
-    def _val(x):
-        return x.value if hasattr(x, "value") else x
-
     # Create evaluation cycle record
     cycle = EvaluationCycle(
         id=generate_id("cycle"),
@@ -1111,7 +1105,7 @@ def _run_targets_path(
 
     # Update content topic statuses for held topics
     for _strategy_name, strat_decision in evaluation.strategies.items():
-        action = _val(strat_decision.action)
+        action = enum_value(strat_decision.action)
         if action == "hold" and strat_decision.topic_id:
             ops.update_topic_status(ctx.conn, strat_decision.topic_id, "holding")
 
@@ -1121,7 +1115,7 @@ def _run_targets_path(
     # Get the first "draft" strategy for arc/angle/category or fall back to first strategy
     first_draft_strategy = None
     for _sn, sd in evaluation.strategies.items():
-        if _val(sd.action) == "draft":
+        if enum_value(sd.action) == "draft":
             first_draft_strategy = sd
             break
     representative = first_draft_strategy or next(iter(evaluation.strategies.values()))
@@ -1136,9 +1130,9 @@ def _run_targets_path(
         angle=representative.angle,
         episode_type=None,
         episode_tags=analysis.episode_tags,
-        post_category=_val(representative.post_category),
+        post_category=enum_value(representative.post_category),
         arc_id=representative.arc_id,
-        media_tool=_val(representative.media_tool),
+        media_tool=enum_value(representative.media_tool),
         targets={k: v.model_dump() for k, v in evaluation.strategies.items()},
         commit_summary=analysis.summary,
         consolidate_with=representative.consolidate_with,
@@ -1164,7 +1158,7 @@ def _run_targets_path(
     # Arc activation for draftable strategies
     if is_draftable(decision.decision):
         for _sn, sd in evaluation.strategies.items():
-            if _val(sd.action) != "draft":
+            if enum_value(sd.action) != "draft":
                 continue
             if sd.new_arc_theme and not sd.arc_id:
                 try:
@@ -1279,7 +1273,7 @@ def _run_targets_path(
             # Update topic status for strategies that drafted with a topic_id
             if draft_results and not ctx.dry_run:
                 for _sn, sd in evaluation.strategies.items():
-                    if _val(sd.action) == "draft" and sd.topic_id:
+                    if enum_value(sd.action) == "draft" and sd.topic_id:
                         new_status = "partial" if sd.arc_id else "covered"
                         ops.update_topic_status(ctx.conn, sd.topic_id, new_status)
                         if ctx.verbose:
@@ -1303,7 +1297,7 @@ def _run_targets_path(
 
             strategy_outcomes = {
                 sn: {
-                    "action": _val(sd.action),
+                    "action": enum_value(sd.action),
                     "reason": sd.reason,
                     "arc_id": sd.arc_id,
                     "topic_id": sd.topic_id,
