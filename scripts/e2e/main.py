@@ -69,6 +69,12 @@ def main():
         help="Pause after each live post so you can verify it on the platform before deletion. "
         "Implies --live. Only affects Section U (Platform Posting).",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Non-interactive mode for agents/CI. Skips prompts, prints auth URLs instead of "
+        "opening browsers, polls silently. Auto-selects claude-cli provider if --provider not set.",
+    )
     args = parser.parse_args()
 
     # --pause implies --live
@@ -91,16 +97,20 @@ def main():
             print()
         print("  For full coverage, run once with each provider.")
         print("=" * 60)
-        while True:
-            choice = input("\n  Select provider [1-2]: ").strip()
-            if choice == "1":
-                provider = "claude-cli"
-                break
-            elif choice == "2":
-                provider = "anthropic"
-                break
-            else:
-                print("  Invalid choice. Enter 1 or 2.")
+        if args.headless or not sys.stdin.isatty():
+            provider = "claude-cli"
+            print(f"\n  Headless mode — auto-selected: {provider}")
+        else:
+            while True:
+                choice = input("\n  Select provider [1-2]: ").strip()
+                if choice == "1":
+                    provider = "claude-cli"
+                    break
+                elif choice == "2":
+                    provider = "anthropic"
+                    break
+                else:
+                    print("  Invalid choice. Enter 1 or 2.")
 
     # Determine which sections to run
     sections_to_run = set(SECTION_REGISTRY.keys())
@@ -228,6 +238,7 @@ def main():
             if info.get("needs_live"):
                 kwargs["live"] = args.live
                 kwargs["pause"] = args.pause
+                kwargs["headless"] = args.headless or not sys.stdin.isatty()
             mod.run(harness, runner, **kwargs)
 
             # Auto-save base-project fixture after section A

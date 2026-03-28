@@ -16,11 +16,13 @@ def _mock_config(env=None, platforms=None):
 
 
 class TestCreateXAdapter:
+    @patch("social_hook.filesystem.get_db_path")
     @patch("social_hook.adapters.platform.factory.auth.refresh_and_get_token")
-    def test_create_x_adapter_from_db(self, mock_refresh):
-        """X adapter created with Bearer token from DB refresh."""
+    def test_create_x_adapter_from_db(self, mock_refresh, mock_auth_db):
+        """X adapter created with Bearer token from main auth DB."""
         from social_hook.adapters.platform.factory import create_adapter
 
+        mock_auth_db.return_value = "/tmp/auth.db"
         mock_refresh.return_value = "test-access-token"
         x_platform_config = MagicMock()
         x_platform_config.account_tier = "free"
@@ -30,7 +32,7 @@ class TestCreateXAdapter:
             platforms={"x": x_platform_config},
         )
 
-        adapter = create_adapter("x", config, db_path="/tmp/test.db")
+        adapter = create_adapter("x", config)
 
         from social_hook.adapters.platform.x import XAdapter
 
@@ -38,7 +40,7 @@ class TestCreateXAdapter:
         assert adapter.access_token == "test-access-token"
         mock_refresh.assert_called_once()
         call_kwargs = mock_refresh.call_args
-        assert call_kwargs[0][0] == "/tmp/test.db"  # db_path
+        assert call_kwargs[0][0] == "/tmp/auth.db"  # uses get_auth_db_path()
         assert call_kwargs[1]["client_id"] == "cid"
 
     def test_create_x_adapter_missing_client_id(self):
@@ -48,22 +50,15 @@ class TestCreateXAdapter:
         config = _mock_config(env={"X_CLIENT_SECRET": "csec"})
 
         with pytest.raises(ConfigError, match="X_CLIENT_ID"):
-            create_adapter("x", config, db_path="/tmp/test.db")
+            create_adapter("x", config)
 
-    def test_create_x_adapter_missing_db_path(self):
-        """db_path=None raises ConfigError for X adapter."""
-        from social_hook.adapters.platform.factory import create_adapter
-
-        config = _mock_config(env={"X_CLIENT_ID": "cid", "X_CLIENT_SECRET": "csec"})
-
-        with pytest.raises(ConfigError, match="db_path required"):
-            create_adapter("x", config, db_path=None)
-
+    @patch("social_hook.filesystem.get_db_path")
     @patch("social_hook.adapters.platform.factory.auth.refresh_and_get_token")
-    def test_x_adapter_uses_tier_from_config(self, mock_refresh):
+    def test_x_adapter_uses_tier_from_config(self, mock_refresh, mock_auth_db):
         """X adapter picks up account_tier from platform config."""
         from social_hook.adapters.platform.factory import create_adapter
 
+        mock_auth_db.return_value = "/tmp/auth.db"
         mock_refresh.return_value = "tok"
         x_cfg = MagicMock()
         x_cfg.account_tier = "basic"
@@ -72,7 +67,7 @@ class TestCreateXAdapter:
             env={"X_CLIENT_ID": "cid", "X_CLIENT_SECRET": "csec"},
             platforms={"x": x_cfg},
         )
-        adapter = create_adapter("x", config, db_path="/tmp/t.db")
+        adapter = create_adapter("x", config)
         assert adapter.tier == "basic"
 
 
