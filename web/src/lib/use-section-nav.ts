@@ -45,16 +45,19 @@ export function useSectionNav({
 
   // Scroll to a section element within the container
   const doScroll = useCallback(
-    (id: string) => {
+    (id: string, behavior: ScrollBehavior = "smooth") => {
       const el = document.getElementById(id);
       const container = scrollContainerRef.current;
       if (!el || !container) return;
       scrollingToRef.current = true;
-      const top = el.offsetTop - container.offsetTop;
-      container.scrollTo({ top, behavior: "smooth" });
+      const top =
+        el.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop;
+      container.scrollTo({ top, behavior });
       setTimeout(() => {
         scrollingToRef.current = false;
-      }, scrollSettleMs);
+      }, behavior === "instant" ? 0 : scrollSettleMs);
     },
     [scrollContainerRef, scrollSettleMs],
   );
@@ -85,10 +88,21 @@ export function useSectionNav({
   useEffect(() => {
     const target = pendingScrollRef.current;
     if (!target) return;
+
+    function attemptScroll(id: string) {
+      // Double-rAF ensures the browser has painted after any layout changes
+      // (e.g. contentHeight measurement in the settings page)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          doScroll(id, "instant");
+        });
+      });
+    }
+
     const el = document.getElementById(target);
     if (el && scrollContainerRef.current) {
       pendingScrollRef.current = null;
-      doScroll(target);
+      attemptScroll(target);
       return;
     }
     // Element not yet rendered — poll briefly
@@ -98,7 +112,7 @@ export function useSectionNav({
         const id = pendingScrollRef.current!;
         pendingScrollRef.current = null;
         clearInterval(interval);
-        doScroll(id);
+        attemptScroll(id);
       }
     }, 50);
     const timeout = setTimeout(() => clearInterval(interval), 3000);
