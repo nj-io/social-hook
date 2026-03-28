@@ -469,14 +469,9 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path) -> No
     if not migrations_dir.exists():
         return
 
-    # Fresh DB: schema_version table doesn't exist yet — nothing to migrate.
-    tables = {
-        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    }
-    if "schema_version" not in tables:
-        return
-
     # Bridge: migrate from sequential (3-19) to timestamp versioning.
+    # get_current_version returns 0 if schema_version table doesn't exist,
+    # so the bridge is a no-op for fresh databases.
     current = get_current_version(conn)
     if 0 < current < 1000:
         _bridge_to_timestamp_versions(conn, current)

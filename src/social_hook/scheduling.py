@@ -123,6 +123,8 @@ def find_optimal_slot(
         user_tz = ZoneInfo("UTC")
 
     now_utc = now if now is not None else datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
     now_local = now_utc.astimezone(user_tz)
 
     # Weekly limit check
@@ -150,6 +152,7 @@ def find_optimal_slot(
                 list(_DAY_MAP.keys()),
             )
     optimal_day_nums = [_DAY_MAP[d] for d in optimal_days if d in _DAY_MAP]
+    sorted_optimal_hours = sorted(optimal_hours)
 
     for day_offset in range(8):
         candidate_date = now_local + timedelta(days=day_offset)
@@ -165,8 +168,7 @@ def find_optimal_slot(
             else f"Non-optimal day (preferred: {optimal_days})"
         )
 
-        sorted_hours = sorted(optimal_hours)
-        for hour in sorted_hours:
+        for hour in sorted_optimal_hours:
             candidate = candidate_date.replace(hour=hour, minute=0, second=0, microsecond=0)
 
             if candidate <= now_local:
@@ -273,7 +275,6 @@ def calculate_optimal_time(
             existing_post_times.append(pt)
 
     # Scheduled-but-not-posted times
-    ops.get_due_drafts(conn)
     all_pending = ops.get_all_pending_drafts(conn)
     sched_times: list[datetime] = []
     for d in all_pending:
