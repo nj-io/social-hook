@@ -335,10 +335,51 @@ def run_trigger(
 
     project_config = load_project_config(repo_path)
 
+    # 5b. Interval gating — BEFORE expensive context assembly, discovery, LLM setup.
+    # Deferred commits only need config + project + commit message, not full context.
+    has_targets = (
+        getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets
+    )
+
+    # Bypass switch: manual retrigger respects interval by default (set True to skip queue)
+    MANUAL_BYPASSES_INTERVAL = False  # noqa: N806
+    skip_interval = (
+        (trigger_source == "manual" and MANUAL_BYPASSES_INTERVAL)
+        or trigger_source == "drain"  # rate-limit-drained commits skip interval (already counted)
+    )
+
+    if has_targets and not skip_interval:
+        # Cheap gating check — only needs counter + interval setting
+        outcome = _run_commit_analyzer_gate(conn, project, project_config, verbose)
+        if not outcome.should_evaluate:
+            # Fast path: parse commit for message, create deferred decision, return
+            commit = parse_commit_info(commit_hash, repo_path)
+            decision = Decision(
+                id=existing_decision_id or generate_id("decision"),
+                project_id=project.id,
+                commit_hash=commit_hash,
+                decision="deferred_eval",
+                reasoning="Deferred: commit awaiting batch threshold",
+                commit_message=commit.message,
+                processed=True,  # NOT drained by scheduler
+                trigger_source=trigger_source,
+                branch=current_branch,
+            )
+            if existing_decision_id:
+                ops.upsert_decision(conn, decision)
+            else:
+                db.insert_decision(decision)
+            db.emit_data_event("decision", "created", decision.id, project.id)
+            db.emit_data_event("pipeline", PipelineStage.QUEUED, commit_hash[:8], project.id)
+            if verbose:
+                print("Evaluation deferred: interval not met")
+            conn.close()
+            return 0
+
     # 6. Parse commit (needed for timestamp-filtered context)
     commit = parse_commit_info(commit_hash, repo_path)
 
-    # 6. Assemble context (with commit timestamps for narrative filtering)
+    # 6b. Assemble context (with commit timestamps for narrative filtering)
     context = assemble_evaluator_context(
         db,
         project.id,
@@ -348,8 +389,13 @@ def run_trigger(
     )
 
     # 6b. Auto-discovery: seed project summary if missing
+    # Discovery concurrency guard: re-check DB in case another thread wrote the summary
     if getattr(context, "project_summary", None) is None:
-        db.emit_data_event("pipeline", PipelineStage.DISCOVERING, commit_hash[:8], project.id)
+        fresh_summary = ops.get_project_summary(conn, project.id)
+        if fresh_summary:
+            context.project_summary = fresh_summary
+    if getattr(context, "project_summary", None) is None:
+        # on_progress callback in discover_project emits DISCOVERING event
         try:
             from social_hook.llm.discovery import discover_project
             from social_hook.llm.factory import create_client as _create_client
@@ -483,11 +529,8 @@ def run_trigger(
     held_topics = [t for t in all_topics if t.status == "holding"]
     active_arcs_all = ops.get_arcs_by_project(conn, project.id, status="active")
 
-    # Stage 1: Commit Analyzer (targets path only, with interval gating)
+    # Stage 1: Commit Analyzer (targets path — deferral already handled by early gate)
     analyzer_result = None
-    has_targets = (
-        getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets
-    )
     if has_targets:
         ctx = TriggerContext(
             config=config,
@@ -502,50 +545,22 @@ def run_trigger(
             show_prompt=show_prompt,
             existing_decision_id=existing_decision_id,
         )
-        outcome = _run_commit_analyzer(
-            ctx=ctx,
-            context=context,
-            evaluator_client=evaluator_client,
-        )
-        analyzer_result = outcome.result
 
-        # Stage 1 gating: defer or proceed
-        if not outcome.should_evaluate:
-            # Interval not met — defer this commit
-            decision = Decision(
-                id=existing_decision_id or generate_id("decision"),
-                project_id=project.id,
-                commit_hash=commit_hash,
-                decision="deferred_eval",
-                reasoning="Deferred: commit awaiting batch threshold",
-                commit_message=commit.message,
-                processed=True,  # NOT drained by scheduler
-                trigger_source=trigger_source,
-                branch=current_branch,
+        # Reset counter (was incremented by early gate)
+        _run_commit_analyzer(ctx=ctx, context=context, evaluator_client=evaluator_client)
+
+        # Check for deferred commits to batch
+        deferred = ops.get_interval_deferred_decisions(conn, project.id)
+        if deferred:
+            result = evaluate_batch(
+                ctx=ctx,
+                deferred_commits=deferred,
+                trigger_commit_hash=commit_hash,
+                context=context,
+                evaluator_client=evaluator_client,
             )
-            if existing_decision_id:
-                ops.upsert_decision(conn, decision)
-            else:
-                db.insert_decision(decision)
-            db.emit_data_event("decision", "created", decision.id, project.id)
-            db.emit_data_event("pipeline", PipelineStage.QUEUED, commit_hash[:8], project.id)
-            if verbose:
-                print("Evaluation deferred: interval not met")
             conn.close()
-            return 0
-        else:
-            # Threshold met — check for deferred commits to batch
-            deferred = ops.get_interval_deferred_decisions(conn, project.id)
-            if deferred:
-                result = evaluate_batch(
-                    ctx=ctx,
-                    deferred_commits=deferred,
-                    trigger_commit_hash=commit_hash,
-                    context=context,
-                    evaluator_client=evaluator_client,
-                )
-                conn.close()
-                return result
+            return result
 
             # Single-commit path: run stage 1 inline
             db.emit_data_event("pipeline", PipelineStage.ANALYZING, commit_hash[:8], project.id)
@@ -948,71 +963,68 @@ def _run_trivial_skip(
     return 0
 
 
+def _run_commit_analyzer_gate(
+    conn,
+    project,
+    project_config,
+    verbose: bool = False,
+) -> AnalyzerOutcome:
+    """Lightweight interval gating — runs EARLY in run_trigger before expensive work.
+
+    Only increments the counter and checks the threshold. No context assembly,
+    no LLM client, no cached analysis lookup. Used by the fast-path deferral
+    in run_trigger to skip context assembly, discovery, and LLM setup for
+    commits that will be deferred.
+
+    The full _run_commit_analyzer (below) is still called by the threshold
+    commit's path after context is assembled — it handles counter reset.
+    """
+    interval = 1
+    if project_config and hasattr(project_config, "context") and project_config.context:
+        interval = getattr(project_config.context, "commit_analysis_interval", 1)
+    if interval < 1:
+        interval = 1
+
+    if interval <= 1:
+        # No batching — always evaluate
+        return AnalyzerOutcome(result=None, should_evaluate=True)
+
+    new_count = ops.increment_analysis_commit_count(conn, project.id)
+
+    logger.info(
+        "Interval gate: count=%d, interval=%d, project=%s",
+        new_count,
+        interval,
+        project.id,
+    )
+
+    if new_count < interval:
+        if verbose:
+            print(f"Commit deferred by interval gate (count {new_count}/{interval})")
+        return AnalyzerOutcome(result=None, should_evaluate=False)
+
+    # Threshold met — don't reset counter here. The full _run_commit_analyzer
+    # handles reset after the commit actually proceeds through the pipeline.
+    if verbose:
+        print(f"Interval threshold met (count {new_count}/{interval})")
+    return AnalyzerOutcome(result=None, should_evaluate=True)
+
+
 def _run_commit_analyzer(
     ctx: TriggerContext,
     context,
     evaluator_client,
-) -> AnalyzerOutcome:
-    """Pure gating function — no LLM calls.
+) -> None:
+    """Reset interval counter after threshold commit enters the evaluation path.
 
-    Checks the commit_analysis_interval counter and returns a gating signal.
-    Stage 1 LLM runs at the call site: inline in run_trigger (single-commit)
-    or inside evaluate_batch (batch).
-
-    Returns AnalyzerOutcome with:
-    - result: Cached CommitAnalysisResult if available, else None.
-    - should_evaluate: True when interval threshold met, False to defer.
+    Called ONLY for commits that passed the early interval gate
+    (_run_commit_analyzer_gate returned should_evaluate=True).
+    The counter was already incremented by the gate — this function
+    just resets it. No LLM calls, no gating logic.
     """
-    from social_hook.llm.schemas import CommitAnalysisResult
-    from social_hook.parsing import safe_json_loads
-
-    # 1. Increment commit count
-    new_count = ops.increment_analysis_commit_count(ctx.conn, ctx.project.id)
-
-    # 2. Check interval threshold
-    interval = 1
-    if ctx.project_config and hasattr(ctx.project_config, "context") and ctx.project_config.context:
-        interval = getattr(ctx.project_config.context, "commit_analysis_interval", 1)
-    if interval < 1:
-        interval = 1
-
-    logger.info(
-        "Commit analyzer: count=%d, interval=%d, project=%s",
-        new_count,
-        interval,
-        ctx.project.id,
-    )
-
-    if new_count < interval:
-        # Interval not met — check for cached analysis from most recent cycle
-        cached_cycle = ops.get_latest_cycle_with_analysis(ctx.conn, ctx.project.id)
-        if cached_cycle and cached_cycle.commit_analysis_json:
-            cached_data = safe_json_loads(
-                cached_cycle.commit_analysis_json,
-                "cached_commit_analysis_json",
-                default=None,
-            )
-            if cached_data is not None:
-                try:
-                    result = CommitAnalysisResult.model_validate(cached_data)
-                    if ctx.verbose:
-                        print(f"Using cached analysis (count {new_count}/{interval})")
-                    return AnalyzerOutcome(result=result, should_evaluate=False)
-                except Exception as e:
-                    logger.warning("Failed to validate cached analysis, running fresh: %s", e)
-            else:
-                logger.warning("Failed to parse cached analysis JSON, running fresh")
-        else:
-            # No cache yet (first commits on this project) — still defer
-            if ctx.verbose:
-                print(f"No cached analysis, deferring (count {new_count}/{interval})")
-            return AnalyzerOutcome(result=None, should_evaluate=False)
-
-    # 3. Threshold met — signal caller to proceed. No LLM here.
     ops.reset_analysis_commit_count(ctx.conn, ctx.project.id)
     if ctx.verbose:
-        print(f"Commit analysis interval met (count {new_count}/{interval})")
-    return AnalyzerOutcome(result=None, should_evaluate=True)
+        print("Analysis commit counter reset")
 
 
 def _run_diagnostics(
