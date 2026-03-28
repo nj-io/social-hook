@@ -4818,10 +4818,16 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                 # No drafts — look up decision by commit hash directly
                 from social_hook.models import Decision
 
+                # For batch cycles, trigger_ref is "hash1,hash2,...,trigger_hash"
+                # The last hash is the trigger commit with the full decision.
+                lookup_hash = c.trigger_ref
+                if c.trigger_type == "batch" and "," in (c.trigger_ref or ""):
+                    lookup_hash = c.trigger_ref.rsplit(",", 1)[-1].strip()
+
                 row = conn.execute(
                     "SELECT * FROM decisions WHERE project_id = ? AND commit_hash = ? "
                     "ORDER BY created_at DESC LIMIT 1",
-                    (project_id, c.trigger_ref),
+                    (project_id, lookup_hash),
                 ).fetchone()
                 if row:
                     decision = Decision.from_dict(dict(row))

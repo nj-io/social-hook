@@ -1875,21 +1875,34 @@ def get_interval_deferred_decisions(conn: sqlite3.Connection, project_id: str) -
     return [Decision.from_dict(dict(row)) for row in rows]
 
 
+def mark_decisions_processing(conn: sqlite3.Connection, decision_ids: list[str]) -> int:
+    """Mark deferred decisions as 'processing' during batch evaluation.
+
+    Pure DB operation — caller handles event emission.
+
+    Returns number of rows updated.
+    """
+    if not decision_ids:
+        return 0
+    placeholders = ",".join("?" for _ in decision_ids)
+    cursor = conn.execute(
+        f"UPDATE decisions SET decision = 'processing' WHERE id IN ({placeholders})",
+        decision_ids,
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
 def mark_deferred_decisions_batched(
     conn: sqlite3.Connection, decision_ids: list[str], batch_cycle_id: str
 ) -> int:
-    """Mark deferred decisions as included in a batch evaluation.
+    """Mark decisions as included in a batch evaluation.
 
-    Sets processed=1 (no-op for interval-deferred, essential for rate-limit-deferred
-    to prevent re-drain), processed_at, batch_id, and reasoning.
+    Reverts decision from 'processing' back to 'deferred_eval' with batch_id set.
+    Sets processed=1 (essential for rate-limit-deferred to prevent re-drain),
+    processed_at, batch_id, and reasoning.
 
-    Args:
-        conn: Database connection
-        decision_ids: List of decision IDs to mark
-        batch_cycle_id: The evaluation cycle ID for this batch
-
-    Returns:
-        Number of rows updated
+    Returns number of rows updated.
     """
     if not decision_ids:
         return 0
@@ -1898,7 +1911,8 @@ def mark_deferred_decisions_batched(
     cursor = conn.execute(
         f"""
         UPDATE decisions
-        SET processed = 1,
+        SET decision = 'deferred_eval',
+            processed = 1,
             processed_at = datetime('now'),
             batch_id = ?,
             reasoning = ?

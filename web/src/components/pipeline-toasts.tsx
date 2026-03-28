@@ -50,9 +50,10 @@ export function PipelineToasts() {
         if (entry) {
           addToast(`${entry.msg}${platform}`, { detail: preview, variant: entry.variant });
         }
-      } else if (data.entity === "decision") {
-        addToast(`Decision: ${data.action}`, { detail: data.entity_id });
       }
+      // Decision status changes are NOT toasted — they are implementation details.
+      // Pipeline stage events (ANALYZING, EVALUATING, DRAFTING, QUEUED) provide
+      // user-facing feedback. The commit log auto-refreshes via useDataEvents.
       // Entity CRUD events (topic, target, suggestion, cycle) are NOT handled here.
       // Those get feedback from their respective component handlers via addToast.
       // PipelineToasts is for background pipeline status only.

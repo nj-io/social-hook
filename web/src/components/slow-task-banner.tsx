@@ -8,7 +8,7 @@ import type { DataChangeEvent } from "@/lib/types";
 import { TopBanner } from "@/components/top-banner";
 
 const STORAGE_KEY = "slow-task-banner";
-const SLOW_THRESHOLD_MS = 13_000;
+const SLOW_THRESHOLD_MS = 50_000;
 
 interface BannerState {
   dismiss_count: number;

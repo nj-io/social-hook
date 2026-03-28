@@ -439,9 +439,7 @@ def run_trigger(
         print(f"Using project summary ({len(context.project_summary)} chars)")
 
     if verbose:
-        print(f"Evaluating commit {commit.hash[:8]}: {commit.message}")
-
-    db.emit_data_event("pipeline", PipelineStage.EVALUATING, commit_hash[:8], project.id)
+        print(f"Processing commit {commit.hash[:8]}: {commit.message}")
 
     # 7. Evaluate
     from social_hook.llm.evaluator import Evaluator
@@ -511,19 +509,9 @@ def run_trigger(
         )
         analyzer_result = outcome.result
 
-        # Stage 1 gating: trivial skip, interval deferral, or proceed to stage 2
-        if outcome.result is not None and _is_trivial_classification(outcome.result):
-            # Trivial commit — skip stage 2 entirely
-            logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
-            result = _run_trivial_skip(
-                ctx=ctx,
-                analyzer_result=outcome.result,
-                commit_hash=commit_hash,
-            )
-            conn.close()
-            return result
-        elif not outcome.should_evaluate:
-            # Interval deferral — create informational decision with processed=1
+        # Stage 1 gating: defer or proceed
+        if not outcome.should_evaluate:
+            # Interval not met — defer this commit
             decision = Decision(
                 id=existing_decision_id or generate_id("decision"),
                 project_id=project.id,
@@ -546,8 +534,7 @@ def run_trigger(
             conn.close()
             return 0
         else:
-            # Normal case: should_evaluate=True and non-trivial
-            # Check for interval-deferred commits to batch with this evaluation
+            # Threshold met — check for deferred commits to batch
             deferred = ops.get_interval_deferred_decisions(conn, project.id)
             if deferred:
                 result = evaluate_batch(
@@ -559,7 +546,38 @@ def run_trigger(
                 )
                 conn.close()
                 return result
-            # No deferred commits — proceed to normal single-commit evaluation
+
+            # Single-commit path: run stage 1 inline
+            db.emit_data_event("pipeline", PipelineStage.ANALYZING, commit_hash[:8], project.id)
+            try:
+                from social_hook.llm.analyzer import CommitAnalyzer
+
+                stage1 = CommitAnalyzer(evaluator_client)
+                analyzer_result = stage1.analyze(
+                    commit=commit, context=context, db=db, show_prompt=show_prompt
+                )
+                if verbose:
+                    cls = (
+                        analyzer_result.commit_analysis.classification.value
+                        if analyzer_result.commit_analysis.classification
+                        else "unknown"
+                    )
+                    print(f"Stage 1 complete (classification: {cls})")
+            except Exception as e:
+                logger.warning("Commit analyzer failed (non-fatal): %s", e, exc_info=True)
+                analyzer_result = None
+
+            # Trivial check on fresh analysis
+            if analyzer_result is not None and _is_trivial_classification(analyzer_result):
+                logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
+                result = _run_trivial_skip(
+                    ctx=ctx, analyzer_result=analyzer_result, commit_hash=commit_hash
+                )
+                conn.close()
+                return result
+
+            # Proceed to stage 2
+            db.emit_data_event("pipeline", PipelineStage.EVALUATING, commit_hash[:8], project.id)
 
     # Guard: targets configured but no content strategies defined
     if has_targets and not config.content_strategies:
@@ -935,16 +953,15 @@ def _run_commit_analyzer(
     context,
     evaluator_client,
 ) -> AnalyzerOutcome:
-    """Run stage 1 commit analyzer with interval gating.
+    """Pure gating function — no LLM calls.
+
+    Checks the commit_analysis_interval counter and returns a gating signal.
+    Stage 1 LLM runs at the call site: inline in run_trigger (single-commit)
+    or inside evaluate_batch (batch).
 
     Returns AnalyzerOutcome with:
-    - result: CommitAnalysisResult if analysis was run or cached, None on error.
-    - should_evaluate: True to proceed to stage 2, False to defer.
-
-    Semantics:
-    - count >= interval: run fresh analysis, reset counter, should_evaluate=True
-    - count < interval: defer (return should_evaluate=False), with or without cache
-    - error: result=None, should_evaluate=True (fallback)
+    - result: Cached CommitAnalysisResult if available, else None.
+    - should_evaluate: True when interval threshold met, False to defer.
     """
     from social_hook.llm.schemas import CommitAnalysisResult
     from social_hook.parsing import safe_json_loads
@@ -991,33 +1008,11 @@ def _run_commit_analyzer(
                 print(f"No cached analysis, deferring (count {new_count}/{interval})")
             return AnalyzerOutcome(result=None, should_evaluate=False)
 
-    # 3. Run fresh analysis (count >= interval)
-    try:
-        from social_hook.llm.analyzer import CommitAnalyzer
-
-        analyzer = CommitAnalyzer(evaluator_client)
-        result = analyzer.analyze(
-            commit=ctx.commit,
-            context=context,
-            db=ctx.db,
-            show_prompt=ctx.show_prompt,
-        )
-
-        # Reset counter after successful analysis
-        ops.reset_analysis_commit_count(ctx.conn, ctx.project.id)
-
-        if ctx.verbose:
-            print(
-                f"Commit analysis complete (classification: "
-                f"{result.commit_analysis.classification.value if result.commit_analysis.classification else 'unknown'})"
-            )
-
-        return AnalyzerOutcome(result=result, should_evaluate=True)
-    except Exception as e:
-        logger.warning("Commit analyzer failed (non-fatal, evaluator will proceed): %s", e)
-        if ctx.verbose:
-            print(f"Commit analyzer skipped: {e}", file=sys.stderr)
-        return AnalyzerOutcome(result=None, should_evaluate=True)
+    # 3. Threshold met — signal caller to proceed. No LLM here.
+    ops.reset_analysis_commit_count(ctx.conn, ctx.project.id)
+    if ctx.verbose:
+        print(f"Commit analysis interval met (count {new_count}/{interval})")
+    return AnalyzerOutcome(result=None, should_evaluate=True)
 
 
 def _run_targets_path(
@@ -1358,6 +1353,12 @@ def evaluate_batch(
     from social_hook.llm.analyzer import CommitAnalyzer
     from social_hook.llm.evaluator import Evaluator
 
+    # 0. Mark deferred decisions as "processing" so UI shows all rows as active
+    deferred_ids = [d.id for d in deferred_commits]
+    ops.mark_decisions_processing(ctx.conn, deferred_ids)
+    for d in deferred_commits:
+        ctx.db.emit_data_event("decision", "updated", d.id, ctx.project.id)
+
     # 1. Build combined CommitInfo from all deferred hashes + trigger hash
     all_hashes = [d.commit_hash for d in deferred_commits] + [trigger_commit_hash]
     diffs = []
@@ -1392,6 +1393,9 @@ def evaluate_batch(
     )
 
     # 2. Run stage 1: CommitAnalyzer on combined diffs
+    ctx.db.emit_data_event(
+        "pipeline", PipelineStage.ANALYZING, trigger_commit_hash[:8], ctx.project.id
+    )
     analyzer_result = None
     try:
         analyzer = CommitAnalyzer(evaluator_client)
@@ -1437,6 +1441,9 @@ def evaluate_batch(
     held_topics = [t for t in all_topics if t.status == "holding"]
     active_arcs_all = ops.get_arcs_by_project(ctx.conn, ctx.project.id, status="active")
 
+    ctx.db.emit_data_event(
+        "pipeline", PipelineStage.EVALUATING, trigger_commit_hash[:8], ctx.project.id
+    )
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(
@@ -1490,7 +1497,7 @@ def evaluate_batch(
         deferred_ids = [d.id for d in deferred_commits]
         ops.mark_deferred_decisions_batched(ctx.conn, deferred_ids, cycle_id)
         for d in deferred_commits:
-            ops.emit_data_event(ctx.conn, "decision", "updated", d.id, ctx.project.id)
+            ctx.db.emit_data_event("decision", "updated", d.id, ctx.project.id)
 
         if ctx.verbose:
             print(f"Batch evaluation complete: {len(all_hashes)} commits, cycle {cycle_id}")
