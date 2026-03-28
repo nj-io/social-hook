@@ -429,8 +429,8 @@ export default function ProjectDetailPage() {
                     <th className="pb-2 pr-2 font-medium w-8"></th>
                     <th className="pb-2 pr-4 font-medium">Decision</th>
                     <th className="pb-2 pr-4 font-medium">Commit</th>
-                    <th className="pb-2 pr-4 font-medium">Reasoning</th>
-                    <th className="pb-2 pr-4 font-medium">Angle</th>
+                    <th className="pb-2 pr-4 font-medium min-w-[200px]">Reasoning</th>
+                    <th className="pb-2 pr-4 font-medium min-w-[120px]">Angle</th>
                     <th className="hidden pb-2 pr-4 font-medium sm:table-cell">Episode</th>
                     <th className="hidden pb-2 pr-4 font-medium md:table-cell">Category</th>
                     <th className="pb-2 pr-4 font-medium">Date</th>
@@ -469,7 +469,7 @@ export default function ProjectDetailPage() {
                           />
                         </td>
                         <td className="py-2 pr-4">
-                          <Badge value={d.decision} variant="decision" />
+                          <Badge value={d.decision === "deferred_eval" && d.batch_id ? "batched" : d.decision} variant="decision" />
                         </td>
                         <td className="py-2 pr-4">
                           <div>

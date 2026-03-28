@@ -115,6 +115,7 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                 >
                   <td className="py-3 pr-4">
                     <span className="text-sm">{cycle.trigger}</span>
+                    <code className="ml-2 text-[10px] text-muted-foreground">{cycle.id.slice(0, 16)}</code>
                     {isExpanded && strategyEntries.length > 0 && (
                       <div className="mt-3 space-y-3">
                         {strategyEntries.map(([stratName, outcome]) => (
