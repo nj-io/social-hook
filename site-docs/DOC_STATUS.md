@@ -79,6 +79,11 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | installation.md | stale | May reference preview platform — needs targets update |
 | quickstart.md | stale | May reference preview platform — needs targets update |
 
+## Recurring Checks
+
+| Check | Last passed | Notes |
+|-------|-------------|-------|
+
 ## Backlog (waiting_approval)
 
 - [ ] Targets concept page — how accounts, targets, and strategies work
