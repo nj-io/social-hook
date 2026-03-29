@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ActivityIndicator } from "@/components/activity-indicator";
 
 const links = [
   { href: "/", label: "Dashboard" },
@@ -20,6 +21,7 @@ export function Nav() {
         <div className="flex h-14 items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-lg font-semibold tracking-tight">{process.env.NEXT_PUBLIC_PROJECT_NAME || "Social Hook"}</span>
+            <ActivityIndicator />
           </div>
           <div className="flex items-center gap-1">
             {links.map((link) => {
