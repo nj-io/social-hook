@@ -219,37 +219,20 @@ export function ActivityIndicator() {
     };
   }, [active]);
 
-  // DEV ONLY — remove before shipping
-  const devTrigger = () => {
-    setActive(true);
-    setTimeout(() => setActive(false), 8_000);
-  };
-
   return (
-    <>
-      <Link
-        href="/system"
-        aria-label="System activity"
-        title="Pipeline running — click to view"
-        className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-1000 ${active ? "opacity-100 ease-in" : "pointer-events-none opacity-0 ease-out"}`}
-      >
-        <canvas
-          ref={canvasRef}
-          width={RENDER_SIZE}
-          height={RENDER_SIZE}
-          className="block rounded-full"
-          style={{ width: DISPLAY_SIZE, height: DISPLAY_SIZE }}
-        />
-      </Link>
-      {/* DEV ONLY — remove before shipping */}
-      {process.env.NODE_ENV === "development" && (
-        <button
-          onClick={devTrigger}
-          className="absolute right-2 top-1/2 -translate-y-1/2 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] text-zinc-400 hover:text-zinc-200"
-        >
-          test
-        </button>
-      )}
-    </>
+    <Link
+      href="/system"
+      aria-label="System activity"
+      title="Pipeline running — click to view"
+      className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-1000 ${active ? "opacity-100 ease-in" : "pointer-events-none opacity-0 ease-out"}`}
+    >
+      <canvas
+        ref={canvasRef}
+        width={RENDER_SIZE}
+        height={RENDER_SIZE}
+        className="block rounded-full"
+        style={{ width: DISPLAY_SIZE, height: DISPLAY_SIZE }}
+      />
+    </Link>
   );
 }
