@@ -4134,7 +4134,9 @@ async def api_delete_target(project_id: str, name: str):
 
 @app.get("/api/projects/{project_id}/strategies")
 async def api_list_strategies(project_id: str):
-    """List strategies: built-in templates merged with project overrides."""
+    """List strategies: built-in templates merged with config overrides."""
+    from social_hook.setup.templates import STRATEGY_TEMPLATES
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
@@ -4143,7 +4145,27 @@ async def api_list_strategies(project_id: str):
 
     config = _get_config()
     strategies = {}
+
+    # Start with built-in templates (skip "custom" placeholder)
+    for t in STRATEGY_TEMPLATES:
+        if t.id == "custom":
+            continue
+        strategies[t.id] = {
+            "audience": t.defaults.audience,
+            "voice": t.defaults.voice_tone,
+            "angle": "",
+            "post_when": t.defaults.post_when,
+            "avoid": t.defaults.avoid,
+            "format_preference": "",
+            "media_preference": "",
+            "min_length": None,
+            "requires": None,
+            "template": True,
+        }
+
+    # Merge/override with config strategies
     for name, strat in config.content_strategies.items():
+        is_template = name in strategies
         strategies[name] = {
             "audience": strat.audience,
             "voice": strat.voice,
@@ -4154,7 +4176,9 @@ async def api_list_strategies(project_id: str):
             "media_preference": strat.media_preference,
             "min_length": strat.min_length,
             "requires": strat.requires,
+            "template": is_template,
         }
+
     return {"strategies": strategies, "project_id": project_id}
 
 
