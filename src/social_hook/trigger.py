@@ -864,11 +864,8 @@ def _is_trivial_classification(analyzer_result) -> bool:
         return False
     ca = analyzer_result.commit_analysis
     if ca and ca.classification:
-        return (
-            ca.classification.value == "trivial"
-            if hasattr(ca.classification, "value")
-            else ca.classification == "trivial"
-        )
+        cls_val = getattr(ca.classification, "value", ca.classification)
+        return bool(cls_val == "trivial")
     else:
         logger.warning("Analyzer result has no classification, treating as non-trivial")
         return False

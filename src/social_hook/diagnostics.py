@@ -118,7 +118,8 @@ def flex_get(obj: Any, key: str, default: Any = None) -> Any:
 def flex_get_action(obj: Any) -> str | None:
     """Get a strategy action value, unwrapping enums if needed."""
     action = flex_get(obj, "action")
-    return getattr(action, "value", action)
+    result = getattr(action, "value", action)
+    return str(result) if result is not None else None
 
 
 def filter_actionable(diagnostics: list[dict]) -> list[dict]:

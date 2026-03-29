@@ -261,7 +261,7 @@ def _resolve_post_strategy(
         if target:
             strategy = getattr(target, "strategy", None)
             if strategy:
-                return strategy
+                return str(strategy)
             else:
                 logger.warning("Target '%s' has no strategy field", target_id)
         else:

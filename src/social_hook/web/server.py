@@ -55,11 +55,12 @@ def _parse_episode_tags(decision) -> list | None:
     return ep_tags or None
 
 
-def _parse_diagnostics_column(cycle_dict: dict) -> list:
+def _parse_diagnostics_column(cycle_dict: dict) -> list[Any]:
     """Parse the diagnostics JSON column on a cycle dict, returning a list."""
     raw = cycle_dict.get("diagnostics")
-    cycle_dict["diagnostics"] = safe_json_loads(raw, "cycle.diagnostics", default=[]) if raw else []
-    return cycle_dict["diagnostics"]
+    parsed: list[Any] = safe_json_loads(raw, "cycle.diagnostics", default=[]) if raw else []
+    cycle_dict["diagnostics"] = parsed
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -1531,7 +1532,9 @@ async def api_import_preview(project_id: str, branch: str | None = Query(None)):
         project = _get_project_or_404(conn, project_id)
         from social_hook.import_commits import get_import_preview
 
-        preview = get_import_preview(conn, project["id"], project["repo_path"], branch)
+        preview: dict[str, Any] = get_import_preview(
+            conn, project["id"], project["repo_path"], branch
+        )
 
         # Include git repo branches so the import modal can show them
         # (decisionBranches is empty on a fresh project)
@@ -4174,7 +4177,7 @@ async def api_list_strategies(project_id: str):
         conn.close()
 
     config = _get_config()
-    strategies = {}
+    strategies: dict[str, dict[str, Any]] = {}
 
     # Start with built-in templates (skip "custom" placeholder)
     for t in STRATEGY_TEMPLATES:
@@ -4989,7 +4992,7 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
 
                 # Build strategy_to_draft map: draft.target_id → config target → strategy name
                 config = _get_config()
-                strategy_to_draft: dict[str, object] = {}
+                strategy_to_draft: dict[str, Any] = {}
                 for d in drafts:
                     if d.target_id and config.targets.get(d.target_id):
                         target_strategy = config.targets[d.target_id].strategy
