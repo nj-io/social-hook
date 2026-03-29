@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from social_hook.drafting import _adapt_content_for_platform, draft_for_targets
-from social_hook.models import CommitInfo
+from social_hook.models.core import CommitInfo
 from social_hook.routing import RoutedTarget
 
 # =============================================================================

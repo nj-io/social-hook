@@ -367,7 +367,8 @@ class TestDiscoverySkippedWhenSummaryExists:
 
     def test_trigger_skips_discovery_when_summary_exists(self):
         """Verify the trigger pipeline skips discovery when project_summary is set."""
-        from social_hook.models import Project, ProjectContext
+        from social_hook.models import ProjectContext
+        from social_hook.models.core import Project
 
         # Create a context with an existing summary
         project = Project(
@@ -399,7 +400,8 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
     def test_discovery_files_in_drafter_prompt(self, temp_repo):
         """Verify discovery_files are loaded into drafter prompt for first posts."""
         from social_hook.llm.prompts import assemble_drafter_prompt
-        from social_hook.models import Project, ProjectContext
+        from social_hook.models import ProjectContext
+        from social_hook.models.core import Project
 
         files_list = ["README.md", "docs/guide.md"]
         project = Project(
@@ -421,7 +423,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
             project_summary="A test project.",
         )
 
-        from social_hook.models import CommitInfo
+        from social_hook.models.core import CommitInfo
 
         commit = CommitInfo(hash="abc123", message="test", diff="")
 
@@ -443,7 +445,8 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
     def test_drafter_falls_back_to_prompt_docs(self, temp_repo):
         """Verify drafter falls back to prompt_docs when no discovery files."""
         from social_hook.llm.prompts import assemble_drafter_prompt
-        from social_hook.models import CommitInfo, Project, ProjectContext
+        from social_hook.models import ProjectContext
+        from social_hook.models.core import CommitInfo, Project
 
         project = Project(
             id="proj_1",
@@ -484,7 +487,8 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
     def test_drafter_uses_readme_when_audience_introduced(self, temp_repo):
         """Verify drafter uses README when audience is already introduced."""
         from social_hook.llm.prompts import assemble_drafter_prompt
-        from social_hook.models import CommitInfo, Project, ProjectContext
+        from social_hook.models import ProjectContext
+        from social_hook.models.core import CommitInfo, Project
 
         files_list = ["README.md", "docs/guide.md"]
         project = Project(
@@ -562,7 +566,7 @@ class TestDbOperations:
         conn.close()
 
     def test_project_from_dict_with_discovery_files(self):
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         files = ["README.md", "src/main.py"]
         d = {
@@ -575,7 +579,7 @@ class TestDbOperations:
         assert p.discovery_files == json.dumps(files)
 
     def test_project_to_dict_with_discovery_files(self):
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         files_json = json.dumps(["README.md"])
         p = Project(id="proj_1", name="Test", repo_path="/tmp/test", discovery_files=files_json)

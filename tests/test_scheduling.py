@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from social_hook.db import insert_decision, insert_draft, insert_post, insert_project
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Draft, Post, Project
+from social_hook.models.core import Decision, Draft, Post, Project
 from social_hook.scheduling import (
     ProjectSchedulingState,
     ScheduleResult,

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from social_hook.config.yaml import ChannelConfig
-from social_hook.models import Decision, Project
+from social_hook.models.core import Decision, Project
 from social_hook.rate_limits import GateResult
 from social_hook.trigger import (
     _build_merge_commit,
@@ -2204,7 +2204,7 @@ class TestBuildMergeEvaluation:
             "status": "draft",
         }
         defaults.update(kwargs)
-        from social_hook.models import Draft
+        from social_hook.models.core import Draft
 
         return Draft(**defaults)
 
@@ -2291,7 +2291,7 @@ class TestBuildMergeCommit:
                 commit_summary="Added feature B",
             ),
         ]
-        from social_hook.models import Draft
+        from social_hook.models.core import Draft
 
         drafts = [
             Draft(
@@ -2322,7 +2322,7 @@ class TestExecuteMergeGroups:
     """Tests for _execute_merge_groups."""
 
     def _make_draft(self, id="d1", platform="x", decision_id="dec_1", **kwargs):
-        from social_hook.models import Draft
+        from social_hook.models.core import Draft
 
         defaults = {
             "id": id,

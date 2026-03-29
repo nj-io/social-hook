@@ -12,7 +12,7 @@ from social_hook.llm.schemas import (
     StrategyDecisionInput,
     TargetAction,
 )
-from social_hook.models import CommitInfo, Project
+from social_hook.models.core import CommitInfo, Project
 from social_hook.rate_limits import GateResult
 from social_hook.trigger import (
     TriggerContext,

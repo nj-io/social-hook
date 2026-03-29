@@ -7,7 +7,7 @@ from social_hook.drafting import (
     _pick_lead_platform,
     _unthread_content,
 )
-from social_hook.models import CommitInfo
+from social_hook.models.core import CommitInfo
 
 # =============================================================================
 # Helpers
@@ -166,7 +166,7 @@ class TestDraftSharedGroupPreviewMode:
     def test_preview_mode_set_on_draft_object(self):
         """The Draft object gets preview_mode=True when target is in preview_targets."""
         from social_hook.filesystem import generate_id
-        from social_hook.models import Draft
+        from social_hook.models.core import Draft
 
         # This is the exact logic from _draft_for_resolved_platforms line 349:
         # preview_mode=bool(preview_targets and pname in preview_targets)
@@ -187,7 +187,7 @@ class TestDraftSharedGroupPreviewMode:
     def test_preview_mode_false_when_not_in_set(self):
         """Draft gets preview_mode=False when target is not in preview_targets."""
         from social_hook.filesystem import generate_id
-        from social_hook.models import Draft
+        from social_hook.models.core import Draft
 
         preview_targets = {"linkedin-preview"}
         pname = "x-feed"
@@ -206,7 +206,7 @@ class TestDraftSharedGroupPreviewMode:
     def test_preview_mode_false_when_preview_targets_none(self):
         """Draft gets preview_mode=False when preview_targets is None."""
         from social_hook.filesystem import generate_id
-        from social_hook.models import Draft
+        from social_hook.models.core import Draft
 
         preview_targets = None
         pname = "x-feed"

@@ -13,7 +13,9 @@ from datetime import datetime, timedelta, timezone
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.filesystem import generate_id, get_db_path
-from social_hook.models import Decision, Draft, Lifecycle, Project, UsageLog
+from social_hook.models.core import Decision, Draft, Project
+from social_hook.models.infra import UsageLog
+from social_hook.models.narrative import Lifecycle
 
 
 def main():

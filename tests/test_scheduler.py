@@ -14,7 +14,7 @@ from social_hook.db import (
     update_draft,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Draft, Project
+from social_hook.models.core import Decision, Draft, Project
 from social_hook.notifications import send_notification
 from social_hook.scheduler import (
     acquire_lock,
@@ -691,7 +691,7 @@ class TestPostDraftReferencePosting:
         )
         insert_draft(conn, ref_draft)
 
-        from social_hook.models import Post
+        from social_hook.models.core import Post
 
         ref_post = Post(
             id=generate_id("post"),

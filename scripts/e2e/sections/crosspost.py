@@ -11,7 +11,7 @@ def _seed_post_record(harness, platform, content, external_id, external_url):
     """
     from social_hook.db import insert_decision, insert_draft, insert_post
     from social_hook.filesystem import generate_id
-    from social_hook.models import Decision, Draft, Post
+    from social_hook.models.core import Decision, Draft, Post
 
     decision = Decision(
         id=generate_id("decision"),
@@ -220,7 +220,7 @@ def run(harness, runner):
     # S3: Arc-based cross-post reference
     def s3():
         from social_hook.filesystem import generate_id
-        from social_hook.models import Arc
+        from social_hook.models.narrative import Arc
         from social_hook.trigger import run_trigger
 
         # Create an Arc
@@ -300,7 +300,7 @@ def run(harness, runner):
         from social_hook.adapters.models import PostResult, ReferenceType
         from social_hook.db import insert_decision, insert_draft
         from social_hook.filesystem import generate_id
-        from social_hook.models import Decision, Draft
+        from social_hook.models.core import Decision, Draft
         from social_hook.scheduler import _post_draft
 
         # Seed a post on X with an external_id
@@ -375,7 +375,8 @@ def run(harness, runner):
         from social_hook.adapters.models import PostResult
         from social_hook.db import insert_decision, insert_draft, insert_post
         from social_hook.filesystem import generate_id
-        from social_hook.models import Arc, Decision, Draft, Post
+        from social_hook.models.core import Decision, Draft, Post
+        from social_hook.models.narrative import Arc
         from social_hook.scheduler import _post_draft
 
         # Create an Arc
@@ -488,7 +489,7 @@ def run(harness, runner):
         from social_hook.filesystem import generate_id
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
         from social_hook.trigger import parse_commit_info
 
         # Seed a post on X

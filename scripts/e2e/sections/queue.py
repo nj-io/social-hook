@@ -13,7 +13,7 @@ def run(harness, runner):
     # Q8: Decision type validation — only draft/hold/skip accepted
     def q8():
 
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         # 'draft' is valid
         d = Decision(
@@ -67,7 +67,7 @@ def run(harness, runner):
     # Q9: Hold decision stored and retrievable
     def q9():
         from social_hook.db import operations as ops
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         d = Decision(
             id="test_q9",
@@ -117,7 +117,7 @@ def run(harness, runner):
     # Q11: Queue action — supersede
     def q11():
         from social_hook.db import operations as ops
-        from social_hook.models import Decision, Draft
+        from social_hook.models.core import Decision, Draft
 
         d = Decision(
             id="test_q11_dec",
@@ -152,7 +152,7 @@ def run(harness, runner):
     # Q12: Queue action — drop
     def q12():
         from social_hook.db import operations as ops
-        from social_hook.models import Decision, Draft
+        from social_hook.models.core import Decision, Draft
 
         d = Decision(
             id="test_q12_dec",

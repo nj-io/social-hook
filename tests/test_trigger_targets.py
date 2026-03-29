@@ -10,7 +10,8 @@ from social_hook.llm.schemas import (
     StrategyDecisionInput,
     TargetAction,
 )
-from social_hook.models import CommitInfo, ContentTopic, Project
+from social_hook.models.content import ContentTopic
+from social_hook.models.core import CommitInfo, Project
 from social_hook.trigger import (
     _combine_strategy_reasoning,
     _determine_overall_decision,

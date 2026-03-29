@@ -11,7 +11,7 @@ from social_hook.drafting import (
     draft_for_platforms,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models import CommitInfo, Decision, Draft, Post, Project
+from social_hook.models.core import CommitInfo, Decision, Draft, Post, Project
 from social_hook.scheduling import ScheduleResult
 
 # =============================================================================

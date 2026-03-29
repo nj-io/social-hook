@@ -5,15 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from social_hook.llm.prompts import assemble_gatekeeper_prompt
-from social_hook.models import (
-    Arc,
-    Decision,
-    Draft,
-    Lifecycle,
-    NarrativeDebt,
-    Post,
-    Project,
-)
+from social_hook.models.core import Decision, Draft, Post, Project
+from social_hook.models.narrative import Arc, Lifecycle, NarrativeDebt
 
 # =============================================================================
 # Fixtures

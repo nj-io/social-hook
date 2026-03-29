@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from social_hook.db import operations as ops
 from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.dry_run import DryRunContext
-from social_hook.models import Project
+from social_hook.models.core import Project
 
 
 def _make_usage(**kwargs):

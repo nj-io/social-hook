@@ -774,7 +774,7 @@ def run(harness, runner):
         from social_hook.filesystem import generate_id
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
         from social_hook.trigger import parse_commit_info
 
         config = harness.load_config()

@@ -204,7 +204,7 @@ class TestDraftCommand:
         from social_hook.config.yaml import Config
         from social_hook.db import init_database, insert_decision, insert_project
         from social_hook.filesystem import generate_id
-        from social_hook.models import Decision, Project
+        from social_hook.models.core import Decision, Project
 
         db_path = temp_dir / "test.db"
         mock_db_path.return_value = db_path

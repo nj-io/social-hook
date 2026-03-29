@@ -8,12 +8,8 @@ from social_hook.db import operations as ops
 from social_hook.errors import AuthError
 from social_hook.llm.client import ClaudeClient, _calculate_cost_cents
 from social_hook.llm.dry_run import DryRunContext
-from social_hook.models import (
-    Decision,
-    Draft,
-    Project,
-    UsageLog,
-)
+from social_hook.models.core import Decision, Draft, Project
+from social_hook.models.infra import UsageLog
 
 # =============================================================================
 # T11: Cost Calculation Tests

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from social_hook.config.platforms import ResolvedPlatformConfig
 from social_hook.llm.drafter import Drafter
-from social_hook.models import CommitInfo
+from social_hook.models.core import CommitInfo
 
 
 def _make_drafter_mocks():
