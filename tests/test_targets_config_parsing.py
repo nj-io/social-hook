@@ -123,67 +123,10 @@ class TestRoundTrip:
         assert cs.requires == ["playwright"]
 
 
-class TestAutoMigration:
-    """Test backward compat: old platforms config auto-migrates."""
+class TestExplicitTargetsConfig:
+    """Test that explicit accounts/targets config is used as-is."""
 
-    def test_platforms_auto_migrates_to_targets(self, tmp_path):
-        old_config = {
-            "models": {
-                "evaluator": "anthropic/claude-opus-4-5",
-                "drafter": "anthropic/claude-sonnet-4-5",
-                "gatekeeper": "anthropic/claude-haiku-4-5",
-            },
-            "platforms": {
-                "x": {
-                    "enabled": True,
-                    "priority": "primary",
-                    "account_tier": "free",
-                },
-            },
-            "content_strategies": {
-                "building-public": {"audience": "devs"},
-            },
-            "content_strategy": "building-public",
-        }
-        config_path = _write_config(tmp_path, old_config)
-        config = load_config(config_path)
-
-        # Auto-migrated platform_credentials
-        assert "x" in config.platform_credentials
-        assert config.platform_credentials["x"].platform == "x"
-        assert config.platform_credentials["x"].client_id == ""
-
-        # Auto-migrated accounts
-        assert "x" in config.accounts
-        assert config.accounts["x"].platform == "x"
-        assert config.accounts["x"].tier == "free"
-
-        # Auto-migrated targets
-        assert "x" in config.targets
-        assert config.targets["x"].account == "x"
-        assert config.targets["x"].destination == "timeline"
-        assert config.targets["x"].primary is True
-        assert config.targets["x"].strategy == "building-public"
-
-    def test_disabled_platform_not_migrated(self, tmp_path):
-        old_config = {
-            "models": {
-                "evaluator": "anthropic/claude-opus-4-5",
-                "drafter": "anthropic/claude-sonnet-4-5",
-                "gatekeeper": "anthropic/claude-haiku-4-5",
-            },
-            "platforms": {
-                "x": {"enabled": True, "priority": "primary"},
-                "linkedin": {"enabled": False},
-            },
-        }
-        config_path = _write_config(tmp_path, old_config)
-        config = load_config(config_path)
-
-        assert "x" in config.accounts
-        assert "linkedin" not in config.accounts
-
-    def test_auto_migration_skipped_when_explicit_accounts(self, tmp_path):
+    def test_explicit_accounts_used(self, tmp_path):
         """When accounts: section exists, no auto-migration happens."""
         config_data = {
             "models": {
@@ -391,8 +334,8 @@ class TestParsingErrors:
 class TestOptionalDefaults:
     """Test that missing optional fields default correctly."""
 
-    def test_empty_sections_default_with_auto_migration(self, tmp_path):
-        """When no explicit targets config, auto-migration from default X platform occurs."""
+    def test_empty_sections_default(self, tmp_path):
+        """Config with no targets/accounts sections has empty dicts."""
         config_data = {
             "models": {
                 "evaluator": "anthropic/claude-opus-4-5",
@@ -403,10 +346,9 @@ class TestOptionalDefaults:
         config_path = _write_config(tmp_path, config_data)
         config = load_config(config_path)
 
-        # Default X platform auto-migrates
-        assert "x" in config.platform_credentials
-        assert "x" in config.accounts
-        assert "x" in config.targets
+        assert config.platform_credentials == {}
+        assert config.accounts == {}
+        assert config.targets == {}
         assert config.platform_settings == {}
         assert config.max_targets == 3
 

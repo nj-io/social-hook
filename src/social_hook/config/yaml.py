@@ -14,7 +14,6 @@ from social_hook.config.targets import (
     TargetConfig,
     validate_targets_config,
 )
-from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
 from social_hook.parsing import check_unknown_keys, safe_int
 
@@ -708,15 +707,6 @@ def _parse_config(data: dict[str, Any]) -> Config:
     # Max targets
     max_targets = safe_int(data.get("max_targets", 3), 3, "max_targets")
 
-    # Detect whether targets config was explicitly provided (not auto-migrated)
-    has_explicit_targets_config = "accounts" in data or "targets" in data
-
-    # Backward compatibility: auto-migrate platforms -> accounts/targets
-    if not has_explicit_targets_config and platforms:
-        platform_credentials, accounts, targets, content_strategy = _auto_migrate_platforms(
-            platforms, content_strategy, content_strategies
-        )
-
     # Cross-reference validation
     if default_identity and default_identity not in identities:
         raise ConfigError(f"default_identity '{default_identity}' not found in identities")
@@ -747,8 +737,8 @@ def _parse_config(data: dict[str, Any]) -> Config:
         max_targets=max_targets,
     )
 
-    # Validate targets config only when explicitly provided
-    if has_explicit_targets_config:
+    # Validate targets config when any targets-related sections exist
+    if config.targets or config.accounts or config.platform_credentials:
         validate_targets_config(config)
 
     return config
@@ -880,94 +870,6 @@ def _parse_platform_settings(
     return result
 
 
-def _auto_migrate_platforms(
-    platforms: dict[str, OutputPlatformConfig],
-    content_strategy: str | None,
-    content_strategies: dict[str, ContentStrategyConfig],
-) -> tuple[
-    dict[str, PlatformCredentialConfig],
-    dict[str, AccountConfig],
-    dict[str, TargetConfig],
-    str | None,
-]:
-    """Auto-migrate legacy platforms config to accounts/targets format.
-
-    When platforms: exists but accounts:/targets: don't, generate
-    equivalent new-format entries for backward compatibility.
-
-    Preview platforms are special-cased: they produce accountless targets
-    with a real platform (defaulting to "x") instead of AccountConfig entries.
-    """
-    import logging
-
-    logger = logging.getLogger(__name__)
-    logger.warning(
-        "Auto-migrating legacy 'platforms' config to accounts/targets format. "
-        "Consider updating your config.yaml to use the new format."
-    )
-
-    creds: dict[str, PlatformCredentialConfig] = {}
-    accts: dict[str, AccountConfig] = {}
-    tgts: dict[str, TargetConfig] = {}
-
-    # Default strategy fallback: when no strategies exist, create a minimal default
-    if not content_strategy and not content_strategies:
-        content_strategies["default"] = ContentStrategyConfig(post_when="notable changes")
-        content_strategy = "default"
-
-    has_preview_only = True  # Track if preview is the only enabled platform
-
-    for pname, pcfg in platforms.items():
-        if not pcfg.enabled:
-            continue
-
-        # Skip preview — it's not a real platform
-        if pname == "preview":
-            continue
-
-        has_preview_only = False
-
-        # One PlatformCredentialConfig per platform (empty creds — legacy uses env vars)
-        creds[pname] = PlatformCredentialConfig(platform=pname)
-
-        # One AccountConfig per platform
-        accts[pname] = AccountConfig(
-            platform=pname,
-            tier=pcfg.account_tier,
-            identity=pcfg.identity,
-        )
-
-        # Determine strategy ref
-        strategy = ""
-        if content_strategy and content_strategy in content_strategies:
-            strategy = content_strategy
-
-        # One TargetConfig per platform
-        tgts[pname] = TargetConfig(
-            account=pname,
-            destination="timeline",
-            strategy=strategy,
-            primary=pcfg.priority == "primary",
-        )
-
-    # If preview was the only enabled platform, generate an accountless target
-    if has_preview_only and any(
-        pcfg.enabled and pname == "preview" for pname, pcfg in platforms.items()
-    ):
-        strategy = ""
-        if content_strategy and content_strategy in content_strategies:
-            strategy = content_strategy
-        tgts["x"] = TargetConfig(
-            account="",
-            platform="x",
-            destination="timeline",
-            strategy=strategy,
-            primary=True,
-        )
-
-    return creds, accts, tgts, content_strategy
-
-
 def validate_config(data: dict[str, Any]) -> Config:
     """Validate a raw config dict. Raises ConfigError if invalid."""
     return _parse_config(data)
@@ -991,11 +893,15 @@ def load_full_config(
     """
     from social_hook.config.env import load_env
 
-    # Set default paths
+    # Set default paths via filesystem helpers (patchable in tests)
     if env_path is None:
-        env_path = Path.home() / CONFIG_DIR_NAME / ".env"
+        from social_hook.filesystem import get_env_path
+
+        env_path = get_env_path()
     if yaml_path is None:
-        yaml_path = Path.home() / CONFIG_DIR_NAME / "config.yaml"
+        from social_hook.filesystem import get_config_path
+
+        yaml_path = get_config_path()
 
     # Load environment variables
     env_vars = load_env(env_path)

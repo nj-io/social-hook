@@ -262,12 +262,7 @@ def _auto_configure(base: Path, api_key: str | None, is_json: bool, verbose: boo
     # Write minimal config
     config_data: dict[str, Any] = {"models": models}
 
-    # Default platform: X in preview mode (no account connected)
-    config_data["platforms"] = {
-        "x": {"enabled": True, "priority": "primary", "type": "builtin", "account_tier": "free"}
-    }
-
-    # Default strategy so auto-migration can create valid targets
+    # Default strategy — the setup wizard creates targets/accounts separately
     from social_hook.setup.templates import get_template
 
     template = get_template("building-public")

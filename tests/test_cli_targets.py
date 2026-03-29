@@ -100,11 +100,33 @@ def db_env_with_errors(db_env):
 
 
 def _patch_paths(db_env):
-    """Return context manager patching filesystem paths."""
+    """Return context manager patching filesystem paths (DB + config)."""
     from contextlib import ExitStack
+
+    import yaml
+
+    # Create isolated config.yaml in test tmp_path
+    config_path = db_env["tmp_path"] / "config.yaml"
+    if not config_path.exists():
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "models": {
+                        "evaluator": "claude-cli/sonnet",
+                        "drafter": "claude-cli/sonnet",
+                        "gatekeeper": "claude-cli/haiku",
+                    },
+                    "content_strategies": {
+                        "building-public": {"audience": "devs", "post_when": "always"}
+                    },
+                    "content_strategy": "building-public",
+                }
+            )
+        )
 
     stack = ExitStack()
     stack.enter_context(patch("social_hook.filesystem.get_db_path", return_value=db_env["db_path"]))
+    stack.enter_context(patch("social_hook.filesystem.get_config_path", return_value=config_path))
     return stack
 
 

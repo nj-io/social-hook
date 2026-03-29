@@ -85,27 +85,6 @@ NEW_FORMAT_CONFIG = {
 }
 
 
-class TestAutoMigrationIntegration:
-    """Old-format config auto-migrates and all sections are accessible."""
-
-    def test_old_format_loads_and_auto_migrates(self, tmp_path):
-        config_path = _write_config(tmp_path, OLD_FORMAT_CONFIG)
-        config = load_config(config_path)
-
-        # Legacy platforms still work
-        assert "x" in config.platforms
-        assert config.platforms["x"].enabled is True
-
-        # Auto-migrated sections created
-        assert "x" in config.accounts
-        assert config.accounts["x"].platform == "x"
-        assert config.accounts["x"].tier == "free"
-        assert "x" in config.targets
-        assert config.targets["x"].primary is True
-        assert config.targets["x"].strategy == "building-public"
-        assert "x" in config.platform_credentials
-
-
 class TestNewFormatIntegration:
     """New-format config loads all sections correctly."""
 
