@@ -13,7 +13,7 @@ from social_hook.messaging.base import (
     MessagingAdapter,
     OutboundMessage,
 )
-from social_hook.models import TERMINAL_STATUSES
+from social_hook.models.enums import TERMINAL_STATUSES
 from social_hook.parsing import safe_int
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
     from social_hook.db import operations as ops
     from social_hook.drafting import _parse_thread_tweets
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftTweet
+    from social_hook.models.core import DraftTweet
 
     existing = ops.get_draft_tweets(conn, draft_id)
     if not existing:
@@ -698,7 +698,7 @@ def _save_media_upload(adapter, chat_id, draft_id, text):
     from social_hook.db import operations as ops
     from social_hook.db.operations import insert_draft_change
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -753,7 +753,7 @@ def _apply_expert_result(
     from social_hook.db import insert_draft_change, update_draft
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     if not result.refined_content and not result.refined_media_spec:
         return False
@@ -909,7 +909,7 @@ def _save_edit(
     from social_hook.db import get_draft, insert_draft_change, update_draft
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:

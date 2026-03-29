@@ -52,7 +52,7 @@ def run(harness, runner):
         # If no arc posts happened, seed one
         if not arcs:
             from social_hook.filesystem import generate_id
-            from social_hook.models import Arc
+            from social_hook.models.narrative import Arc
 
             arc = Arc(
                 id=generate_id("arc"),
@@ -74,7 +74,7 @@ def run(harness, runner):
     # C4: Max 3 active arcs
     def c4():
         from social_hook.filesystem import generate_id
-        from social_hook.models import Arc
+        from social_hook.models.narrative import Arc
 
         # Ensure we have 3 active arcs
         current = ops.get_active_arcs(harness.conn, harness.project_id)
@@ -238,7 +238,7 @@ def run(harness, runner):
 
     # C11: Strategy trigger: phase transition
     def c11():
-        from social_hook.models import Lifecycle
+        from social_hook.models.narrative import Lifecycle
         from social_hook.narrative import check_strategy_triggers, record_strategy_moment
 
         # Seed stored lifecycle at research

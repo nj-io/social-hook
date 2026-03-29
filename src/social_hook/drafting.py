@@ -11,7 +11,7 @@ from typing import Any
 from social_hook.config.platforms import resolve_platform
 from social_hook.config.yaml import TIER_CHAR_LIMITS
 from social_hook.filesystem import generate_id, get_base_path
-from social_hook.models import Draft, DraftTweet
+from social_hook.models.core import Draft, DraftTweet
 from social_hook.scheduling import ScheduleResult, calculate_optimal_time
 
 logger = logging.getLogger(__name__)

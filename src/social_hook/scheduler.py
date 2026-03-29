@@ -14,7 +14,7 @@ from social_hook.db.connection import init_database
 from social_hook.error_feed import ErrorSeverity, error_feed
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id, get_base_path, get_db_path
-from social_hook.models import Decision, Post
+from social_hook.models.core import Decision, Post
 from social_hook.notifications import send_notification
 from social_hook.rate_limits import check_rate_limit
 from social_hook.scheduling import calculate_optimal_time

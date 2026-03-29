@@ -8,24 +8,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from social_hook.models import (
-    Arc,
+from social_hook.models.content import (
     ContentSuggestion,
     ContentTopic,
-    Decision,
-    Draft,
-    DraftChange,
     DraftPattern,
-    DraftTweet,
     EvaluationCycle,
-    Lifecycle,
-    NarrativeDebt,
-    OAuthToken,
-    Post,
-    Project,
-    SystemErrorRecord,
-    UsageLog,
 )
+from social_hook.models.core import Decision, Draft, DraftChange, DraftTweet, Post, Project
+from social_hook.models.infra import OAuthToken, SystemErrorRecord, UsageLog
+from social_hook.models.narrative import Arc, Lifecycle, NarrativeDebt
 
 # =============================================================================
 # Schema Version

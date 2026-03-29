@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 import typer
 
-from social_hook.models import PENDING_STATUSES, TERMINAL_STATUSES
+from social_hook.models.enums import PENDING_STATUSES, TERMINAL_STATUSES
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -46,7 +46,7 @@ def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
     from social_hook.db import operations as ops
     from social_hook.drafting import _parse_thread_tweets
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftTweet
+    from social_hook.models.core import DraftTweet
 
     existing = ops.get_draft_tweets(conn, draft_id)
     if not existing:
@@ -351,7 +351,7 @@ def edit(
     """
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -395,7 +395,7 @@ def redraft(
     from social_hook.filesystem import generate_id
     from social_hook.llm.expert import Expert
     from social_hook.llm.factory import create_client
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -667,7 +667,7 @@ def media_regen(
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id, get_base_path
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -736,7 +736,7 @@ def media_remove(
     """
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -772,7 +772,7 @@ def media_edit(
     """
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -980,7 +980,7 @@ def promote(
     from social_hook.errors import ConfigError
     from social_hook.llm.dry_run import DryRunContext
     from social_hook.llm.prompts import assemble_evaluator_context
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     use_json = json or (ctx.obj.get("json", False) if ctx.obj else False)
 

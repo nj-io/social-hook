@@ -124,7 +124,7 @@ def verify_db_operations():
         insert_project,
     )
     from social_hook.filesystem import generate_id
-    from social_hook.models import Project
+    from social_hook.models.core import Project
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"

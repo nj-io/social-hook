@@ -6,7 +6,7 @@ decisions have episode_type=None, and old data still loads.
 
 import pytest
 
-from social_hook.models import Decision
+from social_hook.models.core import Decision
 
 
 class TestNoEpisodeTypeInSchema:

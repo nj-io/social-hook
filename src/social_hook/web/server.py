@@ -32,7 +32,12 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
-from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES, PipelineStage
+from social_hook.models.enums import (
+    EDITABLE_STATUSES,
+    PENDING_STATUSES,
+    TERMINAL_STATUSES,
+    PipelineStage,
+)
 from social_hook.parsing import check_unknown_keys, safe_json_loads
 
 logger = logging.getLogger(__name__)
@@ -900,7 +905,7 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
 
         # Audit: create DraftChange record
         from social_hook.filesystem import generate_id
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         ops.insert_draft_change(
             conn,
@@ -931,7 +936,7 @@ async def api_upload_draft_media(draft_id: str, file: UploadFile):
     Accepts multipart/form-data with a 'file' field.
     """
     from social_hook.filesystem import generate_id, get_base_path
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     # Validate extension
     ext = ""
@@ -1031,7 +1036,7 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
             assemble_spec_generation_prompt,
             build_spec_generation_tool,
         )
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         config = load_full_config()
         prompt = assemble_spec_generation_prompt(
@@ -1219,7 +1224,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
 
     from social_hook.compat import evaluation_from_decision
     from social_hook.config.project import ProjectConfig, load_project_config
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     try:
         project_config = load_project_config(project.repo_path)
@@ -2112,7 +2117,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
     except ConfigError:
         project_config = ProjectConfig(repo_path=project.repo_path)
 
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     combined_summary = "\n".join(f"- {d.commit_message or d.commit_hash[:8]}" for d in decisions)
     commit = CommitInfo(
@@ -2412,7 +2417,7 @@ async def api_create_arc(project_id: str, body: ArcCreate):
 async def api_update_arc(project_id: str, arc_id: str, body: ArcUpdate):
     """Update a narrative arc (status, notes)."""
     from social_hook.errors import MaxArcsError
-    from social_hook.models import ArcStatus
+    from social_hook.models.enums import ArcStatus
     from social_hook.narrative.arcs import resume_arc, update_arc
 
     conn = _get_conn()
@@ -2629,13 +2634,14 @@ async def api_oauth_authorize(platform: str, request: Request):
     """
     import secrets as _secrets
 
-    from social_hook.setup.oauth import _build_auth_url, _generate_pkce
+    from social_hook.oauth_pkce import generate_pkce
+    from social_hook.setup.oauth import _build_auth_url
 
     _validate_oauth_platform(platform)
     _cleanup_expired_oauth_states()
 
     client_id, _client_secret = _get_oauth_credentials(platform)
-    code_verifier, code_challenge = _generate_pkce()
+    code_verifier, code_challenge = generate_pkce()
     state = _secrets.token_urlsafe(32)
 
     # Determine redirect_uri from the current request so the port is correct.
@@ -4432,7 +4438,7 @@ async def api_list_topics(project_id: str, strategy: str | None = Query(None)):
         if strategy:
             topics = ops.get_topics_by_strategy(conn, project_id, strategy)
         else:
-            from social_hook.models import ContentTopic
+            from social_hook.models.content import ContentTopic
 
             rows = conn.execute(
                 "SELECT * FROM content_topics WHERE project_id = ? ORDER BY strategy, priority_rank DESC, created_at ASC",
@@ -4467,7 +4473,7 @@ async def api_add_topic(project_id: str, body: dict[str, Any] = Body(...)):
             raise HTTPException(status_code=400, detail="'strategy' and 'topic' are required")
 
         from social_hook.filesystem import generate_id
-        from social_hook.models import ContentTopic
+        from social_hook.models.content import ContentTopic
         from social_hook.parsing import safe_int
 
         topic = ContentTopic(
@@ -4553,7 +4559,7 @@ async def api_update_topic(project_id: str, topic_id: str, body: dict[str, Any] 
 @app.put("/api/projects/{project_id}/topics/{topic_id}/status")
 async def api_set_topic_status(project_id: str, topic_id: str, body: dict[str, Any] = Body(...)):
     """Set topic status."""
-    from social_hook.models import TOPIC_STATUSES
+    from social_hook.models.enums import TOPIC_STATUSES
 
     conn = _get_conn()
     try:
@@ -4741,7 +4747,7 @@ async def api_create_suggestion(project_id: str, body: dict[str, Any] = Body(...
             raise HTTPException(status_code=400, detail="'idea' is required")
 
         from social_hook.filesystem import generate_id
-        from social_hook.models import ContentSuggestion
+        from social_hook.models.content import ContentSuggestion
 
         suggestion = ContentSuggestion(
             id=generate_id("suggestion"),
@@ -4963,7 +4969,7 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                 decision = ops.get_decision(conn, decision_id)
             if not decision and c.trigger_ref:
                 # No drafts — look up decision by commit hash directly
-                from social_hook.models import Decision
+                from social_hook.models.core import Decision
 
                 # For batch cycles, trigger_ref is "hash1,hash2,...,trigger_hash"
                 # The last hash is the trigger commit with the full decision.
@@ -5152,7 +5158,7 @@ async def api_get_cycle_detail(project_id: str, cycle_id: str):
         if not row:
             raise HTTPException(status_code=404, detail="Cycle not found")
 
-        from social_hook.models import EvaluationCycle
+        from social_hook.models.content import EvaluationCycle
 
         cycle = EvaluationCycle.from_dict(dict(row))
         cycle_dict = cycle.to_dict()
@@ -5238,7 +5244,7 @@ async def api_system_errors(
 async def api_create_system_error(request: Request):
     """Capture a system error (e.g. from frontend)."""
     from social_hook.filesystem import generate_id
-    from social_hook.models import SystemErrorRecord
+    from social_hook.models.infra import SystemErrorRecord
 
     body = await request.json()
     check_unknown_keys(

@@ -6,7 +6,7 @@ import subprocess
 
 from social_hook.db import operations as ops
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision
+from social_hook.models.core import Decision
 
 logger = logging.getLogger(__name__)
 

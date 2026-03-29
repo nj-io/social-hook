@@ -10,7 +10,8 @@ from social_hook.config.targets import (
     is_default_target_preview,
     resolve_default_platform,
 )
-from social_hook.models import ContentTopic, Project
+from social_hook.models.content import ContentTopic
+from social_hook.models.core import Project
 from social_hook.topics import force_draft_topic, process_topic_suggestions
 
 # =============================================================================

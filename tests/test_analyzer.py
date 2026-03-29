@@ -12,7 +12,8 @@ from social_hook.llm.schemas import (
     CommitAnalysisResult,
     CommitClassification,
 )
-from social_hook.models import CommitInfo, EvaluationCycle, Project
+from social_hook.models.content import EvaluationCycle
+from social_hook.models.core import CommitInfo, Project
 
 # =============================================================================
 # CommitClassification enum

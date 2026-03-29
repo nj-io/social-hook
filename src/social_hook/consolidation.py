@@ -134,7 +134,7 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
     from social_hook.config.project import load_project_config
     from social_hook.llm.factory import create_client
     from social_hook.llm.prompts import assemble_evaluator_context
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     # Load project config
     project_config = load_project_config(project.repo_path)
@@ -194,8 +194,7 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
         logger.error(f"LLM API error during consolidation re-evaluation: {e}")
         return
 
-    def _val(x):
-        return x.value if hasattr(x, "value") else x
+    from social_hook.parsing import enum_value
 
     most_recent = decisions[-1]
 
@@ -210,7 +209,7 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
 
         # Get representative strategy for decision fields
         representative = next(
-            (sd for sd in evaluation.strategies.values() if _val(sd.action) == "draft"),
+            (sd for sd in evaluation.strategies.values() if enum_value(sd.action) == "draft"),
             next(iter(evaluation.strategies.values())),
         )
 
@@ -222,8 +221,8 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
                 reasoning=_combine_strategy_reasoning(evaluation.strategies),
                 angle=representative.angle,
                 episode_type=None,
-                post_category=_val(representative.post_category),
-                media_tool=_val(representative.media_tool),
+                post_category=enum_value(representative.post_category),
+                media_tool=enum_value(representative.media_tool),
             )
             ops.emit_data_event(conn, "decision", "updated", most_recent.id, project.id)
 
@@ -257,11 +256,11 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
             logger.info("Consolidation re-evaluation for %s: no default target", project.name)
             return
 
-        if _val(target.action) != "draft":
+        if enum_value(target.action) != "draft":
             logger.info(
                 "Consolidation re-evaluation for %s: %s",
                 project.name,
-                _val(target.action),
+                enum_value(target.action),
             )
             return
 
@@ -273,8 +272,8 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
                 reasoning=target.reason,
                 angle=target.angle,
                 episode_type=None,
-                post_category=_val(target.post_category),
-                media_tool=_val(target.media_tool),
+                post_category=enum_value(target.post_category),
+                media_tool=enum_value(target.media_tool),
             )
             ops.emit_data_event(conn, "decision", "updated", most_recent.id, project.id)
 

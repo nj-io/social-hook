@@ -127,5 +127,5 @@ class TestDryRunAttributeError:
         conn = MagicMock(spec=sqlite3.Connection)
         ctx = DryRunContext(conn, dry_run=False)
 
-        with pytest.raises(AttributeError, match="not found in db.operations"):
+        with pytest.raises(AttributeError, match="not found in"):
             ctx.this_function_does_not_exist()

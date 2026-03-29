@@ -4,7 +4,7 @@ import sqlite3
 from typing import Any
 
 from social_hook.filesystem import generate_id
-from social_hook.models import UsageLog
+from social_hook.models.infra import UsageLog
 
 
 def log_usage(

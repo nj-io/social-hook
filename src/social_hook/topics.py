@@ -12,7 +12,8 @@ from typing import Any
 from social_hook.db import operations as ops
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id
-from social_hook.models import CommitInfo, ContentTopic, EvaluationCycle
+from social_hook.models.content import ContentTopic, EvaluationCycle
+from social_hook.models.core import CommitInfo
 from social_hook.setup.templates import CODE_DRIVEN_TEMPLATES, POSITIONING_TEMPLATES
 
 logger = logging.getLogger(__name__)
@@ -421,7 +422,7 @@ def force_draft_topic(
             draftable_actions = [a for a in target_actions if a.action == "draft"]
             if draftable_actions:
                 from social_hook.content_sources import content_sources
-                from social_hook.models import Decision
+                from social_hook.models.core import Decision
 
                 decision = Decision(
                     id=generate_id("decision"),
@@ -452,13 +453,11 @@ def force_draft_topic(
             # Legacy path: draft for platforms
             from social_hook.compat import make_eval_compat
             from social_hook.drafting import draft_for_platforms
-            from social_hook.models import Decision
-
-            def _val(x: Any) -> Any:
-                return x.value if hasattr(x, "value") else x
+            from social_hook.models.core import Decision
+            from social_hook.parsing import enum_value
 
             first_strategy = next(iter(evaluation.strategies.values()), None)
-            if first_strategy and _val(first_strategy.action) == "draft":
+            if first_strategy and enum_value(first_strategy.action) == "draft":
                 decision = Decision(
                     id=generate_id("decision"),
                     project_id=project_id,

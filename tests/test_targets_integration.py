@@ -292,7 +292,7 @@ class TestPostTargetIdPropagation:
 
         from social_hook.db import operations as ops
         from social_hook.filesystem import generate_id
-        from social_hook.models import Decision, Draft, Project
+        from social_hook.models.core import Decision, Draft, Project
 
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         ops.insert_project(conn, project)

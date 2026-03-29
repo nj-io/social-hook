@@ -7,7 +7,7 @@ import pytest
 
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
-from social_hook.models import Draft
+from social_hook.models.core import Draft
 from social_hook.scheduler import _check_cross_account_gap
 
 # =============================================================================

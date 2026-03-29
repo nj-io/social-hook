@@ -12,7 +12,7 @@ from social_hook.db import (
     update_draft_tweet,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Draft, DraftTweet
+from social_hook.models.core import Decision, Draft, DraftTweet
 from social_hook.scheduler import _post_draft, _registry
 
 
@@ -41,7 +41,7 @@ class TestPostDraftThread:
     def _setup_draft_with_tweets(self, conn):
         """Create a project, decision, draft with thread tweets."""
         from social_hook.db import insert_project
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
         insert_project(conn, project)
@@ -136,7 +136,7 @@ class TestPostDraftThread:
     def test_no_tweets_posts_single(self, mock_create_adapter, temp_dir):
         """Without draft_tweets, posts single via post()."""
         from social_hook.db import insert_project
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -183,7 +183,7 @@ class TestPostDraftThread:
     def test_linkedin_thread_guard(self, mock_create_adapter, temp_dir):
         """LinkedIn posts single content even if draft has tweets."""
         from social_hook.db import insert_project
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -235,7 +235,7 @@ class TestPostDraftThread:
     def test_paid_tier_long_single_post(self, mock_create_adapter, temp_dir):
         """Paid tier long single post (>280 chars) posts successfully."""
         from social_hook.db import insert_project
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -284,7 +284,7 @@ class TestUpdateDraftTweet:
 
     def test_update_sets_external_id(self, temp_db):
         from social_hook.db import insert_project
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         project = Project(id=generate_id("project"), name="t", repo_path="/t")
         insert_project(temp_db, project)
@@ -326,7 +326,7 @@ class TestUpdateDraftTweet:
 
     def test_update_sets_error(self, temp_db):
         from social_hook.db import insert_project
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         project = Project(id=generate_id("project"), name="t", repo_path="/t")
         insert_project(temp_db, project)

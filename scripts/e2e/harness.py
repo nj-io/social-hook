@@ -360,7 +360,8 @@ class E2EHarness:
             insert_project,
         )
         from social_hook.filesystem import generate_id
-        from social_hook.models import Lifecycle, NarrativeDebt, Project
+        from social_hook.models.core import Project
+        from social_hook.models.narrative import Lifecycle, NarrativeDebt
 
         origin = subprocess.run(
             ["git", "-C", str(self.repo_path), "remote", "get-url", "origin"],
@@ -399,7 +400,7 @@ class E2EHarness:
         """Insert a draft with supporting decision row."""
         from social_hook.db import insert_decision, insert_draft
         from social_hook.filesystem import generate_id
-        from social_hook.models import Decision, Draft
+        from social_hook.models.core import Decision, Draft
 
         decision = Decision(
             id=generate_id("decision"),
