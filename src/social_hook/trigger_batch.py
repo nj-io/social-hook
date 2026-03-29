@@ -12,7 +12,8 @@ import sys
 from typing import TYPE_CHECKING
 
 from social_hook.db import operations as ops
-from social_hook.models import CommitInfo, PipelineStage
+from social_hook.models import CommitInfo
+from social_hook.models.enums import PipelineStage
 from social_hook.trigger_context import (
     AnalyzerOutcome,
     build_platform_summaries,

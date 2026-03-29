@@ -6,7 +6,7 @@ import logging
 import typer
 
 from social_hook.cli.utils import resolve_project
-from social_hook.models import TOPIC_STATUSES
+from social_hook.models.enums import TOPIC_STATUSES
 from social_hook.parsing import safe_int
 
 app = typer.Typer(no_args_is_help=True)

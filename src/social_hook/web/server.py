@@ -32,7 +32,12 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
-from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES, PipelineStage
+from social_hook.models.enums import (
+    EDITABLE_STATUSES,
+    PENDING_STATUSES,
+    TERMINAL_STATUSES,
+    PipelineStage,
+)
 from social_hook.parsing import check_unknown_keys, safe_json_loads
 
 logger = logging.getLogger(__name__)
@@ -2400,7 +2405,7 @@ async def api_create_arc(project_id: str, body: ArcCreate):
 async def api_update_arc(project_id: str, arc_id: str, body: ArcUpdate):
     """Update a narrative arc (status, notes)."""
     from social_hook.errors import MaxArcsError
-    from social_hook.models import ArcStatus
+    from social_hook.models.enums import ArcStatus
     from social_hook.narrative.arcs import resume_arc, update_arc
 
     conn = _get_conn()
@@ -4408,7 +4413,7 @@ async def api_update_topic(project_id: str, topic_id: str, body: dict[str, Any] 
 @app.put("/api/projects/{project_id}/topics/{topic_id}/status")
 async def api_set_topic_status(project_id: str, topic_id: str, body: dict[str, Any] = Body(...)):
     """Set topic status."""
-    from social_hook.models import TOPIC_STATUSES
+    from social_hook.models.enums import TOPIC_STATUSES
 
     conn = _get_conn()
     try:

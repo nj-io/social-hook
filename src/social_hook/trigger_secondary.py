@@ -15,7 +15,8 @@ from social_hook.db.connection import init_database
 from social_hook.errors import ConfigError, DatabaseError
 from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.prompts import assemble_evaluator_context
-from social_hook.models import CommitInfo, Decision, PipelineStage
+from social_hook.models import CommitInfo, Decision
+from social_hook.models.enums import PipelineStage
 
 logger = logging.getLogger(__name__)
 

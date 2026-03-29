@@ -6,7 +6,7 @@ import logging
 import typer
 
 from social_hook.cli.utils import resolve_project
-from social_hook.models import PENDING_STATUSES
+from social_hook.models.enums import PENDING_STATUSES
 
 app = typer.Typer(no_args_is_help=True)
 logger = logging.getLogger(__name__)

@@ -12,7 +12,7 @@ from social_hook.messaging.base import (
     MessagingAdapter,
     OutboundMessage,
 )
-from social_hook.models import EDITABLE_STATUSES, TERMINAL_STATUSES
+from social_hook.models.enums import EDITABLE_STATUSES, TERMINAL_STATUSES
 
 logger = logging.getLogger(__name__)
 

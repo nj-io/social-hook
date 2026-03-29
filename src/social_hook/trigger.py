@@ -13,7 +13,8 @@ from social_hook.errors import ConfigError, DatabaseError
 from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
-from social_hook.models import Decision, PipelineStage, is_draftable
+from social_hook.models import Decision
+from social_hook.models.enums import PipelineStage, is_draftable
 from social_hook.parsing import enum_value
 from social_hook.rate_limits import check_rate_limit
 

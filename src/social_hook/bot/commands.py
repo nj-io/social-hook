@@ -13,7 +13,7 @@ from social_hook.messaging.base import (
     MessagingAdapter,
     OutboundMessage,
 )
-from social_hook.models import TERMINAL_STATUSES
+from social_hook.models.enums import TERMINAL_STATUSES
 from social_hook.parsing import safe_int
 
 logger = logging.getLogger(__name__)

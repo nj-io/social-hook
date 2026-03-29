@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 import typer
 
-from social_hook.models import PENDING_STATUSES, TERMINAL_STATUSES
+from social_hook.models.enums import PENDING_STATUSES, TERMINAL_STATUSES
 
 app = typer.Typer(no_args_is_help=True)
 

@@ -96,7 +96,7 @@ def run(harness, runner):
 
     # Q10: is_held and is_draftable helper functions
     def q10():
-        from social_hook.models import is_draftable, is_held
+        from social_hook.models.enums import is_draftable, is_held
 
         # Held decisions — only "hold" returns True
         assert is_held("hold"), "hold should be held"

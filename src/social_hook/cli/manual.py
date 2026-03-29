@@ -2,7 +2,7 @@
 
 import typer
 
-from social_hook.models import PENDING_STATUSES
+from social_hook.models.enums import PENDING_STATUSES
 
 app = typer.Typer()
 

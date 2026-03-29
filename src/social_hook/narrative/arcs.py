@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from social_hook.db import operations as ops
 from social_hook.errors import MaxArcsError
 from social_hook.filesystem import generate_id
-from social_hook.models import Arc, ArcStatus
+from social_hook.models import Arc
+from social_hook.models.enums import ArcStatus
 
 logger = logging.getLogger(__name__)
 
