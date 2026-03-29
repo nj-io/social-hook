@@ -170,6 +170,7 @@ function SettingsContent() {
   const journeyCapture: JourneyCaptureConfig = (config?.journey_capture as JourneyCaptureConfig) ?? { enabled: false };
   const consolidation: ConsolidationConfig = (config?.consolidation as ConsolidationConfig) ?? { enabled: false, mode: "notify_only", batch_size: 20 };
   const rateLimits: RateLimitsConfig = (config?.rate_limits as RateLimitsConfig) ?? { max_evaluations_per_day: 15, min_evaluation_gap_minutes: 10, batch_throttled: false };
+  const selectedProjectId = projects.find((p) => p.repo_path === selectedProjectPath)?.id ?? "";
   const channels: Record<string, ChannelConfig> = (config?.channels as Record<string, ChannelConfig>) ?? {};
 
   return (
@@ -230,7 +231,7 @@ function SettingsContent() {
           </section>
 
           <section id="projects" className="pt-1">
-            <ProjectsSection />
+            <ProjectsSection onProjectsChange={loadAll} />
           </section>
 
           <section id="installations" className="pt-1">
@@ -255,11 +256,11 @@ function SettingsContent() {
           </section>
 
           <section id="targets" className="pt-1">
-            <TargetsSection />
+            <TargetsSection projectId={selectedProjectId || undefined} />
           </section>
 
           <section id="strategies" className="pt-1">
-            <StrategiesSection />
+            <StrategiesSection projectId={selectedProjectId || undefined} />
             <div className="mt-6 border-t border-border pt-4">
               <h3 className="mb-1 text-sm font-semibold">Topic Generation</h3>
               <p className="mb-3 text-xs text-muted-foreground">

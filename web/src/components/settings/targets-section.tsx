@@ -8,7 +8,7 @@ import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/lib/toast-context";
 import { useDataEvents } from "@/lib/use-data-events";
 
-export function TargetsSection() {
+export function TargetsSection({ projectId }: { projectId?: string } = {}) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState("");
   const [targets, setTargets] = useState<Target[]>([]);
@@ -28,21 +28,28 @@ export function TargetsSection() {
   const [deleting, setDeleting] = useState(false);
   const { addToast } = useToast();
 
-  const loadProjects = useCallback(async () => {
-    try {
-      const res = await fetchProjects();
-      setProjects(res.projects);
-      if (res.projects.length > 0 && !selectedProject) {
-        setSelectedProject(res.projects[0].id);
-      }
-    } catch {
-      addToast("Failed to load projects", { variant: "error" });
-    } finally {
+  // Use parent-provided projectId when available; fall back to self-fetch
+  useEffect(() => {
+    if (projectId) {
+      setSelectedProject(projectId);
+      setProjects([{ id: projectId } as Project]);
       setLoading(false);
+      return;
     }
-  }, [selectedProject, addToast]);
-
-  useEffect(() => { loadProjects(); }, [loadProjects]);
+    (async () => {
+      try {
+        const res = await fetchProjects();
+        setProjects(res.projects);
+        if (res.projects.length > 0 && !selectedProject) {
+          setSelectedProject(res.projects[0].id);
+        }
+      } catch {
+        addToast("Failed to load projects", { variant: "error" });
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadTargets = useCallback(async (projectId: string) => {
     if (!projectId) return;
