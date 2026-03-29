@@ -29,7 +29,7 @@ export function WizardModal({ open, onClose, onComplete, prefilledProject }: Wiz
       const stored = localStorage.getItem("social-hook-wizard");
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (parsed.data?.strategyId || parsed.currentStep > 0) {
+        if (parsed.data?.strategyIds?.length > 0 || parsed.currentStep > 0) {
           setConfirmClose(true);
           return;
         }
