@@ -45,7 +45,7 @@ class AnalyzerOutcome:
 class TriggerContext:
     """Shared context for trigger pipeline functions.
 
-    Groups the parameters that flow through _run_commit_analyzer,
+    Groups the parameters that flow through _run_commit_analyzer_gate,
     _run_trivial_skip, and _run_targets_path.
     """
 
@@ -555,7 +555,7 @@ def run_trigger(
         )
 
         # Reset counter (was incremented by early gate)
-        _run_commit_analyzer(ctx=ctx, context=context, evaluator_client=evaluator_client)
+        _reset_interval_counter(ctx=ctx, context=context, evaluator_client=evaluator_client)
 
         # Check for deferred commits to batch
         deferred = ops.get_interval_deferred_decisions(conn, project.id)
@@ -569,38 +569,6 @@ def run_trigger(
             )
             conn.close()
             return result
-
-            # Single-commit path: run stage 1 inline
-            db.emit_data_event("pipeline", PipelineStage.ANALYZING, commit_hash[:8], project.id)
-            try:
-                from social_hook.llm.analyzer import CommitAnalyzer
-
-                stage1 = CommitAnalyzer(evaluator_client)
-                analyzer_result = stage1.analyze(
-                    commit=commit, context=context, db=db, show_prompt=show_prompt
-                )
-                if verbose:
-                    cls = (
-                        analyzer_result.commit_analysis.classification.value
-                        if analyzer_result.commit_analysis.classification
-                        else "unknown"
-                    )
-                    print(f"Stage 1 complete (classification: {cls})")
-            except Exception as e:
-                logger.warning("Commit analyzer failed (non-fatal): %s", e, exc_info=True)
-                analyzer_result = None
-
-            # Trivial check on fresh analysis
-            if analyzer_result is not None and _is_trivial_classification(analyzer_result):
-                logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
-                result = _run_trivial_skip(
-                    ctx=ctx, analyzer_result=analyzer_result, commit_hash=commit_hash
-                )
-                conn.close()
-                return result
-
-            # Proceed to stage 2
-            db.emit_data_event("pipeline", PipelineStage.EVALUATING, commit_hash[:8], project.id)
 
     # Guard: targets configured but no content strategies defined
     if has_targets and not config.content_strategies:
@@ -984,7 +952,7 @@ def _run_commit_analyzer_gate(
     in run_trigger to skip context assembly, discovery, and LLM setup for
     commits that will be deferred.
 
-    The full _run_commit_analyzer (below) is still called by the threshold
+    The full _reset_interval_counter (below) is still called by the threshold
     commit's path after context is assembled — it handles counter reset.
     """
     interval = 1
@@ -1011,14 +979,14 @@ def _run_commit_analyzer_gate(
             print(f"Commit deferred by interval gate (count {new_count}/{interval})")
         return AnalyzerOutcome(result=None, should_evaluate=False)
 
-    # Threshold met — don't reset counter here. The full _run_commit_analyzer
+    # Threshold met — don't reset counter here. The full _reset_interval_counter
     # handles reset after the commit actually proceeds through the pipeline.
     if verbose:
         print(f"Interval threshold met (count {new_count}/{interval})")
     return AnalyzerOutcome(result=None, should_evaluate=True)
 
 
-def _run_commit_analyzer(
+def _reset_interval_counter(
     ctx: TriggerContext,
     context,
     evaluator_client,
