@@ -5,6 +5,8 @@ import type { Target, Account, Strategy } from "@/lib/types";
 import { fetchTargets, addTarget, disableTarget, enableTarget, fetchAccounts, fetchStrategies, fetchProjects } from "@/lib/api";
 import type { Project } from "@/lib/types";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/lib/toast-context";
+import { useDataEvents } from "@/lib/use-data-events";
 
 export function TargetsSection() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -22,6 +24,7 @@ export function TargetsSection() {
   const [addError, setAddError] = useState("");
   const [confirmDisable, setConfirmDisable] = useState<string | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  const { addToast } = useToast();
 
   const loadProjects = useCallback(async () => {
     try {
@@ -38,6 +41,11 @@ export function TargetsSection() {
   }, [selectedProject]);
 
   useEffect(() => { loadProjects(); }, [loadProjects]);
+
+  const reloadCurrentProject = useCallback(() => {
+    if (selectedProject) loadTargets(selectedProject);
+  }, [selectedProject]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useDataEvents(["config"], reloadCurrentProject);
 
   const loadTargets = useCallback(async (projectId: string) => {
     if (!projectId) return;
@@ -111,9 +119,10 @@ export function TargetsSection() {
     setToggling(name);
     try {
       await enableTarget(selectedProject, name);
+      addToast("Target enabled");
       await loadTargets(selectedProject);
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to enable target", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     } finally {
       setToggling(null);
     }
@@ -124,9 +133,10 @@ export function TargetsSection() {
     setConfirmDisable(null);
     try {
       await disableTarget(selectedProject, name);
+      addToast("Target disabled");
       await loadTargets(selectedProject);
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to disable target", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     } finally {
       setToggling(null);
     }

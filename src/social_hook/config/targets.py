@@ -57,6 +57,7 @@ class TargetConfig:
     source: str | None = None  # ref to another target (hard dependency)
     community_id: str | None = None  # required when destination=community
     share_with_followers: bool = False
+    status: str | None = None  # "disabled" or None (enabled)
     frequency: str | None = None  # "high", "moderate", "low", "minimal"
     scheduling: dict | None = None  # per-target overrides
 

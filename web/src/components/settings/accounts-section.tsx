@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { Account } from "@/lib/types";
 import { fetchAccounts, addAccount, deleteAccount, validateAccounts } from "@/lib/api";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/lib/toast-context";
+import { useDataEvents } from "@/lib/use-data-events";
 
 export function AccountsSection() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -17,6 +19,7 @@ export function AccountsSection() {
   const [deleting, setDeleting] = useState(false);
   const [validating, setValidating] = useState(false);
   const [validationResults, setValidationResults] = useState<Record<string, { valid: boolean; error?: string }> | null>(null);
+  const { addToast } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +48,7 @@ export function AccountsSection() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useDataEvents(["config"], load);
 
   async function handleAdd() {
     if (!addName.trim()) return;
@@ -70,9 +74,15 @@ export function AccountsSection() {
     try {
       await deleteAccount(name);
       setConfirmDelete(null);
+      addToast("Account removed");
       await load();
-    } catch {
-      // silent
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("409") || msg.toLowerCase().includes("target")) {
+        addToast("Cannot remove account", { variant: "error", detail: "Account is referenced by targets. Remove targets first." });
+      } else {
+        addToast("Failed to remove account", { variant: "error", detail: msg || undefined });
+      }
     } finally {
       setDeleting(false);
     }

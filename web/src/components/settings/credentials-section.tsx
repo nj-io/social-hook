@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { PlatformCredential } from "@/lib/types";
 import { fetchPlatformCredentials, addPlatformCredential, deletePlatformCredential, validatePlatformCredential } from "@/lib/api";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/lib/toast-context";
+import { useDataEvents } from "@/lib/use-data-events";
 
 export function CredentialsSection() {
   const [credentials, setCredentials] = useState<PlatformCredential[]>([]);
@@ -17,6 +19,7 @@ export function CredentialsSection() {
   const [deleting, setDeleting] = useState(false);
   const [validating, setValidating] = useState<Record<string, boolean>>({});
   const [validationResult, setValidationResult] = useState<Record<string, { valid: boolean; error?: string }>>({});
+  const { addToast } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -42,6 +45,7 @@ export function CredentialsSection() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useDataEvents(["config"], load);
 
   async function handleAdd() {
     if (!addName.trim()) return;
@@ -64,9 +68,15 @@ export function CredentialsSection() {
     try {
       await deletePlatformCredential(name);
       setConfirmDelete(null);
+      addToast("Credential removed");
       await load();
-    } catch {
-      // silent
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("409") || msg.toLowerCase().includes("account")) {
+        addToast("Cannot remove credential", { variant: "error", detail: "Credential is referenced by accounts. Remove accounts first." });
+      } else {
+        addToast("Failed to remove credential", { variant: "error", detail: msg || undefined });
+      }
     } finally {
       setDeleting(false);
     }

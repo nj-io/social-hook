@@ -3844,7 +3844,7 @@ async def api_list_targets(project_id: str):
                 "community_id": tgt.community_id,
                 "share_with_followers": tgt.share_with_followers,
                 "frequency": tgt.frequency,
-                "enabled": True,  # All config-defined targets are enabled
+                "enabled": tgt.status != "disabled",
                 "platform": account.platform if account else "unknown",
                 "created_at": None,
             }
@@ -3978,6 +3978,21 @@ async def api_update_target(project_id: str, name: str, body: dict[str, Any] = B
 @app.put("/api/projects/{project_id}/targets/{name}/disable")
 async def api_disable_target(project_id: str, name: str):
     """Disable a target and archive pending drafts."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Write disabled status to config YAML (same as CLI target disable)
+    import yaml
+
+    config_path = get_config_path()
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    targets_raw = raw.get("targets", {})
+    if name in targets_raw:
+        targets_raw[name]["status"] = "disabled"
+        config_path.write_text(yaml.dump(raw, default_flow_style=False), encoding="utf-8")
+    _invalidate_config()
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
@@ -3995,13 +4010,27 @@ async def api_disable_target(project_id: str, name: str):
     finally:
         conn.close()
 
-    # Note: targets live in config.yaml, not DB. The web UI tracks disabled state separately.
     return {"status": "disabled", "name": name, "cancelled_drafts": len(pending)}
 
 
 @app.put("/api/projects/{project_id}/targets/{name}/enable")
 async def api_enable_target(project_id: str, name: str):
     """Re-enable a target."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Remove disabled status from config YAML
+    import yaml
+
+    config_path = get_config_path()
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    targets_raw = raw.get("targets", {})
+    if name in targets_raw and "status" in targets_raw[name]:
+        del targets_raw[name]["status"]
+        config_path.write_text(yaml.dump(raw, default_flow_style=False), encoding="utf-8")
+    _invalidate_config()
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
