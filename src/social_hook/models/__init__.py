@@ -1,155 +1,32 @@
-"""Domain models and enums for social-hook."""
+"""Domain models and enums for social-hook.
+
+Models are being split into submodules. During migration, this file
+bridges imports from the new submodules for backward compatibility.
+"""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import datetime
 from typing import Any, Optional
 
+from social_hook.models._helpers import _from_iso, _to_iso  # noqa: F401
+from social_hook.models.enums import (  # noqa: F401
+    ARC_STATUSES,
+    EDITABLE_STATUSES,
+    PENDING_STATUSES,
+    SUGGESTION_STATUSES,
+    TERMINAL_STATUSES,
+    TOPIC_STATUSES,
+    ArcStatus,
+    DecisionType,
+    DraftStatus,
+    LifecyclePhase,
+    PipelineStage,
+    PostCategory,
+    PostFormat,
+    is_draftable,
+    is_held,
+)
 from social_hook.parsing import safe_int, safe_json_loads
-
-# =============================================================================
-# Enums (must match DB CHECK constraints)
-# =============================================================================
-
-
-class DraftStatus(Enum):
-    """Status of a content draft."""
-
-    DRAFT = "draft"
-    APPROVED = "approved"
-    SCHEDULED = "scheduled"
-    POSTED = "posted"
-    REJECTED = "rejected"
-    FAILED = "failed"
-    SUPERSEDED = "superseded"
-    CANCELLED = "cancelled"
-    DEFERRED = "deferred"
-
-
-# Single source of truth for status group checks.
-# Import these instead of writing inline tuples.
-TERMINAL_STATUSES = frozenset(
-    {
-        DraftStatus.POSTED.value,
-        DraftStatus.REJECTED.value,
-        DraftStatus.CANCELLED.value,
-        DraftStatus.SUPERSEDED.value,
-    }
-)
-PENDING_STATUSES = frozenset(
-    {
-        DraftStatus.DRAFT.value,
-        DraftStatus.APPROVED.value,
-        DraftStatus.SCHEDULED.value,
-        DraftStatus.DEFERRED.value,
-    }
-)
-EDITABLE_STATUSES = frozenset(
-    {
-        DraftStatus.DRAFT.value,
-        DraftStatus.DEFERRED.value,
-    }
-)
-
-TOPIC_STATUSES = frozenset({"uncovered", "holding", "partial", "covered", "dismissed"})
-SUGGESTION_STATUSES = frozenset({"pending", "evaluated", "drafted", "dismissed"})
-
-
-class DecisionType(Enum):
-    """Evaluation decision for a commit."""
-
-    DRAFT = "draft"
-    HOLD = "hold"
-    SKIP = "skip"
-    IMPORTED = "imported"
-    DEFERRED_EVAL = "deferred_eval"
-    PROCESSING = "processing"  # generic "in progress" — replaced by specific status when done
-
-
-class PipelineStage:
-    """Reusable pipeline stage identifiers for data_change events.
-
-    Emitted as: emit_data_event("pipeline", stage, entity_id, project_id).
-    Frontend PipelineToasts maps these to user-facing messages.
-    Add new stages here when extending the pipeline (e.g. brand discovery).
-    """
-
-    DISCOVERING = "discovering"  # project discovery / brief generation
-    ANALYZING = "analyzing"  # stage 1 commit analysis
-    EVALUATING = "evaluating"  # stage 2 strategy evaluation
-    DRAFTING = "drafting"  # draft creation
-    PROMOTING = "promoting"  # draft promotion / scheduling
-    QUEUED = "queued"  # commit deferred by interval gating
-
-
-class PostCategory(Enum):
-    """How each post relates to ongoing narrative."""
-
-    ARC = "arc"  # Advances an active narrative arc
-    OPPORTUNISTIC = "opportunistic"  # High-signal standalone post
-    EXPERIMENT = "experiment"  # Testing new format, tone, or angle
-
-
-class PostFormat(Enum):
-    """Format of a drafted post."""
-
-    SINGLE = "single"
-    THREAD = "thread"
-    QUOTE = "quote"
-    REPLY = "reply"
-
-
-class LifecyclePhase(Enum):
-    """Project lifecycle phases."""
-
-    RESEARCH = "research"
-    BUILD = "build"
-    DEMO = "demo"
-    LAUNCH = "launch"
-    POST_LAUNCH = "post_launch"
-
-
-class ArcStatus(Enum):
-    """Status of a narrative arc."""
-
-    PROPOSED = "proposed"
-    ACTIVE = "active"
-    COMPLETED = "completed"
-    ABANDONED = "abandoned"
-
-
-ARC_STATUSES = frozenset(s.value for s in ArcStatus)
-
-
-# =============================================================================
-# Helper functions
-# =============================================================================
-
-
-def _to_iso(dt: datetime | None) -> str | None:
-    """Convert datetime to ISO string."""
-    return dt.isoformat() if dt else None
-
-
-def _from_iso(s: str | None) -> datetime | None:
-    """Convert ISO string to datetime."""
-    return datetime.fromisoformat(s) if s else None
-
-
-def _now_iso() -> str:
-    """Get current time as ISO string."""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def is_draftable(decision: str) -> bool:
-    """Check if a decision indicates content should be drafted."""
-    return decision == "draft"
-
-
-def is_held(decision: str) -> bool:
-    """Check if a decision is held for consolidation."""
-    return decision == "hold"
-
 
 # =============================================================================
 # Dataclasses
