@@ -87,7 +87,7 @@ export function ActivityIndicator() {
       href="/system"
       aria-label="System activity"
       title="Pipeline running — click to view"
-      className={`transition-opacity duration-500 ease-in-out ${active ? "opacity-100" : "pointer-events-none opacity-0"}`}
+      className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-500 ease-in-out ${active ? "opacity-100" : "pointer-events-none opacity-0"}`}
     >
       <span className="relative block h-2.5 w-2.5">
         <span className="absolute inset-0 rounded-full bg-accent" />
