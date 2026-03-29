@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260324152432
+SCHEMA_VERSION = 20260328075443
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS projects (
     prompt_docs           TEXT DEFAULT NULL,
     trigger_branch        TEXT DEFAULT NULL,
     brief_section_metadata TEXT DEFAULT '{}',
+    analysis_commit_count INTEGER NOT NULL DEFAULT 0,
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -47,7 +48,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
     commit_message TEXT,
-    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval', 'evaluating')),
+    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval', 'processing')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
     episode_type  TEXT CHECK (episode_type IN ('decision', 'before_after', 'demo_proof', 'milestone', 'postmortem', 'launch', 'synthesis')),
@@ -307,7 +308,7 @@ CREATE TABLE IF NOT EXISTS content_topics (
     description TEXT,
     priority_rank INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'uncovered'
-        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered')),
+        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered', 'dismissed')),
     commit_count INTEGER NOT NULL DEFAULT 0,
     last_commit_at TEXT,
     last_posted_at TEXT,
@@ -336,6 +337,8 @@ CREATE TABLE IF NOT EXISTS evaluation_cycles (
     trigger_type TEXT NOT NULL,
     trigger_ref TEXT,
     commit_analysis_id TEXT,
+    commit_analysis_json TEXT DEFAULT NULL,
+    diagnostics TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -350,6 +353,15 @@ CREATE TABLE IF NOT EXISTS draft_patterns (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Topic-commit junction (which commits contributed to each topic)
+CREATE TABLE IF NOT EXISTS topic_commits (
+    topic_id TEXT NOT NULL,
+    commit_hash TEXT NOT NULL,
+    matched_tag TEXT,
+    matched_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (topic_id, commit_hash)
+);
+
 -- System error persistence
 CREATE TABLE IF NOT EXISTS system_errors (
     id TEXT PRIMARY KEY,
@@ -357,8 +369,13 @@ CREATE TABLE IF NOT EXISTS system_errors (
     message TEXT NOT NULL,
     context TEXT DEFAULT '{}',
     source TEXT DEFAULT '',
+    component TEXT DEFAULT '',
+    run_id TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_system_errors_severity ON system_errors(severity, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_errors_component ON system_errors(component, created_at DESC);
 """
 
 
@@ -391,16 +408,20 @@ def _apply_pragma_migration(conn: sqlite3.Connection, sql: str) -> None:
     pragmas_after: list[str] = []
     other_lines: list[str] = []
 
+    has_ddl = False  # Track whether we've seen actual DDL/DML (not just comments)
     for line in sql.split("\n"):
         stripped = line.strip()
         if stripped.upper().startswith("PRAGMA"):
             # PRAGMAs before DDL go first, PRAGMAs after go last
-            if other_lines:
+            if has_ddl:
                 pragmas_after.append(stripped)
             else:
                 pragmas_before.append(stripped)
         else:
             other_lines.append(line)
+            # Comments and blank lines don't count as DDL
+            if stripped and not stripped.startswith("--"):
+                has_ddl = True
 
     # Execute pre-DDL PRAGMAs outside transaction
     for pragma in pragmas_before:

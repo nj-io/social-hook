@@ -127,10 +127,32 @@ def route_to_targets(
             if rt.action == "draft":
                 draft_targets.add(tname)
 
+    # Produce preview drafts for strategies that decided "draft" but have no target
+    referenced_strategies = {config.targets[t].strategy for t in independent + dependent}
+    for sname, sd in strategy_decisions.items():
+        action_str = sd.action.value if hasattr(sd.action, "value") else str(sd.action)
+        if action_str == "draft" and sname not in referenced_strategies:
+            logger.info("Strategy '%s' has no target — producing preview draft", sname)
+            routed.append(
+                RoutedTarget(
+                    target_name=f"__preview__{sname}",
+                    target_config=TargetConfig(strategy=sname, platform="preview"),
+                    account_config=AccountConfig(platform="preview"),
+                    strategy_decision=sd,
+                    action="draft",
+                    draft_group=None,  # never share with real target groups
+                )
+            )
+
     # Assign draft groups: targets with same strategy + "draft" action share a group
+    # (preview targets excluded — they have draft_group=None forced above)
     strategy_groups: dict[str, str] = {}
     for rt in routed:
-        if rt.action == "draft":
+        if (
+            rt.action == "draft"
+            and rt.draft_group is None
+            and not rt.target_name.startswith("__preview__")
+        ):
             strategy_name = rt.target_config.strategy
             if strategy_name not in strategy_groups:
                 strategy_groups[strategy_name] = f"group-{strategy_name}"

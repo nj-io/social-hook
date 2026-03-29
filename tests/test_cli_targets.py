@@ -100,11 +100,33 @@ def db_env_with_errors(db_env):
 
 
 def _patch_paths(db_env):
-    """Return context manager patching filesystem paths."""
+    """Return context manager patching filesystem paths (DB + config)."""
     from contextlib import ExitStack
+
+    import yaml
+
+    # Create isolated config.yaml in test tmp_path
+    config_path = db_env["tmp_path"] / "config.yaml"
+    if not config_path.exists():
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "models": {
+                        "evaluator": "claude-cli/sonnet",
+                        "drafter": "claude-cli/sonnet",
+                        "gatekeeper": "claude-cli/haiku",
+                    },
+                    "content_strategies": {
+                        "building-public": {"audience": "devs", "post_when": "always"}
+                    },
+                    "content_strategy": "building-public",
+                }
+            )
+        )
 
     stack = ExitStack()
     stack.enter_context(patch("social_hook.filesystem.get_db_path", return_value=db_env["db_path"]))
+    stack.enter_context(patch("social_hook.filesystem.get_config_path", return_value=config_path))
     return stack
 
 
@@ -570,7 +592,7 @@ class TestTopicsAdd:
                     "topics",
                     "add",
                     "--strategy",
-                    "technical",
+                    "building-public",
                     "--topic",
                     "pipeline design",
                     "--project",
@@ -581,7 +603,7 @@ class TestTopicsAdd:
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["topic"] == "pipeline design"
-            assert data["strategy"] == "technical"
+            assert data["strategy"] == "building-public"
 
 
 class TestTopicsStatus:
@@ -692,8 +714,20 @@ class TestTopicsReorder:
 
 
 class TestTopicsDraftNow:
+    def _set_topic_holding(self, db_env):
+        """Set the test topic to 'holding' status so draft-now can proceed."""
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.execute("UPDATE content_topics SET status = 'holding' WHERE id = 'topic_test1'")
+        conn.commit()
+        conn.close()
+
     def test_draft_now(self, db_env_with_topic):
-        with _patch_paths(db_env_with_topic):
+        self._set_topic_holding(db_env_with_topic)
+        with (
+            _patch_paths(db_env_with_topic),
+            patch("social_hook.topics.force_draft_topic", return_value="cycle_mock1"),
+            patch("social_hook.config.yaml.load_full_config"),
+        ):
             result = runner.invoke(
                 app,
                 [
@@ -705,10 +739,15 @@ class TestTopicsDraftNow:
                 ],
             )
             assert result.exit_code == 0
-            assert "Draft created" in result.output
+            assert "cycle_mock1" in result.output
 
     def test_draft_now_json(self, db_env_with_topic):
-        with _patch_paths(db_env_with_topic):
+        self._set_topic_holding(db_env_with_topic)
+        with (
+            _patch_paths(db_env_with_topic),
+            patch("social_hook.topics.force_draft_topic", return_value="cycle_mock1"),
+            patch("social_hook.config.yaml.load_full_config"),
+        ):
             result = runner.invoke(
                 app,
                 [
@@ -722,7 +761,30 @@ class TestTopicsDraftNow:
             )
             assert result.exit_code == 0
             data = json.loads(result.output)
-            assert "draft_id" in data
+            assert data["cycle_id"] == "cycle_mock1"
+            assert data["topic_id"] == "topic_test1"
+
+    def test_draft_now_wrong_status(self, db_env_with_topic):
+        """Topic with non-draftable status should be rejected."""
+        # Set status to 'covered' — not draftable
+        conn = sqlite3.connect(str(db_env_with_topic["db_path"]))
+        conn.execute("UPDATE content_topics SET status = 'covered' WHERE id = 'topic_test1'")
+        conn.commit()
+        conn.close()
+
+        with _patch_paths(db_env_with_topic):
+            result = runner.invoke(
+                app,
+                [
+                    "topics",
+                    "draft-now",
+                    "topic_test1",
+                    "--project",
+                    str(db_env_with_topic["tmp_path"]),
+                ],
+            )
+            assert result.exit_code == 1
+            assert "Only held or uncovered topics" in result.output
 
     def test_draft_now_not_found(self, db_env):
         with _patch_paths(db_env):
@@ -1061,26 +1123,26 @@ class TestCyclesShow:
 class TestSystemErrors:
     def test_errors_empty(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["system", "errors"])
+            result = runner.invoke(app, ["logs"])
             assert result.exit_code == 0
             assert "No system errors" in result.output
 
     def test_errors_with_records(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "errors"])
+            result = runner.invoke(app, ["logs"])
             assert result.exit_code == 0
             assert "Test error message" in result.output
 
     def test_errors_json(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "errors", "--json"])
+            result = runner.invoke(app, ["logs", "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data["errors"]) == 2
 
     def test_errors_limit(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "errors", "--limit", "1", "--json"])
+            result = runner.invoke(app, ["logs", "--limit", "1", "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert len(data["errors"]) == 1
@@ -1089,13 +1151,13 @@ class TestSystemErrors:
 class TestSystemHealth:
     def test_health_empty(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["system", "health"])
+            result = runner.invoke(app, ["logs", "health"])
             assert result.exit_code == 0
             assert "healthy" in result.output
 
     def test_health_json(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["system", "health", "--json"])
+            result = runner.invoke(app, ["logs", "health", "--json"])
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert data["status"] == "healthy"
@@ -1103,7 +1165,7 @@ class TestSystemHealth:
 
     def test_health_with_errors(self, db_env_with_errors):
         with _patch_paths(db_env_with_errors):
-            result = runner.invoke(app, ["system", "health"])
+            result = runner.invoke(app, ["logs", "health"])
             assert result.exit_code == 0
             # Errors in last 24h should show some status
 
@@ -1127,7 +1189,7 @@ class TestHelpTexts:
             ["brief", "--help"],
             ["content", "--help"],
             ["cycles", "--help"],
-            ["system", "--help"],
+            ["logs", "--help"],
         ],
     )
     def test_help_available(self, cmd):

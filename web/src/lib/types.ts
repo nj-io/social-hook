@@ -199,9 +199,11 @@ export interface Decision {
   platforms: string;
   targets: Record<string, unknown>;
   consolidate_with: string[] | null;
+  classification?: string | null;
   draft_count: number;
   draft_ids?: string[];
   branch?: string | null;
+  batch_id?: string | null;
   created_at: string;
 }
 
@@ -381,6 +383,8 @@ export interface Topic {
   priority_rank: number;
   commit_count?: number;
   last_posted_at?: string;
+  created_by?: string;
+  last_commit_at?: string;
   created_at: string;
 }
 
@@ -397,13 +401,26 @@ export interface ContentSuggestion {
   created_at: string;
 }
 
+export interface DiagnosticItem {
+  code: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  suggestion: string | null;
+  context: Record<string, unknown>;
+}
+
 export interface EvaluationCycle {
   id: string;
   project_id: string;
   trigger: string;
   status: string;
   strategies: Record<string, CycleStrategyOutcome>;
+  diagnostics?: DiagnosticItem[];
   created_at: string;
+  draft_count?: number;
+  pending_count?: number;
+  approved_count?: number;
+  posted_count?: number;
 }
 
 export interface CycleStrategyOutcome {
@@ -415,20 +432,26 @@ export interface CycleStrategyOutcome {
   draft_id?: string;
   draft_content?: string;
   draft_status?: string;
+  draft_preview_mode?: boolean;
+  topic_id?: string;
+  episode_tags?: string[];
 }
 
 export interface SystemError {
   id: string;
   severity: string;
   message: string;
+  context?: string;
   source?: string;
+  component?: string;
+  run_id?: string;
   created_at: string;
 }
 
 export interface SystemHealth {
   status: string;
-  error_count: number;
-  recent_errors: SystemError[];
+  total_errors_24h: number;
+  error_counts_24h: Record<string, number>;
 }
 
 export interface PlatformSettings {

@@ -44,12 +44,14 @@ export async function fetchDrafts(filters?: {
   project_id?: string;
   decision_id?: string;
   commit?: string;
+  tag?: string;
 }): Promise<{ drafts: Draft[] }> {
   const params = new URLSearchParams();
   if (filters?.status) params.set("status", filters.status);
   if (filters?.project_id) params.set("project_id", filters.project_id);
   if (filters?.decision_id) params.set("decision_id", filters.decision_id);
   if (filters?.commit) params.set("commit", filters.commit);
+  if (filters?.tag) params.set("tag", filters.tag);
   const qs = params.toString();
   return apiFetch(`/api/drafts${qs ? `?${qs}` : ""}`);
 }
@@ -272,6 +274,10 @@ export async function toggleProjectPause(projectId: string): Promise<{ status: s
 // Project branches
 export async function fetchProjectBranches(id: string): Promise<{ branches: string[]; current: string | null; error?: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/branches`);
+}
+
+export async function fetchGitBranches(repoPath: string): Promise<{ branches: string[]; current: string | null }> {
+  return apiFetch(`/api/git/branches?repo_path=${encodeURIComponent(repoPath)}`);
 }
 
 export async function updateProjectTriggerBranch(id: string, branch: string | null): Promise<{ status: string; trigger_branch: string | null }> {
@@ -643,8 +649,11 @@ export async function resetStrategy(projectId: string, name: string): Promise<{ 
 }
 
 // Topics
-export async function fetchTopics(projectId: string, strategy?: string): Promise<{ topics: Topic[] }> {
-  const params = strategy ? `?strategy=${encodeURIComponent(strategy)}` : "";
+export async function fetchTopics(projectId: string, strategy?: string, includeDismissed?: boolean): Promise<{ topics: Topic[] }> {
+  const parts: string[] = [];
+  if (strategy) parts.push(`strategy=${encodeURIComponent(strategy)}`);
+  if (includeDismissed) parts.push("include_dismissed=true");
+  const params = parts.length > 0 ? `?${parts.join("&")}` : "";
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics${params}`);
 }
 
@@ -746,12 +755,63 @@ export async function approveAllCycleDrafts(
 }
 
 // System
-export async function fetchSystemErrors(): Promise<{ errors: SystemError[] }> {
-  return apiFetch("/api/system/errors");
+export async function fetchSystemErrors(params?: {
+  severity?: string;
+  component?: string;
+  source?: string;
+  limit?: number;
+}): Promise<{ errors: SystemError[] }> {
+  const qs = new URLSearchParams();
+  if (params?.severity) qs.set("severity", params.severity);
+  if (params?.component) qs.set("component", params.component);
+  if (params?.source) qs.set("source", params.source);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const query = qs.toString();
+  return apiFetch(`/api/system/errors${query ? `?${query}` : ""}`);
 }
 
 export async function fetchSystemHealth(): Promise<SystemHealth> {
   return apiFetch("/api/system/health");
+}
+
+export interface SystemEvent {
+  id: number;
+  entity: string;
+  action: string;
+  entity_id: string | null;
+  project_id: string | null;
+  created_at: string;
+}
+
+export async function fetchSystemEvents(params?: {
+  entity?: string;
+  limit?: number;
+}): Promise<{ events: SystemEvent[] }> {
+  const qs = new URLSearchParams();
+  if (params?.entity) qs.set("entity", params.entity);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const query = qs.toString();
+  return apiFetch(`/api/system/events${query ? `?${query}` : ""}`);
+}
+
+export async function clearSystemErrors(
+  olderThanDays?: number
+): Promise<{ deleted: number }> {
+  const qs = olderThanDays != null ? `?older_than_days=${olderThanDays}` : "";
+  return apiFetch(`/api/system/errors${qs}`, { method: "DELETE" });
+}
+
+export async function reportFrontendError(error: {
+  severity: string;
+  message: string;
+  source: string;
+  context?: Record<string, unknown>;
+}): Promise<{ id: string; status: string }> {
+  return apiFetch("/api/system/errors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(error),
+  });
 }
 
 // Platform Settings
@@ -783,3 +843,37 @@ export async function fetchOAuthDisconnect(platform: string): Promise<{ disconne
 // Backward-compat aliases
 export const fetchXOAuthAuthorize = () => fetchOAuthAuthorize("x");
 export const fetchXOAuthStatus = () => fetchOAuthStatus("x");
+
+// Connect a preview-mode draft to an account
+export async function connectDraft(draftId: string, accountName: string): Promise<{ status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ account: accountName }),
+  });
+}
+
+// --- Phase 3: Missing CRUD ---
+
+export async function deleteTarget(projectId: string, name: string): Promise<{ status: string; name: string; cancelled_drafts: number }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function createStrategy(
+  projectId: string,
+  data: { name: string; audience?: string; voice?: string; angle?: string; post_when?: string; avoid?: string },
+): Promise<{ status: string; name: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteStrategy(projectId: string, name: string): Promise<{ status: string; name: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function acceptSuggestion(projectId: string, suggestionId: string): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(suggestionId)}/accept`, { method: "POST" });
+}

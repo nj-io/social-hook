@@ -18,14 +18,15 @@ export default function DraftsPage() {
   const fromProjectName = searchParams.get("name");
   const decisionFilter = searchParams.get("decision");
   const commitFilter = searchParams.get("commit");
+  const tagParam = searchParams.get("tag");
 
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("All");
+  const [tagFilter, setTagFilter] = useState(tagParam || "");
   const filterRef = useRef(filter);
   filterRef.current = filter;
-
   function removeParam(key: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.delete(key);
@@ -40,8 +41,10 @@ export default function DraftsPage() {
     if (fromProjectId) filters.project_id = fromProjectId;
     if (decisionFilter) filters.decision_id = decisionFilter;
     if (commitFilter) filters.commit = commitFilter;
+    const tag = tagFilter.trim();
+    if (tag) filters.tag = tag;
     return filters;
-  }, [fromProjectId, decisionFilter, commitFilter]);
+  }, [fromProjectId, decisionFilter, commitFilter, tagFilter]);
 
   const reload = useCallback(async () => {
     try {
@@ -67,9 +70,9 @@ export default function DraftsPage() {
       }
     }
     load();
-  }, [filter, buildFilters]);
+  }, [filter, tagFilter, buildFilters]);
 
-  const hasActiveFilters = fromProjectId || decisionFilter || commitFilter;
+  const hasActiveFilters = fromProjectId || decisionFilter || commitFilter || tagParam;
 
   return (
     <div className="space-y-6">
@@ -83,21 +86,44 @@ export default function DraftsPage() {
         <p className="text-muted-foreground">Review and manage generated content drafts.</p>
       </div>
 
-      {/* Status filter tabs */}
-      <div className="flex gap-1 border-b border-border">
-        {STATUSES.map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              filter === s
-                ? "border-accent text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {s === "All" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
-          </button>
-        ))}
+      {/* Status filter tabs + tag filter */}
+      <div className="flex items-end justify-between gap-4 border-b border-border">
+        <div className="flex gap-1">
+          {STATUSES.map((s) => (
+            <button
+              key={s}
+              onClick={() => setFilter(s)}
+              className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                filter === s
+                  ? "border-accent text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {s === "All" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 pb-1.5">
+          <input
+            type="text"
+            placeholder="Filter by tag..."
+            value={tagFilter}
+            onChange={(e) => setTagFilter(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const val = tagFilter.trim();
+                if (val) {
+                  const params = new URLSearchParams(searchParams.toString());
+                  params.set("tag", val);
+                  router.replace(`${pathname}?${params.toString()}`);
+                } else {
+                  removeParam("tag");
+                }
+              }
+            }}
+            className="w-36 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm placeholder:text-muted-foreground focus:border-accent focus:outline-none"
+          />
+        </div>
       </div>
 
       {/* Active filter chips */}
@@ -119,6 +145,12 @@ export default function DraftsPage() {
             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
               Commit: <code>{commitFilter.slice(0, 7)}</code>
               <button onClick={() => removeParam("commit")} className="ml-0.5 hover:text-foreground">&times;</button>
+            </span>
+          )}
+          {tagParam && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+              Tag: <code>{tagParam}</code>
+              <button onClick={() => { removeParam("tag"); setTagFilter(""); }} className="ml-0.5 hover:text-foreground">&times;</button>
             </span>
           )}
         </div>

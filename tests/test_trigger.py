@@ -400,6 +400,11 @@ class TestTriggerBranchFilter:
 class TestTriggerUsesAdapter:
     """Tests that trigger notification uses TelegramAdapter."""
 
+    @pytest.fixture(autouse=True)
+    def _no_real_notifications(self):
+        """Override: this class tests notification paths with mocked adapters."""
+        yield
+
     @patch("social_hook.messaging.telegram.TelegramAdapter.send_message")
     @patch("social_hook.bot.commands.set_chat_draft_context")
     @patch("social_hook.drafting.calculate_optimal_time")
@@ -1049,6 +1054,11 @@ class TestTriggerMedia:
 
 class TestTriggerSendsMediaNotification:
     """Tests that trigger sends media files via adapter after text notification."""
+
+    @pytest.fixture(autouse=True)
+    def _no_real_notifications(self):
+        """Override: this class tests notification paths with mocked adapters."""
+        yield
 
     @patch("social_hook.messaging.telegram.TelegramAdapter.send_media")
     @patch("social_hook.messaging.telegram.TelegramAdapter.send_message")
@@ -1902,6 +1912,11 @@ class TestParseThreadTweetsThreshold:
 
 class TestDecisionNotification:
     """Tests for broadcast_notification integration and notification_level config."""
+
+    @pytest.fixture(autouse=True)
+    def _no_real_notifications(self):
+        """Override: this class tests notification paths with mocked adapters."""
+        yield
 
     @patch("social_hook.notifications.broadcast_notification")
     @patch("social_hook.llm.evaluator.Evaluator")

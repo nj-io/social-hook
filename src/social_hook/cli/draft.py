@@ -810,6 +810,9 @@ def list_cmd(
     project: str | None = typer.Option(None, "--project", "-i", help="Filter by project ID"),
     decision: str | None = typer.Option(None, "--decision", "-d", help="Filter by decision ID"),
     commit: str | None = typer.Option(None, "--commit", "-c", help="Filter by commit hash"),
+    tag: str | None = typer.Option(
+        None, "--tag", "-t", help="Filter by episode tag (matches decision episode_tags)"
+    ),
     pending: bool = typer.Option(
         False, "--pending", help="Show only actionable drafts (draft/approved/scheduled)"
     ),
@@ -820,6 +823,7 @@ def list_cmd(
     Example: social-hook draft list --pending --json
     Example: social-hook draft list --decision decision-abc123
     Example: social-hook draft list --commit 47a5191
+    Example: social-hook draft list --tag auth
     """
     from social_hook.db import operations as ops
 
@@ -831,6 +835,7 @@ def list_cmd(
             project_id=project,
             decision_id=decision,
             commit_hash=commit,
+            tag=tag,
         )
         if pending:
             drafts = [d for d in drafts if d.status in PENDING_STATUSES]

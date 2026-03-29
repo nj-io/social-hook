@@ -270,7 +270,7 @@ class TestAssembleStrategyPostingState:
 
         assert assemble_strategy_posting_state({"default": object()}, None) == ""
 
-    def test_renders_cross_strategy_summary(self):
+    def test_renders_per_strategy_posting_state(self):
         from dataclasses import dataclass
         from datetime import datetime, timezone
 
@@ -280,23 +280,113 @@ class TestAssembleStrategyPostingState:
         class FakePost:
             content: str
             posted_at: datetime
-            strategy_name: str = "default"
+            target_id: str = ""
+            external_url: str = ""
+
+        @dataclass
+        class FakeTarget:
+            strategy: str = ""
 
         posts = [
             FakePost(
                 content="First post about auth",
                 posted_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
-                strategy_name="building-public",
+                target_id="t-build",
             ),
             FakePost(
                 content="Brand announcement",
                 posted_at=datetime(2026, 3, 22, tzinfo=timezone.utc),
-                strategy_name="brand-primary",
+                target_id="t-brand",
             ),
         ]
+        targets = {
+            "t-build": FakeTarget(strategy="building-public"),
+            "t-brand": FakeTarget(strategy="brand-primary"),
+        }
         result = assemble_strategy_posting_state(
-            {"building-public": object(), "brand-primary": object()}, posts
+            {"building-public": object(), "brand-primary": object()},
+            recent_posts=posts,
+            targets=targets,
         )
-        assert "Cross-Strategy Posting Summary" in result
+        assert "Per-Strategy Posting State" in result
         assert "building-public" in result
         assert "brand-primary" in result
+        assert "First post about auth" in result
+
+    def test_renders_pending_drafts(self):
+        from dataclasses import dataclass
+        from datetime import datetime, timezone
+
+        from social_hook.llm.prompts import assemble_strategy_posting_state
+
+        @dataclass
+        class FakeDraft:
+            content: str
+            target_id: str = ""
+            suggested_time: datetime | None = None
+
+        @dataclass
+        class FakeTarget:
+            strategy: str = ""
+
+        drafts = [
+            FakeDraft(
+                content="Thread on testing patterns",
+                target_id="t-build",
+                suggested_time=datetime(2026, 3, 25, 14, 0, tzinfo=timezone.utc),
+            ),
+        ]
+        targets = {"t-build": FakeTarget(strategy="building-public")}
+        result = assemble_strategy_posting_state(
+            {"building-public": object()},
+            pending_drafts=drafts,
+            targets=targets,
+        )
+        assert "Pending drafts: 1" in result
+        assert "Thread on testing" in result
+
+    def test_renders_held_topics(self):
+        from dataclasses import dataclass
+
+        from social_hook.llm.prompts import assemble_strategy_posting_state
+
+        @dataclass
+        class FakeTopic:
+            topic: str
+            strategy: str
+            commit_count: int = 0
+            last_commit_at: str | None = None
+            status: str = "holding"
+
+        topics = [
+            FakeTopic(topic="auth system", strategy="building-public", commit_count=5),
+        ]
+        result = assemble_strategy_posting_state(
+            {"building-public": object()},
+            held_topics=topics,
+        )
+        assert "Held topics:" in result
+        assert "auth system" in result
+        assert "5 commits" in result
+
+    def test_renders_active_arcs(self):
+        from dataclasses import dataclass
+
+        from social_hook.llm.prompts import assemble_strategy_posting_state
+
+        @dataclass
+        class FakeArc:
+            theme: str
+            strategy: str
+            post_count: int = 0
+
+        arcs = [
+            FakeArc(theme="auth rework", strategy="building-public", post_count=3),
+        ]
+        result = assemble_strategy_posting_state(
+            {"building-public": object()},
+            active_arcs=arcs,
+        )
+        assert "Active arcs:" in result
+        assert "auth rework" in result
+        assert "3 posts" in result

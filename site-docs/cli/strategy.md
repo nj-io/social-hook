@@ -4,6 +4,56 @@ Content strategy management.
 
 ---
 
+### `social-hook strategy add`
+
+Create a new custom content strategy.
+
+Creates a strategy in the project's config. Optionally base it on a
+built-in template to inherit defaults, then override specific fields.
+
+Example: social-hook strategy add --name dev-community --audience "open-source developers" --voice casual
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--name`, `-n` | string |  | Strategy name |
+| `--template`, `-t` | string |  | Built-in template ID to base on |
+| `--audience` | string |  | Target audience |
+| `--voice` | string |  | Voice/tone |
+| `--angle` | string |  | Content angle |
+| `--post-when` | string |  | When to post |
+| `--avoid` | string |  | What to avoid |
+| `--project`, `-p` | string |  | Repository path (default: cwd) |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
+### `social-hook strategy delete`
+
+Delete a custom strategy from the project config.
+
+Fails if any targets reference the strategy (409 Conflict).
+Built-in template strategies cannot be deleted — use 'reset' instead.
+
+Example: social-hook strategy delete dev-community --yes
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `name` | yes | Strategy name to delete |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes`, `-y` | boolean | false | Skip confirmation |
+| `--project`, `-p` | string |  | Repository path (default: cwd) |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
 ### `social-hook strategy edit`
 
 Edit a strategy's fields in $EDITOR.

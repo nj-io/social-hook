@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { EvaluationCycle, CycleStrategyOutcome } from "@/lib/types";
-import { fetchCycles, approveAllCycleDrafts } from "@/lib/api";
+import type { EvaluationCycle, CycleStrategyOutcome, DiagnosticItem } from "@/lib/types";
+import type { BackgroundTask } from "@/lib/api";
+import { fetchCycles, approveAllCycleDrafts, sendCallback, connectDraft, draftNowTopic } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
+import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { AsyncButton } from "@/components/async-button";
 import { Badge } from "@/components/ui/badge";
+import { relativeTime, absoluteTime } from "@/lib/relative-time";
 
 export function EvaluationCycles({ projectId }: { projectId: string }) {
   const [cycles, setCycles] = useState<EvaluationCycle[]>([]);
@@ -13,6 +17,14 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
   const [expandedCycles, setExpandedCycles] = useState<Set<string>>(new Set());
   const [expandAll, setExpandAll] = useState(false);
   const [approvingCycle, setApprovingCycle] = useState<string | null>(null);
+
+  const loadRef = useRef<() => void>(() => {});
+
+  const onTaskCompleted = useCallback((_task: BackgroundTask) => {
+    loadRef.current();
+  }, []);
+
+  const { trackTask, isRunning, getTask } = useBackgroundTasks(projectId, onTaskCompleted);
 
   const load = useCallback(async () => {
     try {
@@ -24,6 +36,8 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
       setLoading(false);
     }
   }, [projectId]);
+
+  loadRef.current = load;
 
   useEffect(() => { load(); }, [load]);
   useDataEvents(["cycle", "draft", "decision"], load, projectId);
@@ -101,6 +115,7 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                 >
                   <td className="py-3 pr-4">
                     <span className="text-sm">{cycle.trigger}</span>
+                    <code className="ml-2 text-[10px] text-muted-foreground">{cycle.id.slice(0, 16)}</code>
                     {isExpanded && strategyEntries.length > 0 && (
                       <div className="mt-3 space-y-3">
                         {strategyEntries.map(([stratName, outcome]) => (
@@ -109,6 +124,10 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                             strategy={stratName}
                             outcome={outcome}
                             projectId={projectId}
+                            onReload={load}
+                            trackTask={trackTask}
+                            isTaskRunning={isRunning}
+                            getTask={getTask}
                           />
                         ))}
                         {strategyEntries.some(([, o]) => o.draft_id && o.draft_status === "draft") && (
@@ -123,6 +142,9 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                             {approvingCycle === cycle.id ? "Approving..." : "Approve All"}
                           </button>
                         )}
+                        {cycle.diagnostics && cycle.diagnostics.length > 0 && (
+                          <CycleDiagnostics diagnostics={cycle.diagnostics} />
+                        )}
                       </div>
                     )}
                   </td>
@@ -131,13 +153,7 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                       {strategyEntries.map(([name, outcome]) => (
                         <span
                           key={name}
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                            outcome.decision === "draft"
-                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
-                              : outcome.decision === "hold"
-                              ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-                              : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-                          }`}
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${decisionBadgeClass(outcome.decision)}`}
                         >
                           {name}: {outcome.decision}
                         </span>
@@ -145,10 +161,20 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                     </div>
                   </td>
                   <td className="py-3 pr-4">
-                    <Badge value={cycle.status} variant="status" />
+                    <div className="flex flex-col gap-1">
+                      <Badge value={cycle.status} variant="status" />
+                      {!!cycle.draft_count && (
+                        <span className="text-xs text-muted-foreground">
+                          <CycleStatusCounts cycle={cycle} />
+                        </span>
+                      )}
+                    </div>
                   </td>
-                  <td className="py-3 text-xs text-muted-foreground">
-                    {new Date(cycle.created_at).toLocaleString()}
+                  <td
+                    className="py-3 text-xs text-muted-foreground"
+                    title={absoluteTime(cycle.created_at)}
+                  >
+                    {relativeTime(cycle.created_at)}
                   </td>
                 </tr>
               );
@@ -160,15 +186,101 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
   );
 }
 
+/** 2.6: Descriptive status counts — "2 drafts pending", "1 posted, 1 pending", etc. */
+function CycleStatusCounts({ cycle }: { cycle: EvaluationCycle }) {
+  const parts: string[] = [];
+  if (cycle.posted_count && cycle.posted_count > 0) {
+    parts.push(`${cycle.posted_count} posted`);
+  }
+  if (cycle.approved_count && cycle.approved_count > 0) {
+    parts.push(`${cycle.approved_count} approved`);
+  }
+  if (cycle.pending_count && cycle.pending_count > 0) {
+    parts.push(`${cycle.pending_count} pending`);
+  }
+  if (parts.length === 0 && cycle.draft_count) {
+    parts.push(`${cycle.draft_count} draft${cycle.draft_count > 1 ? "s" : ""}`);
+  }
+  return <>{parts.join(", ")}</>;
+}
+
 function StrategyOutcomeCard({
   strategy,
   outcome,
   projectId,
+  onReload,
+  trackTask,
+  isTaskRunning,
+  getTask,
 }: {
   strategy: string;
   outcome: CycleStrategyOutcome;
   projectId: string;
+  onReload: () => void;
+  trackTask: (taskId: string, refId: string, type: string) => void;
+  isTaskRunning: (refId: string) => boolean;
+  getTask: (refId: string) => BackgroundTask | null;
 }) {
+  const [actionPending, setActionPending] = useState("");
+
+  async function handleApprove() {
+    if (!outcome.draft_id) return;
+    setActionPending("approve");
+    try {
+      await sendCallback("approve", outcome.draft_id);
+      onReload();
+    } catch {
+      onReload();
+    } finally {
+      setActionPending("");
+    }
+  }
+
+  async function handleReject() {
+    if (!outcome.draft_id) return;
+    setActionPending("reject");
+    try {
+      await sendCallback("reject_now", outcome.draft_id);
+      onReload();
+    } catch {
+      onReload();
+    } finally {
+      setActionPending("");
+    }
+  }
+
+  async function handleConnect() {
+    if (!outcome.draft_id) return;
+    setActionPending("connect");
+    try {
+      // Use a placeholder — the server endpoint requires an account name.
+      // For now, connect with the first matching account (the connect endpoint
+      // validates platform match). The UI could be expanded to show a picker.
+      await connectDraft(outcome.draft_id, "");
+      onReload();
+    } catch {
+      onReload();
+    } finally {
+      setActionPending("");
+    }
+  }
+
+  async function handleDraftNow() {
+    if (!outcome.topic_id) return;
+    try {
+      const res = await draftNowTopic(projectId, outcome.topic_id);
+      trackTask(res.task_id, `draft-now:${outcome.topic_id}`, "draft_now");
+    } catch {
+      // silent
+    }
+  }
+
+  const draftNowRefId = outcome.topic_id ? `draft-now:${outcome.topic_id}` : "";
+  const draftNowLoading = !!draftNowRefId && isTaskRunning(draftNowRefId);
+  const draftNowTask = draftNowRefId ? getTask(draftNowRefId) : undefined;
+
+  const isDisabled = !!actionPending;
+
   return (
     <div className="rounded-md border border-border bg-muted/30 p-3" onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center gap-2">
@@ -178,6 +290,16 @@ function StrategyOutcomeCard({
       {outcome.reasoning && (
         <p className="mt-1 text-xs text-muted-foreground">{outcome.reasoning}</p>
       )}
+
+      {/* 2.4: Episode tags as pill badges */}
+      {!!outcome.episode_tags && outcome.episode_tags.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {outcome.episode_tags.map((tag) => (
+            <Badge key={tag} value={tag} variant="tag" />
+          ))}
+        </div>
+      )}
+
       <div className="mt-2 space-y-1 text-xs">
         {outcome.topic_matched && (
           <p><span className="text-muted-foreground">Topic: </span>{outcome.topic_matched}</p>
@@ -188,6 +310,8 @@ function StrategyOutcomeCard({
         {outcome.content_source && (
           <p><span className="text-muted-foreground">Source: </span>{outcome.content_source}</p>
         )}
+
+        {/* Draft section with inline actions */}
         {outcome.draft_id && (
           <div className="mt-2">
             <Link
@@ -207,9 +331,94 @@ function StrategyOutcomeCard({
                 {outcome.draft_content.length > 200 ? "..." : ""}
               </p>
             )}
+
+            {/* 2.1: Inline approve/reject for drafts in "draft" status */}
+            {outcome.draft_status === "draft" && !outcome.draft_preview_mode && (
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={handleApprove}
+                  disabled={isDisabled}
+                  className="rounded bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {actionPending === "approve" ? "..." : "Approve"}
+                </button>
+                <button
+                  onClick={handleReject}
+                  disabled={isDisabled}
+                  className="rounded border border-red-300 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+                >
+                  {actionPending === "reject" ? "..." : "Reject"}
+                </button>
+              </div>
+            )}
+
+            {/* 2.1: Connect Account for preview-mode drafts */}
+            {!!outcome.draft_preview_mode && (
+              <div className="mt-2">
+                <button
+                  onClick={handleConnect}
+                  disabled={isDisabled}
+                  className="rounded border border-blue-300 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20"
+                >
+                  {actionPending === "connect" ? "..." : "Connect Account"}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 2.2: Draft Now for held strategies with a topic */}
+        {outcome.decision === "hold" && !!outcome.topic_id && !outcome.draft_id && (
+          <div className="mt-2">
+            <AsyncButton
+              loading={draftNowLoading}
+              startTime={draftNowTask?.created_at}
+              loadingText="Drafting"
+              onClick={handleDraftNow}
+              disabled={draftNowLoading}
+              className="rounded bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              Draft Now
+            </AsyncButton>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function decisionBadgeClass(decision: string): string {
+  switch (decision) {
+    case "draft":
+      return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400";
+    case "hold":
+      return "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400";
+    default:
+      return "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
+  }
+}
+
+function CycleDiagnostics({ diagnostics }: { diagnostics: DiagnosticItem[] }) {
+  const warnings = diagnostics.filter(d => d.severity !== "info");
+  if (warnings.length === 0) return null;
+
+  return (
+    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+      <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+        Pipeline Warnings ({warnings.length})
+      </p>
+      <ul className="mt-1 space-y-1">
+        {warnings.map((d, i) => (
+          <li key={i} className="text-xs text-amber-700 dark:text-amber-400">
+            <span className="font-medium">{d.code}:</span> {d.message}
+            {d.suggestion && (
+              <span className="ml-1 text-amber-600 dark:text-amber-500">
+                — {d.suggestion}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

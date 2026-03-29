@@ -444,8 +444,8 @@ def insert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
         INSERT INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            reference_posts, branch, trigger_source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch, trigger_source, processed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )
@@ -466,8 +466,8 @@ def upsert_decision(conn: sqlite3.Connection, decision: Decision) -> str:
         INSERT INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            reference_posts, branch, trigger_source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch, trigger_source, processed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         decision.to_row(),
     )
@@ -574,8 +574,8 @@ def insert_decisions_batch(
         INSERT OR IGNORE INTO decisions (id, project_id, commit_hash, commit_message,
             decision, reasoning, angle, episode_type, episode_tags, post_category,
             arc_id, media_tool, platforms, targets, commit_summary, consolidate_with,
-            reference_posts, branch, trigger_source, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            reference_posts, branch, trigger_source, processed, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [d.to_row() + (created_at,) for d, created_at in decisions],
     )
@@ -888,10 +888,11 @@ def get_drafts_filtered(
     project_id: str | None = None,
     decision_id: str | None = None,
     commit_hash: str | None = None,
+    tag: str | None = None,
 ) -> list[Draft]:
-    """Get drafts with optional status, project, decision, and commit filters."""
+    """Get drafts with optional status, project, decision, commit, and tag filters."""
     clauses, params = [], []
-    need_join = commit_hash is not None
+    need_join = commit_hash is not None or tag is not None
     if status:
         clauses.append("d.status = ?")
         params.append(status)
@@ -904,6 +905,9 @@ def get_drafts_filtered(
     if commit_hash:
         clauses.append("dec.commit_hash = ?")
         params.append(commit_hash)
+    if tag:
+        clauses.append("dec.episode_tags LIKE ?")
+        params.append(f'%"{tag}"%')
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     if need_join:
         sql = f"SELECT d.* FROM drafts d JOIN decisions dec ON d.decision_id = dec.id{where} ORDER BY d.created_at DESC"
@@ -1159,6 +1163,25 @@ def insert_post(conn: sqlite3.Connection, post: Post) -> str:
     return post.id
 
 
+def _parse_posted_at(raw: str | None):
+    """Parse a posted_at TEXT column into a timezone-aware datetime.
+
+    SQLite stores datetimes as TEXT. This helper normalises to UTC if
+    the stored value is naive (no tzinfo).
+
+    Returns:
+        datetime or None if *raw* is falsy.
+    """
+    from datetime import datetime, timezone
+
+    if not raw:
+        return None
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def get_last_post_time_by_platform(conn: sqlite3.Connection, platform: str):
     """Get the most recent post time across all projects for a platform.
 
@@ -1168,20 +1191,36 @@ def get_last_post_time_by_platform(conn: sqlite3.Connection, platform: str):
     Returns:
         datetime or None
     """
-    from datetime import datetime, timezone
-
     row = conn.execute(
         "SELECT posted_at FROM posts WHERE platform = ? ORDER BY posted_at DESC LIMIT 1",
         (platform,),
     ).fetchone()
     if not row or not row[0]:
         return None
+    return _parse_posted_at(row[0])
 
-    raw = row[0]
-    dt = datetime.fromisoformat(raw)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
+
+def get_last_post_time_by_account(conn: sqlite3.Connection, target_ids: list[str]):
+    """Get the most recent post time for any of the given target IDs.
+
+    Used by per-account posting gap check. Multiple targets can share the same
+    account — pass all target IDs that use the account.
+
+    Returns:
+        datetime or None
+    """
+    if not target_ids:
+        return None
+
+    placeholders = ",".join("?" for _ in target_ids)
+    row = conn.execute(
+        f"SELECT posted_at FROM posts WHERE target_id IN ({placeholders}) "
+        "ORDER BY posted_at DESC LIMIT 1",
+        target_ids,
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    return _parse_posted_at(row[0])
 
 
 def get_drafts_by_cycle(conn: sqlite3.Connection, cycle_id: str) -> list[Draft]:
@@ -1813,6 +1852,78 @@ def get_deferred_eval_decisions(conn: sqlite3.Connection, project_id: str) -> li
     return [Decision.from_dict(dict(row)) for row in rows]
 
 
+def get_interval_deferred_decisions(conn: sqlite3.Connection, project_id: str) -> list[Decision]:
+    """Get interval-deferred decisions (processed=1, decision='deferred_eval').
+
+    These are commits that were deferred by commit_analysis_interval gating,
+    NOT by rate limits (which use processed=0). The batch_id IS NULL guard
+    ensures we don't re-gather decisions already included in a previous batch.
+
+    Returns decisions ordered by created_at ascending (oldest first).
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM decisions
+        WHERE project_id = ?
+          AND decision = 'deferred_eval'
+          AND processed = 1
+          AND batch_id IS NULL
+        ORDER BY created_at ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [Decision.from_dict(dict(row)) for row in rows]
+
+
+def mark_decisions_processing(conn: sqlite3.Connection, decision_ids: list[str]) -> int:
+    """Mark deferred decisions as 'processing' during batch evaluation.
+
+    Pure DB operation — caller handles event emission.
+
+    Returns number of rows updated.
+    """
+    if not decision_ids:
+        return 0
+    placeholders = ",".join("?" for _ in decision_ids)
+    cursor = conn.execute(
+        f"UPDATE decisions SET decision = 'processing' WHERE id IN ({placeholders})",
+        decision_ids,
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
+def mark_deferred_decisions_batched(
+    conn: sqlite3.Connection, decision_ids: list[str], batch_cycle_id: str
+) -> int:
+    """Mark decisions as included in a batch evaluation.
+
+    Reverts decision from 'processing' back to 'deferred_eval' with batch_id set.
+    Sets processed=1 (essential for rate-limit-deferred to prevent re-drain),
+    processed_at, batch_id, and reasoning.
+
+    Returns number of rows updated.
+    """
+    if not decision_ids:
+        return 0
+
+    placeholders = ",".join("?" for _ in decision_ids)
+    cursor = conn.execute(
+        f"""
+        UPDATE decisions
+        SET decision = 'deferred_eval',
+            processed = 1,
+            processed_at = datetime('now'),
+            batch_id = ?,
+            reasoning = ?
+        WHERE id IN ({placeholders})
+        """,
+        [batch_cycle_id, f"Included in batch evaluation {batch_cycle_id}"] + decision_ids,
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
 # =============================================================================
 # Project Summary
 # =============================================================================
@@ -2202,16 +2313,61 @@ def insert_content_topic(conn: sqlite3.Connection, topic: ContentTopic) -> str:
 
 
 def get_topics_by_strategy(
-    conn: sqlite3.Connection, project_id: str, strategy: str
+    conn: sqlite3.Connection,
+    project_id: str,
+    strategy: str,
+    include_dismissed: bool = True,
 ) -> list[ContentTopic]:
-    """Get all topics for a project+strategy, ordered by priority."""
+    """Get all topics for a project+strategy, ordered by priority.
+
+    Args:
+        include_dismissed: When False, exclude topics with status='dismissed'.
+    """
+    dismissed_clause = "" if include_dismissed else "AND status != 'dismissed'"
     rows = conn.execute(
-        """
+        f"""
         SELECT * FROM content_topics
         WHERE project_id = ? AND strategy = ?
+            {dismissed_clause}
         ORDER BY priority_rank DESC, created_at ASC
         """,
         (project_id, strategy),
+    ).fetchall()
+    return [ContentTopic.from_dict(dict(row)) for row in rows]
+
+
+def get_topics_by_project(
+    conn: sqlite3.Connection,
+    project_id: str,
+    status: str | None = None,
+    include_dismissed: bool = True,
+) -> list[ContentTopic]:
+    """Get all topics for a project, optionally filtered by status.
+
+    Args:
+        conn: Database connection
+        project_id: Project to query
+        status: Filter by status (e.g. "holding"), or None for all
+        include_dismissed: When False, exclude topics with status='dismissed'.
+    """
+    conditions = ["project_id = ?"]
+    params: list[str] = [project_id]
+
+    if status is not None:
+        conditions.append("status = ?")
+        params.append(status)
+
+    if not include_dismissed:
+        conditions.append("status != 'dismissed'")
+
+    where = " AND ".join(conditions)
+    rows = conn.execute(
+        f"""
+        SELECT * FROM content_topics
+        WHERE {where}
+        ORDER BY strategy, priority_rank DESC, created_at ASC
+        """,
+        params,
     ).fetchall()
     return [ContentTopic.from_dict(dict(row)) for row in rows]
 
@@ -2250,11 +2406,13 @@ def get_topics_matching_tag(
     """Get content topics whose topic name matches a tag (case-insensitive substring).
 
     Used by the pipeline to increment commit counts when episode tags match topics.
+    Dismissed topics are excluded — they should not accumulate commits.
     """
     rows = conn.execute(
         """
         SELECT * FROM content_topics
         WHERE project_id = ? AND LOWER(topic) LIKE '%' || LOWER(?) || '%'
+            AND status != 'dismissed'
         """,
         (project_id, tag),
     ).fetchall()
@@ -2277,6 +2435,32 @@ def increment_topic_commit_count(conn: sqlite3.Connection, topic_id: str) -> boo
 
 
 # =============================================================================
+# Topic Commits
+# =============================================================================
+
+
+def insert_topic_commit(
+    conn: sqlite3.Connection, topic_id: str, commit_hash: str, matched_tag: str | None = None
+) -> bool:
+    """Record that a commit contributed to a topic. Returns True if inserted (not duplicate)."""
+    try:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO topic_commits (topic_id, commit_hash, matched_tag)
+            VALUES (?, ?, ?)
+            """,
+            (topic_id, commit_hash, matched_tag),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        logger.warning(
+            "Failed to insert topic_commit (%s, %s)", topic_id, commit_hash, exc_info=True
+        )
+        return False
+
+
+# =============================================================================
 # Content Suggestions
 # =============================================================================
 
@@ -2293,6 +2477,17 @@ def insert_content_suggestion(conn: sqlite3.Connection, suggestion: ContentSugge
     )
     conn.commit()
     return suggestion.id
+
+
+def get_suggestion(conn: sqlite3.Connection, suggestion_id: str) -> ContentSuggestion | None:
+    """Get a single suggestion by ID. Returns None if not found."""
+    row = conn.execute(
+        "SELECT * FROM content_suggestions WHERE id = ?",
+        (suggestion_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return ContentSuggestion.from_dict(dict(row))
 
 
 def get_suggestions_by_project(
@@ -2359,6 +2554,81 @@ def get_recent_cycles(
     return [EvaluationCycle.from_dict(dict(row)) for row in rows]
 
 
+def update_cycle_analysis_json(conn: sqlite3.Connection, cycle_id: str, analysis_json: str) -> None:
+    """Store commit analysis JSON on an evaluation cycle for caching."""
+    conn.execute(
+        "UPDATE evaluation_cycles SET commit_analysis_json = ? WHERE id = ?",
+        (analysis_json, cycle_id),
+    )
+    conn.commit()
+
+
+def update_cycle_diagnostics(
+    conn: sqlite3.Connection, cycle_id: str, diagnostics_json: str
+) -> None:
+    """Store pipeline diagnostics JSON on an evaluation cycle."""
+    conn.execute(
+        "UPDATE evaluation_cycles SET diagnostics = ? WHERE id = ?",
+        (diagnostics_json, cycle_id),
+    )
+    conn.commit()
+
+
+def get_latest_cycle_with_analysis(
+    conn: sqlite3.Connection, project_id: str
+) -> EvaluationCycle | None:
+    """Get the most recent evaluation cycle that has cached analysis JSON."""
+    row = conn.execute(
+        """
+        SELECT * FROM evaluation_cycles
+        WHERE project_id = ? AND commit_analysis_json IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (project_id,),
+    ).fetchone()
+    if row:
+        return EvaluationCycle.from_dict(dict(row))
+    return None
+
+
+# =============================================================================
+# Analysis Commit Count (commit_analysis_interval gating)
+# =============================================================================
+
+
+def increment_analysis_commit_count(conn: sqlite3.Connection, project_id: str) -> int:
+    """Increment analysis_commit_count and return the new value."""
+    conn.execute(
+        "UPDATE projects SET analysis_commit_count = analysis_commit_count + 1 WHERE id = ?",
+        (project_id,),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT analysis_commit_count FROM projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def reset_analysis_commit_count(conn: sqlite3.Connection, project_id: str) -> None:
+    """Reset analysis_commit_count to 0 after a full analysis."""
+    conn.execute(
+        "UPDATE projects SET analysis_commit_count = 0 WHERE id = ?",
+        (project_id,),
+    )
+    conn.commit()
+
+
+def get_analysis_commit_count(conn: sqlite3.Connection, project_id: str) -> int:
+    """Get the current analysis_commit_count for a project."""
+    row = conn.execute(
+        "SELECT analysis_commit_count FROM projects WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
 # =============================================================================
 # Draft Patterns
 # =============================================================================
@@ -2400,8 +2670,8 @@ def insert_system_error(conn: sqlite3.Connection, error: SystemErrorRecord) -> s
     """Insert a system error record. Returns the error ID."""
     conn.execute(
         """
-        INSERT INTO system_errors (id, severity, message, context, source)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO system_errors (id, severity, message, context, source, component, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         error.to_row(),
     )
@@ -2409,16 +2679,40 @@ def insert_system_error(conn: sqlite3.Connection, error: SystemErrorRecord) -> s
     return error.id
 
 
-def get_recent_system_errors(conn: sqlite3.Connection, limit: int = 50) -> list[SystemErrorRecord]:
-    """Get recent system errors, newest first."""
-    rows = conn.execute(
-        """
-        SELECT * FROM system_errors
-        ORDER BY created_at DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
+def get_recent_system_errors(
+    conn: sqlite3.Connection,
+    limit: int = 50,
+    *,
+    severity: str | list[str] | None = None,
+    component: str | None = None,
+    source: str | None = None,
+) -> list[SystemErrorRecord]:
+    """Get recent system errors, newest first. Optional filters narrow results.
+
+    severity can be a single string or a list of strings for IN queries.
+    """
+    query = "SELECT * FROM system_errors"
+    conditions: list[str] = []
+    params: list = []
+    if severity is not None:
+        if isinstance(severity, list):
+            placeholders = ",".join("?" for _ in severity)
+            conditions.append(f"severity IN ({placeholders})")
+            params.extend(severity)
+        else:
+            conditions.append("severity = ?")
+            params.append(severity)
+    if component is not None:
+        conditions.append("component = ?")
+        params.append(component)
+    if source is not None:
+        conditions.append("source = ?")
+        params.append(source)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(query, params).fetchall()
     return [SystemErrorRecord.from_dict(dict(row)) for row in rows]
 
 
@@ -2436,3 +2730,39 @@ def get_error_health_status(conn: sqlite3.Connection) -> dict:
     for row in rows:
         result[row[0]] = row[1]
     return result
+
+
+def clear_system_errors(conn: sqlite3.Connection, *, older_than_days: int | None = None) -> int:
+    """Delete system errors. Returns count of deleted rows.
+
+    If older_than_days is given, only deletes errors older than that.
+    Otherwise deletes all.
+    """
+    if older_than_days is not None:
+        cursor = conn.execute(
+            "DELETE FROM system_errors WHERE created_at < datetime('now', ?)",
+            (f"-{older_than_days} days",),
+        )
+    else:
+        cursor = conn.execute("DELETE FROM system_errors")
+    conn.commit()
+    return cursor.rowcount
+
+
+def prune_system_errors(conn: sqlite3.Connection, retention_days: int = 30) -> int:
+    """Delete system errors older than retention_days. Returns count deleted."""
+    return clear_system_errors(conn, older_than_days=retention_days)
+
+
+def compute_health_status(error_counts: dict[str, int]) -> str:
+    """Derive overall health status string from severity counts.
+
+    Returns one of: "critical", "degraded", "warning", "healthy".
+    """
+    if error_counts.get("critical", 0) > 0:
+        return "critical"
+    if error_counts.get("error", 0) > 0:
+        return "degraded"
+    if error_counts.get("warning", 0) > 0:
+        return "warning"
+    return "healthy"

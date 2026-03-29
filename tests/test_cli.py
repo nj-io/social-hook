@@ -127,12 +127,12 @@ class TestGlobalOptions:
 
 
 class TestLogsCommand:
-    """Tests for logs command (D1)."""
+    """Tests for logs tail command (moved from inspect logs to logs tail)."""
 
-    @patch("social_hook.cli.inspect.subprocess.run")
+    @patch("social_hook.cli.logs.subprocess.run")
     @patch("social_hook.filesystem.get_base_path")
     def test_logs_invokes_tail(self, mock_base, mock_run, temp_dir):
-        from social_hook.cli.inspect import app as inspect_app
+        from social_hook.cli.logs import app as logs_app
 
         logs_dir = temp_dir / "logs"
         logs_dir.mkdir()
@@ -141,39 +141,39 @@ class TestLogsCommand:
         (logs_dir / "bot.log").write_text("log entry\n")
         mock_base.return_value = temp_dir
 
-        inspect_runner = CliRunner()
-        inspect_runner.invoke(inspect_app, ["logs"])
+        logs_runner = CliRunner()
+        logs_runner.invoke(logs_app, ["tail"])
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "tail"
         assert "-f" in cmd
 
-    @patch("social_hook.cli.inspect.subprocess.run")
+    @patch("social_hook.cli.logs.subprocess.run")
     @patch("social_hook.filesystem.get_base_path")
     def test_logs_trigger_only(self, mock_base, mock_run, temp_dir):
-        from social_hook.cli.inspect import app as inspect_app
+        from social_hook.cli.logs import app as logs_app
 
         logs_dir = temp_dir / "logs"
         logs_dir.mkdir()
         (logs_dir / "trigger.log").write_text("log\n")
         mock_base.return_value = temp_dir
 
-        inspect_runner = CliRunner()
-        inspect_runner.invoke(inspect_app, ["logs", "trigger"])
+        logs_runner = CliRunner()
+        logs_runner.invoke(logs_app, ["tail", "trigger"])
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert "trigger.log" in cmd[-1]
 
     @patch("social_hook.filesystem.get_base_path")
     def test_logs_no_files(self, mock_base, temp_dir):
-        from social_hook.cli.inspect import app as inspect_app
+        from social_hook.cli.logs import app as logs_app
 
         logs_dir = temp_dir / "logs"
         logs_dir.mkdir()
         mock_base.return_value = temp_dir
 
-        inspect_runner = CliRunner()
-        result = inspect_runner.invoke(inspect_app, ["logs"])
+        logs_runner = CliRunner()
+        result = logs_runner.invoke(logs_app, ["tail"])
         assert "No log files" in result.output
 
 

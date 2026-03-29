@@ -19,10 +19,18 @@ export function PipelineToasts() {
       const data = inner.data as DataChangeEvent;
 
       if (data.entity === "pipeline") {
-        if (data.action === "evaluating") {
-          addToast("Evaluating commit", { detail: data.entity_id });
-        } else if (data.action === "drafting") {
-          addToast("Drafting content", { detail: data.entity_id });
+        // Pipeline stage events — maps to PipelineStage constants from models/__init__.py
+        const stageMessages: Record<string, string> = {
+          discovering: "Generating project brief",
+          analyzing: "Analyzing commit",
+          evaluating: "Evaluating strategies",
+          drafting: "Drafting content",
+          promoting: "Scheduling draft",
+          queued: "Commit queued for batch evaluation",
+        };
+        const msg = stageMessages[data.action];
+        if (msg) {
+          addToast(msg, { detail: data.entity_id });
         }
       } else if (data.entity === "draft") {
         const platform = data.platform ? ` (${data.platform})` : "";
@@ -42,29 +50,13 @@ export function PipelineToasts() {
         if (entry) {
           addToast(`${entry.msg}${platform}`, { detail: preview, variant: entry.variant });
         }
-      } else if (data.entity === "decision") {
-        addToast(`Decision: ${data.action}`, { detail: data.entity_id });
-      } else if (data.entity === "target") {
-        const actionLabels: Record<string, string> = {
-          created: "Target added", disabled: "Target disabled", enabled: "Target enabled",
-        };
-        const msg = actionLabels[data.action] ?? `Target ${data.action}`;
-        addToast(msg, { detail: data.entity_id });
-      } else if (data.entity === "topic") {
-        const actionLabels: Record<string, string> = {
-          created: "Topic added", updated: "Topic updated", reordered: "Topics reordered",
-        };
-        const msg = actionLabels[data.action] ?? `Topic ${data.action}`;
-        addToast(msg, { detail: data.entity_id });
-      } else if (data.entity === "suggestion") {
-        const actionLabels: Record<string, string> = {
-          created: "Suggestion submitted", dismissed: "Suggestion dismissed",
-        };
-        const msg = actionLabels[data.action] ?? `Suggestion ${data.action}`;
-        addToast(msg, { detail: data.entity_id });
-      } else if (data.entity === "cycle") {
-        addToast("Evaluation cycle completed", { detail: data.entity_id });
       }
+      // Decision status changes are NOT toasted — they are implementation details.
+      // Pipeline stage events (ANALYZING, EVALUATING, DRAFTING, QUEUED) provide
+      // user-facing feedback. The commit log auto-refreshes via useDataEvents.
+      // Entity CRUD events (topic, target, suggestion, cycle) are NOT handled here.
+      // Those get feedback from their respective component handlers via addToast.
+      // PipelineToasts is for background pipeline status only.
     };
 
     addListener("pipeline-toasts", handler);

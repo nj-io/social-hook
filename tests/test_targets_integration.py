@@ -85,27 +85,6 @@ NEW_FORMAT_CONFIG = {
 }
 
 
-class TestAutoMigrationIntegration:
-    """Old-format config auto-migrates and all sections are accessible."""
-
-    def test_old_format_loads_and_auto_migrates(self, tmp_path):
-        config_path = _write_config(tmp_path, OLD_FORMAT_CONFIG)
-        config = load_config(config_path)
-
-        # Legacy platforms still work
-        assert "x" in config.platforms
-        assert config.platforms["x"].enabled is True
-
-        # Auto-migrated sections created
-        assert "x" in config.accounts
-        assert config.accounts["x"].platform == "x"
-        assert config.accounts["x"].tier == "free"
-        assert "x" in config.targets
-        assert config.targets["x"].primary is True
-        assert config.targets["x"].strategy == "building-public"
-        assert "x" in config.platform_credentials
-
-
 class TestNewFormatIntegration:
     """New-format config loads all sections correctly."""
 
@@ -353,55 +332,6 @@ class TestPostTargetIdPropagation:
         assert db_post is not None
         assert db_post.target_id == "my-target"
         conn.close()
-
-
-class TestEnsureErrorFeed:
-    """Test _ensure_error_feed module-level wiring."""
-
-    def test_sets_db_path_and_sender(self, tmp_path):
-        """_ensure_error_feed configures db_path and sender on the singleton."""
-        import social_hook.scheduler as sched
-        from social_hook.error_feed import error_feed as ef
-
-        old_wired = sched._error_feed_wired
-        old_db_path = ef._db_path
-        old_sender = ef._send_callback
-        sched._error_feed_wired = False
-
-        try:
-            db_path = str(tmp_path / "test.db")
-            config = MagicMock()
-            sched._ensure_error_feed(config, db_path)
-
-            assert ef._db_path == db_path
-            assert ef._send_callback is not None
-            assert sched._error_feed_wired is True
-        finally:
-            sched._error_feed_wired = old_wired
-            ef._db_path = old_db_path
-            ef._send_callback = old_sender
-
-    def test_idempotent(self, tmp_path):
-        """Second call is a no-op (guard prevents re-wiring)."""
-        import social_hook.scheduler as sched
-        from social_hook.error_feed import error_feed as ef
-
-        old_wired = sched._error_feed_wired
-        old_db_path = ef._db_path
-        old_sender = ef._send_callback
-        sched._error_feed_wired = False
-
-        try:
-            db1 = str(tmp_path / "first.db")
-            db2 = str(tmp_path / "second.db")
-            sched._ensure_error_feed(MagicMock(), db1)
-            sched._ensure_error_feed(MagicMock(), db2)
-
-            assert ef._db_path == db1  # First call sticks
-        finally:
-            sched._error_feed_wired = old_wired
-            ef._db_path = old_db_path
-            ef._send_callback = old_sender
 
 
 class TestPreviewDraftBlocked:

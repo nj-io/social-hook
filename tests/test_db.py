@@ -130,6 +130,7 @@ class TestDatabaseInitialization:
             "evaluation_cycles",
             "draft_patterns",
             "system_errors",
+            "topic_commits",
         }
 
         assert table_names == expected_tables

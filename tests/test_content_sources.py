@@ -159,8 +159,9 @@ class TestModuleSingleton:
     """Test the module-level singleton registration."""
 
     def test_default_registry_has_all_resolvers(self):
-        """Module singleton has all 4 built-in resolvers registered."""
+        """Module singleton has all 5 built-in resolvers registered."""
         assert "brief" in content_sources._resolvers
         assert "commits" in content_sources._resolvers
         assert "topic" in content_sources._resolvers
+        assert "topic_commits" in content_sources._resolvers
         assert "operator_suggestion" in content_sources._resolvers

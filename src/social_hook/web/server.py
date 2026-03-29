@@ -32,7 +32,7 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
-from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES
+from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES, PipelineStage
 from social_hook.parsing import check_unknown_keys, safe_json_loads
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,28 @@ logger = logging.getLogger(__name__)
 # Background task staleness thresholds
 _STALE_TASK_TIMEOUT_SECONDS = 600  # 10 min; longest expected task is ~5 min (LLM subprocess)
 _STALE_CHECK_INTERVAL_TICKS = 60  # every 60 bridge-loop ticks (60 × 0.5s = 30s)
+
+
+def _parse_episode_tags(decision) -> list | None:
+    """Parse episode_tags from a Decision, handling both list and JSON-string forms.
+
+    Returns a list (possibly empty), or None if the decision has no tags.
+    """
+    if decision is None:
+        return None
+    ep_tags = decision.episode_tags
+    if isinstance(ep_tags, str):
+        ep_tags = safe_json_loads(ep_tags, "decision.episode_tags", default=[])
+    return ep_tags or None
+
+
+def _parse_diagnostics_column(cycle_dict: dict) -> list[Any]:
+    """Parse the diagnostics JSON column on a cycle dict, returning a list."""
+    raw = cycle_dict.get("diagnostics")
+    parsed: list[Any] = safe_json_loads(raw, "cycle.diagnostics", default=[]) if raw else []
+    cycle_dict["diagnostics"] = parsed
+    return parsed
+
 
 # ---------------------------------------------------------------------------
 # WebSocket gateway
@@ -56,6 +78,62 @@ async def lifespan(app_instance: FastAPI):
     db_path = get_db_path()
     init_database(db_path)
     _cleanup_stale_tasks(db_path)
+
+    # Unified logging pipeline — replaces ensure_error_feed()
+    from social_hook.error_feed import error_feed
+    from social_hook.logging import setup_logging
+
+    try:
+        config = _get_config()
+        error_feed.set_db_path(str(db_path))
+        # Build notification sender
+        sender: Callable | None = None
+        try:
+            from social_hook.notifications import send_notification
+
+            # NotificationSink already formats as "[SEVERITY] (source) message"
+            def _send_notification(_sev: str, msg: str) -> None:
+                send_notification(config, msg)
+
+            sender = _send_notification
+        except Exception:
+            pass
+        setup_logging("web", error_feed=error_feed, notification_sender=sender, console=False)
+    except Exception:
+        logger.debug("Logging init failed (non-fatal)", exc_info=True)
+
+    # Wire on_persist callback for WebSocket live updates (fire-and-forget).
+    # Bounded to 10 concurrent threads to avoid storms.
+    _persist_semaphore = threading.Semaphore(10)
+
+    def _on_error_persisted(error_id, severity, component):
+        if not _persist_semaphore.acquire(blocking=False):
+            return  # drop under storm conditions
+
+        def _emit():
+            try:
+                conn = sqlite3.connect(str(db_path), timeout=2)
+                conn.row_factory = sqlite3.Row
+                try:
+                    ops.emit_data_event(
+                        conn,
+                        "system_error",
+                        "created",
+                        error_id,
+                        extra={"severity": severity, "component": component},
+                    )
+                finally:
+                    conn.close()
+            except Exception:
+                pass  # fire-and-forget: never block logging
+            finally:
+                _persist_semaphore.release()
+
+        t = threading.Thread(target=_emit, daemon=True)
+        t.start()
+
+    error_feed.set_on_persist(_on_error_persisted)
+
     task = asyncio.create_task(_event_bridge_loop())
     yield
     task.cancel()
@@ -182,7 +260,7 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
 
         # Reset decisions stuck in 'evaluating' (retrigger was interrupted)
         eval_cursor = conn.execute(
-            "UPDATE decisions SET decision = 'imported' WHERE decision = 'evaluating'"
+            "UPDATE decisions SET decision = 'imported', reasoning = '' WHERE decision = 'evaluating'"
         )
         conn.commit()
         eval_count = eval_cursor.rowcount
@@ -309,13 +387,26 @@ def _run_background_task(
             try:
                 import traceback
 
+                error_msg = traceback.format_exc()[-500:]
                 conn2.execute(
                     "UPDATE background_tasks SET status='failed', error=?,"
                     " updated_at=datetime('now') WHERE id=?",
-                    (traceback.format_exc()[-500:], task_id),
+                    (error_msg, task_id),
                 )
                 conn2.commit()
                 ops.emit_data_event(conn2, "task", "failed", task_id, project_id)
+                # Emit to error feed for visibility in System > Errors
+                try:
+                    from social_hook.error_feed import ErrorSeverity, error_feed
+
+                    error_feed.emit(
+                        ErrorSeverity.ERROR,
+                        f"Background task '{task_type}' failed: {error_msg[:200]}",
+                        source="background_task",
+                        context={"task_id": task_id, "ref_id": ref_id, "project_id": project_id},
+                    )
+                except Exception:
+                    pass  # error feed itself may not be initialized
             finally:
                 conn2.close()
 
@@ -727,8 +818,9 @@ async def api_drafts(
     project_id: str | None = None,
     decision_id: str | None = None,
     commit: str | None = None,
+    tag: str | None = None,
 ):
-    """List drafts, optionally filtered by status, project, decision, or commit."""
+    """List drafts, optionally filtered by status, project, decision, commit, or tag."""
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -739,6 +831,7 @@ async def api_drafts(
             project_id=project_id,
             decision_id=decision_id,
             commit_hash=commit,
+            tag=tag,
         )
         drafts = [d.to_dict() for d in draft_models]
         if pending:
@@ -1165,7 +1258,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
                 commit_timestamp=getattr(commit, "timestamp", None),
                 parent_timestamp=getattr(commit, "parent_timestamp", None),
             )
-            db.emit_data_event("pipeline", "promoting", draft_id[:8], project.id)
+            db.emit_data_event("pipeline", PipelineStage.PROMOTING, draft_id[:8], project.id)
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1388,6 +1481,32 @@ async def api_project_decisions(
             for d in decisions_list:
                 d["draft_ids"] = drafts_by_decision.get(d["id"], [])
 
+        # Enrich with classification from stage 1 analyzer (via evaluation_cycles)
+        commit_hashes = [d["commit_hash"] for d in decisions_list if d.get("commit_hash")]
+        if commit_hashes:
+            ch_placeholders = ",".join("?" * len(commit_hashes))
+            cycle_rows = conn.execute(
+                f"""SELECT trigger_ref, commit_analysis_json
+                    FROM evaluation_cycles
+                    WHERE project_id = ? AND trigger_type = 'commit'
+                    AND trigger_ref IN ({ch_placeholders})
+                    AND commit_analysis_json IS NOT NULL""",
+                [project_id, *commit_hashes],
+            ).fetchall()
+            classification_by_hash: dict[str, str] = {}
+            for cr in cycle_rows:
+                analysis_data = safe_json_loads(
+                    cr["commit_analysis_json"],
+                    "cycle_commit_analysis_json",
+                    default={},
+                )
+                ca = analysis_data.get("commit_analysis", {})
+                cls_val = ca.get("classification")
+                if cls_val:
+                    classification_by_hash[cr["trigger_ref"]] = cls_val
+            for d in decisions_list:
+                d["classification"] = classification_by_hash.get(d.get("commit_hash", ""))
+
         return {"decisions": decisions_list, "total": total}
     finally:
         conn.close()
@@ -1413,7 +1532,26 @@ async def api_import_preview(project_id: str, branch: str | None = Query(None)):
         project = _get_project_or_404(conn, project_id)
         from social_hook.import_commits import get_import_preview
 
-        preview = get_import_preview(conn, project["id"], project["repo_path"], branch)
+        preview: dict[str, Any] = get_import_preview(
+            conn, project["id"], project["repo_path"], branch
+        )
+
+        # Include git repo branches so the import modal can show them
+        # (decisionBranches is empty on a fresh project)
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["git", "-C", project["repo_path"], "branch", "--format=%(refname:short)"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            git_branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+        except Exception:
+            git_branches = []
+
+        preview["branches"] = git_branches
         return preview
     finally:
         conn.close()
@@ -1456,7 +1594,7 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
 
     task_id = _run_background_task(
         "import_commits",
-        ref_id=project_id,
+        ref_id="__import__",
         project_id=pid,
         fn=_blocking_import,
     )
@@ -1516,7 +1654,7 @@ async def api_summary_draft(project_id: str):
 
                 project_config = load_project_config(repo_path)
                 client = create_client(config.models.evaluator, config)
-                ops.emit_data_event(conn2, "pipeline", "discovering", pid, pid)
+                ops.emit_data_event(conn2, "pipeline", PipelineStage.DISCOVERING, pid, pid)
                 disc_summary, disc_files, disc_file_summaries, disc_prompt_docs = discover_project(
                     client=client,
                     repo_path=repo_path,
@@ -1720,7 +1858,9 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit_timestamp=commit.timestamp,
                 parent_timestamp=commit.parent_timestamp,
             )
-            db.emit_data_event("pipeline", "drafting", decision.commit_hash[:8], project.id)
+            db.emit_data_event(
+                "pipeline", PipelineStage.DRAFTING, decision.commit_hash[:8], project.id
+            )
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1823,6 +1963,7 @@ async def api_retrigger_decision(decision_id: str):
         commit_hash = decision.commit_hash
         repo_path = project.repo_path
         project_id = decision.project_id
+        decision_branch = decision.branch
 
         # Clean up old drafts (no-op for imported commits with no drafts)
         conn.execute(
@@ -1834,9 +1975,10 @@ async def api_retrigger_decision(decision_id: str):
             (decision_id,),
         )
         conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
-        # Mark as evaluating — row stays visible in the UI
+        # Mark as processing — row stays visible in the UI.
+        # The pipeline will update to the appropriate status (deferred_eval, draft, skip, etc.)
         conn.execute(
-            "UPDATE decisions SET decision = 'evaluating', reasoning = 'Re-evaluating...' WHERE id = ?",
+            "UPDATE decisions SET decision = 'processing' WHERE id = ?",
             (decision_id,),
         )
         conn.commit()
@@ -1852,6 +1994,7 @@ async def api_retrigger_decision(decision_id: str):
             repo_path=repo_path,
             trigger_source="manual",
             existing_decision_id=decision_id,
+            current_branch=decision_branch,
         )
         return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
@@ -2001,7 +2144,9 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 project.id,
                 project_config,
             )
-            db.emit_data_event("pipeline", "drafting", anchor.commit_hash[:8], project.id)
+            db.emit_data_event(
+                "pipeline", PipelineStage.DRAFTING, anchor.commit_hash[:8], project.id
+            )
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -2870,6 +3015,38 @@ async def api_get_branches(project_id: str):
     return {"branches": branches, "current": current}
 
 
+@app.get("/api/git/branches")
+async def api_git_branches_by_path(repo_path: str = Query(...)):
+    """List git branches for any repo path (used by wizard before project registration)."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "branch", "--format=%(refname:short)"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+    except (subprocess.CalledProcessError, OSError):
+        return {"branches": [], "current": None}
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        current: str | None = result.stdout.strip()
+        if current == "HEAD":
+            current = None
+    except (subprocess.CalledProcessError, OSError):
+        current = None
+
+    return {"branches": branches, "current": current}
+
+
 @app.put("/api/projects/{project_id}/trigger-branch")
 async def api_set_trigger_branch(project_id: str, body: dict = Body(...)):
     """Set the trigger branch filter for a project."""
@@ -3465,7 +3642,11 @@ async def api_add_platform_credential(body: dict[str, Any] = Body(...)):
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "created", "name": name}
 
 
@@ -3497,7 +3678,11 @@ async def api_update_platform_credential(name: str, body: dict[str, Any] = Body(
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "updated", "name": name}
 
 
@@ -3527,7 +3712,11 @@ async def api_delete_platform_credential(name: str):
     raw["platform_credentials"] = pc
     yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "deleted", "name": name}
 
 
@@ -3609,7 +3798,11 @@ async def api_add_account(body: dict[str, Any] = Body(...)):
     # Note: PKCE auth flow (build_auth_url) is not yet implemented in adapters/auth.py
     auth_url = None
 
-    ops.emit_data_event(_get_conn(), "config", "updated", "accounts")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "accounts")
+    finally:
+        conn.close()
     result: dict[str, Any] = {"status": "created", "name": name}
     if auth_url:
         result["auth_url"] = auth_url
@@ -3702,7 +3895,7 @@ async def api_list_targets(project_id: str):
                 "community_id": tgt.community_id,
                 "share_with_followers": tgt.share_with_followers,
                 "frequency": tgt.frequency,
-                "enabled": True,  # All config-defined targets are enabled
+                "enabled": tgt.status != "disabled",
                 "platform": account.platform if account else "unknown",
                 "created_at": None,
             }
@@ -3836,14 +4029,47 @@ async def api_update_target(project_id: str, name: str, body: dict[str, Any] = B
 @app.put("/api/projects/{project_id}/targets/{name}/disable")
 async def api_disable_target(project_id: str, name: str):
     """Disable a target and archive pending drafts."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Write full target data with disabled status to config YAML.
+    # Must persist the full target (account, platform, strategy, etc.) because
+    # auto-migrated targets only exist in memory — the YAML may not have them.
+    tgt = config.targets[name]
+    target_data: dict[str, Any] = {
+        "status": "disabled",
+        "destination": tgt.destination,
+        "strategy": tgt.strategy,
+    }
+    if tgt.account:
+        target_data["account"] = tgt.account
+    if tgt.platform:
+        target_data["platform"] = tgt.platform
+    if tgt.primary:
+        target_data["primary"] = True
+    if tgt.source:
+        target_data["source"] = tgt.source
+    if tgt.frequency:
+        target_data["frequency"] = tgt.frequency
+
+    from social_hook.config.yaml import save_config
+
+    save_config(
+        {"targets": {name: target_data}},
+        config_path=get_config_path(),
+    )
+    _invalidate_config()
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
 
         # Cancel pending drafts for this target
+        _placeholders = ",".join("?" for _ in PENDING_STATUSES)
         pending = conn.execute(
-            "SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ('draft', 'approved', 'scheduled', 'deferred')",
-            (project_id, name),
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({_placeholders})",
+            (project_id, name, *PENDING_STATUSES),
         ).fetchall()
         for row in pending:
             ops.update_draft(conn, row["id"], status="cancelled")
@@ -3853,13 +4079,42 @@ async def api_disable_target(project_id: str, name: str):
     finally:
         conn.close()
 
-    # Note: targets live in config.yaml, not DB. The web UI tracks disabled state separately.
     return {"status": "disabled", "name": name, "cancelled_drafts": len(pending)}
 
 
 @app.put("/api/projects/{project_id}/targets/{name}/enable")
 async def api_enable_target(project_id: str, name: str):
     """Re-enable a target."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Write full target data without disabled status to config YAML.
+    # Same pattern as disable — persist from Config object, not raw YAML.
+    tgt = config.targets[name]
+    target_data: dict[str, Any] = {
+        "destination": tgt.destination,
+        "strategy": tgt.strategy,
+    }
+    if tgt.account:
+        target_data["account"] = tgt.account
+    if tgt.platform:
+        target_data["platform"] = tgt.platform
+    if tgt.primary:
+        target_data["primary"] = True
+    if tgt.source:
+        target_data["source"] = tgt.source
+    if tgt.frequency:
+        target_data["frequency"] = tgt.frequency
+
+    from social_hook.config.yaml import save_config
+
+    save_config(
+        {"targets": {name: target_data}},
+        config_path=get_config_path(),
+    )
+    _invalidate_config()
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
@@ -3869,6 +4124,42 @@ async def api_enable_target(project_id: str, name: str):
     return {"status": "enabled", "name": name}
 
 
+@app.delete("/api/projects/{project_id}/targets/{name}")
+async def api_delete_target(project_id: str, name: str):
+    """Remove a target from config and cancel its pending drafts."""
+    cancelled_count = 0
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        config = _get_config()
+        if name not in config.targets:
+            raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+        # Cancel pending drafts for this target
+        _placeholders = ",".join("?" for _ in PENDING_STATUSES)
+        pending = conn.execute(
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({_placeholders})",
+            (project_id, name, *PENDING_STATUSES),
+        ).fetchall()
+        for row in pending:
+            ops.update_draft(conn, row["id"], status="cancelled")
+            ops.emit_data_event(conn, "draft", "updated", row["id"], project_id)
+        cancelled_count = len(pending)
+
+        ops.emit_data_event(conn, "config", "updated", "targets", project_id)
+    finally:
+        conn.close()
+
+    # Remove from config.yaml
+    from social_hook.config.yaml import delete_config_key
+
+    delete_config_key(get_config_path(), "targets", name)
+    _invalidate_config()
+
+    return {"status": "deleted", "name": name, "cancelled_drafts": cancelled_count}
+
+
 # =============================================================================
 # Strategies (per-project)
 # =============================================================================
@@ -3876,7 +4167,9 @@ async def api_enable_target(project_id: str, name: str):
 
 @app.get("/api/projects/{project_id}/strategies")
 async def api_list_strategies(project_id: str):
-    """List strategies: built-in templates merged with project overrides."""
+    """List strategies: built-in templates merged with config overrides."""
+    from social_hook.setup.templates import STRATEGY_TEMPLATES
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
@@ -3884,8 +4177,28 @@ async def api_list_strategies(project_id: str):
         conn.close()
 
     config = _get_config()
-    strategies = {}
+    strategies: dict[str, dict[str, Any]] = {}
+
+    # Start with built-in templates (skip "custom" placeholder)
+    for t in STRATEGY_TEMPLATES:
+        if t.id == "custom":
+            continue
+        strategies[t.id] = {
+            "audience": t.defaults.audience,
+            "voice": t.defaults.voice_tone,
+            "angle": "",
+            "post_when": t.defaults.post_when,
+            "avoid": t.defaults.avoid,
+            "format_preference": "",
+            "media_preference": "",
+            "min_length": None,
+            "requires": None,
+            "template": True,
+        }
+
+    # Merge/override with config strategies
     for name, strat in config.content_strategies.items():
+        is_template = name in strategies
         strategies[name] = {
             "audience": strat.audience,
             "voice": strat.voice,
@@ -3896,7 +4209,9 @@ async def api_list_strategies(project_id: str):
             "media_preference": strat.media_preference,
             "min_length": strat.min_length,
             "requires": strat.requires,
+            "template": is_template,
         }
+
     return {"strategies": strategies, "project_id": project_id}
 
 
@@ -4002,6 +4317,105 @@ async def api_reset_strategy(project_id: str, name: str):
     finally:
         conn.close()
     return {"status": "reset", "name": name}
+
+
+@app.post("/api/projects/{project_id}/strategies")
+async def api_create_strategy(project_id: str, body: dict[str, Any] = Body(...)):
+    """Create a new custom strategy."""
+    from social_hook.config.yaml import save_config
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    known_keys = {
+        "name",
+        "audience",
+        "voice",
+        "angle",
+        "post_when",
+        "avoid",
+        "format_preference",
+        "media_preference",
+        "min_length",
+        "requires",
+    }
+    try:
+        check_unknown_keys(body, known_keys, "create_strategy", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    name = body.get("name")
+    if not name:
+        raise HTTPException(status_code=400, detail="'name' is required")
+
+    config = _get_config()
+    if name in config.content_strategies:
+        raise HTTPException(status_code=409, detail=f"Strategy '{name}' already exists")
+
+    fields = {k: v for k, v in body.items() if k != "name" and v is not None}
+
+    try:
+        save_config(
+            {"content_strategies": {name: fields}},
+            config_path=get_config_path(),
+            deep_merge=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
+    finally:
+        conn.close()
+    return JSONResponse(status_code=201, content={"status": "created", "name": name})
+
+
+@app.delete("/api/projects/{project_id}/strategies/{name}")
+async def api_delete_strategy(project_id: str, name: str):
+    """Delete a strategy. Returns 409 if any targets reference it."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    config = _get_config()
+    if name not in config.content_strategies:
+        raise HTTPException(status_code=404, detail=f"Strategy '{name}' not found")
+
+    # Check if any targets reference this strategy
+    referencing = [tgt_name for tgt_name, tgt in config.targets.items() if tgt.strategy == name]
+    if referencing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete strategy '{name}': referenced by targets {referencing}",
+        )
+
+    # Remove from config.yaml
+    from social_hook.config.yaml import delete_config_key
+
+    delete_config_key(get_config_path(), "content_strategies", name)
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        # Dismiss orphaned topics for the deleted strategy
+        dismissed_count = conn.execute(
+            "UPDATE content_topics SET status = 'dismissed' WHERE project_id = ? AND strategy = ? AND status != 'dismissed'",
+            (project_id, name),
+        ).rowcount
+        if dismissed_count:
+            conn.commit()
+            logger.info(
+                "Dismissed %d orphaned topics for deleted strategy '%s'", dismissed_count, name
+            )
+        ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
+    finally:
+        conn.close()
+    return {"status": "deleted", "name": name, "topics_dismissed": dismissed_count}
 
 
 # =============================================================================
@@ -4276,12 +4690,31 @@ async def api_update_brief(project_id: str, body: dict[str, Any] = Body(...)):
 
 @app.get("/api/projects/{project_id}/suggestions")
 async def api_list_suggestions(project_id: str):
-    """List content suggestions for a project."""
+    """List content suggestions for a project, enriched with cycle IDs."""
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
         suggestions = ops.get_suggestions_by_project(conn, project_id)
-        return {"suggestions": [s.to_dict() for s in suggestions]}
+
+        # Look up evaluation_cycle_id for suggestions that have been evaluated
+        sug_ids = [s.id for s in suggestions]
+        cycle_map: dict[str, str] = {}
+        if sug_ids:
+            placeholders = ",".join("?" for _ in sug_ids)
+            rows = conn.execute(
+                f"SELECT suggestion_id, evaluation_cycle_id FROM drafts WHERE suggestion_id IN ({placeholders}) AND evaluation_cycle_id IS NOT NULL",
+                sug_ids,
+            ).fetchall()
+            for row in rows:
+                cycle_map[row["suggestion_id"]] = row["evaluation_cycle_id"]
+
+        result = []
+        for s in suggestions:
+            d = s.to_dict()
+            d["evaluation_cycle_id"] = cycle_map.get(s.id)
+            result.append(d)
+
+        return {"suggestions": result}
     finally:
         conn.close()
 
@@ -4341,7 +4774,7 @@ async def api_create_suggestion(project_id: str, body: dict[str, Any] = Body(...
                 status_code=202,
                 content={
                     "task_id": task_id,
-                    "status": "evaluating",
+                    "status": "processing",
                     "suggestion": suggestion.to_dict(),
                 },
             )
@@ -4367,6 +4800,53 @@ async def api_dismiss_suggestion(project_id: str, suggestion_id: str):
         return {"status": "dismissed", "suggestion_id": suggestion_id}
     finally:
         conn.close()
+
+
+@app.post("/api/projects/{project_id}/suggestions/{suggestion_id}/accept")
+async def api_accept_suggestion(project_id: str, suggestion_id: str):
+    """Accept a pending suggestion and trigger evaluation. 202 — LLM call."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        suggestion = ops.get_suggestion(conn, suggestion_id)
+        if not suggestion:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+        if suggestion.status != "pending":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Suggestion has status '{suggestion.status}', only 'pending' can be accepted",
+            )
+
+        # Check for already-running task
+        existing = conn.execute(
+            "SELECT id FROM background_tasks WHERE type='evaluate_suggestion' AND ref_id=? AND status='running'",
+            (suggestion_id,),
+        ).fetchone()
+        if existing:
+            raise HTTPException(
+                status_code=409, detail="Evaluation already in progress for this suggestion"
+            )
+
+        ops.update_suggestion_status(conn, suggestion_id, "evaluated")
+        ops.emit_data_event(conn, "suggestion", "updated", suggestion_id, project_id)
+        pid = project_id
+    finally:
+        conn.close()
+
+    sid = suggestion_id
+
+    def _blocking_evaluate():
+        from social_hook.trigger import run_suggestion_trigger
+
+        return {"exit_code": run_suggestion_trigger(sid, pid)}
+
+    task_id = _run_background_task(
+        "evaluate_suggestion",
+        ref_id=sid,
+        project_id=pid,
+        fn=_blocking_evaluate,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "evaluating"})
 
 
 @app.post("/api/projects/{project_id}/content/combine")
@@ -4470,65 +4950,105 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
         enriched = []
         for c in cycles:
             cd = c.to_dict()
-            # Build human-readable trigger
-            trigger_parts = [c.trigger_type or "unknown"]
-            if c.trigger_ref:
-                trigger_parts.append(c.trigger_ref[:8])
-            cd["trigger"] = " ".join(trigger_parts)
+            _parse_diagnostics_column(cd)
 
             # Get drafts for this cycle to derive strategies and status
             drafts = ops.get_drafts_by_cycle(conn, c.id)
 
-            # Get the decision for strategy info (via first draft's decision_id)
-            strategies: dict[str, dict] = {}
+            # Get the decision for strategy info
+            # Try via drafts first, then fall back to cycle's trigger_ref (commit hash)
+            decision = None
             if drafts:
                 decision_id = drafts[0].decision_id
                 decision = ops.get_decision(conn, decision_id)
-                if decision and decision.targets:
-                    # targets is a dict of {strategy_name: {action, reason, ...}}
-                    from social_hook.parsing import safe_json_loads
+            if not decision and c.trigger_ref:
+                # No drafts — look up decision by commit hash directly
+                from social_hook.models import Decision
 
-                    targets_data = decision.targets
-                    if isinstance(targets_data, str):
-                        targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
-                    for strat_name, strat_data in (targets_data or {}).items():
-                        action = (
-                            strat_data.get("action", "skip")
-                            if isinstance(strat_data, dict)
-                            else "skip"
-                        )
-                        if hasattr(action, "value"):
-                            action = action.value
-                        reasoning = (
-                            strat_data.get("reason", "") if isinstance(strat_data, dict) else ""
-                        )
-                        # Find a draft matching this strategy (by target_id or platform)
-                        strat_draft = None
-                        for d in drafts:
-                            strat_draft = d
-                            break
-                        strategies[strat_name] = {
-                            "decision": action,
-                            "reasoning": reasoning,
-                            "draft_id": strat_draft.id if strat_draft else None,
-                            "draft_status": strat_draft.status if strat_draft else None,
-                            "draft_content": strat_draft.content[:200] if strat_draft else None,
-                        }
-                elif decision:
-                    # Legacy: single "default" strategy
-                    strategies["default"] = {
-                        "decision": decision.decision,
-                        "reasoning": decision.reasoning[:200] if decision.reasoning else "",
-                        "draft_id": drafts[0].id if drafts else None,
-                        "draft_status": drafts[0].status if drafts else None,
-                        "draft_content": drafts[0].content[:200] if drafts else None,
+                # For batch cycles, trigger_ref is "hash1,hash2,...,trigger_hash"
+                # The last hash is the trigger commit with the full decision.
+                lookup_hash = c.trigger_ref
+                if c.trigger_type == "batch" and "," in (c.trigger_ref or ""):
+                    lookup_hash = c.trigger_ref.rsplit(",", 1)[-1].strip()
+
+                row = conn.execute(
+                    "SELECT * FROM decisions WHERE project_id = ? AND commit_hash = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (project_id, lookup_hash),
+                ).fetchone()
+                if row:
+                    decision = Decision.from_dict(dict(row))
+
+            # --- 2.3: Richer trigger descriptions ---
+            cd["trigger"] = _enrich_cycle_trigger(conn, c, decision)
+
+            # --- Strategy outcomes ---
+            strategies: dict[str, dict] = {}
+            if decision and decision.targets:
+                # targets is a dict of {strategy_name: {action, reason, ...}}
+                targets_data = decision.targets
+                if isinstance(targets_data, str):
+                    targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
+
+                # Build strategy_to_draft map: draft.target_id → config target → strategy name
+                config = _get_config()
+                strategy_to_draft: dict[str, Any] = {}
+                for d in drafts:
+                    if d.target_id and config.targets.get(d.target_id):
+                        target_strategy = config.targets[d.target_id].strategy
+                        if target_strategy and target_strategy not in strategy_to_draft:
+                            strategy_to_draft[target_strategy] = d
+                    else:
+                        # Legacy drafts without target_id → assign to "default"
+                        if "default" not in strategy_to_draft:
+                            strategy_to_draft["default"] = d
+
+                ep_tags = _parse_episode_tags(decision)
+
+                for strat_name, strat_data in (targets_data or {}).items():
+                    action = (
+                        strat_data.get("action", "skip") if isinstance(strat_data, dict) else "skip"
+                    )
+                    if hasattr(action, "value"):
+                        action = action.value
+                    reasoning = strat_data.get("reason", "") if isinstance(strat_data, dict) else ""
+                    topic_id = strat_data.get("topic_id") if isinstance(strat_data, dict) else None
+                    # Find a draft matching this strategy via target_id → config target → strategy
+                    strat_draft = strategy_to_draft.get(strat_name)
+                    strategies[strat_name] = {
+                        "decision": action,
+                        "reasoning": reasoning,
+                        "draft_id": strat_draft.id if strat_draft else None,
+                        "draft_status": strat_draft.status if strat_draft else None,
+                        "draft_content": strat_draft.content[:200] if strat_draft else None,
+                        "draft_preview_mode": strat_draft.preview_mode if strat_draft else None,
+                        "topic_id": topic_id,
+                        "episode_tags": ep_tags,
                     }
+            elif decision:
+                ep_tags = _parse_episode_tags(decision)
+                # Legacy decisions without per-strategy targets data
+                label = "legacy" if decision.decision != "deferred_eval" else "deferred"
+                strategies[label] = {
+                    "decision": decision.decision,
+                    "reasoning": decision.reasoning[:200] if decision.reasoning else "",
+                    "draft_id": drafts[0].id if drafts else None,
+                    "draft_status": drafts[0].status if drafts else None,
+                    "draft_content": drafts[0].content[:200] if drafts else None,
+                    "draft_preview_mode": drafts[0].preview_mode if drafts else None,
+                    "topic_id": None,
+                    "episode_tags": ep_tags,
+                }
 
             cd["strategies"] = strategies
 
-            # Derive overall status from draft statuses
+            # --- 2.6: Status with counts ---
             if not drafts:
                 cd["status"] = "no drafts"
+                cd["draft_count"] = 0
+                cd["pending_count"] = 0
+                cd["approved_count"] = 0
+                cd["posted_count"] = 0
             else:
                 statuses = {d.status for d in drafts}
                 if "posted" in statuses:
@@ -4539,11 +5059,82 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                     cd["status"] = "review"
                 else:
                     cd["status"] = drafts[0].status
+                cd["draft_count"] = len(drafts)
+                cd["pending_count"] = sum(1 for d in drafts if d.status in ("draft", "deferred"))
+                cd["approved_count"] = sum(
+                    1 for d in drafts if d.status in ("approved", "scheduled")
+                )
+                cd["posted_count"] = sum(1 for d in drafts if d.status == "posted")
 
             enriched.append(cd)
         return {"cycles": enriched}
     finally:
         conn.close()
+
+
+def _enrich_cycle_trigger(conn, cycle, decision) -> str:
+    """Build a human-readable trigger description for a cycle."""
+    trigger_type = cycle.trigger_type or "unknown"
+    trigger_ref = cycle.trigger_ref
+
+    if trigger_type == "commit":
+        short_hash = trigger_ref[:7] if trigger_ref else "unknown"
+        parts = [f"Commit {short_hash}"]
+        if decision:
+            ep_tags = _parse_episode_tags(decision)
+            if ep_tags:
+                parts.append(f"({', '.join(ep_tags)})")
+            if decision.commit_message:
+                msg = decision.commit_message[:80]
+                parts.append(f"\u2014 {msg}")
+        return " ".join(parts)
+    elif trigger_type == "topic_maturity":
+        if trigger_ref:
+            topic = ops.get_topic(conn, trigger_ref)
+            if topic:
+                return f"Topic matured: {topic.topic}"
+        return "Topic matured"
+    elif trigger_type == "operator_suggestion":
+        if trigger_ref:
+            s = ops.get_suggestion(conn, trigger_ref)
+            if s:
+                idea_preview = s.idea[:60] + ("..." if len(s.idea) > 60 else "")
+                return f"Suggestion: {idea_preview}"
+        return "Operator suggestion"
+    elif trigger_type == "batch":
+        # trigger_ref is comma-separated commit hashes
+        hashes = [h.strip() for h in (trigger_ref or "").split(",") if h.strip()]
+        if not hashes:
+            return "Batch evaluation"
+        parts = [f"Batch of {len(hashes)} commits"]
+        if decision:
+            ep_tags = _parse_episode_tags(decision)
+            if ep_tags:
+                parts.append(f"({', '.join(ep_tags)})")
+        # Get commit hash + first line of message for each
+        commit_lines = []
+        for h in hashes[:5]:  # Cap at 5 to avoid huge descriptions
+            short = h[:7]
+            d = conn.execute(
+                "SELECT commit_message FROM decisions WHERE project_id = ? AND commit_hash = ? LIMIT 1",
+                (cycle.project_id, h),
+            ).fetchone()
+            msg = d["commit_message"].splitlines()[0][:50] if d and d["commit_message"] else ""
+            commit_lines.append(f"{short} {msg}".strip())
+        parts.append("\u2014 " + "; ".join(commit_lines))
+        if len(hashes) > 5:
+            parts.append(f"(+{len(hashes) - 5} more)")
+        return " ".join(parts)
+    elif trigger_type == "hero_launch":
+        return "Hero launch"
+    elif trigger_type == "draft_now":
+        return "Manual draft"
+    else:
+        logger.warning("Unknown trigger_type in cycle: %s", trigger_type)
+        parts = [trigger_type]
+        if trigger_ref:
+            parts.append(trigger_ref[:8])
+        return " ".join(parts)
 
 
 @app.get("/api/projects/{project_id}/cycles/{cycle_id}")
@@ -4565,6 +5156,7 @@ async def api_get_cycle_detail(project_id: str, cycle_id: str):
 
         cycle = EvaluationCycle.from_dict(dict(row))
         cycle_dict = cycle.to_dict()
+        _parse_diagnostics_column(cycle_dict)
 
         # Get associated drafts
         drafts = ops.get_drafts_by_cycle(conn, cycle_id)
@@ -4618,12 +5210,91 @@ async def api_approve_all_cycle_drafts(project_id: str, cycle_id: str):
 
 
 @app.get("/api/system/errors")
-async def api_system_errors(limit: int = Query(50, ge=1, le=500)):
-    """Recent system errors."""
+async def api_system_errors(
+    limit: int = Query(50, ge=1, le=500),
+    severity: str | None = Query(None),
+    component: str | None = Query(None),
+    source: str | None = Query(None),
+):
+    """Recent system errors with optional filters."""
     conn = _get_conn()
     try:
-        errors = ops.get_recent_system_errors(conn, limit=limit)
-        return {"errors": [e.to_dict() for e in errors]}
+        errors = ops.get_recent_system_errors(
+            conn, limit=limit, severity=severity, component=component, source=source
+        )
+        result = []
+        for e in errors:
+            d = e.to_dict()
+            # Ensure timestamps have Z suffix for JS Date parsing
+            if d.get("created_at") and not d["created_at"].endswith("Z"):
+                d["created_at"] = d["created_at"] + "Z"
+            result.append(d)
+        return {"errors": result}
+    finally:
+        conn.close()
+
+
+@app.post("/api/system/errors", status_code=201)
+async def api_create_system_error(request: Request):
+    """Capture a system error (e.g. from frontend)."""
+    from social_hook.filesystem import generate_id
+    from social_hook.models import SystemErrorRecord
+
+    body = await request.json()
+    check_unknown_keys(
+        body, {"severity", "message", "source", "context"}, "system_error", strict=True
+    )
+
+    severity = body.get("severity", "error")
+    if severity not in ("info", "warning", "error", "critical"):
+        raise HTTPException(status_code=400, detail=f"Invalid severity: {severity}")
+
+    message = body.get("message", "")
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    source = body.get("source", "")
+    context_raw = body.get("context", "{}")
+    if isinstance(context_raw, str):
+        context = safe_json_loads(context_raw, "system_error.context", default={})
+    else:
+        context = context_raw
+
+    error = SystemErrorRecord(
+        id=generate_id("err"),
+        severity=severity,
+        message=message,
+        context=json.dumps(context) if isinstance(context, dict) else str(context),
+        source=source,
+    )
+    conn = _get_conn()
+    try:
+        error_id = ops.insert_system_error(conn, error)
+        ops.emit_data_event(
+            conn,
+            "system_error",
+            "created",
+            error_id,
+            extra={"severity": severity, "component": source},
+        )
+        return {"id": error_id, "status": "created"}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/system/errors")
+async def api_clear_system_errors(
+    older_than_days: int | None = None,
+):
+    """Clear system errors. Optional: ?older_than_days=30 to prune old entries only.
+
+    Without the parameter, deletes all errors.
+    """
+    conn = _get_conn()
+    try:
+        count = ops.clear_system_errors(conn, older_than_days=older_than_days)
+        ops.emit_data_event(conn, "system_error", "cleared", "")
+        return {"deleted": count}
     finally:
         conn.close()
 
@@ -4635,22 +5306,62 @@ async def api_system_health():
     try:
         error_counts = ops.get_error_health_status(conn)
         total_errors = sum(error_counts.values())
-
-        # Determine overall health status
-        if error_counts.get("critical", 0) > 0:
-            status = "critical"
-        elif error_counts.get("error", 0) > 0:
-            status = "degraded"
-        elif error_counts.get("warning", 0) > 5:
-            status = "warning"
-        else:
-            status = "healthy"
+        status = ops.compute_health_status(error_counts)
 
         return {
             "status": status,
             "error_counts_24h": error_counts,
             "total_errors_24h": total_errors,
         }
+    finally:
+        conn.close()
+
+
+@app.get("/api/system/events")
+async def api_system_events(
+    entity: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Recent pipeline/system events from web_events.
+
+    Useful for debugging pipeline flow. Filters to pipeline, decision, task,
+    and draft entities by default. Pass ?entity=pipeline to filter further.
+    """
+    conn = _get_conn()
+    try:
+        allowed_entities = {"pipeline", "decision", "task", "draft", "topic", "cycle"}
+        clauses = ["1=1"]
+        params: list = []
+
+        if entity:
+            clauses.append("json_extract(data, '$.entity') = ?")
+            params.append(entity)
+        else:
+            placeholders = ",".join("?" * len(allowed_entities))
+            clauses.append(f"json_extract(data, '$.entity') IN ({placeholders})")
+            params.extend(sorted(allowed_entities))
+
+        where = " AND ".join(clauses)
+        rows = conn.execute(
+            f"SELECT id, data, created_at FROM web_events WHERE {where} "
+            f"ORDER BY created_at DESC LIMIT ?",
+            [*params, limit],
+        ).fetchall()
+
+        events = []
+        for r in rows:
+            parsed = safe_json_loads(r["data"], "web_events.data", default={})
+            events.append(
+                {
+                    "id": r["id"],
+                    "entity": parsed.get("entity"),
+                    "action": parsed.get("action"),
+                    "entity_id": parsed.get("entity_id"),
+                    "project_id": parsed.get("project_id"),
+                    "created_at": r["created_at"],
+                }
+            )
+        return {"events": events}
     finally:
         conn.close()
 

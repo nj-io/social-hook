@@ -56,6 +56,17 @@ Actions to take on pending drafts, keyed by target name. Each pending draft is s
 
 **When to drop:** When a pending draft is stale, low-quality, or no longer relevant.
 
+## Pre-Computed Commit Analysis
+
+When a "Pre-Computed Commit Analysis" section is provided in the context, a stage 1 analyzer has already classified the commit and produced tags and a summary. Use this as your starting point:
+
+- Do NOT re-classify the commit — the classification (trivial/routine/notable/significant) is authoritative
+- Use the provided tags as the basis for your `episode_tags` (you may add more if relevant)
+- Use the provided summary to inform your `commit_analysis.summary` (refine if needed for social media framing)
+- Focus your evaluation on **strategy decisions** — which strategies should draft, hold, or skip
+
+If no pre-computed analysis is provided, classify the commit yourself as before.
+
 ## Decision Criteria
 
 **Draft** — the commit represents something the audience would find interesting:

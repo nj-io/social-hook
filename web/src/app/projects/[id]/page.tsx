@@ -8,8 +8,6 @@ import {
   fetchProjectDecisions,
   fetchProjectPosts,
   fetchProjectUsage,
-  updateProjectSummary,
-  regenerateProjectSummary,
   createDraftFromDecision,
   deleteDecision,
   retriggerDecision,
@@ -19,15 +17,16 @@ import {
   fetchDecisionBranches,
   fetchImportPreview,
   importCommits,
+  fetchTasks,
   type BackgroundTask,
 } from "@/lib/api";
 import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
-import { SimpleMarkdown } from "@/components/simple-markdown";
 import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
 import { RateLimitCard } from "@/components/rate-limit-card";
+import { AnalysisQueueCard } from "@/components/analysis-queue-card";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
 import { EvaluationCycles } from "@/components/evaluation-cycles";
@@ -52,13 +51,6 @@ export default function ProjectDetailPage() {
   const [decisionOffset, setDecisionOffset] = useState(0);
   const [hasMoreDecisions, setHasMoreDecisions] = useState(false);
   const [totalDecisions, setTotalDecisions] = useState(0);
-  const [editingSummary, setEditingSummary] = useState(false);
-  const [summaryDraft, setSummaryDraft] = useState("");
-  const [summaryLoading, setSummaryLoading] = useState(false);
-  const [summaryExpanded, setSummaryExpanded] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return localStorage.getItem("project-summary-expanded") !== "false";
-  });
   const [expandedDecisions, setExpandedDecisions] = useState<Set<string>>(new Set());
   const [draftResult, setDraftResult] = useState<Record<string, { count?: number; error?: string }>>({});
   const [platformCount, setPlatformCount] = useState<number>(0);
@@ -72,11 +64,19 @@ export default function ProjectDetailPage() {
   const [branchFilter, setBranchFilter] = useState<string>("");
   const [decisionBranches, setDecisionBranches] = useState<string[]>([]);
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [importPreview, setImportPreview] = useState<{ total_commits: number; already_tracked: number; importable: number } | null>(null);
+  const [importPreview, setImportPreview] = useState<{ total_commits: number; already_tracked: number; importable: number; branches?: string[] } | null>(null);
   const [importBranch, setImportBranch] = useState<string>("");
   const [importLoading, setImportLoading] = useState(false);
   const [importRefreshKey, setImportRefreshKey] = useState(0);
-  const [activeTab, setActiveTab] = useState<"cycles" | "commits" | "topics" | "brief">("cycles");
+  const [activeTab, setActiveTab] = useState<"cycles" | "commits" | "topics" | "brief">(() => {
+    if (typeof window === "undefined") return "cycles";
+    const validTabs = ["cycles", "commits", "topics", "brief"] as const;
+    const param = new URLSearchParams(window.location.search).get("tab");
+    if (param && (validTabs as readonly string[]).includes(param)) {
+      return param as typeof validTabs[number];
+    }
+    return "cycles";
+  });
   // Consolidate uses a special ref_id key since it spans multiple decisions
   const CONSOLIDATE_REF = "__consolidate__";
 
@@ -266,113 +266,6 @@ export default function ProjectDetailPage() {
           {!!project.paused && <Badge value="paused" variant="status" />}
         </div>
         <p className="mt-1 truncate text-sm text-muted-foreground">{project.repo_path}</p>
-        {/* Project Summary */}
-        <div className="mt-4 rounded-lg border border-border">
-          <button
-            type="button"
-            onClick={() => {
-              const next = !summaryExpanded;
-              setSummaryExpanded(next);
-              localStorage.setItem("project-summary-expanded", String(next));
-            }}
-            className="flex w-full items-center justify-between p-4 text-left"
-          >
-            <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-medium text-muted-foreground">Project Summary</h2>
-              {!summaryExpanded && project.summary && (
-                <p className="mt-1 truncate text-xs text-muted-foreground/70">
-                  {project.summary.replace(/[*`#\n]+/g, " ").trim()}
-                </p>
-              )}
-            </div>
-            <span className="ml-3 shrink-0 text-xs text-muted-foreground">{summaryExpanded ? "\u25B2" : "\u25BC"}</span>
-          </button>
-
-          {summaryExpanded && (
-            <div className="border-t border-border px-4 pb-4 pt-3">
-              <div className="mb-2 flex items-center justify-end gap-2">
-                {!editingSummary && (
-                  <>
-                    <button
-                      onClick={() => {
-                        setSummaryDraft(project.summary || "");
-                        setEditingSummary(true);
-                      }}
-                      className="text-xs text-accent hover:underline"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={async () => {
-                        setSummaryLoading(true);
-                        try {
-                          const res = await regenerateProjectSummary(id);
-                          setProject((prev) => prev ? { ...prev, summary: res.summary } : prev);
-                        } catch {
-                          // Silent failure
-                        } finally {
-                          setSummaryLoading(false);
-                        }
-                      }}
-                      disabled={summaryLoading}
-                      className="text-xs text-accent hover:underline disabled:opacity-50"
-                    >
-                      {summaryLoading ? "Regenerating..." : "Regenerate"}
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {editingSummary ? (
-                <div className="space-y-2">
-                  <textarea
-                    rows={4}
-                    value={summaryDraft}
-                    onChange={(e) => setSummaryDraft(e.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={async () => {
-                        setSummaryLoading(true);
-                        try {
-                          await updateProjectSummary(id, summaryDraft);
-                          setProject((prev) => prev ? { ...prev, summary: summaryDraft } : prev);
-                          setEditingSummary(false);
-                        } catch {
-                          // Silent failure
-                        } finally {
-                          setSummaryLoading(false);
-                        }
-                      }}
-                      disabled={summaryLoading}
-                      className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditingSummary(false)}
-                      className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : project.summary ? (
-                <SimpleMarkdown content={project.summary} />
-              ) : (
-                <p className="text-sm text-muted-foreground">No summary yet. Click Regenerate to create one.</p>
-              )}
-
-              <p className="mt-2 text-xs text-muted-foreground">
-                Adjust context depth in{" "}
-                <Link href="/settings?section=context" className="text-accent hover:underline">
-                  Settings &gt; Context
-                </Link>
-              </p>
-            </div>
-          )}
-        </div>
 
         {/* Lifecycle */}
         {project.lifecycle && (
@@ -422,9 +315,10 @@ export default function ProjectDetailPage() {
           </Link>
         </div>
 
-        {/* Rate Limits + Journey Capture status */}
-        <div className="mt-4">
+        {/* Rate Limits + Analysis Queue + Journey Capture status */}
+        <div className="mt-4 flex gap-4">
           <RateLimitCard />
+          <AnalysisQueueCard projectId={id} />
         </div>
         <div className="mt-2">
           {project.journey_capture_enabled ? (
@@ -451,7 +345,10 @@ export default function ProjectDetailPage() {
           ] as const).map((tab) => (
             <button
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => {
+                setActiveTab(tab.key);
+                window.history.replaceState({}, "", `?tab=${tab.key}`);
+              }}
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab.key
                   ? "border-accent text-foreground"
@@ -532,11 +429,12 @@ export default function ProjectDetailPage() {
                     <th className="pb-2 pr-2 font-medium w-8"></th>
                     <th className="pb-2 pr-4 font-medium">Decision</th>
                     <th className="pb-2 pr-4 font-medium">Commit</th>
-                    <th className="pb-2 pr-4 font-medium">Reasoning</th>
-                    <th className="pb-2 pr-4 font-medium">Angle</th>
+                    <th className="pb-2 pr-4 font-medium min-w-[200px]">Reasoning</th>
+                    <th className="pb-2 pr-4 font-medium min-w-[120px]">Angle</th>
                     <th className="hidden pb-2 pr-4 font-medium sm:table-cell">Episode</th>
                     <th className="hidden pb-2 pr-4 font-medium md:table-cell">Category</th>
                     <th className="pb-2 pr-4 font-medium">Date</th>
+                    <th className="hidden pb-2 pr-4 font-medium lg:table-cell">Branch</th>
                     <th className="pb-2 pr-4 font-medium">Drafts</th>
                     <th className="pb-2 pr-4 font-medium">Actions</th>
                     <th className="pb-2 font-medium">Status</th>
@@ -546,7 +444,7 @@ export default function ProjectDetailPage() {
                   {decisions.map((d) => {
                     const isExpanded = expandedDecisions.has(d.id);
                     const isCreating = isTaskRunning(d.id);
-                    const isEvaluating = isTaskRunning(`retrigger-${d.id}`) || d.decision === "evaluating";
+                    const isProcessing = isTaskRunning(`retrigger-${d.id}`) || d.decision === "processing";
                     const evalTask = getTask(`retrigger-${d.id}`);
                     const result = draftResult[d.id];
                     return (
@@ -571,11 +469,16 @@ export default function ProjectDetailPage() {
                           />
                         </td>
                         <td className="py-2 pr-4">
-                          <Badge value={d.decision} variant="decision" />
+                          <Badge value={d.decision === "deferred_eval" && d.batch_id ? "batched" : d.decision} variant="decision" />
                         </td>
                         <td className="py-2 pr-4">
                           <div>
-                            <code className="text-xs">{d.commit_hash.slice(0, 7)}</code>
+                            <div className="flex items-center gap-1.5">
+                              <code className="text-xs">{d.commit_hash.slice(0, 7)}</code>
+                              {d.classification && (
+                                <Badge value={d.classification} variant="classification" />
+                              )}
+                            </div>
                             <p className="text-xs text-muted-foreground">
                               {d.commit_message?.split("\n")[0]}
                             </p>
@@ -619,7 +522,11 @@ export default function ProjectDetailPage() {
                           </div>
                         </td>
                         <td className="py-2 pr-4 text-xs">
-                          <p className="whitespace-pre-wrap">{d.reasoning || "-"}</p>
+                          {d.decision === "deferred_eval" && d.batch_id ? (
+                            <span className="text-muted-foreground">Included in batch <code className="rounded bg-muted px-1 py-0.5 text-xs">{d.batch_id.slice(0, 12)}</code></span>
+                          ) : (
+                            <p className="whitespace-pre-wrap">{d.decision === "processing" ? "" : (d.reasoning || "-")}</p>
+                          )}
                         </td>
                         <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
                         <td className="hidden py-2 pr-4 sm:table-cell">
@@ -630,6 +537,13 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="py-2 pr-4 text-xs text-muted-foreground">
                           {new Date(d.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="hidden py-2 pr-4 lg:table-cell">
+                          {d.branch ? (
+                            <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{d.branch}</code>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">&mdash;</span>
+                          )}
                         </td>
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           {d.draft_count > 0 ? (
@@ -645,11 +559,13 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1.5">
-                            {(d.decision === "imported" || d.decision === "evaluating") ? (
+                            {d.decision === "deferred_eval" && d.batch_id ? (
+                              <span className="text-xs text-muted-foreground">Batched</span>
+                            ) : (d.decision === "imported" || d.decision === "processing") ? (
                               <AsyncButton
-                                loading={isEvaluating}
+                                loading={isProcessing}
                                 startTime={evalTask?.created_at}
-                                loadingText="Evaluating"
+                                loadingText="Processing"
                                 onClick={async () => {
                                   setActionError(null);
                                   try {
@@ -661,13 +577,16 @@ export default function ProjectDetailPage() {
                                     setActionError(err instanceof Error ? err.message : "Evaluate failed");
                                   }
                                 }}
-                                disabled={isEvaluating}
+                                disabled={isProcessing}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950 disabled:opacity-70"
                               >
                                 Evaluate
                               </AsyncButton>
                             ) : (
-                              <button
+                              <AsyncButton
+                                loading={isCreating}
+                                startTime={getTask(d.id)?.created_at}
+                                loadingText="Drafting"
                                 onClick={() => onCreateDraftClick(d.id, d.draft_count > 0)}
                                 disabled={isCreating}
                                 className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-70 ${
@@ -675,20 +594,9 @@ export default function ProjectDetailPage() {
                                     ? "border border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
                                     : "bg-accent text-accent-foreground hover:bg-accent/80"
                                 }`}
-                                title={platformCount === 0 ? "No platforms configured" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
                               >
-                                {isCreating && (
-                                  <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                  </svg>
-                                )}
-                                {isCreating
-                                  ? "Creating..."
-                                  : d.draft_count > 0
-                                    ? "Draft Created"
-                                    : "Create Draft"}
-                              </button>
+                                {d.draft_count > 0 ? "Draft Created" : "Create Draft"}
+                              </AsyncButton>
                             )}
                           </div>
                         </td>
@@ -957,7 +865,7 @@ export default function ProjectDetailPage() {
             }}
           >
             <option value="">All branches</option>
-            {decisionBranches.map((b) => (
+            {(importPreview?.branches || []).map((b) => (
               <option key={b} value={b}>{b}</option>
             ))}
           </select>
@@ -976,6 +884,21 @@ export default function ProjectDetailPage() {
               try {
                 const res = await importCommits(id, importBranch || null);
                 trackTask(res.task_id, "__import__", "import_commits");
+                // Poll for completion since WebSocket callback can miss fast tasks
+                const poll = setInterval(async () => {
+                  try {
+                    const { tasks: all } = await fetchTasks({ project_id: id });
+                    const task = all.find((t) => t.id === res.task_id);
+                    if (task && task.status !== "running") {
+                      clearInterval(poll);
+                      setImportModalOpen(false);
+                      setImportLoading(false);
+                      setImportRefreshKey((k) => k + 1);
+                    }
+                  } catch { /* keep polling */ }
+                }, 2000);
+                // Safety: stop polling after 5 minutes
+                setTimeout(() => clearInterval(poll), 300_000);
               } catch {
                 setImportLoading(false);
               }
@@ -1039,8 +962,12 @@ export default function ProjectDetailPage() {
                           setActionLoading(true);
                           setActionError(null);
                           try {
-                            for (const did of Array.from(selectedDecisions)) {
-                              const res = await retriggerDecision(did);
+                            const results = await Promise.all(
+                              Array.from(selectedDecisions).map((did) => retriggerDecision(did))
+                            );
+                            for (let i = 0; i < results.length; i++) {
+                              const res = results[i];
+                              const did = Array.from(selectedDecisions)[i];
                               if (res.task_id) {
                                 trackTask(res.task_id, `retrigger-${did}`, "retrigger");
                               }
