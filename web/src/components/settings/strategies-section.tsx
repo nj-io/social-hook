@@ -175,7 +175,8 @@ export function StrategiesSection() {
         </div>
         <button
           onClick={() => setCreateOpen(true)}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80"
+          disabled={!selectedProject}
+          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
         >
           New Strategy
         </button>
@@ -245,7 +246,9 @@ export function StrategiesSection() {
         <p className="text-sm text-muted-foreground">Loading...</p>
       ) : strategies.length === 0 ? (
         <div className="rounded-lg border-2 border-dashed border-border p-6 text-center">
-          <p className="text-sm text-muted-foreground">No strategies found for this project.</p>
+          <p className="text-sm text-muted-foreground">
+            {projects.length === 0 ? "Register a project first to manage strategies." : "No strategies found for this project."}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">

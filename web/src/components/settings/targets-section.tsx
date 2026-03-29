@@ -194,7 +194,9 @@ export function TargetsSection() {
         <p className="text-sm text-muted-foreground">Loading...</p>
       ) : targets.length === 0 ? (
         <div className="rounded-lg border-2 border-dashed border-border p-6 text-center">
-          <p className="text-sm text-muted-foreground">No targets configured for this project.</p>
+          <p className="text-sm text-muted-foreground">
+            {projects.length === 0 ? "Register a project first to manage targets." : "No targets configured. Click \"Add Target\" to create one."}
+          </p>
         </div>
       ) : (
         <div className="space-y-2">

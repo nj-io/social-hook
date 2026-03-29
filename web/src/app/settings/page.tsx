@@ -5,6 +5,7 @@ import { fetchConfig, fetchContentConfig, fetchContentConfigParsed, fetchEnv, fe
 import { useSectionNav } from "@/lib/use-section-nav";
 import type { ChannelConfig, Config, ConsolidationConfig, JourneyCaptureConfig, MediaGenerationConfig, ModelsConfig, PlatformConfig, Project, RateLimitsConfig, SchedulingConfig } from "@/lib/types";
 import { SettingsSidebar, sections } from "@/components/settings/settings-sidebar";
+import { Note } from "@/components/ui/note";
 import { ModelsSection } from "@/components/settings/models-section";
 import { ApiKeysSection } from "@/components/settings/api-keys-section";
 import { PlatformsSection } from "@/components/settings/platforms-section";
@@ -184,6 +185,12 @@ function SettingsContent() {
           </span>
         )}
       </div>
+
+      {projects.length === 0 && (
+        <Note variant="warning" className="mb-4">
+          No project registered. Add a project in the <button onClick={() => scrollToSection("projects")} className="underline font-medium">Projects</button> section to enable targets, strategies, and evaluations.
+        </Note>
+      )}
 
       {projects.length > 0 && (
         <div className="mb-4 flex items-center gap-3 border-b border-border pb-4">
