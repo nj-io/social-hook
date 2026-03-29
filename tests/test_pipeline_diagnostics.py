@@ -27,8 +27,9 @@ class TestDraftWithoutTarget:
         }
         results = _run_check("draft_without_target", ctx)
         assert len(results) == 1
-        assert results[0].severity == DiagnosticSeverity.WARNING
+        assert results[0].severity == DiagnosticSeverity.INFO
         assert "building-public" in results[0].message
+        assert "preview draft" in results[0].message
 
     def test_draft_strategy_with_matching_target(self):
         ctx = {

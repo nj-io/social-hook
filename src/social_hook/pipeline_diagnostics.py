@@ -24,7 +24,7 @@ ERROR = DiagnosticSeverity.ERROR
 
 @diagnostics_registry.register("draft_without_target")
 def _check_draft_without_target(ctx: DiagnosticContext) -> list[Diagnostic]:
-    """Strategy decided 'draft' but no target uses that strategy."""
+    """Strategy decided 'draft' but no target uses that strategy — preview draft created."""
     results: list[Diagnostic] = []
     strategies = ctx.get("strategies") or {}
     config_targets = ctx.get("config_targets") or {}
@@ -39,9 +39,9 @@ def _check_draft_without_target(ctx: DiagnosticContext) -> list[Diagnostic]:
             results.append(
                 Diagnostic(
                     code="draft_without_target",
-                    severity=WARNING,
-                    message=f"Strategy '{sname}' decided draft but no target uses it",
-                    suggestion=f"Add a target with strategy '{sname}'",
+                    severity=INFO,
+                    message=f"Strategy '{sname}' has no target — preview draft created",
+                    suggestion=f"Add a target with strategy '{sname}' for platform-specific formatting and posting",
                     context={"strategy": sname},
                 )
             )
