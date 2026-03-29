@@ -236,8 +236,9 @@ class TestDrainBatch:
     """Tests for batch drain mode (batch_throttled=True)."""
 
     @patch("social_hook.trigger.evaluate_batch")
+    @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.scheduler.check_rate_limit")
-    def test_batch_combines_deferred(self, mock_gate, mock_eval, temp_dir):
+    def test_batch_combines_deferred(self, mock_gate, _mock_client, mock_eval, temp_dir):
         """Batch mode calls evaluate_batch with all deferred decisions."""
         mock_gate.return_value = _GateResult(blocked=False, reason="")
 
@@ -298,8 +299,9 @@ class TestDrainIntegration:
         conn.close()
 
     @patch("social_hook.trigger.evaluate_batch")
+    @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.scheduler.check_rate_limit")
-    def test_dispatches_batch_mode(self, mock_gate, mock_eval, temp_dir):
+    def test_dispatches_batch_mode(self, mock_gate, _mock_client, mock_eval, temp_dir):
         """With batch_throttled=True, dispatches to batch drain via evaluate_batch."""
         mock_gate.return_value = _GateResult(blocked=False, reason="")
 
