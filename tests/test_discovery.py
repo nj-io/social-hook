@@ -367,7 +367,7 @@ class TestDiscoverySkippedWhenSummaryExists:
 
     def test_trigger_skips_discovery_when_summary_exists(self):
         """Verify the trigger pipeline skips discovery when project_summary is set."""
-        from social_hook.models import ProjectContext
+        from social_hook.models.context import ProjectContext
         from social_hook.models.core import Project
 
         # Create a context with an existing summary
@@ -400,7 +400,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
     def test_discovery_files_in_drafter_prompt(self, temp_repo):
         """Verify discovery_files are loaded into drafter prompt for first posts."""
         from social_hook.llm.prompts import assemble_drafter_prompt
-        from social_hook.models import ProjectContext
+        from social_hook.models.context import ProjectContext
         from social_hook.models.core import Project
 
         files_list = ["README.md", "docs/guide.md"]
@@ -445,7 +445,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
     def test_drafter_falls_back_to_prompt_docs(self, temp_repo):
         """Verify drafter falls back to prompt_docs when no discovery files."""
         from social_hook.llm.prompts import assemble_drafter_prompt
-        from social_hook.models import ProjectContext
+        from social_hook.models.context import ProjectContext
         from social_hook.models.core import CommitInfo, Project
 
         project = Project(
@@ -487,7 +487,7 @@ class TestDiscoveryFilesStoredAndUsedByDrafter:
     def test_drafter_uses_readme_when_audience_introduced(self, temp_repo):
         """Verify drafter uses README when audience is already introduced."""
         from social_hook.llm.prompts import assemble_drafter_prompt
-        from social_hook.models import ProjectContext
+        from social_hook.models.context import ProjectContext
         from social_hook.models.core import CommitInfo, Project
 
         files_list = ["README.md", "docs/guide.md"]

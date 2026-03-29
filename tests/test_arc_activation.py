@@ -485,7 +485,7 @@ class TestDraftingArcContext:
         from social_hook.drafting import draft_for_platforms
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.schemas import CreateDraftInput
-        from social_hook.models import ProjectContext
+        from social_hook.models.context import ProjectContext
         from social_hook.models.core import CommitInfo
         from social_hook.scheduling import ScheduleResult
 
@@ -591,7 +591,7 @@ class TestDraftingArcContext:
         from social_hook.drafting import draft_for_platforms
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.schemas import CreateDraftInput
-        from social_hook.models import ProjectContext
+        from social_hook.models.context import ProjectContext
         from social_hook.models.core import CommitInfo
         from social_hook.scheduling import ScheduleResult
 

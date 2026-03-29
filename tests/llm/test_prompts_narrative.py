@@ -11,7 +11,7 @@ from social_hook.llm.prompts import (
     assemble_evaluator_context,
     assemble_evaluator_prompt,
 )
-from social_hook.models import ProjectContext
+from social_hook.models.context import ProjectContext
 from social_hook.models.core import CommitInfo, Decision, Post, Project
 from social_hook.models.narrative import Arc, Lifecycle
 

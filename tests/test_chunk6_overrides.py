@@ -256,7 +256,7 @@ def _make_draft_result(
 def _mock_create_draft_patches():
     """Return context managers for mocking the create-draft pipeline."""
     from social_hook.config.project import ProjectConfig
-    from social_hook.models import ProjectContext
+    from social_hook.models.context import ProjectContext
     from social_hook.models.core import CommitInfo
 
     mock_commit = CommitInfo(hash="abc123", message="feat: test", diff="", files_changed=[])
