@@ -28,71 +28,57 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _run_commit_analyzer(
-    ctx: TriggerContext,
-    context,
-    evaluator_client,
+def _run_commit_analyzer_gate(
+    conn,
+    project,
+    project_config,
+    verbose: bool = False,
 ) -> AnalyzerOutcome:
-    """Pure gating function — no LLM calls.
+    """Lightweight interval gating — runs EARLY in run_trigger before expensive work.
 
-    Checks the commit_analysis_interval counter and returns a gating signal.
-    Stage 1 LLM runs at the call site: inline in run_trigger (single-commit)
-    or inside evaluate_batch (batch).
-
-    Returns AnalyzerOutcome with:
-    - result: Cached CommitAnalysisResult if available, else None.
-    - should_evaluate: True when interval threshold met, False to defer.
+    Only increments the counter and checks the threshold. No context assembly,
+    no LLM client, no cached analysis lookup. Used by the fast-path deferral
+    in run_trigger to skip context assembly, discovery, and LLM setup for
+    commits that will be deferred.
     """
-    from social_hook.llm.schemas import CommitAnalysisResult
-    from social_hook.parsing import safe_json_loads
-
-    # 1. Increment commit count
-    new_count = ops.increment_analysis_commit_count(ctx.conn, ctx.project.id)
-
-    # 2. Check interval threshold
     interval = 1
-    if ctx.project_config and hasattr(ctx.project_config, "context") and ctx.project_config.context:
-        interval = getattr(ctx.project_config.context, "commit_analysis_interval", 1)
+    if project_config and hasattr(project_config, "context") and project_config.context:
+        interval = getattr(project_config.context, "commit_analysis_interval", 1)
     if interval < 1:
         interval = 1
 
+    if interval <= 1:
+        # No batching — always evaluate
+        return AnalyzerOutcome(result=None, should_evaluate=True)
+
+    new_count = ops.increment_analysis_commit_count(conn, project.id)
+
     logger.info(
-        "Commit analyzer: count=%d, interval=%d, project=%s",
+        "Interval gate: count=%d, interval=%d, project=%s",
         new_count,
         interval,
-        ctx.project.id,
+        project.id,
     )
 
     if new_count < interval:
-        # Interval not met — check for cached analysis from most recent cycle
-        cached_cycle = ops.get_latest_cycle_with_analysis(ctx.conn, ctx.project.id)
-        if cached_cycle and cached_cycle.commit_analysis_json:
-            cached_data = safe_json_loads(
-                cached_cycle.commit_analysis_json,
-                "cached_commit_analysis_json",
-                default=None,
-            )
-            if cached_data is not None:
-                try:
-                    result = CommitAnalysisResult.model_validate(cached_data)
-                    if ctx.verbose:
-                        print(f"Using cached analysis (count {new_count}/{interval})")
-                    return AnalyzerOutcome(result=result, should_evaluate=False)
-                except Exception as e:
-                    logger.warning("Failed to validate cached analysis, running fresh: %s", e)
-            else:
-                logger.warning("Failed to parse cached analysis JSON, running fresh")
-        else:
-            # No cache yet (first commits on this project) — still defer
-            if ctx.verbose:
-                print(f"No cached analysis, deferring (count {new_count}/{interval})")
-            return AnalyzerOutcome(result=None, should_evaluate=False)
+        if verbose:
+            print(f"Commit deferred by interval gate (count {new_count}/{interval})")
+        return AnalyzerOutcome(result=None, should_evaluate=False)
 
-    # 3. Threshold met — signal caller to proceed. No LLM here.
+    if verbose:
+        print(f"Interval threshold met (count {new_count}/{interval})")
+    return AnalyzerOutcome(result=None, should_evaluate=True)
+
+
+def _reset_interval_counter(
+    ctx: TriggerContext,
+    context,
+    evaluator_client,
+) -> None:
+    """Reset interval counter after threshold commit enters the evaluation path."""
     ops.reset_analysis_commit_count(ctx.conn, ctx.project.id)
     if ctx.verbose:
-        print(f"Commit analysis interval met (count {new_count}/{interval})")
-    return AnalyzerOutcome(result=None, should_evaluate=True)
+        print("Analysis commit counter reset")
 
 
 def evaluate_batch(

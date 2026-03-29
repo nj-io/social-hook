@@ -76,8 +76,60 @@ def _trigger_brief_update(
         return False
 
 
-def _send_decision_notification(config, project, commit, decision):
+def _run_diagnostics(
+    ctx,
+    cycle_id: str,
+    evaluation,
+    decision_type: str,
+    *,
+    hold_limit_forced: bool = False,
+) -> list[dict]:
+    """Run pipeline diagnostics and store results on cycle. Returns serialized list."""
+    try:
+        import json
+
+        import social_hook.pipeline_diagnostics  # noqa: F401
+        from social_hook.diagnostics import diagnostics_registry
+
+        strategies = {
+            name: {
+                "action": getattr(sd.action, "value", sd.action),
+                "reason": sd.reason,
+                "arc_id": sd.arc_id,
+                "topic_id": sd.topic_id,
+            }
+            for name, sd in evaluation.strategies.items()
+        }
+
+        diag_context = {
+            "strategies": strategies,
+            "config_targets": ctx.config.targets or {},
+            "config_strategies": ctx.config.content_strategies or {},
+            "config_platforms": ctx.config.platforms or {},
+            "config_accounts": ctx.config.accounts or {},
+            "decision_type": decision_type,
+            "hold_limit_forced": hold_limit_forced,
+            "has_targets": bool(ctx.config.targets),
+            "has_strategies": bool(ctx.config.content_strategies),
+            "legacy_fallback": False,
+        }
+
+        results = diagnostics_registry.run(diag_context)
+
+        serialized = [d.to_dict() for d in results]
+
+        if not ctx.dry_run:
+            ops.update_cycle_diagnostics(ctx.conn, cycle_id, json.dumps(serialized))
+
+        return serialized
+    except Exception:
+        logger.warning("Pipeline diagnostics failed (non-fatal)", exc_info=True)
+        return []
+
+
+def _send_decision_notification(config, project, commit, decision, diagnostics=None):
     """Send a decision notification to all configured channels."""
+    from social_hook.diagnostics import format_diagnostic_warnings
     from social_hook.messaging.base import OutboundMessage
     from social_hook.notifications import broadcast_notification
 
@@ -91,6 +143,10 @@ def _send_decision_notification(config, project, commit, decision):
         f"Decision: {decision.decision}\n"
         f"Reasoning: {reasoning_preview}"
     )
+
+    if diagnostics:
+        msg_text += format_diagnostic_warnings(diagnostics)
+
     broadcast_notification(config, OutboundMessage(text=msg_text))
 
 

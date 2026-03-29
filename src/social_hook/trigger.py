@@ -749,9 +749,13 @@ def _run_trivial_skip(
 
 
 from social_hook.trigger_batch import (  # noqa: E402, F401
-    _run_commit_analyzer,
+    _reset_interval_counter,
+    _run_commit_analyzer_gate,
     evaluate_batch,
 )
+
+# Backward-compat alias
+_run_commit_analyzer = _run_commit_analyzer_gate  # noqa: F841
 
 
 def _run_targets_path(
@@ -1093,6 +1097,7 @@ from social_hook.trigger_side_effects import (  # noqa: E402, F401
     _build_merge_commit,
     _build_merge_evaluation,
     _execute_merge_groups,
+    _run_diagnostics,
     _send_decision_notification,
     _trigger_brief_update,
 )
