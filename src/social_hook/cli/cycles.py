@@ -113,7 +113,7 @@ def show(
                 typer.echo(msg)
             raise typer.Exit(1)
 
-        from social_hook.models import EvaluationCycle
+        from social_hook.models.content import EvaluationCycle
 
         cycle = EvaluationCycle.from_dict(dict(row))
 

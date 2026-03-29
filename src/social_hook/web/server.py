@@ -4292,7 +4292,7 @@ async def api_list_topics(project_id: str, strategy: str | None = Query(None)):
         if strategy:
             topics = ops.get_topics_by_strategy(conn, project_id, strategy)
         else:
-            from social_hook.models import ContentTopic
+            from social_hook.models.content import ContentTopic
 
             rows = conn.execute(
                 "SELECT * FROM content_topics WHERE project_id = ? ORDER BY strategy, priority_rank DESC, created_at ASC",
@@ -4327,7 +4327,7 @@ async def api_add_topic(project_id: str, body: dict[str, Any] = Body(...)):
             raise HTTPException(status_code=400, detail="'strategy' and 'topic' are required")
 
         from social_hook.filesystem import generate_id
-        from social_hook.models import ContentTopic
+        from social_hook.models.content import ContentTopic
         from social_hook.parsing import safe_int
 
         topic = ContentTopic(
@@ -4601,7 +4601,7 @@ async def api_create_suggestion(project_id: str, body: dict[str, Any] = Body(...
             raise HTTPException(status_code=400, detail="'idea' is required")
 
         from social_hook.filesystem import generate_id
-        from social_hook.models import ContentSuggestion
+        from social_hook.models.content import ContentSuggestion
 
         suggestion = ContentSuggestion(
             id=generate_id("suggestion"),
@@ -5013,7 +5013,7 @@ async def api_get_cycle_detail(project_id: str, cycle_id: str):
         if not row:
             raise HTTPException(status_code=404, detail="Cycle not found")
 
-        from social_hook.models import EvaluationCycle
+        from social_hook.models.content import EvaluationCycle
 
         cycle = EvaluationCycle.from_dict(dict(row))
         cycle_dict = cycle.to_dict()
@@ -5098,7 +5098,7 @@ async def api_system_errors(
 async def api_create_system_error(request: Request):
     """Capture a system error (e.g. from frontend)."""
     from social_hook.filesystem import generate_id
-    from social_hook.models import SystemErrorRecord
+    from social_hook.models.infra import SystemErrorRecord
 
     body = await request.json()
     check_unknown_keys(

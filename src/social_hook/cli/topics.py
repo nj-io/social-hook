@@ -147,7 +147,7 @@ def add(
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import ContentTopic
+    from social_hook.models.content import ContentTopic
 
     json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
