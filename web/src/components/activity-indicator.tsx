@@ -8,23 +8,21 @@ import type { DataChangeEvent } from "@/lib/types";
 
 const ACTIVE_ACTIONS = new Set(["discovering", "analyzing", "evaluating", "drafting", "started", "created"]);
 const DONE_ACTIONS = new Set(["completed", "failed"]);
-const DEBOUNCE_IN_MS = 5_000;
-const TIMEOUT_MS = 5_000;
+const SHOW_AFTER_MS = 5_000;
+const HIDE_AFTER_MS = 5_000;
 
 /**
- * Small pulsing dot in the nav bar that indicates LLM activity.
- *
- * Activates after 5s of sustained pipeline/task events, deactivates
- * 5s after last event or on task completion. Links to /system.
+ * Pulsing dot in the center of the nav bar. Only visible when a background
+ * task has been running for 5+ seconds. Fades out 5s after last event or
+ * on task completion. Links to /system.
  */
 export function ActivityIndicator() {
   const [active, setActive] = useState(false);
-  const [visible, setVisible] = useState(false);
   const { addListener, removeListener } = useGateway();
 
   const firstEventRef = useRef<number | null>(null);
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const timeoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const handler = (envelope: GatewayEnvelope) => {
@@ -43,35 +41,34 @@ export function ActivityIndicator() {
         (data.entity === "task" && DONE_ACTIONS.has(data.action));
 
       if (isStart) {
-        // Reset inactivity timeout on every activity event
-        if (timeoutTimerRef.current) {
-          clearTimeout(timeoutTimerRef.current);
-          timeoutTimerRef.current = null;
+        // Reset hide timer on every activity event
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current);
+          hideTimerRef.current = null;
         }
 
-        // Start debounce-in timer on first event
+        // Start show timer on first event — only show after 5s sustained
         if (firstEventRef.current === null) {
           firstEventRef.current = Date.now();
-          debounceTimerRef.current = setTimeout(() => {
+          showTimerRef.current = setTimeout(() => {
             setActive(true);
-          }, DEBOUNCE_IN_MS);
+          }, SHOW_AFTER_MS);
         }
 
-        // Set inactivity timeout — if no events for 5s, deactivate
-        timeoutTimerRef.current = setTimeout(() => {
+        // Auto-hide if no events for 5s
+        hideTimerRef.current = setTimeout(() => {
           firstEventRef.current = null;
           setActive(false);
-        }, TIMEOUT_MS);
+        }, HIDE_AFTER_MS);
       } else if (isDone) {
-        // Clear everything on completion
         firstEventRef.current = null;
-        if (debounceTimerRef.current) {
-          clearTimeout(debounceTimerRef.current);
-          debounceTimerRef.current = null;
+        if (showTimerRef.current) {
+          clearTimeout(showTimerRef.current);
+          showTimerRef.current = null;
         }
-        if (timeoutTimerRef.current) {
-          clearTimeout(timeoutTimerRef.current);
-          timeoutTimerRef.current = null;
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current);
+          hideTimerRef.current = null;
         }
         setActive(false);
       }
@@ -80,42 +77,21 @@ export function ActivityIndicator() {
     addListener("activity-indicator", handler);
     return () => {
       removeListener("activity-indicator");
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+      if (showTimerRef.current) clearTimeout(showTimerRef.current);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
   }, [addListener, removeListener]);
-
-  // Smooth fade: delay visibility change so CSS transition can run
-  useEffect(() => {
-    if (active) {
-      setVisible(true);
-    } else {
-      // Keep visible briefly for fade-out, then hide
-      const t = setTimeout(() => setVisible(false), 600);
-      return () => clearTimeout(t);
-    }
-  }, [active]);
 
   return (
     <Link
       href="/system"
       aria-label="System activity"
-      title={active ? "Pipeline running — click to view" : "System status"}
+      title="Pipeline running — click to view"
+      className={`transition-opacity duration-500 ease-in-out ${active ? "opacity-100" : "pointer-events-none opacity-0"}`}
     >
-      <span
-        className="relative block h-2.5 w-2.5 rounded-full transition-opacity duration-500 ease-in-out"
-        style={{ opacity: visible ? 1 : 0.3 }}
-      >
-        {/* Base dot */}
-        <span
-          className={`absolute inset-0 rounded-full transition-colors duration-500 ${
-            active ? "bg-accent" : "bg-muted-foreground/40"
-          }`}
-        />
-        {/* Pulse ring — only when active */}
-        {active && (
-          <span className="absolute inset-0 animate-ping rounded-full bg-accent/40" />
-        )}
+      <span className="relative block h-2.5 w-2.5">
+        <span className="absolute inset-0 rounded-full bg-accent" />
+        <span className="absolute inset-0 animate-ping rounded-full bg-accent/40" />
       </span>
     </Link>
   );
