@@ -897,7 +897,7 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
 
         # Audit: create DraftChange record
         from social_hook.filesystem import generate_id
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         ops.insert_draft_change(
             conn,
@@ -928,7 +928,7 @@ async def api_upload_draft_media(draft_id: str, file: UploadFile):
     Accepts multipart/form-data with a 'file' field.
     """
     from social_hook.filesystem import generate_id, get_base_path
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     # Validate extension
     ext = ""
@@ -1028,7 +1028,7 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
             assemble_spec_generation_prompt,
             build_spec_generation_tool,
         )
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         config = load_full_config()
         prompt = assemble_spec_generation_prompt(
@@ -1216,7 +1216,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
 
     from social_hook.compat import evaluation_from_decision
     from social_hook.config.project import ProjectConfig, load_project_config
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     try:
         project_config = load_project_config(project.repo_path)
@@ -2105,7 +2105,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
     except ConfigError:
         project_config = ProjectConfig(repo_path=project.repo_path)
 
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     combined_summary = "\n".join(f"- {d.commit_message or d.commit_hash[:8]}" for d in decisions)
     commit = CommitInfo(
@@ -4822,7 +4822,7 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                 decision = ops.get_decision(conn, decision_id)
             if not decision and c.trigger_ref:
                 # No drafts — look up decision by commit hash directly
-                from social_hook.models import Decision
+                from social_hook.models.core import Decision
 
                 # For batch cycles, trigger_ref is "hash1,hash2,...,trigger_hash"
                 # The last hash is the trigger commit with the full decision.

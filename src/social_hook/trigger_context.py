@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from social_hook.config.project import ProjectConfig
     from social_hook.config.yaml import Config
     from social_hook.llm.dry_run import DryRunContext
-    from social_hook.models import CommitInfo, Project
+    from social_hook.models.core import CommitInfo, Project
 
 logger = logging.getLogger(__name__)
 

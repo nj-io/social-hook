@@ -189,7 +189,7 @@ def consolidate(
             raise typer.Exit(1)
 
         # Build synthetic CommitInfo combining commit messages
-        from social_hook.models import CommitInfo
+        from social_hook.models.core import CommitInfo
 
         combined_summary = "\n".join(
             f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}" for d in decisions

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import subprocess
 
-from social_hook.models import CommitInfo
+from social_hook.models.core import CommitInfo
 from social_hook.parsing import safe_int
 
 logger = logging.getLogger(__name__)

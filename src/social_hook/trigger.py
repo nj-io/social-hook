@@ -13,7 +13,7 @@ from social_hook.errors import ConfigError, DatabaseError
 from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
-from social_hook.models import Decision
+from social_hook.models.core import Decision
 from social_hook.models.enums import PipelineStage, is_draftable
 from social_hook.parsing import enum_value
 from social_hook.rate_limits import check_rate_limit
@@ -655,7 +655,7 @@ def _run_trivial_skip(
     """Handle trivial commits: create cycle, do tag matching, skip stage 2."""
     import json
 
-    from social_hook.models import EvaluationCycle
+    from social_hook.models.content import EvaluationCycle
 
     analysis = analyzer_result.commit_analysis
 
@@ -730,7 +730,7 @@ def _run_targets_path(
     batch_commit_hashes: list[str] | None = None,
 ) -> int:
     """New targets pipeline path: multi-strategy -> multi-target routing."""
-    from social_hook.models import EvaluationCycle
+    from social_hook.models.content import EvaluationCycle
 
     # Create evaluation cycle record
     cycle = EvaluationCycle(

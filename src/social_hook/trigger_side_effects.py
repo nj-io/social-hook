@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from social_hook.db import operations as ops
 
 if TYPE_CHECKING:
-    from social_hook.models import CommitInfo, Decision, Draft
+    from social_hook.models.core import CommitInfo, Decision, Draft
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,7 @@ def _build_merge_commit(
     Injects original draft contents into the diff field so the drafter
     sees them in the "### Diff" section of the system prompt.
     """
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     summaries = "\n".join(
         f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}" for d in decisions

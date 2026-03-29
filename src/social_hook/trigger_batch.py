@@ -12,7 +12,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from social_hook.db import operations as ops
-from social_hook.models import CommitInfo
+from social_hook.models.core import CommitInfo
 from social_hook.models.enums import PipelineStage
 from social_hook.trigger_context import (
     AnalyzerOutcome,
@@ -22,7 +22,7 @@ from social_hook.trigger_context import (
 from social_hook.trigger_git import parse_commit_info
 
 if TYPE_CHECKING:
-    from social_hook.models import Decision
+    from social_hook.models.core import Decision
     from social_hook.trigger_context import TriggerContext
 
 logger = logging.getLogger(__name__)

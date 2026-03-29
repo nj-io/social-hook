@@ -134,7 +134,7 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
     from social_hook.config.project import load_project_config
     from social_hook.llm.factory import create_client
     from social_hook.llm.prompts import assemble_evaluator_context
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     # Load project config
     project_config = load_project_config(project.repo_path)

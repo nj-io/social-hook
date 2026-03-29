@@ -16,7 +16,8 @@ from social_hook.config.project import (
 )
 from social_hook.constants import CONFIG_DIR_NAME, PROJECT_SLUG
 from social_hook.errors import ConfigError, PromptNotFoundError
-from social_hook.models import CommitInfo, ProjectContext
+from social_hook.models import ProjectContext
+from social_hook.models.core import CommitInfo
 from social_hook.scheduling import ProjectSchedulingState
 
 if TYPE_CHECKING:
