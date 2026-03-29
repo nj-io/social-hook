@@ -135,12 +135,10 @@ export function ActivityIndicator() {
       const data = payload.data as DataChangeEvent | undefined;
       if (!data) return;
 
-      const isStart =
-        (data.entity === "pipeline" && ACTIVE_ACTIONS.has(data.action)) ||
-        (data.entity === "task" && ACTIVE_ACTIONS.has(data.action));
-      const isDone =
-        (data.entity === "pipeline" && DONE_ACTIONS.has(data.action)) ||
-        (data.entity === "task" && DONE_ACTIONS.has(data.action));
+      // Only track task lifecycle — pipeline stage events fire multiple times
+      // per task without matching completion signals
+      const isStart = data.entity === "task" && ACTIVE_ACTIONS.has(data.action);
+      const isDone = data.entity === "task" && DONE_ACTIONS.has(data.action);
 
       if (isStart) {
         activeTasksRef.current += 1;
