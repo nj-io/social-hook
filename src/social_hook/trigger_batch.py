@@ -177,8 +177,10 @@ def evaluate_batch(
             show_prompt=ctx.show_prompt,
         )
         if ctx.verbose:
+            from social_hook.parsing import enum_value
+
             classification = (
-                analyzer_result.commit_analysis.classification.value
+                enum_value(analyzer_result.commit_analysis.classification)
                 if analyzer_result.commit_analysis.classification
                 else "unknown"
             )

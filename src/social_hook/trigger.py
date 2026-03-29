@@ -295,14 +295,6 @@ def run_trigger(
         conn.close()
         return 1
 
-    # Build evaluator context helpers (shared with evaluate_batch)
-    platform_summaries = build_platform_summaries(config)
-    extras = fetch_evaluator_extras(conn, project.id, config)
-    scheduling_state = extras.scheduling_state
-    all_topics = extras.all_topics
-    held_topics = extras.held_topics
-    active_arcs_all = extras.active_arcs
-
     # Stage 1: Commit Analyzer (targets path only, with interval gating)
     analyzer_result = None
     has_targets = (
@@ -367,37 +359,47 @@ def run_trigger(
                 conn.close()
                 return result
 
-            # Single-commit path: run stage 1 inline
-            db.emit_data_event("pipeline", PipelineStage.ANALYZING, commit_hash[:8], project.id)
-            try:
-                from social_hook.llm.analyzer import CommitAnalyzer
+    # Build evaluator context helpers (only for single-commit path;
+    # evaluate_batch builds its own via fetch_evaluator_extras)
+    platform_summaries = build_platform_summaries(config)
+    extras = fetch_evaluator_extras(conn, project.id, config)
+    scheduling_state = extras.scheduling_state
+    all_topics = extras.all_topics
+    held_topics = extras.held_topics
+    active_arcs_all = extras.active_arcs
 
-                stage1 = CommitAnalyzer(evaluator_client)
-                analyzer_result = stage1.analyze(
-                    commit=commit, context=context, db=db, show_prompt=show_prompt
+    if has_targets:
+        # Single-commit path: run stage 1 inline
+        db.emit_data_event("pipeline", PipelineStage.ANALYZING, commit_hash[:8], project.id)
+        try:
+            from social_hook.llm.analyzer import CommitAnalyzer
+
+            stage1 = CommitAnalyzer(evaluator_client)
+            analyzer_result = stage1.analyze(
+                commit=commit, context=context, db=db, show_prompt=show_prompt
+            )
+            if verbose:
+                cls = (
+                    enum_value(analyzer_result.commit_analysis.classification)
+                    if analyzer_result.commit_analysis.classification
+                    else "unknown"
                 )
-                if verbose:
-                    cls = (
-                        analyzer_result.commit_analysis.classification.value
-                        if analyzer_result.commit_analysis.classification
-                        else "unknown"
-                    )
-                    print(f"Stage 1 complete (classification: {cls})")
-            except Exception as e:
-                logger.warning("Commit analyzer failed (non-fatal): %s", e, exc_info=True)
-                analyzer_result = None
+                print(f"Stage 1 complete (classification: {cls})")
+        except Exception as e:
+            logger.warning("Commit analyzer failed (non-fatal): %s", e, exc_info=True)
+            analyzer_result = None
 
-            # Trivial check on fresh analysis
-            if analyzer_result is not None and _is_trivial_classification(analyzer_result):
-                logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
-                result = _run_trivial_skip(
-                    ctx=ctx, analyzer_result=analyzer_result, commit_hash=commit_hash
-                )
-                conn.close()
-                return result
+        # Trivial check on fresh analysis
+        if analyzer_result is not None and _is_trivial_classification(analyzer_result):
+            logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
+            result = _run_trivial_skip(
+                ctx=ctx, analyzer_result=analyzer_result, commit_hash=commit_hash
+            )
+            conn.close()
+            return result
 
-            # Proceed to stage 2
-            db.emit_data_event("pipeline", PipelineStage.EVALUATING, commit_hash[:8], project.id)
+        # Proceed to stage 2
+        db.emit_data_event("pipeline", PipelineStage.EVALUATING, commit_hash[:8], project.id)
 
     # Guard: targets configured but no content strategies defined
     if has_targets and not config.content_strategies:
@@ -759,7 +761,7 @@ def _run_targets_path(
 
         if ctx.verbose:
             classification = (
-                analyzer_result.commit_analysis.classification.value
+                enum_value(analyzer_result.commit_analysis.classification)
                 if analyzer_result.commit_analysis.classification
                 else "unknown"
             )
