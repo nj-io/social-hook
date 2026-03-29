@@ -68,4 +68,5 @@ def create_adapter(platform: str, config=None, **kwargs) -> MessagingAdapter:
     if not _messaging_registry.has(platform):
         raise ConfigError(f"Unknown messaging platform: {platform}")
 
-    return _messaging_registry.create(platform, config=config, **kwargs)
+    result: MessagingAdapter = _messaging_registry.create(platform, config=config, **kwargs)
+    return result

@@ -126,7 +126,8 @@ def get_current_version(
     }
     if version_table not in tables:
         return 0
-    return conn.execute(f"SELECT COALESCE(MAX(version), 0) FROM {version_table}").fetchone()[0]
+    row = conn.execute(f"SELECT COALESCE(MAX(version), 0) FROM {version_table}").fetchone()
+    return int(row[0]) if row else 0
 
 
 def _apply_pragma_migration(conn: sqlite3.Connection, sql: str) -> None:

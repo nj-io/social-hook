@@ -111,7 +111,8 @@ def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | N
         )
         return None
 
-    return _media_registry.get_or_create(name, api_key=api_key)
+    result: MediaAdapter = _media_registry.get_or_create(name, api_key=api_key)
+    return result
 
 
 def clear_adapter_cache() -> None:

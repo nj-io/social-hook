@@ -70,7 +70,9 @@ def _create_x(
     from social_hook.adapters.platform.x import XAdapter
 
     if account is not None:
-        # Targets path
+        # Targets path — db_path and account_name are always provided
+        assert db_path is not None
+        assert account_name is not None
         if not platform_creds.client_id:
             raise ConfigError(f"X client_id not configured for account '{account_name}'")
 
@@ -119,7 +121,9 @@ def _create_linkedin(
     from social_hook.adapters.platform.linkedin import LinkedInAdapter
 
     if account is not None:
-        # Targets path
+        # Targets path — db_path and account_name are always provided
+        assert db_path is not None
+        assert account_name is not None
         if not platform_creds.client_id:
             raise ConfigError(f"LinkedIn client_id not configured for account '{account_name}'")
 
@@ -163,7 +167,8 @@ def create_adapter(platform: str, config, db_path: str | None = None) -> Platfor
     """
     if not _platform_registry.has(platform):
         raise ConfigError(f"Unknown platform: {platform}")
-    return _platform_registry.create(platform, config=config, db_path=db_path)
+    result: PlatformAdapter = _platform_registry.create(platform, config=config, db_path=db_path)
+    return result
 
 
 def resolve_platform_creds(
@@ -233,10 +238,11 @@ def create_adapter_from_account(
         logger.warning("Unknown platform '%s' for account '%s'", platform, account_name)
         raise ConfigError(f"Unknown platform: '{platform}'")
 
-    return _platform_registry.create(
+    result: PlatformAdapter = _platform_registry.create(
         platform,
         account_name=account_name,
         account=account,
         platform_creds=platform_creds,
         db_path=db_path,
     )
+    return result

@@ -63,7 +63,7 @@ def _is_trivial_classification(analyzer_result) -> bool:
         return False
     ca = analyzer_result.commit_analysis
     if ca and ca.classification:
-        return enum_value(ca.classification) == "trivial"
+        return bool(enum_value(ca.classification) == "trivial")
     else:
         logger.warning("Analyzer result has no classification, treating as non-trivial")
         return False
