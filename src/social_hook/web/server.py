@@ -32,7 +32,13 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
-from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES, PipelineStage
+from social_hook.models import (
+    EDITABLE_STATUSES,
+    PENDING_STATUSES,
+    TERMINAL_STATUSES,
+    DecisionType,
+    PipelineStage,
+)
 from social_hook.parsing import check_unknown_keys, safe_json_loads
 
 logger = logging.getLogger(__name__)
@@ -239,7 +245,7 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
 
     After a restart, daemon threads from the previous process are dead,
     so any task still marked 'running' will never complete.
-    Also resets any decisions stuck in 'evaluating' state back to 'imported'.
+    Also resets any decisions stuck in transient states (e.g. 'processing') back to 'imported'.
     No data events are emitted — no WebSocket clients exist at startup.
 
     Returns the number of tasks cleaned up.
@@ -258,16 +264,18 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
         if count:
             logger.info("Marked %d stale background task(s) as failed on startup", count)
 
-        # Reset decisions stuck in 'evaluating' (retrigger was interrupted)
+        # Reset decisions stuck in transient states (retrigger/batch was interrupted)
+
+        transient = (DecisionType.PROCESSING.value,)
         eval_cursor = conn.execute(
-            "UPDATE decisions SET decision = 'imported', reasoning = '' WHERE decision = 'evaluating'"
+            f"UPDATE decisions SET decision = '{DecisionType.IMPORTED.value}', reasoning = ''"
+            f" WHERE decision IN ({','.join('?' for _ in transient)})",
+            transient,
         )
         conn.commit()
         eval_count = eval_cursor.rowcount
         if eval_count:
-            logger.info(
-                "Reset %d 'evaluating' decision(s) back to 'imported' on startup", eval_count
-            )
+            logger.info("Reset %d transient decision(s) back to 'imported' on startup", eval_count)
 
         return count + eval_count
     finally:
@@ -1945,7 +1953,7 @@ async def api_delete_decision(decision_id: str):
 async def api_retrigger_decision(decision_id: str):
     """Re-evaluate a commit in-place, reusing the same decision ID.
 
-    Cleans up old drafts, marks the decision as 'evaluating', then re-runs
+    Cleans up old drafts, marks the decision as 'processing', then re-runs
     the full evaluator pipeline via background task. The decision row stays
     visible in the UI throughout (no delete/re-create gap).
     Returns 202 with task_id for frontend tracking via useBackgroundTasks.
@@ -1977,9 +1985,10 @@ async def api_retrigger_decision(decision_id: str):
         conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
         # Mark as processing — row stays visible in the UI.
         # The pipeline will update to the appropriate status (deferred_eval, draft, skip, etc.)
+
         conn.execute(
-            "UPDATE decisions SET decision = 'processing' WHERE id = ?",
-            (decision_id,),
+            "UPDATE decisions SET decision = ? WHERE id = ?",
+            (DecisionType.PROCESSING.value, decision_id),
         )
         conn.commit()
         ops.emit_data_event(conn, "decision", "updated", decision_id, project_id)
@@ -4846,7 +4855,9 @@ async def api_accept_suggestion(project_id: str, suggestion_id: str):
         project_id=pid,
         fn=_blocking_evaluate,
     )
-    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "evaluating"})
+    return JSONResponse(
+        status_code=202, content={"task_id": task_id, "status": DecisionType.PROCESSING.value}
+    )
 
 
 @app.post("/api/projects/{project_id}/content/combine")
