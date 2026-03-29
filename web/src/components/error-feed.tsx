@@ -45,19 +45,10 @@ export function ErrorFeed() {
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 30_000);
-    return () => clearInterval(interval);
-  }, [load]);
-  useDataEvents(["error"], load);
-
-  // WebSocket live updates
-  useDataEvents(["system_error"], load);
-
-  // 30s poll fallback
-  useEffect(() => {
     const timer = setInterval(load, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [load]);
+  useDataEvents(["error", "system_error"], load);
 
   // Collect unique components for filter dropdown
   const components = Array.from(new Set(errors.map((e) => e.component).filter(Boolean)));

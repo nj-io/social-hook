@@ -388,40 +388,36 @@ def _drain_individual(conn, config, project, deferred):
         if gate.blocked:
             break
 
-        commit_hash = d.commit_hash
-        ops.delete_decision(conn, d.id)
-
         try:
             run_trigger(
-                commit_hash=commit_hash,
+                commit_hash=d.commit_hash,
                 repo_path=project.repo_path,
                 dry_run=False,
                 trigger_source="drain",
+                existing_decision_id=d.id,
+                current_branch=d.branch,
             )
         except Exception as e:
             logger.error(
                 "Drain failed for commit %s (project %s): %s",
-                commit_hash,
+                d.commit_hash,
                 project.id,
                 e,
             )
-            # Re-insert deferred_eval only if run_trigger didn't create a real decision
-            existing = conn.execute(
-                "SELECT id FROM decisions WHERE project_id = ? AND commit_hash = ?",
-                (project.id, commit_hash),
-            ).fetchone()
-            if not existing:
-                ops.insert_decision(
-                    conn,
-                    Decision(
-                        id=generate_id("decision"),
-                        project_id=project.id,
-                        commit_hash=commit_hash,
-                        decision="deferred_eval",
-                        reasoning=f"Drain failed: {e}",
-                        trigger_source="commit",
-                    ),
-                )
+            # Restore deferred_eval with error reason. The row still exists
+            # (run_trigger upserts over it via existing_decision_id).
+            ops.upsert_decision(
+                conn,
+                Decision(
+                    id=d.id,
+                    project_id=project.id,
+                    commit_hash=d.commit_hash,
+                    decision="deferred_eval",
+                    reasoning=f"Drain failed: {e}",
+                    trigger_source="commit",
+                    branch=d.branch,
+                ),
+            )
 
 
 def _drain_batch(conn, config, project, deferred):
@@ -449,7 +445,7 @@ def _drain_batch(conn, config, project, deferred):
             project=project,
             commit=commit,
             project_config=project_config,
-            current_branch=None,
+            current_branch=deferred[0].branch or None,
             dry_run=False,
             verbose=False,
             show_prompt=False,

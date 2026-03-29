@@ -17,7 +17,7 @@ const FIELD_LABELS: Record<string, string> = {
   media_preference: "Media Preference",
 };
 
-export function StrategiesSection() {
+export function StrategiesSection({ projectId }: { projectId?: string } = {}) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState("");
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -35,21 +35,28 @@ export function StrategiesSection() {
   const [deleting, setDeleting] = useState(false);
   const { addToast } = useToast();
 
-  const loadProjects = useCallback(async () => {
-    try {
-      const res = await fetchProjects();
-      setProjects(res.projects);
-      if (res.projects.length > 0 && !selectedProject) {
-        setSelectedProject(res.projects[0].id);
-      }
-    } catch {
-      // silent — failed initial load
-    } finally {
+  // Use parent-provided projectId when available; fall back to self-fetch
+  useEffect(() => {
+    if (projectId) {
+      setSelectedProject(projectId);
+      setProjects([{ id: projectId } as Project]);
       setLoading(false);
+      return;
     }
-  }, [selectedProject]);
-
-  useEffect(() => { loadProjects(); }, [loadProjects]);
+    (async () => {
+      try {
+        const res = await fetchProjects();
+        setProjects(res.projects);
+        if (res.projects.length > 0 && !selectedProject) {
+          setSelectedProject(res.projects[0].id);
+        }
+      } catch {
+        // silent — failed initial load
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadStrategies = useCallback(async (projectId: string) => {
     if (!projectId) return;
@@ -175,7 +182,8 @@ export function StrategiesSection() {
         </div>
         <button
           onClick={() => setCreateOpen(true)}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80"
+          disabled={!selectedProject}
+          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
         >
           New Strategy
         </button>
@@ -245,7 +253,9 @@ export function StrategiesSection() {
         <p className="text-sm text-muted-foreground">Loading...</p>
       ) : strategies.length === 0 ? (
         <div className="rounded-lg border-2 border-dashed border-border p-6 text-center">
-          <p className="text-sm text-muted-foreground">No strategies found for this project.</p>
+          <p className="text-sm text-muted-foreground">
+            {projects.length === 0 ? "Register a project first to manage strategies." : "No strategies found for this project."}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">

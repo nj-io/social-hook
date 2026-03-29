@@ -360,157 +360,67 @@ class TestCycleAnalysisCaching:
 
 
 class TestCommitAnalyzerIntervalGating:
-    """Test commit_analysis_interval gating: count < interval uses cache, >= runs fresh."""
+    """Test _run_commit_analyzer_gate: early fast-path gating before expensive work."""
 
-    def _make_mock_analyzer_result(self):
-        return CommitAnalysisResult(
-            commit_analysis=CommitAnalysis(
-                summary="Test commit",
-                episode_tags=["test"],
-                classification=CommitClassification.routine,
-            ),
-            brief_update=BriefUpdateInstructions(
-                sections_to_update={},
-                new_facts=[],
-            ),
-        )
-
-    def _make_ctx(self, temp_db, project, commit, project_config=None):
-        from social_hook.llm.dry_run import DryRunContext
-        from social_hook.trigger import TriggerContext
-
-        return TriggerContext(
-            config=MagicMock(),
-            conn=temp_db,
-            db=DryRunContext(temp_db, dry_run=False),
-            project=project,
-            commit=commit,
-            project_config=project_config,
-            current_branch="main",
-            dry_run=False,
-            verbose=False,
-            show_prompt=False,
-        )
-
-    def test_first_commit_defers_like_any_other(self, temp_db):
-        """First commit (no cache) still defers when interval > 1."""
+    def test_first_commit_defers_when_interval_gt_1(self, temp_db):
+        """First commit defers when interval > 1."""
         from social_hook.db import operations as ops
-        from social_hook.trigger import _run_commit_analyzer
+        from social_hook.trigger import _run_commit_analyzer_gate
 
         project = Project(id="proj-gate-1", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
 
-        commit = CommitInfo(hash="abc123", message="first commit", diff="")
-        context = SimpleNamespace(project=project)
-
-        mock_client = MagicMock()
-
-        # Set interval to 3 — first commit should defer, not evaluate
         project_config = SimpleNamespace(context=SimpleNamespace(commit_analysis_interval=3))
-        ctx = self._make_ctx(temp_db, project, commit, project_config)
 
-        outcome = _run_commit_analyzer(
-            ctx=ctx,
-            context=context,
-            evaluator_client=mock_client,
-        )
+        outcome = _run_commit_analyzer_gate(temp_db, project, project_config)
 
-        assert outcome.result is None
         assert outcome.should_evaluate is False
-        # Counter incremented but not reset
         assert ops.get_analysis_commit_count(temp_db, "proj-gate-1") == 1
 
-    def test_interval_not_met_uses_cache(self, temp_db):
-        """When count < interval and cache exists, return cached result."""
+    def test_interval_1_always_evaluates(self, temp_db):
+        """With interval=1 (default), every commit evaluates immediately."""
         from social_hook.db import operations as ops
-        from social_hook.trigger import _run_commit_analyzer
+        from social_hook.trigger import _run_commit_analyzer_gate
 
         project = Project(id="proj-gate-2", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
 
-        # Pre-populate a cached cycle
-        cycle = EvaluationCycle(
-            id="cycle-cached",
-            project_id="proj-gate-2",
-            trigger_type="commit",
-            trigger_ref="prev123",
-        )
-        ops.insert_evaluation_cycle(temp_db, cycle)
-        cached_data = self._make_mock_analyzer_result().model_dump()
-        ops.update_cycle_analysis_json(
-            temp_db, "cycle-cached", json.dumps(cached_data, default=str)
-        )
+        project_config = SimpleNamespace(context=SimpleNamespace(commit_analysis_interval=1))
 
-        commit = CommitInfo(hash="def456", message="second commit", diff="")
-        context = SimpleNamespace(project=project)
-        mock_client = MagicMock()
+        outcome = _run_commit_analyzer_gate(temp_db, project, project_config)
 
-        project_config = SimpleNamespace(context=SimpleNamespace(commit_analysis_interval=3))
-        ctx = self._make_ctx(temp_db, project, commit, project_config)
+        assert outcome.should_evaluate is True
+        # Counter NOT incremented when interval=1 (short-circuit)
+        assert ops.get_analysis_commit_count(temp_db, "proj-gate-2") == 0
 
-        with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
-            outcome = _run_commit_analyzer(
-                ctx=ctx,
-                context=context,
-                evaluator_client=mock_client,
-            )
-            # Analyzer should NOT be called — using cache
-            MockAnalyzer.return_value.analyze.assert_not_called()
-
-        assert outcome.result is not None
-        assert outcome.should_evaluate is False
-        assert outcome.result.commit_analysis.classification == CommitClassification.routine
-
-    def test_interval_met_signals_evaluate_no_llm(self, temp_db):
-        """When count >= interval, signal should_evaluate=True but do NOT run LLM."""
+    def test_threshold_met_signals_evaluate(self, temp_db):
+        """When count reaches interval, should_evaluate=True."""
         from social_hook.db import operations as ops
-        from social_hook.trigger import _run_commit_analyzer
+        from social_hook.trigger import _run_commit_analyzer_gate
 
         project = Project(id="proj-gate-3", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
 
-        # Set count to 2 so next increment hits interval of 3
+        # Pre-increment to 2
         ops.increment_analysis_commit_count(temp_db, "proj-gate-3")
         ops.increment_analysis_commit_count(temp_db, "proj-gate-3")
-
-        commit = CommitInfo(hash="ghi789", message="third commit", diff="")
-        context = SimpleNamespace(project=project)
-        mock_client = MagicMock()
 
         project_config = SimpleNamespace(context=SimpleNamespace(commit_analysis_interval=3))
-        ctx = self._make_ctx(temp_db, project, commit, project_config)
 
-        outcome = _run_commit_analyzer(
-            ctx=ctx,
-            context=context,
-            evaluator_client=mock_client,
-        )
+        outcome = _run_commit_analyzer_gate(temp_db, project, project_config)
 
-        # Pure gating — no LLM called, result is None
-        assert outcome.result is None
         assert outcome.should_evaluate is True
-        # Counter reset to 0
-        assert ops.get_analysis_commit_count(temp_db, "proj-gate-3") == 0
+        # Counter at 3 (gate does NOT reset — _run_commit_analyzer does)
+        assert ops.get_analysis_commit_count(temp_db, "proj-gate-3") == 3
 
-    def test_analyzer_failure_returns_none(self, temp_db):
-        """Analyzer failure is non-fatal, returns None."""
+    def test_no_project_config_defaults_to_interval_1(self, temp_db):
+        """Missing project_config defaults to interval=1 (always evaluate)."""
         from social_hook.db import operations as ops
-        from social_hook.trigger import _run_commit_analyzer
+        from social_hook.trigger import _run_commit_analyzer_gate
 
         project = Project(id="proj-gate-4", name="test", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
 
-        commit = CommitInfo(hash="jkl012", message="test", diff="")
-        context = SimpleNamespace(project=project)
-        ctx = self._make_ctx(temp_db, project, commit, project_config=None)
+        outcome = _run_commit_analyzer_gate(temp_db, project, project_config=None)
 
-        with patch("social_hook.llm.analyzer.CommitAnalyzer") as MockAnalyzer:
-            MockAnalyzer.return_value.analyze.side_effect = Exception("LLM error")
-            outcome = _run_commit_analyzer(
-                ctx=ctx,
-                context=context,
-                evaluator_client=MagicMock(),
-            )
-
-        assert outcome.result is None
         assert outcome.should_evaluate is True

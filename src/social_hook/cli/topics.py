@@ -1,7 +1,10 @@
 """CLI commands for content topic queue management."""
 
+from __future__ import annotations
+
 import json as json_mod
 import logging
+from typing import NoReturn
 
 import typer
 
@@ -32,7 +35,7 @@ def _resolve_proj(conn, project_path: str | None):
     return proj
 
 
-def _fail(msg: str, json_output: bool, exit_code: int = 1) -> None:
+def _fail(msg: str, json_output: bool, exit_code: int = 1) -> NoReturn:
     """Print error (JSON or plain) and raise typer.Exit."""
     if json_output:
         typer.echo(json_mod.dumps({"error": msg}))

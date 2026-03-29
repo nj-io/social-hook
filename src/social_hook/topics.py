@@ -43,7 +43,7 @@ def resolve_strategy_type(
     if strategy_config is not None:
         explicit_type = getattr(strategy_config, "strategy_type", None)
         if explicit_type in ("code-driven", "positioning"):
-            return explicit_type
+            return str(explicit_type)
 
     # 2. Check known template names
     if strategy_name in POSITIONING_TEMPLATES:
@@ -107,7 +107,8 @@ def _persist_strategy_types(
         return
 
     try:
-        from social_hook.config.yaml import get_config_path, save_config
+        from social_hook.config.yaml import save_config
+        from social_hook.filesystem import get_config_path
 
         save_config(
             {"content_strategies": updates},

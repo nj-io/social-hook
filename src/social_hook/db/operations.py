@@ -2554,6 +2554,17 @@ def update_cycle_analysis_json(conn: sqlite3.Connection, cycle_id: str, analysis
     conn.commit()
 
 
+def update_cycle_diagnostics(
+    conn: sqlite3.Connection, cycle_id: str, diagnostics_json: str
+) -> None:
+    """Store pipeline diagnostics JSON on an evaluation cycle."""
+    conn.execute(
+        "UPDATE evaluation_cycles SET diagnostics = ? WHERE id = ?",
+        (diagnostics_json, cycle_id),
+    )
+    conn.commit()
+
+
 def get_latest_cycle_with_analysis(
     conn: sqlite3.Connection, project_id: str
 ) -> EvaluationCycle | None:

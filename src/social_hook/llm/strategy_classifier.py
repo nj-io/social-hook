@@ -98,4 +98,4 @@ class StrategyClassifier:
             strategy_type,
             reasoning,
         )
-        return strategy_type
+        return str(strategy_type)

@@ -401,12 +401,21 @@ export interface ContentSuggestion {
   created_at: string;
 }
 
+export interface DiagnosticItem {
+  code: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  suggestion: string | null;
+  context: Record<string, unknown>;
+}
+
 export interface EvaluationCycle {
   id: string;
   project_id: string;
   trigger: string;
   status: string;
   strategies: Record<string, CycleStrategyOutcome>;
+  diagnostics?: DiagnosticItem[];
   created_at: string;
   draft_count?: number;
   pending_count?: number;

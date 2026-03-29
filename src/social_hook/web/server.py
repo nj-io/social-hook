@@ -60,6 +60,14 @@ def _parse_episode_tags(decision) -> list | None:
     return ep_tags or None
 
 
+def _parse_diagnostics_column(cycle_dict: dict) -> list[Any]:
+    """Parse the diagnostics JSON column on a cycle dict, returning a list."""
+    raw = cycle_dict.get("diagnostics")
+    parsed: list[Any] = safe_json_loads(raw, "cycle.diagnostics", default=[]) if raw else []
+    cycle_dict["diagnostics"] = parsed
+    return parsed
+
+
 # ---------------------------------------------------------------------------
 # WebSocket gateway
 # ---------------------------------------------------------------------------
@@ -1529,7 +1537,9 @@ async def api_import_preview(project_id: str, branch: str | None = Query(None)):
         project = _get_project_or_404(conn, project_id)
         from social_hook.import_commits import get_import_preview
 
-        preview = get_import_preview(conn, project["id"], project["repo_path"], branch)
+        preview: dict[str, Any] = get_import_preview(
+            conn, project["id"], project["repo_path"], branch
+        )
 
         # Include git repo branches so the import modal can show them
         # (decisionBranches is empty on a fresh project)
@@ -1958,6 +1968,7 @@ async def api_retrigger_decision(decision_id: str):
         commit_hash = decision.commit_hash
         repo_path = project.repo_path
         project_id = decision.project_id
+        decision_branch = decision.branch
 
         # Clean up old drafts (no-op for imported commits with no drafts)
         conn.execute(
@@ -1988,6 +1999,7 @@ async def api_retrigger_decision(decision_id: str):
             repo_path=repo_path,
             trigger_source="manual",
             existing_decision_id=decision_id,
+            current_branch=decision_branch,
         )
         return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
@@ -3009,6 +3021,38 @@ async def api_get_branches(project_id: str):
     return {"branches": branches, "current": current}
 
 
+@app.get("/api/git/branches")
+async def api_git_branches_by_path(repo_path: str = Query(...)):
+    """List git branches for any repo path (used by wizard before project registration)."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "branch", "--format=%(refname:short)"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+    except (subprocess.CalledProcessError, OSError):
+        return {"branches": [], "current": None}
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        current: str | None = result.stdout.strip()
+        if current == "HEAD":
+            current = None
+    except (subprocess.CalledProcessError, OSError):
+        current = None
+
+    return {"branches": branches, "current": current}
+
+
 @app.put("/api/projects/{project_id}/trigger-branch")
 async def api_set_trigger_branch(project_id: str, body: dict = Body(...)):
     """Set the trigger branch filter for a project."""
@@ -3604,7 +3648,11 @@ async def api_add_platform_credential(body: dict[str, Any] = Body(...)):
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "created", "name": name}
 
 
@@ -3636,7 +3684,11 @@ async def api_update_platform_credential(name: str, body: dict[str, Any] = Body(
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "updated", "name": name}
 
 
@@ -3666,7 +3718,11 @@ async def api_delete_platform_credential(name: str):
     raw["platform_credentials"] = pc
     yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "deleted", "name": name}
 
 
@@ -3748,7 +3804,11 @@ async def api_add_account(body: dict[str, Any] = Body(...)):
     # Note: PKCE auth flow (build_auth_url) is not yet implemented in adapters/auth.py
     auth_url = None
 
-    ops.emit_data_event(_get_conn(), "config", "updated", "accounts")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "accounts")
+    finally:
+        conn.close()
     result: dict[str, Any] = {"status": "created", "name": name}
     if auth_url:
         result["auth_url"] = auth_url
@@ -3841,7 +3901,7 @@ async def api_list_targets(project_id: str):
                 "community_id": tgt.community_id,
                 "share_with_followers": tgt.share_with_followers,
                 "frequency": tgt.frequency,
-                "enabled": True,  # All config-defined targets are enabled
+                "enabled": tgt.status != "disabled",
                 "platform": account.platform if account else "unknown",
                 "created_at": None,
             }
@@ -3975,14 +4035,47 @@ async def api_update_target(project_id: str, name: str, body: dict[str, Any] = B
 @app.put("/api/projects/{project_id}/targets/{name}/disable")
 async def api_disable_target(project_id: str, name: str):
     """Disable a target and archive pending drafts."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Write full target data with disabled status to config YAML.
+    # Must persist the full target (account, platform, strategy, etc.) because
+    # auto-migrated targets only exist in memory — the YAML may not have them.
+    tgt = config.targets[name]
+    target_data: dict[str, Any] = {
+        "status": "disabled",
+        "destination": tgt.destination,
+        "strategy": tgt.strategy,
+    }
+    if tgt.account:
+        target_data["account"] = tgt.account
+    if tgt.platform:
+        target_data["platform"] = tgt.platform
+    if tgt.primary:
+        target_data["primary"] = True
+    if tgt.source:
+        target_data["source"] = tgt.source
+    if tgt.frequency:
+        target_data["frequency"] = tgt.frequency
+
+    from social_hook.config.yaml import save_config
+
+    save_config(
+        {"targets": {name: target_data}},
+        config_path=get_config_path(),
+    )
+    _invalidate_config()
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
 
         # Cancel pending drafts for this target
+        _placeholders = ",".join("?" for _ in PENDING_STATUSES)
         pending = conn.execute(
-            "SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ('draft', 'approved', 'scheduled', 'deferred')",
-            (project_id, name),
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({_placeholders})",
+            (project_id, name, *PENDING_STATUSES),
         ).fetchall()
         for row in pending:
             ops.update_draft(conn, row["id"], status="cancelled")
@@ -3992,13 +4085,42 @@ async def api_disable_target(project_id: str, name: str):
     finally:
         conn.close()
 
-    # Note: targets live in config.yaml, not DB. The web UI tracks disabled state separately.
     return {"status": "disabled", "name": name, "cancelled_drafts": len(pending)}
 
 
 @app.put("/api/projects/{project_id}/targets/{name}/enable")
 async def api_enable_target(project_id: str, name: str):
     """Re-enable a target."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Write full target data without disabled status to config YAML.
+    # Same pattern as disable — persist from Config object, not raw YAML.
+    tgt = config.targets[name]
+    target_data: dict[str, Any] = {
+        "destination": tgt.destination,
+        "strategy": tgt.strategy,
+    }
+    if tgt.account:
+        target_data["account"] = tgt.account
+    if tgt.platform:
+        target_data["platform"] = tgt.platform
+    if tgt.primary:
+        target_data["primary"] = True
+    if tgt.source:
+        target_data["source"] = tgt.source
+    if tgt.frequency:
+        target_data["frequency"] = tgt.frequency
+
+    from social_hook.config.yaml import save_config
+
+    save_config(
+        {"targets": {name: target_data}},
+        config_path=get_config_path(),
+    )
+    _invalidate_config()
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
@@ -4051,7 +4173,9 @@ async def api_delete_target(project_id: str, name: str):
 
 @app.get("/api/projects/{project_id}/strategies")
 async def api_list_strategies(project_id: str):
-    """List strategies: built-in templates merged with project overrides."""
+    """List strategies: built-in templates merged with config overrides."""
+    from social_hook.setup.templates import STRATEGY_TEMPLATES
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
@@ -4059,8 +4183,28 @@ async def api_list_strategies(project_id: str):
         conn.close()
 
     config = _get_config()
-    strategies = {}
+    strategies: dict[str, dict[str, Any]] = {}
+
+    # Start with built-in templates (skip "custom" placeholder)
+    for t in STRATEGY_TEMPLATES:
+        if t.id == "custom":
+            continue
+        strategies[t.id] = {
+            "audience": t.defaults.audience,
+            "voice": t.defaults.voice_tone,
+            "angle": "",
+            "post_when": t.defaults.post_when,
+            "avoid": t.defaults.avoid,
+            "format_preference": "",
+            "media_preference": "",
+            "min_length": None,
+            "requires": None,
+            "template": True,
+        }
+
+    # Merge/override with config strategies
     for name, strat in config.content_strategies.items():
+        is_template = name in strategies
         strategies[name] = {
             "audience": strat.audience,
             "voice": strat.voice,
@@ -4071,7 +4215,9 @@ async def api_list_strategies(project_id: str):
             "media_preference": strat.media_preference,
             "min_length": strat.min_length,
             "requires": strat.requires,
+            "template": is_template,
         }
+
     return {"strategies": strategies, "project_id": project_id}
 
 
@@ -4810,6 +4956,7 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
         enriched = []
         for c in cycles:
             cd = c.to_dict()
+            _parse_diagnostics_column(cd)
 
             # Get drafts for this cycle to derive strategies and status
             drafts = ops.get_drafts_by_cycle(conn, c.id)
@@ -4845,15 +4992,13 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
             strategies: dict[str, dict] = {}
             if decision and decision.targets:
                 # targets is a dict of {strategy_name: {action, reason, ...}}
-                from social_hook.parsing import safe_json_loads
-
                 targets_data = decision.targets
                 if isinstance(targets_data, str):
                     targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
 
                 # Build strategy_to_draft map: draft.target_id → config target → strategy name
                 config = _get_config()
-                strategy_to_draft: dict[str, object] = {}
+                strategy_to_draft: dict[str, Any] = {}
                 for d in drafts:
                     if d.target_id and config.targets.get(d.target_id):
                         target_strategy = config.targets[d.target_id].strategy
@@ -5017,6 +5162,7 @@ async def api_get_cycle_detail(project_id: str, cycle_id: str):
 
         cycle = EvaluationCycle.from_dict(dict(row))
         cycle_dict = cycle.to_dict()
+        _parse_diagnostics_column(cycle_dict)
 
         # Get associated drafts
         drafts = ops.get_drafts_by_cycle(conn, cycle_id)

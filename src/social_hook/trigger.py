@@ -43,6 +43,7 @@ def run_trigger(
     show_prompt: bool = False,
     trigger_source: str = "commit",
     existing_decision_id: str | None = None,
+    current_branch: str | None = None,
 ) -> int:
     """Run the commit-to-draft trigger pipeline.
 
@@ -61,6 +62,9 @@ def run_trigger(
         verbose: If True, print detailed output
         existing_decision_id: If provided, reuse this ID instead of generating
             a new one. Used by retrigger to update in-place (upsert).
+        current_branch: Branch the commit belongs to. When provided, skips
+            HEAD detection (important for retrigger/drain where HEAD is
+            irrelevant). Falls back to reading HEAD if not supplied.
 
     Returns:
         Exit code (0-4)
@@ -124,7 +128,11 @@ def run_trigger(
         conn.close()
         return 0
 
-    current_branch = _get_current_branch(repo_path)
+    # Resolve branch: callers that know the branch (retrigger, drain) pass it
+    # directly via current_branch. Git hooks read HEAD (correct — developer
+    # just committed). Fall back to HEAD when no branch is supplied.
+    if not current_branch:
+        current_branch = _get_current_branch(repo_path)
 
     # Branch filter: skip commits from non-target branches.
     # Manual retriggers and drain bypass this — the user explicitly chose the commit.
@@ -171,10 +179,51 @@ def run_trigger(
 
     project_config = load_project_config(repo_path)
 
+    # 5b. Interval gating — BEFORE expensive context assembly, discovery, LLM setup.
+    # Deferred commits only need config + project + commit message, not full context.
+    has_targets = (
+        getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets
+    )
+
+    # Bypass switch: manual retrigger respects interval by default (set True to skip queue)
+    MANUAL_BYPASSES_INTERVAL = False  # noqa: N806
+    skip_interval = (
+        (trigger_source == "manual" and MANUAL_BYPASSES_INTERVAL)
+        or trigger_source == "drain"  # rate-limit-drained commits skip interval (already counted)
+    )
+
+    if has_targets and not skip_interval:
+        # Cheap gating check — only needs counter + interval setting
+        outcome = _run_commit_analyzer_gate(conn, project, project_config, verbose)
+        if not outcome.should_evaluate:
+            # Fast path: parse commit for message, create deferred decision, return
+            commit = parse_commit_info(commit_hash, repo_path)
+            decision = Decision(
+                id=existing_decision_id or generate_id("decision"),
+                project_id=project.id,
+                commit_hash=commit_hash,
+                decision="deferred_eval",
+                reasoning="Deferred: commit awaiting batch threshold",
+                commit_message=commit.message,
+                processed=True,  # NOT drained by scheduler
+                trigger_source=trigger_source,
+                branch=current_branch,
+            )
+            if existing_decision_id:
+                ops.upsert_decision(conn, decision)
+            else:
+                db.insert_decision(decision)
+            db.emit_data_event("decision", "created", decision.id, project.id)
+            db.emit_data_event("pipeline", PipelineStage.QUEUED, commit_hash[:8], project.id)
+            if verbose:
+                print("Evaluation deferred: interval not met")
+            conn.close()
+            return 0
+
     # 6. Parse commit (needed for timestamp-filtered context)
     commit = parse_commit_info(commit_hash, repo_path)
 
-    # 6. Assemble context (with commit timestamps for narrative filtering)
+    # 6b. Assemble context (with commit timestamps for narrative filtering)
     context = assemble_evaluator_context(
         db,
         project.id,
@@ -184,8 +233,13 @@ def run_trigger(
     )
 
     # 6b. Auto-discovery: seed project summary if missing
+    # Discovery concurrency guard: re-check DB in case another thread wrote the summary
     if getattr(context, "project_summary", None) is None:
-        db.emit_data_event("pipeline", PipelineStage.DISCOVERING, commit_hash[:8], project.id)
+        fresh_summary = ops.get_project_summary(conn, project.id)
+        if fresh_summary:
+            context.project_summary = fresh_summary
+    if getattr(context, "project_summary", None) is None:
+        # on_progress callback in discover_project emits DISCOVERING event
         try:
             from social_hook.llm.discovery import discover_project
             from social_hook.llm.factory import create_client as _create_client
@@ -298,9 +352,6 @@ def run_trigger(
 
     # Stage 1: Commit Analyzer (targets path only, with interval gating)
     analyzer_result = None
-    has_targets = (
-        getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets
-    )
     if has_targets:
         ctx = TriggerContext(
             config=config,
@@ -315,35 +366,20 @@ def run_trigger(
             show_prompt=show_prompt,
             existing_decision_id=existing_decision_id,
         )
-        outcome = _run_commit_analyzer(
-            ctx=ctx,
-            context=context,
-            evaluator_client=evaluator_client,
-        )
-        analyzer_result = outcome.result
 
-        # Stage 1 gating: defer or proceed
-        if not outcome.should_evaluate:
-            # Interval not met — defer this commit
-            decision = Decision(
-                id=existing_decision_id or generate_id("decision"),
-                project_id=project.id,
-                commit_hash=commit_hash,
-                decision="deferred_eval",
-                reasoning="Deferred: commit awaiting batch threshold",
-                commit_message=commit.message,
-                processed=True,  # NOT drained by scheduler
-                trigger_source=trigger_source,
-                branch=current_branch,
+        # Reset counter (was incremented by early gate)
+        _reset_interval_counter(ctx=ctx, context=context, evaluator_client=evaluator_client)
+
+        # Check for deferred commits to batch
+        deferred = ops.get_interval_deferred_decisions(conn, project.id)
+        if deferred:
+            result = evaluate_batch(
+                ctx=ctx,
+                deferred_commits=deferred,
+                trigger_commit_hash=commit_hash,
+                context=context,
+                evaluator_client=evaluator_client,
             )
-            if existing_decision_id:
-                ops.upsert_decision(conn, decision)
-            else:
-                db.insert_decision(decision)
-            db.emit_data_event("decision", "created", decision.id, project.id)
-            db.emit_data_event("pipeline", PipelineStage.QUEUED, commit_hash[:8], project.id)
-            if verbose:
-                print("Evaluation deferred: interval not met")
             conn.close()
             return 0
         else:
@@ -847,6 +883,7 @@ def _run_targets_path(
     )
 
     # Hold count enforcement
+    hold_limit_forced = False
     if decision_type == "hold":
         max_hold = ctx.project_config.context.max_hold_count if ctx.project_config else 5
         current_held = ops.get_held_decisions(ctx.conn, ctx.project.id)
@@ -854,6 +891,7 @@ def _run_targets_path(
             logger.warning(f"Hold limit reached ({max_hold}), forcing skip for {commit_hash[:8]}")
             decision.decision = "skip"
             decision_type = "skip"
+            hold_limit_forced = True
 
     if ctx.existing_decision_id:
         ops.upsert_decision(ctx.conn, decision)
@@ -925,13 +963,28 @@ def _run_targets_path(
                 ctx.verbose,
             )
 
+    # Run pipeline diagnostics before notification fork
+    diagnostics_list = _run_diagnostics(
+        ctx,
+        cycle.id,
+        evaluation,
+        decision_type,
+        hold_limit_forced=hold_limit_forced,
+    )
+
     # Send decision notification for non-draftable decisions
     if (
         not ctx.dry_run
         and ctx.config.notification_level == "all_decisions"
         and not is_draftable(decision.decision)
     ):
-        _send_decision_notification(ctx.config, ctx.project, ctx.commit, decision)
+        _send_decision_notification(
+            ctx.config,
+            ctx.project,
+            ctx.commit,
+            decision,
+            diagnostics=diagnostics_list,
+        )
 
     if ctx.verbose:
         print(f"Decision: {decision_type}")
@@ -1019,6 +1072,7 @@ def _run_targets_path(
                 strategy_outcomes=strategy_outcomes,
                 drafts=cycle_drafts,
                 queue_actions=executed_queue_actions or None,
+                diagnostics=diagnostics_list,
                 dry_run=ctx.dry_run,
             )
 

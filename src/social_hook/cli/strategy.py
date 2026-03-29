@@ -32,12 +32,23 @@ def _resolve_proj(conn, project_path: str | None):
 
 
 def _get_merged_strategies(repo_path: str) -> list[dict]:
-    """Get built-in templates merged with project overrides."""
-    from social_hook.config.project import load_project_config
+    """Get built-in templates merged with config overrides."""
+    from social_hook.config.yaml import load_full_config
     from social_hook.setup.templates import STRATEGY_TEMPLATES
 
-    project_config = load_project_config(repo_path)
-    overrides = project_config.content_config.get("strategies", {})
+    config = load_full_config()
+    overrides = {
+        name: {
+            "audience": s.audience,
+            "voice": s.voice,
+            "angle": s.angle,
+            "post_when": s.post_when,
+            "avoid": s.avoid,
+            "format_preference": s.format_preference,
+            "media_preference": s.media_preference,
+        }
+        for name, s in config.content_strategies.items()
+    }
 
     result = []
     seen = set()

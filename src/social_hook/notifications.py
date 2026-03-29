@@ -230,6 +230,7 @@ def notify_evaluation_cycle(
     drafts: list,
     arc_info: dict | None = None,
     queue_actions: list[dict[str, str]] | None = None,
+    diagnostics: list[dict] | None = None,
     dry_run: bool = False,
 ) -> None:
     """Send grouped notification for an evaluation cycle.
@@ -248,6 +249,7 @@ def notify_evaluation_cycle(
         drafts: List of Draft model instances already fetched by the caller.
         arc_info: Optional arc proposal dict (arc_id, theme, parts, reasoning).
         queue_actions: Optional list of queue action dicts (type, draft_id, reason).
+        diagnostics: Optional list of diagnostic result dicts (code, severity, message, suggestion).
         dry_run: If True, skip all sends.
     """
     if dry_run:
@@ -262,6 +264,7 @@ def notify_evaluation_cycle(
         drafts=drafts,
         arc_info=arc_info,
         queue_actions=queue_actions,
+        diagnostics=diagnostics,
     )
     buttons = get_cycle_buttons(
         cycle_id=cycle_id,
