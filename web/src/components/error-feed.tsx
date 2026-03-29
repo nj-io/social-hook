@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { SystemError, SystemHealth } from "@/lib/types";
 import { fetchSystemErrors, fetchSystemHealth, clearSystemErrors } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
+import { useToast } from "@/lib/toast-context";
 import { Modal } from "@/components/ui/modal";
 
 const SEVERITY_STYLES: Record<string, string> = {
@@ -19,6 +20,7 @@ export function ErrorFeed() {
   const [errors, setErrors] = useState<SystemError[]>([]);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [loading, setLoading] = useState(true);
+  const { addToast } = useToast();
   const [severityFilter, setSeverityFilter] = useState("");
   const [componentFilter, setComponentFilter] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -148,6 +150,26 @@ export function ErrorFeed() {
                   <span className="text-xs text-muted-foreground">
                     {new Date(err.created_at).toLocaleString()}
                   </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const text = [
+                        `[${err.severity}] ${err.message}`,
+                        err.component ? `Component: ${err.component}` : "",
+                        err.source ? `Source: ${err.source}` : "",
+                        err.created_at ? `Time: ${new Date(err.created_at).toLocaleString()}` : "",
+                        err.context && err.context !== "{}" ? `Context: ${err.context}` : "",
+                      ].filter(Boolean).join("\n");
+                      navigator.clipboard.writeText(text).then(
+                        () => addToast("Copied to clipboard"),
+                        () => addToast("Failed to copy", { variant: "error" }),
+                      );
+                    }}
+                    className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+                    title="Copy error details"
+                  >
+                    Copy
+                  </button>
                 </div>
                 <p className="mt-1 text-sm">{err.message}</p>
                 {expandedId === err.id && err.context && err.context !== "{}" && (

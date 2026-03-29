@@ -113,6 +113,19 @@ export function ActivityIndicator() {
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeTasksRef = useRef(0); // count of in-flight tasks
 
+  // Check for running tasks on mount (page refresh while task in progress)
+  useEffect(() => {
+    fetch("/api/tasks?status=running")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.tasks?.length > 0) {
+          activeTasksRef.current = data.tasks.length;
+          setActive(true);
+        }
+      })
+      .catch(() => {}); // silent — if API not ready yet, events will catch up
+  }, []);
+
   // Event detection
   useEffect(() => {
     const handler = (envelope: GatewayEnvelope) => {
