@@ -43,7 +43,7 @@ class Lifecycle:
     def from_dict(cls, d: dict[str, Any]) -> Lifecycle:
         evidence = d.get("evidence", [])
         if isinstance(evidence, str):
-            evidence = safe_json_loads(evidence, "Lifecycle.evidence", default={})
+            evidence = safe_json_loads(evidence, "Lifecycle.evidence", default=[])
         return cls(
             project_id=d["project_id"],
             phase=d.get("phase", "research"),
