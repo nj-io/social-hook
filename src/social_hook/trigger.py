@@ -205,6 +205,7 @@ def run_trigger(
     show_prompt: bool = False,
     trigger_source: str = "commit",
     existing_decision_id: str | None = None,
+    current_branch: str | None = None,
 ) -> int:
     """Run the commit-to-draft trigger pipeline.
 
@@ -223,6 +224,9 @@ def run_trigger(
         verbose: If True, print detailed output
         existing_decision_id: If provided, reuse this ID instead of generating
             a new one. Used by retrigger to update in-place (upsert).
+        current_branch: Branch the commit belongs to. When provided, skips
+            HEAD detection (important for retrigger/drain where HEAD is
+            irrelevant). Falls back to reading HEAD if not supplied.
 
     Returns:
         Exit code (0-4)
@@ -286,16 +290,10 @@ def run_trigger(
         conn.close()
         return 0
 
-    # Resolve branch: git hook reads HEAD (correct — developer just committed).
-    # Retrigger/drain preserve the original decision's branch (HEAD is irrelevant).
-    if existing_decision_id:
-        existing_dec = ops.get_decision(conn, existing_decision_id)
-        current_branch = (
-            existing_dec.branch
-            if existing_dec and existing_dec.branch
-            else _get_current_branch(repo_path)
-        )
-    else:
+    # Resolve branch: callers that know the branch (retrigger, drain) pass it
+    # directly via current_branch. Git hooks read HEAD (correct — developer
+    # just committed). Fall back to HEAD when no branch is supplied.
+    if not current_branch:
         current_branch = _get_current_branch(repo_path)
 
     # Branch filter: skip commits from non-target branches.

@@ -1960,6 +1960,7 @@ async def api_retrigger_decision(decision_id: str):
         commit_hash = decision.commit_hash
         repo_path = project.repo_path
         project_id = decision.project_id
+        decision_branch = decision.branch
 
         # Clean up old drafts (no-op for imported commits with no drafts)
         conn.execute(
@@ -1990,6 +1991,7 @@ async def api_retrigger_decision(decision_id: str):
             repo_path=repo_path,
             trigger_source="manual",
             existing_decision_id=decision_id,
+            current_branch=decision_branch,
         )
         return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 

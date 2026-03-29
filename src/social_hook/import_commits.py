@@ -139,7 +139,6 @@ def import_project_commits(
     Returns:
         Dict with imported, skipped, total counts.
     """
-    # Default to project's trigger_branch if no explicit branch given
     if branch is None:
         project = ops.get_project(conn, project_id)
         if project and project.trigger_branch:
