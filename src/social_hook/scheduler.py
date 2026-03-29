@@ -420,6 +420,7 @@ def _drain_individual(conn, config, project, deferred):
                         decision="deferred_eval",
                         reasoning=f"Drain failed: {e}",
                         trigger_source="commit",
+                        branch=d.branch,
                     ),
                 )
 
@@ -449,7 +450,7 @@ def _drain_batch(conn, config, project, deferred):
             project=project,
             commit=commit,
             project_config=project_config,
-            current_branch=None,
+            current_branch=deferred[0].branch if deferred and deferred[0].branch else None,
             dry_run=False,
             verbose=False,
             show_prompt=False,

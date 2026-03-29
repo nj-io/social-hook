@@ -286,7 +286,17 @@ def run_trigger(
         conn.close()
         return 0
 
-    current_branch = _get_current_branch(repo_path)
+    # Resolve branch: git hook reads HEAD (correct — developer just committed).
+    # Retrigger/drain preserve the original decision's branch (HEAD is irrelevant).
+    if existing_decision_id:
+        existing_dec = ops.get_decision(conn, existing_decision_id)
+        current_branch = (
+            existing_dec.branch
+            if existing_dec and existing_dec.branch
+            else _get_current_branch(repo_path)
+        )
+    else:
+        current_branch = _get_current_branch(repo_path)
 
     # Branch filter: skip commits from non-target branches.
     # Manual retriggers and drain bypass this — the user explicitly chose the commit.
