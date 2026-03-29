@@ -34,18 +34,13 @@ export function TargetsSection() {
         setSelectedProject(res.projects[0].id);
       }
     } catch {
-      // silent
+      addToast("Failed to load projects", { variant: "error" });
     } finally {
       setLoading(false);
     }
-  }, [selectedProject]);
+  }, [selectedProject, addToast]);
 
   useEffect(() => { loadProjects(); }, [loadProjects]);
-
-  const reloadCurrentProject = useCallback(() => {
-    if (selectedProject) loadTargets(selectedProject);
-  }, [selectedProject]);  // eslint-disable-line react-hooks/exhaustive-deps
-  useDataEvents(["config"], reloadCurrentProject);
 
   const loadTargets = useCallback(async (projectId: string) => {
     if (!projectId) return;
@@ -80,9 +75,14 @@ export function TargetsSection() {
         setStrategies([]);
       }
     } catch {
-      // silent
+      addToast("Failed to load targets", { variant: "error" });
     }
-  }, []);
+  }, [addToast]);
+
+  const reloadCurrentProject = useCallback(() => {
+    if (selectedProject) loadTargets(selectedProject);
+  }, [selectedProject, loadTargets]);
+  useDataEvents(["config"], reloadCurrentProject);
 
   useEffect(() => {
     if (selectedProject) loadTargets(selectedProject);

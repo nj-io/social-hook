@@ -41,11 +41,11 @@ export function AccountsSection() {
         setAccounts([]);
       }
     } catch {
-      // silent
+      addToast("Failed to load accounts", { variant: "error" });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [addToast]);
 
   useEffect(() => { load(); }, [load]);
   useDataEvents(["config"], load);
@@ -94,7 +94,7 @@ export function AccountsSection() {
       const res = await validateAccounts();
       setValidationResults(res.results);
     } catch {
-      // silent
+      addToast("Failed to validate accounts", { variant: "error" });
     } finally {
       setValidating(false);
     }

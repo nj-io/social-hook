@@ -38,11 +38,11 @@ export function CredentialsSection() {
         setCredentials([]);
       }
     } catch {
-      // silent
+      addToast("Failed to load credentials", { variant: "error" });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [addToast]);
 
   useEffect(() => { load(); }, [load]);
   useDataEvents(["config"], load);

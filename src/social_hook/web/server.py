@@ -3607,7 +3607,11 @@ async def api_add_platform_credential(body: dict[str, Any] = Body(...)):
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "created", "name": name}
 
 
@@ -3639,7 +3643,11 @@ async def api_update_platform_credential(name: str, body: dict[str, Any] = Body(
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "updated", "name": name}
 
 
@@ -3669,7 +3677,11 @@ async def api_delete_platform_credential(name: str):
     raw["platform_credentials"] = pc
     yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "deleted", "name": name}
 
 
@@ -3751,7 +3763,11 @@ async def api_add_account(body: dict[str, Any] = Body(...)):
     # Note: PKCE auth flow (build_auth_url) is not yet implemented in adapters/auth.py
     auth_url = None
 
-    ops.emit_data_event(_get_conn(), "config", "updated", "accounts")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "accounts")
+    finally:
+        conn.close()
     result: dict[str, Any] = {"status": "created", "name": name}
     if auth_url:
         result["auth_url"] = auth_url
@@ -3982,15 +3998,15 @@ async def api_disable_target(project_id: str, name: str):
     if name not in (config.targets or {}):
         raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
 
-    # Write disabled status to config YAML (same as CLI target disable)
-    import yaml
-
-    config_path = get_config_path()
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    targets_raw = raw.get("targets", {})
-    if name in targets_raw:
-        targets_raw[name]["status"] = "disabled"
-        config_path.write_text(yaml.dump(raw, default_flow_style=False), encoding="utf-8")
+    # Write disabled status to config YAML
+    yaml_path = get_config_path()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
+    targets_raw = raw.setdefault("targets", {})
+    targets_raw.setdefault(name, {})["status"] = "disabled"
+    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
     _invalidate_config()
 
     conn = _get_conn()
@@ -3998,9 +4014,10 @@ async def api_disable_target(project_id: str, name: str):
         _get_project_or_404(conn, project_id)
 
         # Cancel pending drafts for this target
+        _placeholders = ",".join("?" for _ in PENDING_STATUSES)
         pending = conn.execute(
-            "SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ('draft', 'approved', 'scheduled', 'deferred')",
-            (project_id, name),
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({_placeholders})",
+            (project_id, name, *PENDING_STATUSES),
         ).fetchall()
         for row in pending:
             ops.update_draft(conn, row["id"], status="cancelled")
@@ -4021,14 +4038,15 @@ async def api_enable_target(project_id: str, name: str):
         raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
 
     # Remove disabled status from config YAML
-    import yaml
-
-    config_path = get_config_path()
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    yaml_path = get_config_path()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
     targets_raw = raw.get("targets", {})
     if name in targets_raw and "status" in targets_raw[name]:
         del targets_raw[name]["status"]
-        config_path.write_text(yaml.dump(raw, default_flow_style=False), encoding="utf-8")
+        yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
     _invalidate_config()
 
     conn = _get_conn()
