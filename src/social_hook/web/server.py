@@ -3998,15 +3998,33 @@ async def api_disable_target(project_id: str, name: str):
     if name not in (config.targets or {}):
         raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
 
-    # Write disabled status to config YAML
-    yaml_path = get_config_path()
-    try:
-        raw = yaml.safe_load(yaml_path.read_text()) or {}
-    except yaml.YAMLError:
-        raw = {}
-    targets_raw = raw.setdefault("targets", {})
-    targets_raw.setdefault(name, {})["status"] = "disabled"
-    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    # Write full target data with disabled status to config YAML.
+    # Must persist the full target (account, platform, strategy, etc.) because
+    # auto-migrated targets only exist in memory — the YAML may not have them.
+    tgt = config.targets[name]
+    target_data: dict[str, Any] = {
+        "status": "disabled",
+        "destination": tgt.destination,
+        "strategy": tgt.strategy,
+    }
+    if tgt.account:
+        target_data["account"] = tgt.account
+    if tgt.platform:
+        target_data["platform"] = tgt.platform
+    if tgt.primary:
+        target_data["primary"] = True
+    if tgt.source:
+        target_data["source"] = tgt.source
+    if tgt.frequency:
+        target_data["frequency"] = tgt.frequency
+
+    from social_hook.config.yaml import save_config
+
+    save_config(
+        {"targets": {name: target_data}},
+        config_path=get_config_path(),
+        deep_merge=True,
+    )
     _invalidate_config()
 
     conn = _get_conn()
@@ -4037,16 +4055,31 @@ async def api_enable_target(project_id: str, name: str):
     if name not in (config.targets or {}):
         raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
 
-    # Remove disabled status from config YAML
-    yaml_path = get_config_path()
-    try:
-        raw = yaml.safe_load(yaml_path.read_text()) or {}
-    except yaml.YAMLError:
-        raw = {}
-    targets_raw = raw.get("targets", {})
-    if name in targets_raw and "status" in targets_raw[name]:
-        del targets_raw[name]["status"]
-        yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    # Write full target data without disabled status to config YAML.
+    # Same pattern as disable — persist from Config object, not raw YAML.
+    tgt = config.targets[name]
+    target_data: dict[str, Any] = {
+        "destination": tgt.destination,
+        "strategy": tgt.strategy,
+    }
+    if tgt.account:
+        target_data["account"] = tgt.account
+    if tgt.platform:
+        target_data["platform"] = tgt.platform
+    if tgt.primary:
+        target_data["primary"] = True
+    if tgt.source:
+        target_data["source"] = tgt.source
+    if tgt.frequency:
+        target_data["frequency"] = tgt.frequency
+
+    from social_hook.config.yaml import save_config
+
+    save_config(
+        {"targets": {name: target_data}},
+        config_path=get_config_path(),
+        deep_merge=True,
+    )
     _invalidate_config()
 
     conn = _get_conn()
