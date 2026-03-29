@@ -1,5 +1,5 @@
-<!-- last_run_commit: 3c8d6cfa3b324968ffb3745b11362cc6f498e9c8 -->
-<!-- last_run_date: 2026-03-28 -->
+<!-- last_run_commit: cf5db9ecc580f240abb7ce09606f70bd8f561c79 -->
+<!-- last_run_date: 2026-03-29 -->
 
 # Documentation Status
 
@@ -76,8 +76,8 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Page | Status | Notes |
 |------|--------|-------|
-| installation.md | stale | May reference preview platform — needs targets update |
-| quickstart.md | stale | May reference preview platform — needs targets update |
+| installation.md | complete | Accurate for current quickstart flow; targets workflow addendum in backlog |
+| quickstart.md | complete | Preview draft → promote flow still valid; targets onboarding in backlog |
 
 ## Recurring Checks
 
