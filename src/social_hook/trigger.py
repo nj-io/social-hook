@@ -17,7 +17,7 @@ from social_hook.errors import ConfigError, DatabaseError
 from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
-from social_hook.models import CommitInfo, Decision, Draft, is_draftable
+from social_hook.models import CommitInfo, Decision, Draft, PipelineStage, is_draftable
 from social_hook.parsing import safe_int
 from social_hook.rate_limits import check_rate_limit
 
@@ -45,7 +45,7 @@ class AnalyzerOutcome:
 class TriggerContext:
     """Shared context for trigger pipeline functions.
 
-    Groups the parameters that flow through _run_commit_analyzer,
+    Groups the parameters that flow through _run_commit_analyzer_gate,
     _run_trivial_skip, and _run_targets_path.
     """
 
@@ -205,6 +205,7 @@ def run_trigger(
     show_prompt: bool = False,
     trigger_source: str = "commit",
     existing_decision_id: str | None = None,
+    current_branch: str | None = None,
 ) -> int:
     """Run the commit-to-draft trigger pipeline.
 
@@ -223,6 +224,9 @@ def run_trigger(
         verbose: If True, print detailed output
         existing_decision_id: If provided, reuse this ID instead of generating
             a new one. Used by retrigger to update in-place (upsert).
+        current_branch: Branch the commit belongs to. When provided, skips
+            HEAD detection (important for retrigger/drain where HEAD is
+            irrelevant). Falls back to reading HEAD if not supplied.
 
     Returns:
         Exit code (0-4)
@@ -286,9 +290,19 @@ def run_trigger(
         conn.close()
         return 0
 
-    current_branch = _get_current_branch(repo_path)
+    # Resolve branch: callers that know the branch (retrigger, drain) pass it
+    # directly via current_branch. Git hooks read HEAD (correct — developer
+    # just committed). Fall back to HEAD when no branch is supplied.
+    if not current_branch:
+        current_branch = _get_current_branch(repo_path)
 
-    if project.trigger_branch and current_branch != project.trigger_branch:
+    # Branch filter: skip commits from non-target branches.
+    # Manual retriggers and drain bypass this — the user explicitly chose the commit.
+    if (
+        project.trigger_branch
+        and current_branch != project.trigger_branch
+        and trigger_source not in ("manual", "drain")
+    ):
         branch_desc = current_branch or "(detached HEAD)"
         if verbose:
             print(
@@ -329,10 +343,51 @@ def run_trigger(
 
     project_config = load_project_config(repo_path)
 
+    # 5b. Interval gating — BEFORE expensive context assembly, discovery, LLM setup.
+    # Deferred commits only need config + project + commit message, not full context.
+    has_targets = (
+        getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets
+    )
+
+    # Bypass switch: manual retrigger respects interval by default (set True to skip queue)
+    MANUAL_BYPASSES_INTERVAL = False  # noqa: N806
+    skip_interval = (
+        (trigger_source == "manual" and MANUAL_BYPASSES_INTERVAL)
+        or trigger_source == "drain"  # rate-limit-drained commits skip interval (already counted)
+    )
+
+    if has_targets and not skip_interval:
+        # Cheap gating check — only needs counter + interval setting
+        outcome = _run_commit_analyzer_gate(conn, project, project_config, verbose)
+        if not outcome.should_evaluate:
+            # Fast path: parse commit for message, create deferred decision, return
+            commit = parse_commit_info(commit_hash, repo_path)
+            decision = Decision(
+                id=existing_decision_id or generate_id("decision"),
+                project_id=project.id,
+                commit_hash=commit_hash,
+                decision="deferred_eval",
+                reasoning="Deferred: commit awaiting batch threshold",
+                commit_message=commit.message,
+                processed=True,  # NOT drained by scheduler
+                trigger_source=trigger_source,
+                branch=current_branch,
+            )
+            if existing_decision_id:
+                ops.upsert_decision(conn, decision)
+            else:
+                db.insert_decision(decision)
+            db.emit_data_event("decision", "created", decision.id, project.id)
+            db.emit_data_event("pipeline", PipelineStage.QUEUED, commit_hash[:8], project.id)
+            if verbose:
+                print("Evaluation deferred: interval not met")
+            conn.close()
+            return 0
+
     # 6. Parse commit (needed for timestamp-filtered context)
     commit = parse_commit_info(commit_hash, repo_path)
 
-    # 6. Assemble context (with commit timestamps for narrative filtering)
+    # 6b. Assemble context (with commit timestamps for narrative filtering)
     context = assemble_evaluator_context(
         db,
         project.id,
@@ -342,7 +397,13 @@ def run_trigger(
     )
 
     # 6b. Auto-discovery: seed project summary if missing
+    # Discovery concurrency guard: re-check DB in case another thread wrote the summary
     if getattr(context, "project_summary", None) is None:
+        fresh_summary = ops.get_project_summary(conn, project.id)
+        if fresh_summary:
+            context.project_summary = fresh_summary
+    if getattr(context, "project_summary", None) is None:
+        # on_progress callback in discover_project emits DISCOVERING event
         try:
             from social_hook.llm.discovery import discover_project
             from social_hook.llm.factory import create_client as _create_client
@@ -432,9 +493,7 @@ def run_trigger(
         print(f"Using project summary ({len(context.project_summary)} chars)")
 
     if verbose:
-        print(f"Evaluating commit {commit.hash[:8]}: {commit.message}")
-
-    db.emit_data_event("pipeline", "evaluating", commit_hash[:8], project.id)
+        print(f"Processing commit {commit.hash[:8]}: {commit.message}")
 
     # 7. Evaluate
     from social_hook.llm.evaluator import Evaluator
@@ -478,11 +537,8 @@ def run_trigger(
     held_topics = [t for t in all_topics if t.status == "holding"]
     active_arcs_all = ops.get_arcs_by_project(conn, project.id, status="active")
 
-    # Stage 1: Commit Analyzer (targets path only, with interval gating)
+    # Stage 1: Commit Analyzer (targets path — deferral already handled by early gate)
     analyzer_result = None
-    has_targets = (
-        getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets
-    )
     if has_targets:
         ctx = TriggerContext(
             config=config,
@@ -497,49 +553,22 @@ def run_trigger(
             show_prompt=show_prompt,
             existing_decision_id=existing_decision_id,
         )
-        outcome = _run_commit_analyzer(
-            ctx=ctx,
-            context=context,
-            evaluator_client=evaluator_client,
-        )
-        analyzer_result = outcome.result
 
-        # Stage 1 gating: trivial skip, interval deferral, or proceed to stage 2
-        if outcome.result is not None and _is_trivial_classification(outcome.result):
-            # Trivial commit — skip stage 2 entirely
-            logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
-            result = _run_trivial_skip(
+        # Reset counter (was incremented by early gate)
+        _reset_interval_counter(ctx=ctx, context=context, evaluator_client=evaluator_client)
+
+        # Check for deferred commits to batch
+        deferred = ops.get_interval_deferred_decisions(conn, project.id)
+        if deferred:
+            result = evaluate_batch(
                 ctx=ctx,
-                analyzer_result=outcome.result,
-                commit_hash=commit_hash,
+                deferred_commits=deferred,
+                trigger_commit_hash=commit_hash,
+                context=context,
+                evaluator_client=evaluator_client,
             )
             conn.close()
             return result
-        elif not outcome.should_evaluate:
-            # Interval deferral — create informational decision with processed=1
-            decision = Decision(
-                id=existing_decision_id or generate_id("decision"),
-                project_id=project.id,
-                commit_hash=commit_hash,
-                decision="deferred_eval",
-                reasoning="Deferred: commit awaiting batch threshold",
-                commit_message=commit.message,
-                processed=True,  # NOT drained by scheduler
-                trigger_source=trigger_source,
-                branch=current_branch,
-            )
-            if existing_decision_id:
-                ops.upsert_decision(conn, decision)
-            else:
-                db.insert_decision(decision)
-            db.emit_data_event("decision", "created", decision.id, project.id)
-            if verbose:
-                print("Evaluation deferred: interval not met")
-            conn.close()
-            return 0
-        else:
-            # Normal case: should_evaluate=True and non-trivial — proceed to stage 2
-            pass
 
     # Guard: targets configured but no content strategies defined
     if has_targets and not config.content_strategies:
@@ -734,7 +763,7 @@ def run_trigger(
         from social_hook.compat import make_eval_compat
         from social_hook.drafting import draft_for_platforms
 
-        db.emit_data_event("pipeline", "drafting", commit_hash[:8], project.id)
+        db.emit_data_event("pipeline", PipelineStage.DRAFTING, commit_hash[:8], project.id)
         eval_compat = make_eval_compat(evaluation, decision.decision)
 
         draft_results = draft_for_platforms(
@@ -910,109 +939,119 @@ def _run_trivial_skip(
     return 0
 
 
-def _run_commit_analyzer(
-    ctx: TriggerContext,
-    context,
-    evaluator_client,
+def _run_commit_analyzer_gate(
+    conn,
+    project,
+    project_config,
+    verbose: bool = False,
 ) -> AnalyzerOutcome:
-    """Run stage 1 commit analyzer with interval gating.
+    """Lightweight interval gating — runs EARLY in run_trigger before expensive work.
 
-    Returns AnalyzerOutcome with:
-    - result: CommitAnalysisResult if analysis was run or cached, None on error.
-    - should_evaluate: True to proceed to stage 2, False to defer.
+    Only increments the counter and checks the threshold. No context assembly,
+    no LLM client, no cached analysis lookup. Used by the fast-path deferral
+    in run_trigger to skip context assembly, discovery, and LLM setup for
+    commits that will be deferred.
 
-    Semantics:
-    - count >= interval: run fresh analysis, reset counter, should_evaluate=True
-    - count < interval + cached exists: return cached, should_evaluate=False
-    - count < interval + no cache (first commit): run fresh, do NOT reset, should_evaluate=True
-    - error: result=None, should_evaluate=True (fallback)
+    The full _reset_interval_counter (below) is still called by the threshold
+    commit's path after context is assembled — it handles counter reset.
     """
-    from social_hook.llm.schemas import CommitAnalysisResult
-    from social_hook.parsing import safe_json_loads
-
-    # 1. Increment commit count
-    new_count = ops.increment_analysis_commit_count(ctx.conn, ctx.project.id)
-
-    # 2. Check interval threshold
     interval = 1
-    if ctx.project_config and hasattr(ctx.project_config, "context") and ctx.project_config.context:
-        interval = getattr(ctx.project_config.context, "commit_analysis_interval", 1)
+    if project_config and hasattr(project_config, "context") and project_config.context:
+        interval = getattr(project_config.context, "commit_analysis_interval", 1)
     if interval < 1:
         interval = 1
 
-    if new_count < interval:
-        # Interval not met — check for cached analysis from most recent cycle
-        cached_cycle = ops.get_latest_cycle_with_analysis(ctx.conn, ctx.project.id)
-        if cached_cycle and cached_cycle.commit_analysis_json:
-            cached_data = safe_json_loads(
-                cached_cycle.commit_analysis_json,
-                "cached_commit_analysis_json",
-                default=None,
-            )
-            if cached_data is not None:
-                try:
-                    result = CommitAnalysisResult.model_validate(cached_data)
-                    if ctx.verbose:
-                        print(f"Using cached analysis (count {new_count}/{interval})")
-                    return AnalyzerOutcome(result=result, should_evaluate=False)
-                except Exception as e:
-                    logger.warning("Failed to validate cached analysis, running fresh: %s", e)
-            else:
-                logger.warning("Failed to parse cached analysis JSON, running fresh")
-        else:
-            # No cache (first commit case) — run fresh, do NOT reset counter
-            if ctx.verbose:
-                print(f"No cached analysis available, running fresh (count {new_count}/{interval})")
-            try:
-                from social_hook.llm.analyzer import CommitAnalyzer
-
-                analyzer = CommitAnalyzer(evaluator_client)
-                result = analyzer.analyze(
-                    commit=ctx.commit,
-                    context=context,
-                    db=ctx.db,
-                    show_prompt=ctx.show_prompt,
-                )
-                if ctx.verbose:
-                    print(
-                        f"Commit analysis complete (classification: "
-                        f"{result.commit_analysis.classification.value if result.commit_analysis.classification else 'unknown'})"
-                    )
-                # First commit always evaluates — no counter reset
-                return AnalyzerOutcome(result=result, should_evaluate=True)
-            except Exception as e:
-                logger.warning("Commit analyzer failed on first commit (non-fatal): %s", e)
-                if ctx.verbose:
-                    print(f"Commit analyzer skipped: {e}", file=sys.stderr)
-                return AnalyzerOutcome(result=None, should_evaluate=True)
-
-    # 3. Run fresh analysis (count >= interval)
-    try:
-        from social_hook.llm.analyzer import CommitAnalyzer
-
-        analyzer = CommitAnalyzer(evaluator_client)
-        result = analyzer.analyze(
-            commit=ctx.commit,
-            context=context,
-            db=ctx.db,
-            show_prompt=ctx.show_prompt,
-        )
-
-        # Reset counter after successful analysis
-        ops.reset_analysis_commit_count(ctx.conn, ctx.project.id)
-
-        if ctx.verbose:
-            print(
-                f"Commit analysis complete (classification: "
-                f"{result.commit_analysis.classification.value if result.commit_analysis.classification else 'unknown'})"
-            )
-
-        return AnalyzerOutcome(result=result, should_evaluate=True)
-    except Exception as e:
-        logger.warning("Commit analyzer failed (non-fatal, evaluator will proceed): %s", e)
-        if ctx.verbose:
-            print(f"Commit analyzer skipped: {e}", file=sys.stderr)
+    if interval <= 1:
+        # No batching — always evaluate
         return AnalyzerOutcome(result=None, should_evaluate=True)
+
+    new_count = ops.increment_analysis_commit_count(conn, project.id)
+
+    logger.info(
+        "Interval gate: count=%d, interval=%d, project=%s",
+        new_count,
+        interval,
+        project.id,
+    )
+
+    if new_count < interval:
+        if verbose:
+            print(f"Commit deferred by interval gate (count {new_count}/{interval})")
+        return AnalyzerOutcome(result=None, should_evaluate=False)
+
+    # Threshold met — don't reset counter here. The full _reset_interval_counter
+    # handles reset after the commit actually proceeds through the pipeline.
+    if verbose:
+        print(f"Interval threshold met (count {new_count}/{interval})")
+    return AnalyzerOutcome(result=None, should_evaluate=True)
+
+
+def _reset_interval_counter(
+    ctx: TriggerContext,
+    context,
+    evaluator_client,
+) -> None:
+    """Reset interval counter after threshold commit enters the evaluation path.
+
+    Called ONLY for commits that passed the early interval gate
+    (_run_commit_analyzer_gate returned should_evaluate=True).
+    The counter was already incremented by the gate — this function
+    just resets it. No LLM calls, no gating logic.
+    """
+    ops.reset_analysis_commit_count(ctx.conn, ctx.project.id)
+    if ctx.verbose:
+        print("Analysis commit counter reset")
+
+
+def _run_diagnostics(
+    ctx: TriggerContext,
+    cycle_id: str,
+    evaluation,
+    decision_type: str,
+    *,
+    hold_limit_forced: bool = False,
+) -> list[dict]:
+    """Run pipeline diagnostics and store results on cycle. Returns serialized list."""
+    try:
+        import json
+
+        import social_hook.pipeline_diagnostics  # noqa: F401
+        from social_hook.diagnostics import diagnostics_registry
+
+        strategies = {
+            name: {
+                "action": getattr(sd.action, "value", sd.action),
+                "reason": sd.reason,
+                "arc_id": sd.arc_id,
+                "topic_id": sd.topic_id,
+            }
+            for name, sd in evaluation.strategies.items()
+        }
+
+        diag_context = {
+            "strategies": strategies,
+            "config_targets": ctx.config.targets or {},
+            "config_strategies": ctx.config.content_strategies or {},
+            "config_platforms": ctx.config.platforms or {},
+            "config_accounts": ctx.config.accounts or {},
+            "decision_type": decision_type,
+            "hold_limit_forced": hold_limit_forced,
+            "has_targets": bool(ctx.config.targets),
+            "has_strategies": bool(ctx.config.content_strategies),
+            "legacy_fallback": False,
+        }
+
+        results = diagnostics_registry.run(diag_context)
+
+        serialized = [d.to_dict() for d in results]
+
+        if not ctx.dry_run:
+            ops.update_cycle_diagnostics(ctx.conn, cycle_id, json.dumps(serialized))
+
+        return serialized
+    except Exception:
+        logger.warning("Pipeline diagnostics failed (non-fatal)", exc_info=True)
+        return []
 
 
 def _run_targets_path(
@@ -1023,6 +1062,8 @@ def _run_targets_path(
     context,
     evaluator_client,
     analyzer_result=None,
+    trigger_type: str = "commit",
+    batch_commit_hashes: list[str] | None = None,
 ) -> int:
     """New targets pipeline path: multi-strategy -> multi-target routing."""
     from social_hook.models import EvaluationCycle
@@ -1034,8 +1075,8 @@ def _run_targets_path(
     cycle = EvaluationCycle(
         id=generate_id("cycle"),
         project_id=ctx.project.id,
-        trigger_type="commit",
-        trigger_ref=commit_hash,
+        trigger_type=trigger_type,
+        trigger_ref=",".join(batch_commit_hashes) if batch_commit_hashes else commit_hash,
     )
     ctx.db.insert_evaluation_cycle(cycle)
 
@@ -1101,6 +1142,8 @@ def _run_targets_path(
                 project_id=ctx.project.id,
                 suggestions=analyzer_result.topic_suggestions,
                 strategies=strategy_names,
+                strategy_configs=ctx.config.content_strategies,
+                llm_client=evaluator_client,
             )
         except Exception:
             logger.warning("Topic creation from analyzer suggestions failed", exc_info=True)
@@ -1143,6 +1186,7 @@ def _run_targets_path(
     )
 
     # Hold count enforcement
+    hold_limit_forced = False
     if decision_type == "hold":
         max_hold = ctx.project_config.context.max_hold_count if ctx.project_config else 5
         current_held = ops.get_held_decisions(ctx.conn, ctx.project.id)
@@ -1150,6 +1194,7 @@ def _run_targets_path(
             logger.warning(f"Hold limit reached ({max_hold}), forcing skip for {commit_hash[:8]}")
             decision.decision = "skip"
             decision_type = "skip"
+            hold_limit_forced = True
 
     if ctx.existing_decision_id:
         ops.upsert_decision(ctx.conn, decision)
@@ -1221,13 +1266,28 @@ def _run_targets_path(
                 ctx.verbose,
             )
 
+    # Run pipeline diagnostics before notification fork
+    diagnostics_list = _run_diagnostics(
+        ctx,
+        cycle.id,
+        evaluation,
+        decision_type,
+        hold_limit_forced=hold_limit_forced,
+    )
+
     # Send decision notification for non-draftable decisions
     if (
         not ctx.dry_run
         and ctx.config.notification_level == "all_decisions"
         and not is_draftable(decision.decision)
     ):
-        _send_decision_notification(ctx.config, ctx.project, ctx.commit, decision)
+        _send_decision_notification(
+            ctx.config,
+            ctx.project,
+            ctx.commit,
+            decision,
+            diagnostics=diagnostics_list,
+        )
 
     if ctx.verbose:
         print(f"Decision: {decision_type}")
@@ -1239,7 +1299,7 @@ def _run_targets_path(
         from social_hook.drafting import draft_for_targets
         from social_hook.routing import route_to_targets
 
-        ctx.db.emit_data_event("pipeline", "drafting", commit_hash[:8], ctx.project.id)
+        ctx.db.emit_data_event("pipeline", PipelineStage.DRAFTING, commit_hash[:8], ctx.project.id)
 
         target_actions = route_to_targets(evaluation.strategies, ctx.config, ctx.conn)
         draftable_actions = [a for a in target_actions if a.action == "draft"]
@@ -1315,10 +1375,195 @@ def _run_targets_path(
                 strategy_outcomes=strategy_outcomes,
                 drafts=cycle_drafts,
                 queue_actions=executed_queue_actions or None,
+                diagnostics=diagnostics_list,
                 dry_run=ctx.dry_run,
             )
 
     return 0
+
+
+def evaluate_batch(
+    ctx: TriggerContext,
+    deferred_commits: list[Decision],
+    trigger_commit_hash: str,
+    context,
+    evaluator_client,
+) -> int:
+    """Evaluate a batch of deferred commits together with the trigger commit.
+
+    Combines diffs from all deferred commits plus the trigger commit, runs
+    stage 1 (CommitAnalyzer) and stage 2 (Evaluator) on the combined input,
+    then passes through the full targets pipeline via _run_targets_path.
+
+    Connection ownership: does NOT own ctx.conn. Caller manages lifecycle.
+
+    Args:
+        ctx: Trigger context (config, conn, db, project, etc.)
+        deferred_commits: Deferred decisions to include in batch
+        trigger_commit_hash: The commit that crossed the threshold
+        context: Assembled evaluator context
+        evaluator_client: LLM client for evaluation
+
+    Returns:
+        0 on success, non-zero on failure
+    """
+    from social_hook.llm.analyzer import CommitAnalyzer
+    from social_hook.llm.evaluator import Evaluator
+
+    # 0. Mark deferred decisions as "processing" so UI shows all rows as active
+    deferred_ids = [d.id for d in deferred_commits]
+    ops.mark_decisions_processing(ctx.conn, deferred_ids)
+    for d in deferred_commits:
+        ctx.db.emit_data_event("decision", "updated", d.id, ctx.project.id)
+
+    # 1. Build combined CommitInfo from all deferred hashes + trigger hash
+    all_hashes = [d.commit_hash for d in deferred_commits] + [trigger_commit_hash]
+    diffs = []
+    all_files: list[str] = []
+    total_insertions = 0
+    total_deletions = 0
+
+    for h in all_hashes:
+        ci = parse_commit_info(h, ctx.project.repo_path)
+        if ci.diff:
+            first_line = ci.message.splitlines()[0] if ci.message else ""
+            diffs.append(f"--- Commit {h[:8]}: {first_line} ---\n{ci.diff}")
+            all_files.extend(ci.files_changed)
+            total_insertions += ci.insertions
+            total_deletions += ci.deletions
+
+    if not diffs:
+        logger.warning("Batch evaluation: all commits had empty diffs, skipping")
+        return 0
+
+    # Use trigger commit's info as base
+    trigger_ci = parse_commit_info(trigger_commit_hash, ctx.project.repo_path)
+    combined = CommitInfo(
+        hash=trigger_commit_hash,
+        message=f"Batch of {len(all_hashes)} commits: {trigger_ci.message}",
+        diff="\n\n".join(diffs),
+        files_changed=list(dict.fromkeys(all_files)),  # dedupe, preserve order
+        insertions=total_insertions,
+        deletions=total_deletions,
+        timestamp=trigger_ci.timestamp,
+        parent_timestamp=trigger_ci.parent_timestamp,
+    )
+
+    # 2. Run stage 1: CommitAnalyzer on combined diffs
+    ctx.db.emit_data_event(
+        "pipeline", PipelineStage.ANALYZING, trigger_commit_hash[:8], ctx.project.id
+    )
+    analyzer_result = None
+    try:
+        analyzer = CommitAnalyzer(evaluator_client)
+        analyzer_result = analyzer.analyze(
+            commit=combined,
+            context=context,
+            db=ctx.db,
+            show_prompt=ctx.show_prompt,
+        )
+        if ctx.verbose:
+            classification = (
+                analyzer_result.commit_analysis.classification.value
+                if analyzer_result.commit_analysis.classification
+                else "unknown"
+            )
+            print(f"Batch stage 1 complete (classification: {classification})")
+    except Exception as e:
+        logger.warning("Batch commit analyzer failed (non-fatal): %s", e)
+        if ctx.verbose:
+            print(f"Batch commit analyzer skipped: {e}", file=sys.stderr)
+
+    # 3. Run stage 2: Evaluator on combined diffs
+    # Build platform summaries (same as run_trigger)
+    platform_summaries = []
+    for pname, pcfg in ctx.config.platforms.items():
+        if pcfg.enabled:
+            summary = f"{pname} ({pcfg.priority})"
+            if pcfg.type == "custom" and pcfg.description:
+                summary += f" — {pcfg.description}"
+            platform_summaries.append(summary)
+
+    # Gather scheduling state
+    from social_hook.scheduling import get_scheduling_state
+
+    try:
+        scheduling_state = get_scheduling_state(ctx.conn, ctx.project.id, ctx.config)
+    except Exception as e:
+        logger.warning("Failed to get scheduling state for batch (non-fatal): %s", e)
+        scheduling_state = None
+
+    # Fetch topics and arcs
+    all_topics = ops.get_topics_by_project(ctx.conn, ctx.project.id, include_dismissed=False)
+    held_topics = [t for t in all_topics if t.status == "holding"]
+    active_arcs_all = ops.get_arcs_by_project(ctx.conn, ctx.project.id, status="active")
+
+    ctx.db.emit_data_event(
+        "pipeline", PipelineStage.EVALUATING, trigger_commit_hash[:8], ctx.project.id
+    )
+    try:
+        evaluator = Evaluator(evaluator_client)
+        evaluation = evaluator.evaluate(
+            combined,
+            context,
+            ctx.db,
+            show_prompt=ctx.show_prompt,
+            platform_summaries=platform_summaries or None,
+            media_config=ctx.config.media_generation,
+            media_guidance=ctx.project_config.media_guidance if ctx.project_config else None,
+            strategy_config=ctx.project_config.strategy if ctx.project_config else None,
+            summary_config=ctx.project_config.summary if ctx.project_config else None,
+            scheduling_state=scheduling_state,
+            strategies=ctx.config.content_strategies or None,
+            held_topics=held_topics or None,
+            active_arcs_all=active_arcs_all or None,
+            targets=ctx.config.targets or None,
+            all_topics=all_topics or None,
+            analysis=analyzer_result,
+        )
+    except Exception as e:
+        logger.error("LLM API error during batch evaluation: %s", e)
+        if ctx.verbose:
+            print(f"Batch evaluation failed: {e}", file=sys.stderr)
+        return 3
+
+    # 4. Run full targets pipeline
+    analysis = evaluation.commit_analysis
+    try:
+        result = _run_targets_path(
+            ctx=ctx,
+            evaluation=evaluation,
+            analysis=analysis,
+            commit_hash=trigger_commit_hash,
+            context=context,
+            evaluator_client=evaluator_client,
+            analyzer_result=analyzer_result,
+            trigger_type="batch",
+            batch_commit_hashes=all_hashes,
+        )
+    except Exception as e:
+        logger.error("Batch targets path failed: %s", e)
+        return 3
+
+    # 5. After success: mark deferred decisions with batch_id
+    if result == 0:
+        # Get cycle ID from the cycle just inserted by _run_targets_path
+        recent_cycles = ops.get_recent_cycles(ctx.conn, ctx.project.id, limit=1)
+        cycle_id = recent_cycles[0].id if recent_cycles else "unknown"
+
+        deferred_ids = [d.id for d in deferred_commits]
+        ops.mark_deferred_decisions_batched(ctx.conn, deferred_ids, cycle_id)
+        for d in deferred_commits:
+            ctx.db.emit_data_event("decision", "updated", d.id, ctx.project.id)
+
+        if ctx.verbose:
+            print(f"Batch evaluation complete: {len(all_hashes)} commits, cycle {cycle_id}")
+    else:
+        logger.warning(
+            "Batch targets path returned non-zero (%d), not marking deferred decisions", result
+        )
+
+    return result
 
 
 def _trigger_brief_update(
@@ -1378,8 +1623,9 @@ def _trigger_brief_update(
         return False
 
 
-def _send_decision_notification(config, project, commit, decision):
+def _send_decision_notification(config, project, commit, decision, diagnostics=None):
     """Send a decision notification to all configured channels."""
+    from social_hook.diagnostics import format_diagnostic_warnings
     from social_hook.messaging.base import OutboundMessage
     from social_hook.notifications import broadcast_notification
 
@@ -1393,6 +1639,10 @@ def _send_decision_notification(config, project, commit, decision):
         f"Decision: {decision.decision}\n"
         f"Reasoning: {reasoning_preview}"
     )
+
+    if diagnostics:
+        msg_text += format_diagnostic_warnings(diagnostics)
+
     broadcast_notification(config, OutboundMessage(text=msg_text))
 
 
@@ -1653,7 +1903,7 @@ def run_summary_trigger(
     eval_compat = make_eval_compat(evaluation, "draft")
 
     # Draft
-    db.emit_data_event("pipeline", "drafting", "summary", project.id)
+    db.emit_data_event("pipeline", PipelineStage.DRAFTING, "summary", project.id)
 
     commit = CommitInfo(
         hash="summary",

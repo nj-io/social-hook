@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260326071918
+SCHEMA_VERSION = 20260328075443
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
     commit_message TEXT,
-    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval', 'evaluating')),
+    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval', 'processing')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
     episode_type  TEXT CHECK (episode_type IN ('decision', 'before_after', 'demo_proof', 'milestone', 'postmortem', 'launch', 'synthesis')),
@@ -338,6 +338,7 @@ CREATE TABLE IF NOT EXISTS evaluation_cycles (
     trigger_ref TEXT,
     commit_analysis_id TEXT,
     commit_analysis_json TEXT DEFAULT NULL,
+    diagnostics TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -407,16 +408,20 @@ def _apply_pragma_migration(conn: sqlite3.Connection, sql: str) -> None:
     pragmas_after: list[str] = []
     other_lines: list[str] = []
 
+    has_ddl = False  # Track whether we've seen actual DDL/DML (not just comments)
     for line in sql.split("\n"):
         stripped = line.strip()
         if stripped.upper().startswith("PRAGMA"):
             # PRAGMAs before DDL go first, PRAGMAs after go last
-            if other_lines:
+            if has_ddl:
                 pragmas_after.append(stripped)
             else:
                 pragmas_before.append(stripped)
         else:
             other_lines.append(line)
+            # Comments and blank lines don't count as DDL
+            if stripped and not stripped.startswith("--"):
+                has_ddl = True
 
     # Execute pre-DDL PRAGMAs outside transaction
     for pragma in pragmas_before:

@@ -6,7 +6,8 @@ import logging
 import typer
 
 from social_hook.cli.utils import resolve_project
-from social_hook.parsing import safe_int
+from social_hook.diagnostics import filter_actionable
+from social_hook.parsing import safe_int, safe_json_loads
 
 app = typer.Typer(no_args_is_help=True)
 logger = logging.getLogger(__name__)
@@ -148,6 +149,13 @@ def show(
         ).fetchall()
         decisions = [dict(r) for r in decision_rows]
 
+        # Get batched decisions (deferred commits included in this cycle)
+        batched_rows = conn.execute(
+            "SELECT id, decision, commit_hash, commit_message FROM decisions WHERE batch_id = ?",
+            (cycle_id,),
+        ).fetchall()
+        batched = [dict(r) for r in batched_rows]
+
         if json_output:
             typer.echo(
                 json_mod.dumps(
@@ -155,6 +163,7 @@ def show(
                         "cycle": cycle.to_dict(),
                         "drafts": drafts,
                         "decisions": decisions,
+                        "batched_commits": batched,
                     },
                     indent=2,
                     default=str,
@@ -167,6 +176,16 @@ def show(
         if cycle.trigger_ref:
             typer.echo(f"  Ref:      {cycle.trigger_ref}")
         typer.echo(f"  Created:  {cycle.created_at}")
+
+        if batched:
+            typer.echo(f"\n  Batched commits ({len(batched)}):")
+            for b in batched:
+                msg = (
+                    (b.get("commit_message") or "").splitlines()[0][:50]
+                    if b.get("commit_message")
+                    else ""
+                )
+                typer.echo(f"    {b['commit_hash'][:8]:<10} {msg}")
 
         if drafts:
             typer.echo(f"\n  Drafts ({len(drafts)}):")
@@ -187,5 +206,21 @@ def show(
                 )
         else:
             typer.echo("\n  No decisions.")
+
+        # Parse and display diagnostics
+        diag_raw = cycle.diagnostics
+        diags = safe_json_loads(diag_raw, "cycle.diagnostics", default=[]) if diag_raw else []
+        warnings = filter_actionable(diags)
+        if warnings:
+            typer.echo(
+                f"\n  Diagnostics ({len(warnings)} warning{'s' if len(warnings) != 1 else ''}):"
+            )
+            for d in warnings:
+                sev = d.get("severity", "?").upper()
+                typer.echo(f"    [{sev}] {d.get('code', '?')}: {d.get('message', '')}")
+                if d.get("suggestion"):
+                    typer.echo(f"           → {d['suggestion']}")
+        else:
+            typer.echo("\n  No diagnostics.")
     finally:
         conn.close()

@@ -32,7 +32,7 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
-from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES
+from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES, PipelineStage
 from social_hook.parsing import check_unknown_keys, safe_json_loads
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,13 @@ def _parse_episode_tags(decision) -> list | None:
     if isinstance(ep_tags, str):
         ep_tags = safe_json_loads(ep_tags, "decision.episode_tags", default=[])
     return ep_tags or None
+
+
+def _parse_diagnostics_column(cycle_dict: dict) -> list:
+    """Parse the diagnostics JSON column on a cycle dict, returning a list."""
+    raw = cycle_dict.get("diagnostics")
+    cycle_dict["diagnostics"] = safe_json_loads(raw, "cycle.diagnostics", default=[]) if raw else []
+    return cycle_dict["diagnostics"]
 
 
 # ---------------------------------------------------------------------------
@@ -1250,7 +1257,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
                 commit_timestamp=getattr(commit, "timestamp", None),
                 parent_timestamp=getattr(commit, "parent_timestamp", None),
             )
-            db.emit_data_event("pipeline", "promoting", draft_id[:8], project.id)
+            db.emit_data_event("pipeline", PipelineStage.PROMOTING, draft_id[:8], project.id)
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1525,6 +1532,23 @@ async def api_import_preview(project_id: str, branch: str | None = Query(None)):
         from social_hook.import_commits import get_import_preview
 
         preview = get_import_preview(conn, project["id"], project["repo_path"], branch)
+
+        # Include git repo branches so the import modal can show them
+        # (decisionBranches is empty on a fresh project)
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["git", "-C", project["repo_path"], "branch", "--format=%(refname:short)"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            git_branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+        except Exception:
+            git_branches = []
+
+        preview["branches"] = git_branches
         return preview
     finally:
         conn.close()
@@ -1567,7 +1591,7 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
 
     task_id = _run_background_task(
         "import_commits",
-        ref_id=project_id,
+        ref_id="__import__",
         project_id=pid,
         fn=_blocking_import,
     )
@@ -1627,7 +1651,7 @@ async def api_summary_draft(project_id: str):
 
                 project_config = load_project_config(repo_path)
                 client = create_client(config.models.evaluator, config)
-                ops.emit_data_event(conn2, "pipeline", "discovering", pid, pid)
+                ops.emit_data_event(conn2, "pipeline", PipelineStage.DISCOVERING, pid, pid)
                 disc_summary, disc_files, disc_file_summaries, disc_prompt_docs = discover_project(
                     client=client,
                     repo_path=repo_path,
@@ -1831,7 +1855,9 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit_timestamp=commit.timestamp,
                 parent_timestamp=commit.parent_timestamp,
             )
-            db.emit_data_event("pipeline", "drafting", decision.commit_hash[:8], project.id)
+            db.emit_data_event(
+                "pipeline", PipelineStage.DRAFTING, decision.commit_hash[:8], project.id
+            )
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1934,6 +1960,7 @@ async def api_retrigger_decision(decision_id: str):
         commit_hash = decision.commit_hash
         repo_path = project.repo_path
         project_id = decision.project_id
+        decision_branch = decision.branch
 
         # Clean up old drafts (no-op for imported commits with no drafts)
         conn.execute(
@@ -1945,9 +1972,10 @@ async def api_retrigger_decision(decision_id: str):
             (decision_id,),
         )
         conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
-        # Mark as evaluating — row stays visible in the UI
+        # Mark as processing — row stays visible in the UI.
+        # The pipeline will update to the appropriate status (deferred_eval, draft, skip, etc.)
         conn.execute(
-            "UPDATE decisions SET decision = 'evaluating' WHERE id = ?",
+            "UPDATE decisions SET decision = 'processing' WHERE id = ?",
             (decision_id,),
         )
         conn.commit()
@@ -1963,6 +1991,7 @@ async def api_retrigger_decision(decision_id: str):
             repo_path=repo_path,
             trigger_source="manual",
             existing_decision_id=decision_id,
+            current_branch=decision_branch,
         )
         return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
@@ -2112,7 +2141,9 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 project.id,
                 project_config,
             )
-            db.emit_data_event("pipeline", "drafting", anchor.commit_hash[:8], project.id)
+            db.emit_data_event(
+                "pipeline", PipelineStage.DRAFTING, anchor.commit_hash[:8], project.id
+            )
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -3576,7 +3607,11 @@ async def api_add_platform_credential(body: dict[str, Any] = Body(...)):
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "created", "name": name}
 
 
@@ -3608,7 +3643,11 @@ async def api_update_platform_credential(name: str, body: dict[str, Any] = Body(
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "updated", "name": name}
 
 
@@ -3638,7 +3677,11 @@ async def api_delete_platform_credential(name: str):
     raw["platform_credentials"] = pc
     yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
     _invalidate_config()
-    ops.emit_data_event(_get_conn(), "config", "updated", "platform_credentials")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
     return {"status": "deleted", "name": name}
 
 
@@ -3720,7 +3763,11 @@ async def api_add_account(body: dict[str, Any] = Body(...)):
     # Note: PKCE auth flow (build_auth_url) is not yet implemented in adapters/auth.py
     auth_url = None
 
-    ops.emit_data_event(_get_conn(), "config", "updated", "accounts")
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "accounts")
+    finally:
+        conn.close()
     result: dict[str, Any] = {"status": "created", "name": name}
     if auth_url:
         result["auth_url"] = auth_url
@@ -3813,7 +3860,7 @@ async def api_list_targets(project_id: str):
                 "community_id": tgt.community_id,
                 "share_with_followers": tgt.share_with_followers,
                 "frequency": tgt.frequency,
-                "enabled": True,  # All config-defined targets are enabled
+                "enabled": tgt.status != "disabled",
                 "platform": account.platform if account else "unknown",
                 "created_at": None,
             }
@@ -3947,14 +3994,30 @@ async def api_update_target(project_id: str, name: str, body: dict[str, Any] = B
 @app.put("/api/projects/{project_id}/targets/{name}/disable")
 async def api_disable_target(project_id: str, name: str):
     """Disable a target and archive pending drafts."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Write disabled status to config YAML
+    yaml_path = get_config_path()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
+    targets_raw = raw.setdefault("targets", {})
+    targets_raw.setdefault(name, {})["status"] = "disabled"
+    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    _invalidate_config()
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
 
         # Cancel pending drafts for this target
+        _placeholders = ",".join("?" for _ in PENDING_STATUSES)
         pending = conn.execute(
-            "SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ('draft', 'approved', 'scheduled', 'deferred')",
-            (project_id, name),
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({_placeholders})",
+            (project_id, name, *PENDING_STATUSES),
         ).fetchall()
         for row in pending:
             ops.update_draft(conn, row["id"], status="cancelled")
@@ -3964,13 +4027,28 @@ async def api_disable_target(project_id: str, name: str):
     finally:
         conn.close()
 
-    # Note: targets live in config.yaml, not DB. The web UI tracks disabled state separately.
     return {"status": "disabled", "name": name, "cancelled_drafts": len(pending)}
 
 
 @app.put("/api/projects/{project_id}/targets/{name}/enable")
 async def api_enable_target(project_id: str, name: str):
     """Re-enable a target."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Remove disabled status from config YAML
+    yaml_path = get_config_path()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
+    targets_raw = raw.get("targets", {})
+    if name in targets_raw and "status" in targets_raw[name]:
+        del targets_raw[name]["status"]
+        yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    _invalidate_config()
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
@@ -4234,10 +4312,20 @@ async def api_delete_strategy(project_id: str, name: str):
     _invalidate_config()
     conn = _get_conn()
     try:
+        # Dismiss orphaned topics for the deleted strategy
+        dismissed_count = conn.execute(
+            "UPDATE content_topics SET status = 'dismissed' WHERE project_id = ? AND strategy = ? AND status != 'dismissed'",
+            (project_id, name),
+        ).rowcount
+        if dismissed_count:
+            conn.commit()
+            logger.info(
+                "Dismissed %d orphaned topics for deleted strategy '%s'", dismissed_count, name
+            )
         ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
     finally:
         conn.close()
-    return {"status": "deleted", "name": name}
+    return {"status": "deleted", "name": name, "topics_dismissed": dismissed_count}
 
 
 # =============================================================================
@@ -4596,7 +4684,7 @@ async def api_create_suggestion(project_id: str, body: dict[str, Any] = Body(...
                 status_code=202,
                 content={
                     "task_id": task_id,
-                    "status": "evaluating",
+                    "status": "processing",
                     "suggestion": suggestion.to_dict(),
                 },
             )
@@ -4772,6 +4860,7 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
         enriched = []
         for c in cycles:
             cd = c.to_dict()
+            _parse_diagnostics_column(cd)
 
             # Get drafts for this cycle to derive strategies and status
             drafts = ops.get_drafts_by_cycle(conn, c.id)
@@ -4786,10 +4875,16 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                 # No drafts — look up decision by commit hash directly
                 from social_hook.models import Decision
 
+                # For batch cycles, trigger_ref is "hash1,hash2,...,trigger_hash"
+                # The last hash is the trigger commit with the full decision.
+                lookup_hash = c.trigger_ref
+                if c.trigger_type == "batch" and "," in (c.trigger_ref or ""):
+                    lookup_hash = c.trigger_ref.rsplit(",", 1)[-1].strip()
+
                 row = conn.execute(
                     "SELECT * FROM decisions WHERE project_id = ? AND commit_hash = ? "
                     "ORDER BY created_at DESC LIMIT 1",
-                    (project_id, c.trigger_ref),
+                    (project_id, lookup_hash),
                 ).fetchone()
                 if row:
                     decision = Decision.from_dict(dict(row))
@@ -4801,8 +4896,6 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
             strategies: dict[str, dict] = {}
             if decision and decision.targets:
                 # targets is a dict of {strategy_name: {action, reason, ...}}
-                from social_hook.parsing import safe_json_loads
-
                 targets_data = decision.targets
                 if isinstance(targets_data, str):
                     targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
@@ -4844,8 +4937,9 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                     }
             elif decision:
                 ep_tags = _parse_episode_tags(decision)
-                # Legacy: single "default" strategy
-                strategies["default"] = {
+                # Legacy decisions without per-strategy targets data
+                label = "legacy" if decision.decision != "deferred_eval" else "deferred"
+                strategies[label] = {
                     "decision": decision.decision,
                     "reasoning": decision.reasoning[:200] if decision.reasoning else "",
                     "draft_id": drafts[0].id if drafts else None,
@@ -4917,6 +5011,30 @@ def _enrich_cycle_trigger(conn, cycle, decision) -> str:
                 idea_preview = s.idea[:60] + ("..." if len(s.idea) > 60 else "")
                 return f"Suggestion: {idea_preview}"
         return "Operator suggestion"
+    elif trigger_type == "batch":
+        # trigger_ref is comma-separated commit hashes
+        hashes = [h.strip() for h in (trigger_ref or "").split(",") if h.strip()]
+        if not hashes:
+            return "Batch evaluation"
+        parts = [f"Batch of {len(hashes)} commits"]
+        if decision:
+            ep_tags = _parse_episode_tags(decision)
+            if ep_tags:
+                parts.append(f"({', '.join(ep_tags)})")
+        # Get commit hash + first line of message for each
+        commit_lines = []
+        for h in hashes[:5]:  # Cap at 5 to avoid huge descriptions
+            short = h[:7]
+            d = conn.execute(
+                "SELECT commit_message FROM decisions WHERE project_id = ? AND commit_hash = ? LIMIT 1",
+                (cycle.project_id, h),
+            ).fetchone()
+            msg = d["commit_message"].splitlines()[0][:50] if d and d["commit_message"] else ""
+            commit_lines.append(f"{short} {msg}".strip())
+        parts.append("\u2014 " + "; ".join(commit_lines))
+        if len(hashes) > 5:
+            parts.append(f"(+{len(hashes) - 5} more)")
+        return " ".join(parts)
     elif trigger_type == "hero_launch":
         return "Hero launch"
     elif trigger_type == "draft_now":
@@ -4948,6 +5066,7 @@ async def api_get_cycle_detail(project_id: str, cycle_id: str):
 
         cycle = EvaluationCycle.from_dict(dict(row))
         cycle_dict = cycle.to_dict()
+        _parse_diagnostics_column(cycle_dict)
 
         # Get associated drafts
         drafts = ops.get_drafts_by_cycle(conn, cycle_id)
@@ -5104,6 +5223,55 @@ async def api_system_health():
             "error_counts_24h": error_counts,
             "total_errors_24h": total_errors,
         }
+    finally:
+        conn.close()
+
+
+@app.get("/api/system/events")
+async def api_system_events(
+    entity: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Recent pipeline/system events from web_events.
+
+    Useful for debugging pipeline flow. Filters to pipeline, decision, task,
+    and draft entities by default. Pass ?entity=pipeline to filter further.
+    """
+    conn = _get_conn()
+    try:
+        allowed_entities = {"pipeline", "decision", "task", "draft", "topic", "cycle"}
+        clauses = ["1=1"]
+        params: list = []
+
+        if entity:
+            clauses.append("json_extract(data, '$.entity') = ?")
+            params.append(entity)
+        else:
+            placeholders = ",".join("?" * len(allowed_entities))
+            clauses.append(f"json_extract(data, '$.entity') IN ({placeholders})")
+            params.extend(sorted(allowed_entities))
+
+        where = " AND ".join(clauses)
+        rows = conn.execute(
+            f"SELECT id, data, created_at FROM web_events WHERE {where} "
+            f"ORDER BY created_at DESC LIMIT ?",
+            [*params, limit],
+        ).fetchall()
+
+        events = []
+        for r in rows:
+            parsed = safe_json_loads(r["data"], "web_events.data", default={})
+            events.append(
+                {
+                    "id": r["id"],
+                    "entity": parsed.get("entity"),
+                    "action": parsed.get("action"),
+                    "entity_id": parsed.get("entity_id"),
+                    "project_id": parsed.get("project_id"),
+                    "created_at": r["created_at"],
+                }
+            )
+        return {"events": events}
     finally:
         conn.close()
 

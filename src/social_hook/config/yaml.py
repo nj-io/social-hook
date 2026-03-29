@@ -195,6 +195,9 @@ class ContentStrategyConfig:
     angle: str | None = None
     post_when: str | None = None
     avoid: str | None = None
+    strategy_type: str | None = (
+        None  # "code-driven" or "positioning" — auto-classified on first use
+    )
     format_preference: str | None = None  # "single", "thread", "long-form"
     media_preference: str | None = None  # "screenshot", "diagram", "video", "code"
     min_length: int | None = None
@@ -825,6 +828,7 @@ def _parse_targets(data: dict[str, Any]) -> dict[str, TargetConfig]:
                 "source",
                 "community_id",
                 "share_with_followers",
+                "status",
                 "frequency",
                 "scheduling",
             },
@@ -847,6 +851,7 @@ def _parse_targets(data: dict[str, Any]) -> dict[str, TargetConfig]:
             source=tgt_data.get("source"),
             community_id=tgt_data.get("community_id"),
             share_with_followers=bool(tgt_data.get("share_with_followers", False)),
+            status=tgt_data.get("status"),
             frequency=tgt_data.get("frequency"),
             scheduling=tgt_data.get("scheduling"),
         )

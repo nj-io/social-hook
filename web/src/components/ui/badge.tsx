@@ -14,6 +14,8 @@ const variantStyles: Record<string, Record<string, string>> = {
     skip: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
     imported: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400",
     deferred_eval: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
+    batched: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400",
+    processing: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
   },
   system: {
     _default: "bg-accent/10 text-accent dark:bg-accent/20",
@@ -41,6 +43,8 @@ const decisionLabels: Record<string, string> = {
   skip: "Skip",
   imported: "Imported",
   deferred_eval: "Queued",
+  batched: "Batched",
+  processing: "Processing",
 };
 
 interface BadgeProps {

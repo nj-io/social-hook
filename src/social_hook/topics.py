@@ -13,19 +13,113 @@ from social_hook.db import operations as ops
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id
 from social_hook.models import CommitInfo, ContentTopic, EvaluationCycle
-from social_hook.setup.templates import POSITIONING_TEMPLATES
+from social_hook.setup.templates import CODE_DRIVEN_TEMPLATES, POSITIONING_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# Strategy type resolution
+# =============================================================================
 
-def is_positioning_strategy(strategy_name: str) -> bool:
-    """Check if a strategy is positioning-driven based on template name.
 
-    Positioning strategies get product topics (seeded from brief).
-    Code-driven strategies (and custom/unrecognized) get implementation topics
-    (created from commit tags).
+def resolve_strategy_type(
+    strategy_name: str,
+    strategy_config: Any | None = None,
+    llm_client: Any | None = None,
+) -> str:
+    """Resolve whether a strategy is code-driven or positioning-driven.
+
+    Resolution order:
+    1. Explicit strategy_type field on the strategy config (set by previous classification)
+    2. Known template names (POSITIONING_TEMPLATES / CODE_DRIVEN_TEMPLATES)
+    3. LLM classification via StrategyClassifier agent (result cached on config)
+    4. Default: "code-driven"
+
+    When an LLM classification is made, the result is returned but NOT persisted here —
+    the caller should write it back to config via save_config() to cache for future calls.
     """
-    return strategy_name in POSITIONING_TEMPLATES
+    # 1. Check explicit strategy_type on config
+    if strategy_config is not None:
+        explicit_type = getattr(strategy_config, "strategy_type", None)
+        if explicit_type in ("code-driven", "positioning"):
+            return explicit_type
+
+    # 2. Check known template names
+    if strategy_name in POSITIONING_TEMPLATES:
+        return "positioning"
+    if strategy_name in CODE_DRIVEN_TEMPLATES:
+        return "code-driven"
+
+    # 3. LLM classification for custom strategies
+    if llm_client is not None and strategy_config is not None:
+        try:
+            from social_hook.llm.strategy_classifier import StrategyClassifier
+
+            classifier = StrategyClassifier(llm_client)
+            return classifier.classify(strategy_name, strategy_config)
+        except Exception:
+            logger.warning(
+                "LLM classification failed for strategy '%s', defaulting to code-driven",
+                strategy_name,
+                exc_info=True,
+            )
+
+    # 4. Default
+    return "code-driven"
+
+
+def is_positioning_strategy(strategy_name: str, strategy_config: Any | None = None) -> bool:
+    """Check if a strategy is positioning-driven.
+
+    Convenience wrapper around resolve_strategy_type(). For synchronous use
+    without LLM — checks config field and known templates only.
+    """
+    return resolve_strategy_type(strategy_name, strategy_config) == "positioning"
+
+
+def _persist_strategy_types(
+    strategy_types: dict[str, str],
+    strategy_configs: dict[str, Any] | None,
+) -> None:
+    """Write newly-resolved strategy_type values back to config.
+
+    Only writes if the config object has a strategy_type field that is currently
+    unset. Known templates don't need persisting — they're resolved from frozensets.
+    """
+    if not strategy_configs:
+        return
+
+    updates: dict[str, dict[str, str]] = {}
+    for name, resolved_type in strategy_types.items():
+        # Skip known templates — no need to persist
+        if name in POSITIONING_TEMPLATES or name in CODE_DRIVEN_TEMPLATES:
+            continue
+        scfg = strategy_configs.get(name)
+        if scfg is None:
+            continue
+        existing = getattr(scfg, "strategy_type", None)
+        if existing in ("code-driven", "positioning"):
+            continue  # Already persisted
+        updates[name] = {"strategy_type": resolved_type}
+
+    if not updates:
+        return
+
+    try:
+        from social_hook.config.yaml import get_config_path, save_config
+
+        save_config(
+            {"content_strategies": updates},
+            config_path=get_config_path(),
+            deep_merge=True,
+        )
+        logger.info(
+            "Persisted strategy_type for %d custom strategies: %s",
+            len(updates),
+            list(updates.keys()),
+        )
+    except Exception:
+        logger.warning("Failed to persist strategy_type classifications", exc_info=True)
 
 
 def _insert_topic_if_new(
@@ -76,27 +170,39 @@ def process_topic_suggestions(
     project_id: str,
     suggestions: list[Any],
     strategies: list[str],
+    strategy_configs: dict[str, Any] | None = None,
+    llm_client: Any | None = None,
 ) -> list[ContentTopic]:
     """Process topic suggestions from the commit analyzer (stage 1).
 
     Each suggestion has title, description, and strategy_type (code-driven or
     positioning). Topics are created scoped to the appropriate strategies based
-    on strategy_type.
+    on strategy_type. Custom strategies are classified via LLM on first use.
 
     Args:
         conn: Database connection
         project_id: Project ID
         suggestions: List of TopicSuggestion objects from analyzer
         strategies: All strategy names for the project
+        strategy_configs: Dict of strategy name -> ContentStrategyConfig (for LLM classification)
+        llm_client: Optional LLM client for classifying custom strategies
 
     Returns list of newly created ContentTopic objects.
     """
     if not suggestions or not strategies:
         return []
 
-    # Split strategies by type
-    positioning = [s for s in strategies if is_positioning_strategy(s)]
-    code_driven = [s for s in strategies if not is_positioning_strategy(s)]
+    # Resolve each strategy's type (uses config cache, template names, or LLM)
+    strategy_types: dict[str, str] = {}
+    for s in strategies:
+        scfg = strategy_configs.get(s) if strategy_configs else None
+        strategy_types[s] = resolve_strategy_type(s, scfg, llm_client)
+
+    # Persist any newly-classified strategy types back to config
+    _persist_strategy_types(strategy_types, strategy_configs)
+
+    positioning = [s for s in strategies if strategy_types[s] == "positioning"]
+    code_driven = [s for s in strategies if strategy_types[s] == "code-driven"]
 
     # Pre-fetch existing topics per strategy
     existing_by_strategy: dict[str, dict[str, ContentTopic]] = {}

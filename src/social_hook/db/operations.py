@@ -1852,6 +1852,78 @@ def get_deferred_eval_decisions(conn: sqlite3.Connection, project_id: str) -> li
     return [Decision.from_dict(dict(row)) for row in rows]
 
 
+def get_interval_deferred_decisions(conn: sqlite3.Connection, project_id: str) -> list[Decision]:
+    """Get interval-deferred decisions (processed=1, decision='deferred_eval').
+
+    These are commits that were deferred by commit_analysis_interval gating,
+    NOT by rate limits (which use processed=0). The batch_id IS NULL guard
+    ensures we don't re-gather decisions already included in a previous batch.
+
+    Returns decisions ordered by created_at ascending (oldest first).
+    """
+    rows = conn.execute(
+        """
+        SELECT * FROM decisions
+        WHERE project_id = ?
+          AND decision = 'deferred_eval'
+          AND processed = 1
+          AND batch_id IS NULL
+        ORDER BY created_at ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [Decision.from_dict(dict(row)) for row in rows]
+
+
+def mark_decisions_processing(conn: sqlite3.Connection, decision_ids: list[str]) -> int:
+    """Mark deferred decisions as 'processing' during batch evaluation.
+
+    Pure DB operation — caller handles event emission.
+
+    Returns number of rows updated.
+    """
+    if not decision_ids:
+        return 0
+    placeholders = ",".join("?" for _ in decision_ids)
+    cursor = conn.execute(
+        f"UPDATE decisions SET decision = 'processing' WHERE id IN ({placeholders})",
+        decision_ids,
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
+def mark_deferred_decisions_batched(
+    conn: sqlite3.Connection, decision_ids: list[str], batch_cycle_id: str
+) -> int:
+    """Mark decisions as included in a batch evaluation.
+
+    Reverts decision from 'processing' back to 'deferred_eval' with batch_id set.
+    Sets processed=1 (essential for rate-limit-deferred to prevent re-drain),
+    processed_at, batch_id, and reasoning.
+
+    Returns number of rows updated.
+    """
+    if not decision_ids:
+        return 0
+
+    placeholders = ",".join("?" for _ in decision_ids)
+    cursor = conn.execute(
+        f"""
+        UPDATE decisions
+        SET decision = 'deferred_eval',
+            processed = 1,
+            processed_at = datetime('now'),
+            batch_id = ?,
+            reasoning = ?
+        WHERE id IN ({placeholders})
+        """,
+        [batch_cycle_id, f"Included in batch evaluation {batch_cycle_id}"] + decision_ids,
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
 # =============================================================================
 # Project Summary
 # =============================================================================
@@ -2487,6 +2559,17 @@ def update_cycle_analysis_json(conn: sqlite3.Connection, cycle_id: str, analysis
     conn.execute(
         "UPDATE evaluation_cycles SET commit_analysis_json = ? WHERE id = ?",
         (analysis_json, cycle_id),
+    )
+    conn.commit()
+
+
+def update_cycle_diagnostics(
+    conn: sqlite3.Connection, cycle_id: str, diagnostics_json: str
+) -> None:
+    """Store pipeline diagnostics JSON on an evaluation cycle."""
+    conn.execute(
+        "UPDATE evaluation_cycles SET diagnostics = ? WHERE id = ?",
+        (diagnostics_json, cycle_id),
     )
     conn.commit()
 

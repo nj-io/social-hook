@@ -17,6 +17,7 @@ import {
   fetchDecisionBranches,
   fetchImportPreview,
   importCommits,
+  fetchTasks,
   type BackgroundTask,
 } from "@/lib/api";
 import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
@@ -63,7 +64,7 @@ export default function ProjectDetailPage() {
   const [branchFilter, setBranchFilter] = useState<string>("");
   const [decisionBranches, setDecisionBranches] = useState<string[]>([]);
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [importPreview, setImportPreview] = useState<{ total_commits: number; already_tracked: number; importable: number } | null>(null);
+  const [importPreview, setImportPreview] = useState<{ total_commits: number; already_tracked: number; importable: number; branches?: string[] } | null>(null);
   const [importBranch, setImportBranch] = useState<string>("");
   const [importLoading, setImportLoading] = useState(false);
   const [importRefreshKey, setImportRefreshKey] = useState(0);
@@ -428,11 +429,12 @@ export default function ProjectDetailPage() {
                     <th className="pb-2 pr-2 font-medium w-8"></th>
                     <th className="pb-2 pr-4 font-medium">Decision</th>
                     <th className="pb-2 pr-4 font-medium">Commit</th>
-                    <th className="pb-2 pr-4 font-medium">Reasoning</th>
-                    <th className="pb-2 pr-4 font-medium">Angle</th>
+                    <th className="pb-2 pr-4 font-medium min-w-[200px]">Reasoning</th>
+                    <th className="pb-2 pr-4 font-medium min-w-[120px]">Angle</th>
                     <th className="hidden pb-2 pr-4 font-medium sm:table-cell">Episode</th>
                     <th className="hidden pb-2 pr-4 font-medium md:table-cell">Category</th>
                     <th className="pb-2 pr-4 font-medium">Date</th>
+                    <th className="hidden pb-2 pr-4 font-medium lg:table-cell">Branch</th>
                     <th className="pb-2 pr-4 font-medium">Drafts</th>
                     <th className="pb-2 pr-4 font-medium">Actions</th>
                     <th className="pb-2 font-medium">Status</th>
@@ -442,7 +444,7 @@ export default function ProjectDetailPage() {
                   {decisions.map((d) => {
                     const isExpanded = expandedDecisions.has(d.id);
                     const isCreating = isTaskRunning(d.id);
-                    const isEvaluating = isTaskRunning(`retrigger-${d.id}`) || d.decision === "evaluating";
+                    const isProcessing = isTaskRunning(`retrigger-${d.id}`) || d.decision === "processing";
                     const evalTask = getTask(`retrigger-${d.id}`);
                     const result = draftResult[d.id];
                     return (
@@ -467,7 +469,7 @@ export default function ProjectDetailPage() {
                           />
                         </td>
                         <td className="py-2 pr-4">
-                          <Badge value={d.decision} variant="decision" />
+                          <Badge value={d.decision === "deferred_eval" && d.batch_id ? "batched" : d.decision} variant="decision" />
                         </td>
                         <td className="py-2 pr-4">
                           <div>
@@ -520,7 +522,11 @@ export default function ProjectDetailPage() {
                           </div>
                         </td>
                         <td className="py-2 pr-4 text-xs">
-                          <p className="whitespace-pre-wrap">{d.decision === "evaluating" ? "" : (d.reasoning || "-")}</p>
+                          {d.decision === "deferred_eval" && d.batch_id ? (
+                            <span className="text-muted-foreground">Included in batch <code className="rounded bg-muted px-1 py-0.5 text-xs">{d.batch_id.slice(0, 12)}</code></span>
+                          ) : (
+                            <p className="whitespace-pre-wrap">{d.decision === "processing" ? "" : (d.reasoning || "-")}</p>
+                          )}
                         </td>
                         <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
                         <td className="hidden py-2 pr-4 sm:table-cell">
@@ -531,6 +537,13 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="py-2 pr-4 text-xs text-muted-foreground">
                           {new Date(d.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="hidden py-2 pr-4 lg:table-cell">
+                          {d.branch ? (
+                            <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{d.branch}</code>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">&mdash;</span>
+                          )}
                         </td>
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           {d.draft_count > 0 ? (
@@ -546,11 +559,13 @@ export default function ProjectDetailPage() {
                         </td>
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1.5">
-                            {(d.decision === "imported" || d.decision === "evaluating") ? (
+                            {d.decision === "deferred_eval" && d.batch_id ? (
+                              <span className="text-xs text-muted-foreground">Batched</span>
+                            ) : (d.decision === "imported" || d.decision === "processing") ? (
                               <AsyncButton
-                                loading={isEvaluating}
+                                loading={isProcessing}
                                 startTime={evalTask?.created_at}
-                                loadingText="Evaluating"
+                                loadingText="Processing"
                                 onClick={async () => {
                                   setActionError(null);
                                   try {
@@ -562,13 +577,16 @@ export default function ProjectDetailPage() {
                                     setActionError(err instanceof Error ? err.message : "Evaluate failed");
                                   }
                                 }}
-                                disabled={isEvaluating}
+                                disabled={isProcessing}
                                 className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950 disabled:opacity-70"
                               >
                                 Evaluate
                               </AsyncButton>
                             ) : (
-                              <button
+                              <AsyncButton
+                                loading={isCreating}
+                                startTime={getTask(d.id)?.created_at}
+                                loadingText="Drafting"
                                 onClick={() => onCreateDraftClick(d.id, d.draft_count > 0)}
                                 disabled={isCreating}
                                 className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium disabled:opacity-70 ${
@@ -576,20 +594,9 @@ export default function ProjectDetailPage() {
                                     ? "border border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
                                     : "bg-accent text-accent-foreground hover:bg-accent/80"
                                 }`}
-                                title={platformCount === 0 ? "No platforms configured" : `Draft for ${platformCount} platform${platformCount !== 1 ? "s" : ""}`}
                               >
-                                {isCreating && (
-                                  <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                                  </svg>
-                                )}
-                                {isCreating
-                                  ? "Creating..."
-                                  : d.draft_count > 0
-                                    ? "Draft Created"
-                                    : "Create Draft"}
-                              </button>
+                                {d.draft_count > 0 ? "Draft Created" : "Create Draft"}
+                              </AsyncButton>
                             )}
                           </div>
                         </td>
@@ -858,7 +865,7 @@ export default function ProjectDetailPage() {
             }}
           >
             <option value="">All branches</option>
-            {decisionBranches.map((b) => (
+            {(importPreview?.branches || []).map((b) => (
               <option key={b} value={b}>{b}</option>
             ))}
           </select>
@@ -877,6 +884,21 @@ export default function ProjectDetailPage() {
               try {
                 const res = await importCommits(id, importBranch || null);
                 trackTask(res.task_id, "__import__", "import_commits");
+                // Poll for completion since WebSocket callback can miss fast tasks
+                const poll = setInterval(async () => {
+                  try {
+                    const { tasks: all } = await fetchTasks({ project_id: id });
+                    const task = all.find((t) => t.id === res.task_id);
+                    if (task && task.status !== "running") {
+                      clearInterval(poll);
+                      setImportModalOpen(false);
+                      setImportLoading(false);
+                      setImportRefreshKey((k) => k + 1);
+                    }
+                  } catch { /* keep polling */ }
+                }, 2000);
+                // Safety: stop polling after 5 minutes
+                setTimeout(() => clearInterval(poll), 300_000);
               } catch {
                 setImportLoading(false);
               }

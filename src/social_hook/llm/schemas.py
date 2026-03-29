@@ -152,7 +152,7 @@ class LogEvaluationInput(BaseModel):
         """Return JSON schema dict for Claude's tools parameter."""
         return {
             "name": "log_evaluation",
-            "description": "Record the evaluation for a commit with per-target decisions and optional queue management",
+            "description": "Record the evaluation for a commit with per-strategy decisions and optional queue management",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -178,7 +178,7 @@ class LogEvaluationInput(BaseModel):
                     },
                     "targets": {
                         "type": "object",
-                        "description": "Per-target decisions. Use 'default' for the primary decision.",
+                        "description": "Per-strategy decisions. Use the exact strategy names from the Content Strategies section (e.g. 'building-public', 'brand-primary'). One entry per strategy.",
                         "additionalProperties": {
                             "type": "object",
                             "properties": {
@@ -680,3 +680,33 @@ class CommitAnalysisResult(BaseModel):
             return cls.model_validate(data)
         except ValidationError as e:
             raise MalformedResponseError(f"Invalid log_commit_analysis input: {e}") from e
+
+
+# =============================================================================
+# Strategy Classification (one-time LLM classification for custom strategies)
+# =============================================================================
+
+STRATEGY_CLASSIFICATION_TOOL: dict[str, Any] = {
+    "name": "classify_strategy",
+    "description": "Classify a content strategy as code-driven or positioning-driven",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "strategy_type": {
+                "type": "string",
+                "enum": ["code-driven", "positioning"],
+                "description": (
+                    "code-driven: content sourced from commits/code — aimed at developers "
+                    "who want to see how things are built. "
+                    "positioning: content sourced from product brief — aimed at users/buyers "
+                    "who care about what the product does for them."
+                ),
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation for the classification",
+            },
+        },
+        "required": ["strategy_type"],
+    },
+}

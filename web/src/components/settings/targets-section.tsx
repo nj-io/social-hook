@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Target, Account, Strategy } from "@/lib/types";
-import { fetchTargets, addTarget, disableTarget, enableTarget, fetchAccounts, fetchStrategies, fetchProjects } from "@/lib/api";
+import { fetchTargets, addTarget, disableTarget, enableTarget, deleteTarget, fetchAccounts, fetchStrategies, fetchProjects } from "@/lib/api";
 import type { Project } from "@/lib/types";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/lib/toast-context";
+import { useDataEvents } from "@/lib/use-data-events";
 
 export function TargetsSection() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -21,7 +23,10 @@ export function TargetsSection() {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
   const [confirmDisable, setConfirmDisable] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const { addToast } = useToast();
 
   const loadProjects = useCallback(async () => {
     try {
@@ -31,11 +36,11 @@ export function TargetsSection() {
         setSelectedProject(res.projects[0].id);
       }
     } catch {
-      // silent
+      addToast("Failed to load projects", { variant: "error" });
     } finally {
       setLoading(false);
     }
-  }, [selectedProject]);
+  }, [selectedProject, addToast]);
 
   useEffect(() => { loadProjects(); }, [loadProjects]);
 
@@ -72,9 +77,14 @@ export function TargetsSection() {
         setStrategies([]);
       }
     } catch {
-      // silent
+      addToast("Failed to load targets", { variant: "error" });
     }
-  }, []);
+  }, [addToast]);
+
+  const reloadCurrentProject = useCallback(() => {
+    if (selectedProject) loadTargets(selectedProject);
+  }, [selectedProject, loadTargets]);
+  useDataEvents(["config"], reloadCurrentProject);
 
   useEffect(() => {
     if (selectedProject) loadTargets(selectedProject);
@@ -111,9 +121,10 @@ export function TargetsSection() {
     setToggling(name);
     try {
       await enableTarget(selectedProject, name);
+      addToast("Target enabled");
       await loadTargets(selectedProject);
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to enable target", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     } finally {
       setToggling(null);
     }
@@ -124,11 +135,27 @@ export function TargetsSection() {
     setConfirmDisable(null);
     try {
       await disableTarget(selectedProject, name);
+      addToast("Target disabled");
       await loadTargets(selectedProject);
-    } catch {
-      // silent
+    } catch (e) {
+      addToast("Failed to disable target", { variant: "error", detail: e instanceof Error ? e.message : undefined });
     } finally {
       setToggling(null);
+    }
+  }
+
+  async function handleDelete(name: string) {
+    setDeleting(true);
+    try {
+      await deleteTarget(selectedProject, name);
+      setConfirmDelete(null);
+      addToast("Target deleted");
+      await loadTargets(selectedProject);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : undefined;
+      addToast("Failed to delete target", { variant: "error", detail: msg });
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -194,17 +221,25 @@ export function TargetsSection() {
                   {target.frequency && ` | Frequency: ${target.frequency}`}
                 </p>
               </div>
-              <button
-                onClick={() => handleToggle(target.id, target.enabled)}
-                disabled={toggling === target.id}
-                className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
-                  target.enabled
-                    ? "border-yellow-300 text-yellow-700 hover:bg-yellow-50 dark:border-yellow-700 dark:text-yellow-400 dark:hover:bg-yellow-950"
-                    : "border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
-                }`}
-              >
-                {toggling === target.id ? "..." : target.enabled ? "Disable" : "Enable"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleToggle(target.id, target.enabled)}
+                  disabled={toggling === target.id}
+                  className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+                    target.enabled
+                      ? "border-yellow-300 text-yellow-700 hover:bg-yellow-50 dark:border-yellow-700 dark:text-yellow-400 dark:hover:bg-yellow-950"
+                      : "border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
+                  }`}
+                >
+                  {toggling === target.id ? "..." : target.enabled ? "Disable" : "Enable"}
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(target.id)}
+                  className="text-xs text-muted-foreground hover:text-destructive"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -293,6 +328,26 @@ export function TargetsSection() {
             className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80"
           >
             Disable
+          </button>
+        </div>
+      </Modal>
+
+      {/* Delete confirmation */}
+      <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="max-w-sm">
+        <h3 className="text-sm font-semibold">Delete Target</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This will permanently remove the target and cancel any pending drafts. This cannot be undone.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={() => setConfirmDelete(null)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+            Cancel
+          </button>
+          <button
+            onClick={() => confirmDelete && handleDelete(confirmDelete)}
+            disabled={deleting}
+            className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/80 disabled:opacity-50"
+          >
+            {deleting ? "Deleting..." : "Delete"}
           </button>
         </div>
       </Modal>
