@@ -4023,7 +4023,6 @@ async def api_disable_target(project_id: str, name: str):
     save_config(
         {"targets": {name: target_data}},
         config_path=get_config_path(),
-        deep_merge=True,
     )
     _invalidate_config()
 
@@ -4078,7 +4077,6 @@ async def api_enable_target(project_id: str, name: str):
     save_config(
         {"targets": {name: target_data}},
         config_path=get_config_path(),
-        deep_merge=True,
     )
     _invalidate_config()
 
