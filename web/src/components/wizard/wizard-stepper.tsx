@@ -10,21 +10,21 @@ interface WizardStepperProps {
 export function WizardStepper({ steps, currentStep, completedSteps, onStepClick }: WizardStepperProps) {
   return (
     <>
-      {/* Desktop: horizontal stepper */}
-      <div className="hidden sm:flex items-center justify-center gap-1">
+      {/* Desktop: horizontal stepper — scrolls when steps overflow */}
+      <div className="hidden sm:flex items-center gap-0.5 overflow-x-auto scrollbar-none">
         {steps.map((label, i) => {
           const isActive = i === currentStep;
           const isCompleted = completedSteps.has(i);
           const isClickable = isCompleted || i <= currentStep;
           return (
-            <div key={i} className="flex items-center">
+            <div key={i} className="flex shrink-0 items-center">
               {i > 0 && (
-                <div className={`mx-1 h-px w-4 ${isCompleted || i <= currentStep ? "bg-accent" : "bg-border"}`} />
+                <div className={`mx-0.5 h-px w-3 ${isCompleted || i <= currentStep ? "bg-accent" : "bg-border"}`} />
               )}
               <button
                 onClick={() => isClickable && onStepClick(i)}
                 disabled={!isClickable}
-                className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors ${
                   isActive
                     ? "bg-accent text-accent-foreground"
                     : isCompleted
@@ -33,7 +33,7 @@ export function WizardStepper({ steps, currentStep, completedSteps, onStepClick 
                 } ${isClickable ? "cursor-pointer" : "cursor-default"}`}
               >
                 <span
-                  className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ${
+                  className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-semibold ${
                     isActive
                       ? "bg-accent-foreground/20 text-accent-foreground"
                       : isCompleted
@@ -43,7 +43,7 @@ export function WizardStepper({ steps, currentStep, completedSteps, onStepClick 
                 >
                   {isCompleted ? "\u2713" : i + 1}
                 </span>
-                <span className="hidden lg:inline">{label}</span>
+                <span className="hidden xl:inline">{label}</span>
               </button>
             </div>
           );

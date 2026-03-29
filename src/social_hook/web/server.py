@@ -3012,6 +3012,38 @@ async def api_get_branches(project_id: str):
     return {"branches": branches, "current": current}
 
 
+@app.get("/api/git/branches")
+async def api_git_branches_by_path(repo_path: str = Query(...)):
+    """List git branches for any repo path (used by wizard before project registration)."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "branch", "--format=%(refname:short)"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+    except (subprocess.CalledProcessError, OSError):
+        return {"branches": [], "current": None}
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        current: str | None = result.stdout.strip()
+        if current == "HEAD":
+            current = None
+    except (subprocess.CalledProcessError, OSError):
+        current = None
+
+    return {"branches": branches, "current": current}
+
+
 @app.put("/api/projects/{project_id}/trigger-branch")
 async def api_set_trigger_branch(project_id: str, body: dict = Body(...)):
     """Set the trigger branch filter for a project."""

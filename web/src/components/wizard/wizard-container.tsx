@@ -260,6 +260,16 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
         projectId = projectRes.project?.id;
       }
 
+      // 4b. Set trigger branch if selected
+      if (projectId && data.triggerBranch) {
+        try {
+          const { updateProjectTriggerBranch } = await import("@/lib/api");
+          await updateProjectTriggerBranch(projectId, data.triggerBranch);
+        } catch {
+          // Non-fatal — branch filter can be set later in Settings
+        }
+      }
+
       // 5. Import commits + generate summary draft
       if (projectId) {
         try {
@@ -373,9 +383,11 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
             repoPath={data.repoPath}
             projectName={data.projectName}
             installGitHook={data.installGitHook}
+            triggerBranch={data.triggerBranch}
             onRepoPathChange={(repoPath) => updateData({ repoPath })}
             onProjectNameChange={(projectName) => updateData({ projectName })}
             onInstallGitHookChange={(installGitHook) => updateData({ installGitHook })}
+            onTriggerBranchChange={(triggerBranch) => updateData({ triggerBranch })}
           />
         )}
         {activeStep === "Summary" && (

@@ -276,6 +276,10 @@ export async function fetchProjectBranches(id: string): Promise<{ branches: stri
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/branches`);
 }
 
+export async function fetchGitBranches(repoPath: string): Promise<{ branches: string[]; current: string | null }> {
+  return apiFetch(`/api/git/branches?repo_path=${encodeURIComponent(repoPath)}`);
+}
+
 export async function updateProjectTriggerBranch(id: string, branch: string | null): Promise<{ status: string; trigger_branch: string | null }> {
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/trigger-branch`, {
     method: "PUT",
