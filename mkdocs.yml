@@ -85,7 +85,7 @@ nav:
     - project: cli/project.md
     - snapshot: cli/snapshot.md
     - strategy: cli/strategy.md
-    - system: cli/system.md
+    - logs: cli/logs.md
     - target: cli/target.md
     - topics: cli/topics.md
   - Concepts:

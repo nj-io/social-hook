@@ -147,7 +147,9 @@ For each enabled platform that passes the content filter:
 
 ### Preview mode
 
-If no platforms are configured, the system auto-injects a synthetic "preview" platform (2,000 char limit, filter=all). This lets you run the full pipeline and see what it would generate without setting up real platform credentials.
+When a strategy has no connected targets (no account + destination), the pipeline still drafts content but marks each draft as `preview_mode=True`. Preview drafts let you run the full pipeline and review what it would generate without configuring real platform credentials.
+
+To publish a preview draft, either promote it to a specific platform (`draft promote`) or connect it to an existing account (`draft connect`). Both operations clear preview mode and make the draft eligible for scheduling.
 
 ### Audience introduction
 

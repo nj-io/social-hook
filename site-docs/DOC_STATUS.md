@@ -1,5 +1,5 @@
-<!-- last_run_commit: cf5db9ecc580f240abb7ce09606f70bd8f561c79 -->
-<!-- last_run_date: 2026-03-29 -->
+<!-- last_run_commit: 6688d91b2ee4da630f9dec8dae1d776ae89b5a4c -->
+<!-- last_run_date: 2026-03-30 -->
 
 # Documentation Status
 
@@ -28,7 +28,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `credentials *` | ok | Group help enriched; subcommand docstrings already good |
 | `cycles *` | ok | Group help enriched; subcommand docstrings already good |
 | `strategy *` | ok | Group help enriched; subcommand docstrings already good |
-| `system *` | ok | Group help enriched; subcommand docstrings already good |
+| `logs *` | ok | Replaced `system *`; query, tail, clear, health subcommands |
 | `target *` | ok | Group help enriched; subcommand docstrings already good |
 | `topics *` | ok | Group help enriched; subcommand docstrings already good |
 | `draft approve` | ok | Enriched: explains scheduler interaction |
@@ -48,13 +48,14 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `draft reopen` | ok | |
 | `draft show` | ok | |
 | `draft unapprove` | ok | |
+| `draft connect` | ok | New: links preview draft to an account |
 | `draft unschedule` | ok | |
 
 ## Conceptual Docs (site-docs/concepts/)
 
 | Page | Status | Notes |
 |------|--------|-------|
-| pipeline.md | stale | Needs update for targets/routing/topics — major pipeline changes |
+| pipeline.md | partial | Preview mode section updated; still needs targets/routing/topics integration |
 | narrative-arcs.md | stale | Arcs now tied to strategies — needs update |
 | voice-memory.md | complete | |
 | media-generation.md | complete | |
@@ -83,6 +84,11 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-03-30 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-03-30 | Fixed: `system` → `logs` |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-03-30 | |
+| `ruff check src/ tests/` passes | 2026-03-30 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-03-30 | 28 errors, all `import-untyped` or pre-existing |
 
 ## Backlog (waiting_approval)
 

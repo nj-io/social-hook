@@ -37,9 +37,9 @@ These options can be placed before any command.
 | [`memory`](memory.md) | Manage voice memories. |
 | [`project`](project.md) | Project management. |
 | [`snapshot`](snapshot.md) | DB snapshot management. |
-| [`strategy`](strategy.md) | Content strategy management. |
-| [`target`](target.md) | Content distribution targets. |
-| [`topics`](topics.md) | Content topic queue. |
+| [`strategy`](strategy.md) | View and customize content strategies (voice, audience, editorial rules). |
+| [`target`](target.md) | Configure where content is distributed (account + destination + strategy). |
+| [`topics`](topics.md) | Manage the prioritised content topic queue per strategy. |
 
 ## Commands
 
