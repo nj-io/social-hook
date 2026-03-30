@@ -79,6 +79,9 @@ Example: social-hook target disable product/timeline --yes
 
 Re-enable a disabled target.
 
+Sets the target status back to 'active'. Previously cancelled drafts
+are not restored -- new drafts will be created on the next trigger.
+
 Example: social-hook target enable product/timeline
 
 **Arguments:**

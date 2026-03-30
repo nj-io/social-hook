@@ -8,6 +8,12 @@ Manual operations.
 
 Consolidate multiple decisions into a single draft.
 
+Combines two or more commit decisions into one draft when individual
+commits are too small to post alone. All decisions must belong to the
+same project. The most recent decision is used as the anchor.
+
+Example: social-hook manual consolidate decision-aaa decision-bbb decision-ccc
+
 **Arguments:**
 
 | Name | Required | Description |
@@ -19,6 +25,12 @@ Consolidate multiple decisions into a single draft.
 ### `social-hook manual draft`
 
 Manually create drafts from an existing decision.
+
+Use when a decision exists but drafts were not generated automatically
+(e.g., after a rewind). Calls the LLM drafter to produce platform-specific
+content for all enabled platforms, or a single platform with --platform.
+
+Example: social-hook manual draft decision-abc123 --platform x
 
 **Arguments:**
 
@@ -59,6 +71,12 @@ Example: social-hook manual evaluate abc1234 --repo /path/to/repo
 ### `social-hook manual post`
 
 Manually post an approved draft.
+
+Posts immediately rather than waiting for the scheduler. The draft must
+be in a pending status (draft, approved, scheduled, or deferred) and
+have a connected account (not in preview mode).
+
+Example: social-hook manual post draft-abc123
 
 **Arguments:**
 
