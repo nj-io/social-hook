@@ -31,15 +31,15 @@ These options can be placed before any command.
 | [`draft`](draft.md) | Draft lifecycle management. |
 | [`inspect`](inspect.md) | Inspect system state. |
 | [`journey`](journey.md) | Development Journey capture. |
+| [`logs`](logs.md) | Log queries, tailing, and health. |
 | [`manual`](manual.md) | Manual operations. |
 | [`media`](media.md) | Media management. |
 | [`memory`](memory.md) | Manage voice memories. |
 | [`project`](project.md) | Project management. |
 | [`snapshot`](snapshot.md) | DB snapshot management. |
-| [`strategy`](strategy.md) | View and customize content strategies (voice, audience, editorial rules). |
-| [`system`](system.md) | Monitor system health, view error feed, and check process status. |
-| [`target`](target.md) | Configure where content is distributed (account + destination + strategy). |
-| [`topics`](topics.md) | Manage the prioritised content topic queue per strategy. |
+| [`strategy`](strategy.md) | Content strategy management. |
+| [`target`](target.md) | Content distribution targets. |
+| [`topics`](topics.md) | Content topic queue. |
 
 ## Commands
 

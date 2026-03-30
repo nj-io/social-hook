@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Memory } from "@/lib/types";
 import { addMemory, deleteMemory, clearMemories } from "@/lib/api";
+import { Modal } from "@/components/ui/modal";
 
 interface MemoriesSectionProps {
   memories: Memory[];
@@ -12,6 +13,8 @@ interface MemoriesSectionProps {
 
 export function MemoriesSection({ memories, projectPath, onRefresh }: MemoriesSectionProps) {
   const [showForm, setShowForm] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
   const [context, setContext] = useState("");
   const [feedback, setFeedback] = useState("");
   const [draftId, setDraftId] = useState("");
@@ -48,12 +51,15 @@ export function MemoriesSection({ memories, projectPath, onRefresh }: MemoriesSe
   }
 
   async function handleClear() {
-    if (!confirm("Clear all memories? This cannot be undone.")) return;
+    setClearingAll(true);
     try {
       await clearMemories(projectPath);
+      setShowClearConfirm(false);
       onRefresh();
     } catch {
       // Silent
+    } finally {
+      setClearingAll(false);
     }
   }
 
@@ -71,7 +77,7 @@ export function MemoriesSection({ memories, projectPath, onRefresh }: MemoriesSe
         <div className="flex items-center gap-2">
           {memories.length > 0 && (
             <button
-              onClick={handleClear}
+              onClick={() => setShowClearConfirm(true)}
               className="text-xs text-destructive hover:underline"
             >
               Clear all
@@ -174,6 +180,29 @@ export function MemoriesSection({ memories, projectPath, onRefresh }: MemoriesSe
           </table>
         </div>
       )}
+
+      <Modal open={showClearConfirm} onClose={() => !clearingAll && setShowClearConfirm(false)} maxWidth="max-w-sm">
+        <h3 className="text-sm font-semibold">Clear all memories?</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This will permanently delete {memories.length} voice memor{memories.length !== 1 ? "ies" : "y"}. This cannot be undone.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={() => setShowClearConfirm(false)}
+            disabled={clearingAll}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleClear}
+            disabled={clearingAll}
+            className="rounded-md bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {clearingAll ? "Clearing..." : "Clear all"}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

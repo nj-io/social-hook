@@ -12,9 +12,10 @@ from social_hook.llm.schemas import (
     StrategyDecisionInput,
     TargetAction,
 )
-from social_hook.models import CommitInfo, Project
+from social_hook.models.core import CommitInfo, Project
 from social_hook.rate_limits import GateResult
 from social_hook.trigger import (
+    TriggerContext,
     _run_targets_path,
 )
 
@@ -233,21 +234,25 @@ class TestRunTargetsPathNotification:
             from social_hook.llm.dry_run import DryRunContext
 
             db = DryRunContext(temp_db, dry_run=False)
-            _run_targets_path(
-                evaluation=evaluation,
-                analysis=evaluation.commit_analysis,
+            ctx = TriggerContext(
                 config=config,
                 conn=temp_db,
                 db=db,
                 project=project,
                 commit=commit,
-                commit_hash="notif123",
-                context=context,
                 project_config=None,
                 current_branch="main",
-                evaluator_client=MagicMock(),
                 dry_run=False,
                 verbose=False,
+                show_prompt=False,
+            )
+            _run_targets_path(
+                ctx=ctx,
+                evaluation=evaluation,
+                analysis=evaluation.commit_analysis,
+                commit_hash="notif123",
+                context=context,
+                evaluator_client=MagicMock(),
             )
             mock_notify.assert_called_once()
 
@@ -277,21 +282,25 @@ class TestRunTargetsPathNotification:
             from social_hook.llm.dry_run import DryRunContext
 
             db = DryRunContext(temp_db, dry_run=False)
-            _run_targets_path(
-                evaluation=evaluation,
-                analysis=evaluation.commit_analysis,
+            ctx = TriggerContext(
                 config=config,
                 conn=temp_db,
                 db=db,
                 project=project,
                 commit=commit,
-                commit_hash="quiet123",
-                context=context,
                 project_config=None,
                 current_branch="main",
-                evaluator_client=MagicMock(),
                 dry_run=False,
                 verbose=False,
+                show_prompt=False,
+            )
+            _run_targets_path(
+                ctx=ctx,
+                evaluation=evaluation,
+                analysis=evaluation.commit_analysis,
+                commit_hash="quiet123",
+                context=context,
+                evaluator_client=MagicMock(),
             )
             mock_notify.assert_not_called()
 
@@ -332,21 +341,25 @@ class TestRunTargetsPathHoldEnforcement:
             from social_hook.llm.dry_run import DryRunContext
 
             db = DryRunContext(temp_db, dry_run=False)
-            _run_targets_path(
-                evaluation=evaluation,
-                analysis=evaluation.commit_analysis,
+            ctx = TriggerContext(
                 config=config,
                 conn=temp_db,
                 db=db,
                 project=project,
                 commit=commit,
-                commit_hash="hold123",
-                context=context,
-                project_config=None,  # default max_hold = 5
+                project_config=None,
                 current_branch="main",
-                evaluator_client=MagicMock(),
                 dry_run=False,
                 verbose=False,
+                show_prompt=False,
+            )
+            _run_targets_path(
+                ctx=ctx,
+                evaluation=evaluation,
+                analysis=evaluation.commit_analysis,
+                commit_hash="hold123",
+                context=context,
+                evaluator_client=MagicMock(),
             )
 
         decisions = ops.get_recent_decisions(temp_db, "proj-hold")
@@ -394,21 +407,25 @@ class TestRunTargetsPathDrafting:
             from social_hook.llm.dry_run import DryRunContext
 
             db = DryRunContext(temp_db, dry_run=False)
-            _run_targets_path(
-                evaluation=evaluation,
-                analysis=evaluation.commit_analysis,
+            ctx = TriggerContext(
                 config=config,
                 conn=temp_db,
                 db=db,
                 project=project,
                 commit=commit,
-                commit_hash="draft123",
-                context=context,
                 project_config=None,
                 current_branch="main",
-                evaluator_client=MagicMock(),
                 dry_run=False,
                 verbose=False,
+                show_prompt=False,
+            )
+            _run_targets_path(
+                ctx=ctx,
+                evaluation=evaluation,
+                analysis=evaluation.commit_analysis,
+                commit_hash="draft123",
+                context=context,
+                evaluator_client=MagicMock(),
             )
 
             mock_route.assert_called_once()

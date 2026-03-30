@@ -10,8 +10,9 @@ from social_hook.config.targets import (
     is_default_target_preview,
     resolve_default_platform,
 )
-from social_hook.models import ContentTopic, Project
-from social_hook.topics import force_draft_topic, seed_topics_from_brief
+from social_hook.models.content import ContentTopic
+from social_hook.models.core import Project
+from social_hook.topics import force_draft_topic, process_topic_suggestions
 
 # =============================================================================
 # resolve_default_platform
@@ -184,9 +185,9 @@ class TestForceDraftTopicNoConfig:
 
 
 class TestForceDraftTopicWrongStatus:
-    """force_draft_topic rejects topics not in 'holding' status."""
+    """force_draft_topic rejects topics not in 'holding' or 'uncovered' status."""
 
-    def test_uncovered_topic_returns_none(self, temp_db):
+    def test_uncovered_topic_succeeds(self, temp_db):
         from social_hook.db import operations as ops
 
         project = Project(id="proj-wrong", name="test", repo_path="/tmp/test")
@@ -197,7 +198,7 @@ class TestForceDraftTopicWrongStatus:
             project_id="proj-wrong",
             strategy="s1",
             topic="Test",
-            status="uncovered",  # Not 'holding'
+            status="uncovered",
         )
         ops.insert_content_topic(temp_db, topic)
 
@@ -206,6 +207,30 @@ class TestForceDraftTopicWrongStatus:
             config=None,
             project_id="proj-wrong",
             topic_id="topic-wrong",
+            strategy="s1",
+        )
+        assert result is not None  # uncovered topics can be force-drafted
+
+    def test_covered_topic_returns_none(self, temp_db):
+        from social_hook.db import operations as ops
+
+        project = Project(id="proj-cov", name="test", repo_path="/tmp/test")
+        ops.insert_project(temp_db, project)
+
+        topic = ContentTopic(
+            id="topic-cov",
+            project_id="proj-cov",
+            strategy="s1",
+            topic="Test",
+            status="covered",
+        )
+        ops.insert_content_topic(temp_db, topic)
+
+        result = force_draft_topic(
+            conn=temp_db,
+            config=None,
+            project_id="proj-cov",
+            topic_id="topic-cov",
             strategy="s1",
         )
         assert result is None
@@ -305,19 +330,25 @@ class TestForceDraftTopicTargetsPath:
 
 
 # =============================================================================
-# seed_topics_from_brief: no strategies
+# process_topic_suggestions: edge cases
 # =============================================================================
 
 
-class TestSeedTopicsFromBrief:
-    """seed_topics_from_brief edge cases."""
+class _FakeSuggestion:
+    def __init__(self, title, description=None, strategy_type="code-driven"):
+        self.title = title
+        self.description = description
+        self.strategy_type = strategy_type
 
-    def test_empty_strategies_returns_empty(self, temp_db):
-        result = seed_topics_from_brief(temp_db, "proj-1", "## Key Capabilities\n- Feature", [])
+
+class TestProcessTopicSuggestions:
+    """process_topic_suggestions edge cases."""
+
+    def test_empty_suggestions_returns_empty(self, temp_db):
+        result = process_topic_suggestions(temp_db, "proj-1", [], ["building-public"])
         assert result == []
 
-    def test_no_capabilities_section_returns_empty(self, temp_db):
-        result = seed_topics_from_brief(
-            temp_db, "proj-1", "# Brief\n\nNo caps section here.", ["s1"]
-        )
+    def test_empty_strategies_returns_empty(self, temp_db):
+        suggestions = [_FakeSuggestion("Test Topic")]
+        result = process_topic_suggestions(temp_db, "proj-1", suggestions, [])
         assert result == []

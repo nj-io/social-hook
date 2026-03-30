@@ -6,6 +6,7 @@ import logging
 import typer
 
 from social_hook.cli.utils import resolve_project
+from social_hook.models.enums import PENDING_STATUSES
 
 app = typer.Typer(no_args_is_help=True)
 logger = logging.getLogger(__name__)
@@ -148,6 +149,75 @@ def add(
             typer.echo(json_mod.dumps({"added": True, "target": new_target}, indent=2))
         else:
             typer.echo(f"Added target: {account}/{destination} -> {strategy}")
+    finally:
+        conn.close()
+
+
+@app.command()
+def delete(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Target name to delete"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Delete a target and cancel its pending drafts.
+
+    Permanently removes the target from config. Pending drafts for
+    this target will be cancelled. This cannot be undone.
+
+    Example: social-hook target delete x-lead-timeline --yes
+    """
+    from social_hook.config.yaml import load_full_config
+    from social_hook.db import operations as ops
+    from social_hook.filesystem import get_config_path
+
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn = _get_conn()
+    try:
+        proj = _resolve_proj(conn, project_path)
+
+        config = load_full_config()
+        if name not in config.targets:
+            msg = f"Target not found: {name}"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if not yes and not typer.confirm(
+            f"Delete target '{name}'? Pending drafts will be cancelled."
+        ):
+            typer.echo("Cancelled.")
+            return
+
+        # Cancel pending drafts
+        placeholders = ",".join("?" for _ in PENDING_STATUSES)
+        pending = conn.execute(
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({placeholders})",
+            (proj.id, name, *PENDING_STATUSES),
+        ).fetchall()
+        for row in pending:
+            ops.update_draft(conn, row["id"], status="cancelled")
+
+        # Remove from config
+        from social_hook.config.yaml import delete_config_key
+
+        delete_config_key(get_config_path(), "targets", name)
+
+        if json_output:
+            typer.echo(
+                json_mod.dumps(
+                    {"deleted": True, "target": name, "cancelled_drafts": len(pending)},
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(f"Target '{name}' deleted. {len(pending)} draft(s) cancelled.")
     finally:
         conn.close()
 

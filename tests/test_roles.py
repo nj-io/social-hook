@@ -20,15 +20,9 @@ from social_hook.llm.schemas import (
     RouteAction,
     RouteActionInput,
 )
-from social_hook.models import (
-    Arc,
-    CommitInfo,
-    Draft,
-    Lifecycle,
-    Post,
-    Project,
-    ProjectContext,
-)
+from social_hook.models.context import ProjectContext
+from social_hook.models.core import CommitInfo, Draft, Post, Project
+from social_hook.models.narrative import Arc, Lifecycle
 
 # =============================================================================
 # Helpers

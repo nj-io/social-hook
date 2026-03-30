@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from social_hook.config.platforms import FREQUENCY_PRESETS, SMART_DEFAULTS
+from social_hook.config.platforms import FREQUENCY_PRESETS, PLATFORM_THREAD_SUPPORT, SMART_DEFAULTS
 from social_hook.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -57,6 +57,7 @@ class TargetConfig:
     source: str | None = None  # ref to another target (hard dependency)
     community_id: str | None = None  # required when destination=community
     share_with_followers: bool = False
+    status: str | None = None  # "disabled" or None (enabled)
     frequency: str | None = None  # "high", "moderate", "low", "minimal"
     scheduling: dict | None = None  # per-target overrides
 
@@ -252,3 +253,81 @@ def validate_targets_config(config: Config) -> None:
                 f"Target '{target_name}' has invalid destination '{target.destination}': "
                 f"must be one of {sorted(VALID_DESTINATIONS)}"
             )
+
+    # --- Strategy constraint validation ---
+    validate_strategy_constraints(config)
+
+
+def validate_strategy_constraints(config: Config) -> None:
+    """Validate cross-cutting constraints between strategies and platforms.
+
+    Checks:
+    - strategy.min_length <= platform max_length (ConfigError if exceeds)
+    - strategy.format_preference "thread" requires platform thread support (warning)
+    - strategy.requires tools are enabled in media config (ConfigError if missing)
+
+    Called from validate_targets_config().
+
+    Args:
+        config: Fully parsed Config object
+
+    Raises:
+        ConfigError: On min_length or requires constraint violation
+    """
+    if not config.content_strategies:
+        return
+
+    # Build strategy -> platforms map from targets
+    strategy_platforms: dict[str, set[str]] = {}
+    for _target_name, target in config.targets.items():
+        platform = resolve_target_platform(target, config)
+        if target.strategy:
+            strategy_platforms.setdefault(target.strategy, set()).add(platform)
+
+    # Get enabled media tools
+    media_config = getattr(config, "media_generation", None)
+    enabled_tools: set[str] = set()
+    if media_config and getattr(media_config, "enabled", False):
+        for tool_name, enabled in getattr(media_config, "tools", {}).items():
+            if enabled:
+                enabled_tools.add(tool_name)
+
+    for strat_name, strat in config.content_strategies.items():
+        platforms = strategy_platforms.get(strat_name, set())
+
+        # --- min_length vs platform max_length ---
+        if strat.min_length is not None:
+            for platform_name in platforms:
+                pcfg = config.platforms.get(platform_name)
+                if pcfg and pcfg.max_length is not None and strat.min_length > pcfg.max_length:
+                    raise ConfigError(
+                        f"Strategy '{strat_name}' min_length ({strat.min_length}) "
+                        f"exceeds platform '{platform_name}' max_length ({pcfg.max_length})"
+                    )
+
+        # --- format_preference "thread" requires thread support ---
+        if strat.format_preference == "thread":
+            for platform_name in platforms:
+                supports = PLATFORM_THREAD_SUPPORT.get(platform_name)
+                if supports is False:
+                    logger.warning(
+                        "Strategy '%s' prefers threads but platform '%s' does not support threads",
+                        strat_name,
+                        platform_name,
+                    )
+                elif supports is None:
+                    logger.warning(
+                        "Strategy '%s' prefers threads but platform '%s' "
+                        "has unknown thread support",
+                        strat_name,
+                        platform_name,
+                    )
+
+        # --- requires tools enabled in media config ---
+        if strat.requires:
+            for tool_name in strat.requires:
+                if tool_name not in enabled_tools:
+                    raise ConfigError(
+                        f"Strategy '{strat_name}' requires tool '{tool_name}' "
+                        f"but it is not enabled in media_generation.tools"
+                    )

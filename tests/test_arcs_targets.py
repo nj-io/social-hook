@@ -4,7 +4,9 @@ import pytest
 
 from social_hook.db import operations as ops
 from social_hook.errors import MaxArcsError
-from social_hook.models import Arc, ArcStatus, Project
+from social_hook.models.core import Project
+from social_hook.models.enums import ArcStatus
+from social_hook.models.narrative import Arc
 from social_hook.narrative.arcs import (
     abandon_arc,
     activate_arc,

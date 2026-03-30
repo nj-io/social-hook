@@ -8,12 +8,8 @@ from social_hook.db import operations as ops
 from social_hook.errors import AuthError
 from social_hook.llm.client import ClaudeClient, _calculate_cost_cents
 from social_hook.llm.dry_run import DryRunContext
-from social_hook.models import (
-    Decision,
-    Draft,
-    Project,
-    UsageLog,
-)
+from social_hook.models.core import Decision, Draft, Project
+from social_hook.models.infra import UsageLog
 
 # =============================================================================
 # T11: Cost Calculation Tests
@@ -398,5 +394,5 @@ class TestDryRunContext:
 
     def test_nonexistent_operation_raises(self, temp_db):
         db = DryRunContext(temp_db, dry_run=True)
-        with pytest.raises(AttributeError, match="not found in db.operations"):
+        with pytest.raises(AttributeError, match="not found in"):
             db.nonexistent_operation()

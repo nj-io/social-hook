@@ -6,7 +6,7 @@ import subprocess
 
 from social_hook.db import operations as ops
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision
+from social_hook.models.core import Decision
 
 logger = logging.getLogger(__name__)
 
@@ -126,15 +126,25 @@ def import_project_commits(
 ) -> dict[str, int]:
     """Import historical git commits as 'imported' decisions.
 
+    When no branch is specified, defaults to the project's trigger_branch
+    (if configured). This ensures imports match the branch the system follows.
+    Falls back to all branches if no trigger_branch is set.
+
     Args:
         conn: Database connection
         project_id: Project to import into
         repo_path: Path to git repository
-        branch: Optional branch filter (None = all branches)
+        branch: Optional branch filter (None = use trigger_branch or all)
 
     Returns:
         Dict with imported, skipped, total counts.
     """
+    if branch is None:
+        project = ops.get_project(conn, project_id)
+        if project and project.trigger_branch:
+            branch = project.trigger_branch
+            logger.info("Import defaulting to trigger branch: %s", branch)
+
     commits = _git_log_commits(repo_path, branch)
     total = len(commits)
 
@@ -149,7 +159,7 @@ def import_project_commits(
             project_id=project_id,
             commit_hash=c["hash"],
             decision="imported",
-            reasoning="Historical commit",
+            reasoning="",
             commit_message=c["message"],
             branch=commit_branch,
         )

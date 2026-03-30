@@ -12,7 +12,8 @@ from social_hook.content_sources import (
 )
 from social_hook.db import operations as ops
 from social_hook.filesystem import generate_id
-from social_hook.models import ContentTopic, Project
+from social_hook.models.content import ContentTopic
+from social_hook.models.core import Project
 
 
 class TestContentSourceRegistry:
@@ -159,8 +160,9 @@ class TestModuleSingleton:
     """Test the module-level singleton registration."""
 
     def test_default_registry_has_all_resolvers(self):
-        """Module singleton has all 4 built-in resolvers registered."""
+        """Module singleton has all 5 built-in resolvers registered."""
         assert "brief" in content_sources._resolvers
         assert "commits" in content_sources._resolvers
         assert "topic" in content_sources._resolvers
+        assert "topic_commits" in content_sources._resolvers
         assert "operator_suggestion" in content_sources._resolvers

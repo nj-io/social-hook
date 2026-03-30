@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260324152432
+SCHEMA_VERSION = 20260328075443
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS projects (
     prompt_docs           TEXT DEFAULT NULL,
     trigger_branch        TEXT DEFAULT NULL,
     brief_section_metadata TEXT DEFAULT '{}',
+    analysis_commit_count INTEGER NOT NULL DEFAULT 0,
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -47,7 +48,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
     commit_message TEXT,
-    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval', 'evaluating')),
+    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval', 'processing')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
     episode_type  TEXT CHECK (episode_type IN ('decision', 'before_after', 'demo_proof', 'milestone', 'postmortem', 'launch', 'synthesis')),
@@ -307,7 +308,7 @@ CREATE TABLE IF NOT EXISTS content_topics (
     description TEXT,
     priority_rank INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'uncovered'
-        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered')),
+        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered', 'dismissed')),
     commit_count INTEGER NOT NULL DEFAULT 0,
     last_commit_at TEXT,
     last_posted_at TEXT,
@@ -336,6 +337,8 @@ CREATE TABLE IF NOT EXISTS evaluation_cycles (
     trigger_type TEXT NOT NULL,
     trigger_ref TEXT,
     commit_analysis_id TEXT,
+    commit_analysis_json TEXT DEFAULT NULL,
+    diagnostics TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -350,6 +353,15 @@ CREATE TABLE IF NOT EXISTS draft_patterns (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Topic-commit junction (which commits contributed to each topic)
+CREATE TABLE IF NOT EXISTS topic_commits (
+    topic_id TEXT NOT NULL,
+    commit_hash TEXT NOT NULL,
+    matched_tag TEXT,
+    matched_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (topic_id, commit_hash)
+);
+
 -- System error persistence
 CREATE TABLE IF NOT EXISTS system_errors (
     id TEXT PRIMARY KEY,
@@ -357,8 +369,13 @@ CREATE TABLE IF NOT EXISTS system_errors (
     message TEXT NOT NULL,
     context TEXT DEFAULT '{}',
     source TEXT DEFAULT '',
+    component TEXT DEFAULT '',
+    run_id TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_system_errors_severity ON system_errors(severity, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_errors_component ON system_errors(component, created_at DESC);
 """
 
 
@@ -379,41 +396,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
             (SCHEMA_VERSION, "initial_schema"),
         )
         conn.commit()
-
-
-def _apply_pragma_migration(conn: sqlite3.Connection, sql: str) -> None:
-    """Apply a migration containing PRAGMA statements.
-
-    PRAGMA statements must execute outside transactions. This splits them
-    from DDL/DML statements and handles each appropriately.
-    """
-    pragmas_before: list[str] = []
-    pragmas_after: list[str] = []
-    other_lines: list[str] = []
-
-    for line in sql.split("\n"):
-        stripped = line.strip()
-        if stripped.upper().startswith("PRAGMA"):
-            # PRAGMAs before DDL go first, PRAGMAs after go last
-            if other_lines:
-                pragmas_after.append(stripped)
-            else:
-                pragmas_before.append(stripped)
-        else:
-            other_lines.append(line)
-
-    # Execute pre-DDL PRAGMAs outside transaction
-    for pragma in pragmas_before:
-        conn.execute(pragma)
-
-    # Execute DDL/DML as a script
-    ddl_sql = "\n".join(other_lines).strip()
-    if ddl_sql:
-        conn.executescript(ddl_sql)
-
-    # Execute post-DDL PRAGMAs outside transaction
-    for pragma in pragmas_after:
-        conn.execute(pragma)
 
 
 # Mapping from old sequential versions to their timestamp equivalents.
@@ -473,50 +455,26 @@ def _bridge_to_timestamp_versions(conn: sqlite3.Connection, current_seq: int) ->
 def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path) -> None:
     """Apply pending migrations from the migrations directory.
 
+    Delegates to the generic migration runner in ``social_hook.migrations``,
+    with a one-time bridge from sequential to timestamp version numbering
+    for databases created before the timestamp migration scheme.
+
     Args:
         conn: Database connection
         migrations_dir: Directory containing .sql migration files
     """
+    from social_hook.migrations import apply_sql_migrations, get_current_version
+
     migrations_dir = Path(migrations_dir)
 
     if not migrations_dir.exists():
         return
 
-    # Fresh DB: schema_version table doesn't exist yet — nothing to migrate.
-    tables = {
-        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    }
-    if "schema_version" not in tables:
-        return
-
-    # Get current version
-    current = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
-
     # Bridge: migrate from sequential (3-19) to timestamp versioning.
-    # If max version is sequential (<1000), map old versions to their
-    # timestamp equivalents so renamed migrations aren't re-applied.
+    # get_current_version returns 0 if schema_version table doesn't exist,
+    # so the bridge is a no-op for fresh databases.
+    current = get_current_version(conn)
     if 0 < current < 1000:
         _bridge_to_timestamp_versions(conn, current)
-        current = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
 
-    # Apply pending migrations
-    for migration_file in sorted(migrations_dir.glob("*.sql")):
-        try:
-            version = int(migration_file.stem.split("_")[0])
-        except (ValueError, IndexError):
-            continue
-
-        if version > current:
-            sql = migration_file.read_text()
-
-            # Check if migration contains PRAGMA statements (table rebuild)
-            if "PRAGMA" in sql:
-                _apply_pragma_migration(conn, sql)
-            else:
-                conn.executescript(sql)
-
-            conn.execute(
-                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
-                (version, migration_file.stem),
-            )
-            conn.commit()
+    apply_sql_migrations(conn, migrations_dir)

@@ -46,6 +46,7 @@ export interface WizardData {
   repoPath: string;
   projectName: string;
   installGitHook: boolean;
+  triggerBranch: string;
   // Strategy fields
   postWhen: string;
   avoid: string;
@@ -78,6 +79,7 @@ export function createDefaultWizardData(): WizardData {
     repoPath: "",
     projectName: "",
     installGitHook: true,
+    triggerBranch: "",
     postWhen: "",
     avoid: "",
   };

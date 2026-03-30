@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ContentSuggestion, Strategy } from "@/lib/types";
 import type { BackgroundTask } from "@/lib/api";
-import { fetchSuggestions, createSuggestion, dismissSuggestion, fetchStrategies } from "@/lib/api";
+import { fetchSuggestions, createSuggestion, dismissSuggestion, fetchStrategies, acceptSuggestion } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
 import { AsyncButton } from "@/components/async-button";
@@ -14,10 +14,16 @@ const STATUS_STYLES: Record<string, string> = {
   accepted: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
   dismissed: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
   evaluating: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+  evaluated: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+  drafted: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400",
 };
 
+interface EnrichedSuggestion extends ContentSuggestion {
+  evaluation_cycle_id?: string | null;
+}
+
 export function ContentSuggestions({ projectId }: { projectId: string }) {
-  const [suggestions, setSuggestions] = useState<ContentSuggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<EnrichedSuggestion[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -32,7 +38,7 @@ export function ContentSuggestions({ projectId }: { projectId: string }) {
     loadRef.current();
   }, []);
 
-  const { trackTask } = useBackgroundTasks(projectId, onTaskCompleted);
+  const { trackTask, isRunning: isTaskRunning, getTask } = useBackgroundTasks(projectId, onTaskCompleted);
 
   const load = useCallback(async () => {
     try {
@@ -40,7 +46,7 @@ export function ContentSuggestions({ projectId }: { projectId: string }) {
         fetchSuggestions(projectId),
         fetchStrategies(projectId),
       ]);
-      setSuggestions(s.suggestions);
+      setSuggestions(s.suggestions as EnrichedSuggestion[]);
       // API returns {strategies: {name: {...}}} — convert to array
       const stratMap = st.strategies;
       if (stratMap && typeof stratMap === "object" && !Array.isArray(stratMap)) {
@@ -83,6 +89,15 @@ export function ContentSuggestions({ projectId }: { projectId: string }) {
     }
   }
 
+  async function handleAccept(id: string) {
+    try {
+      const res = await acceptSuggestion(projectId, id);
+      trackTask(res.task_id, `accept:${id}`, "evaluate_suggestion");
+    } catch {
+      // silent
+    }
+  }
+
   async function handleDismiss(id: string) {
     setDismissing(true);
     try {
@@ -114,34 +129,60 @@ export function ContentSuggestions({ projectId }: { projectId: string }) {
         <p className="text-sm text-muted-foreground">No suggestions yet. Use the button above to suggest content ideas.</p>
       ) : (
         <div className="space-y-2">
-          {suggestions.map((s) => (
-            <div key={s.id} className="flex items-center justify-between rounded-lg border border-border p-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                    STATUS_STYLES[s.status] ?? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-                  }`}>
-                    {s.status}
-                  </span>
-                  {s.strategy && (
-                    <span className="text-xs text-muted-foreground">{s.strategy}</span>
-                  )}
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(s.created_at).toLocaleDateString()}
-                  </span>
+          {suggestions.map((s) => {
+            const acceptRefId = `accept:${s.id}`;
+            const isAccepting = isTaskRunning(acceptRefId);
+            const acceptTask = getTask(acceptRefId);
+            return (
+              <div key={s.id} className="flex items-center justify-between rounded-lg border border-border p-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                      STATUS_STYLES[s.status] ?? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                    }`}>
+                      {s.status}
+                    </span>
+                    {s.strategy && (
+                      <span className="text-xs text-muted-foreground">{s.strategy}</span>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(s.created_at).toLocaleDateString()}
+                    </span>
+                    {s.evaluation_cycle_id && (
+                      <a
+                        href={`?tab=cycles&cycle=${s.evaluation_cycle_id}`}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        View cycle &rarr;
+                      </a>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm">{s.idea}</p>
                 </div>
-                <p className="mt-1 text-sm">{s.idea}</p>
+                <div className="ml-3 flex shrink-0 items-center gap-2">
+                  {s.status === "pending" && (
+                    <AsyncButton
+                      loading={isAccepting}
+                      startTime={acceptTask?.created_at}
+                      loadingText="Evaluating"
+                      onClick={() => handleAccept(s.id)}
+                      className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
+                    >
+                      Accept
+                    </AsyncButton>
+                  )}
+                  {s.status !== "dismissed" && (
+                    <button
+                      onClick={() => setConfirmDismiss(s.id)}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
               </div>
-              {s.status !== "dismissed" && (
-                <button
-                  onClick={() => setConfirmDismiss(s.id)}
-                  className="ml-3 shrink-0 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Dismiss
-                </button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

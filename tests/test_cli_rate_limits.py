@@ -115,7 +115,7 @@ class TestRateLimitsCommand:
         from social_hook.config.yaml import Config
         from social_hook.db import operations as ops
         from social_hook.filesystem import generate_id
-        from social_hook.models import Decision, Project
+        from social_hook.models.core import Decision, Project
 
         conn, db_path = _init_test_db(tmp_path)
         mock_db_path.return_value = db_path

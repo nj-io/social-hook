@@ -25,6 +25,31 @@ Example: social-hook target add --account product --destination timeline --strat
 
 ---
 
+### `social-hook target delete`
+
+Delete a target and cancel its pending drafts.
+
+Permanently removes the target from config. Pending drafts for
+this target will be cancelled. This cannot be undone.
+
+Example: social-hook target delete x-lead-timeline --yes
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `name` | yes | Target name to delete |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes`, `-y` | boolean | false | Skip confirmation |
+| `--project`, `-p` | string |  | Repository path (default: cwd) |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
 ### `social-hook target disable`
 
 Disable a target and archive its pending drafts.

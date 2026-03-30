@@ -205,7 +205,7 @@ def rewind(
                     (proj.id, escaped + "%"),
                 ).fetchall()
                 if len(rows) == 1:
-                    from social_hook.models import Decision
+                    from social_hook.models.core import Decision
 
                     decision = Decision.from_dict(dict(rows[0]))
                 elif len(rows) > 1:

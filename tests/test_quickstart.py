@@ -15,7 +15,7 @@ from social_hook.cli.quickstart import (
     _error_exit,
     _run_batch_evaluate,
 )
-from social_hook.models import Decision, Draft, Project
+from social_hook.models.core import Decision, Draft, Project
 
 runner = CliRunner()
 
@@ -98,9 +98,7 @@ class TestAutoConfigure:
 
         config = yaml.safe_load((temp_dir / "config.yaml").read_text())
         assert config["models"]["evaluator"] == "claude-cli/sonnet"
-        assert config["platforms"]["x"]["enabled"] is True
-        assert config["platforms"]["x"]["priority"] == "primary"
-        assert config["platforms"]["x"]["account_tier"] == "free"
+        assert "platforms" not in config  # no legacy platforms section
         assert config["content_strategy"] == "building-public"
         assert "building-public" in config["content_strategies"]
 

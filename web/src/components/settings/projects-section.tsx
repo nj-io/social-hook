@@ -18,7 +18,7 @@ import {
 import { Modal } from "@/components/ui/modal";
 import { FolderPickerModal } from "./folder-picker-modal";
 
-export function ProjectsSection() {
+export function ProjectsSection({ onProjectsChange }: { onProjectsChange?: () => void } = {}) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState<string | null>(null);
@@ -135,6 +135,7 @@ export function ProjectsSection() {
       setProjectName("");
       setInstallHook(true);
       await loadProjects();
+      onProjectsChange?.();
     } catch (e) {
       setRegisterError(e instanceof Error ? e.message : "Registration failed");
     } finally {
@@ -168,6 +169,7 @@ export function ProjectsSection() {
       await deleteProject(projectId);
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
       setConfirmDelete(null);
+      onProjectsChange?.();
     } catch {
       // Silently handle
     } finally {

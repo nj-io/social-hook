@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from social_hook.db import (
     get_connection,
     get_draft,
@@ -14,7 +16,7 @@ from social_hook.db import (
     update_draft,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Draft, Project
+from social_hook.models.core import Decision, Draft, Project
 from social_hook.notifications import send_notification
 from social_hook.scheduler import (
     acquire_lock,
@@ -293,6 +295,11 @@ class TestSchedulerTick:
 
 class TestNotifications:
     """Tests for the shared notification helper."""
+
+    @pytest.fixture(autouse=True)
+    def _no_real_notifications(self):
+        """Override: this class tests notification paths with mocked adapters."""
+        yield
 
     def test_send_notification_web_and_telegram(self):
         """Notification sends to both web and telegram when configured."""
@@ -691,7 +698,7 @@ class TestPostDraftReferencePosting:
         )
         insert_draft(conn, ref_draft)
 
-        from social_hook.models import Post
+        from social_hook.models.core import Post
 
         ref_post = Post(
             id=generate_id("post"),

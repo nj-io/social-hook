@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ class SystemError:
     message: str
     context: dict = field(default_factory=dict)
     source: str = ""
+    component: str = ""
+    run_id: str = ""
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -53,6 +56,7 @@ class ErrorFeed:
         self._max_recent = max_recent
         self._recent: deque[SystemError] = deque(maxlen=max_recent)
         self._send_callback: Callable[[str, str], None] | None = None
+        self._on_persist_callback: Callable[[str, str, str], None] | None = None
 
     def set_db_path(self, db_path: str) -> None:
         """Set or update the DB path after construction.
@@ -65,12 +69,18 @@ class ErrorFeed:
         """Set the notification sender (called with severity, formatted_message)."""
         self._send_callback = callback
 
+    def set_on_persist(self, callback: Callable[[str, str, str], None]) -> None:
+        """Set callback fired after DB write: (error_id, severity, component)."""
+        self._on_persist_callback = callback
+
     def emit(
         self,
-        severity: ErrorSeverity,
+        severity: ErrorSeverity | str,
         message: str,
         context: dict | None = None,
         source: str = "",
+        component: str = "",
+        run_id: str = "",
     ) -> None:
         """Emit an error. Never raises — errors in the error feed are logged.
 
@@ -78,12 +88,16 @@ class ErrorFeed:
         system_errors DB table (cross-process persistence).
         """
         try:
+            if isinstance(severity, str):
+                severity = ErrorSeverity(severity)
             ctx = context or {}
             error = SystemError(
                 severity=severity,
                 message=message,
                 context=ctx,
                 source=source,
+                component=component,
+                run_id=run_id,
             )
             self._recent.append(error)
 
@@ -112,15 +126,25 @@ class ErrorFeed:
                 exc_info=True,
             )
 
-    def get_recent(self, limit: int = 50) -> list[SystemError]:
+    def get_recent(
+        self,
+        limit: int = 50,
+        *,
+        severity: str | None = None,
+        component: str | None = None,
+        source: str | None = None,
+    ) -> list[SystemError]:
         """Return recent errors, newest first.
 
         Reads from the system_errors DB table (source of truth).
         Falls back to in-memory deque if db_path is not set.
+        Optional filters narrow the result set (DB path only).
         """
         if self._db_path is not None:
             try:
-                return self._read_from_db(limit)
+                return self._read_from_db(
+                    limit, severity=severity, component=component, source=source
+                )
             except Exception:
                 logger.warning(
                     "Error feed DB read failed, falling back to in-memory",
@@ -168,17 +192,21 @@ class ErrorFeed:
     def _write_to_db(self, error: SystemError) -> None:
         """Persist a SystemError to the system_errors table."""
         assert self._db_path is not None
+        error_id = str(uuid.uuid4())
         conn = sqlite3.connect(self._db_path, timeout=5)
         try:
             conn.execute(
-                """INSERT INTO system_errors (id, severity, message, context, source, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO system_errors
+                   (id, severity, message, context, source, component, run_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid.uuid4()),
+                    error_id,
                     error.severity.value,
                     error.message,
                     json.dumps(error.context),
                     error.source,
+                    error.component,
+                    error.run_id,
                     error.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f"),
                 ),
             )
@@ -186,19 +214,47 @@ class ErrorFeed:
         finally:
             conn.close()
 
-    def _read_from_db(self, limit: int) -> list[SystemError]:
-        """Read recent errors from the system_errors table."""
+        # Fire on_persist callback after commit (never raises)
+        if self._on_persist_callback is not None:
+            try:
+                self._on_persist_callback(error_id, error.severity.value, error.component)
+            except Exception:
+                logger.warning("on_persist callback failed", exc_info=True)
+
+    def _read_from_db(
+        self,
+        limit: int,
+        *,
+        severity: str | None = None,
+        component: str | None = None,
+        source: str | None = None,
+    ) -> list[SystemError]:
+        """Read recent errors from the system_errors table.
+
+        Optional filters narrow the result set.
+        """
         assert self._db_path is not None
         conn = sqlite3.connect(self._db_path, timeout=5)
         try:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """SELECT severity, message, context, source, created_at
-                   FROM system_errors
-                   ORDER BY created_at DESC
-                   LIMIT ?""",
-                (limit,),
-            ).fetchall()
+            query = "SELECT severity, message, context, source, component, run_id, created_at FROM system_errors"
+            conditions: list[str] = []
+            params: list[Any] = []
+            if severity is not None:
+                conditions.append("severity = ?")
+                params.append(severity)
+            if component is not None:
+                conditions.append("component = ?")
+                params.append(component)
+            if source is not None:
+                conditions.append("source = ?")
+                params.append(source)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+
+            rows = conn.execute(query, params).fetchall()
             results: list[SystemError] = []
             for row in rows:
                 try:
@@ -207,7 +263,6 @@ class ErrorFeed:
                     ctx = {}
                 ts_str = row["created_at"]
                 try:
-                    # Try microsecond format first, fall back to second-only
                     for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
                         try:
                             ts = datetime.strptime(ts_str, fmt).replace(tzinfo=timezone.utc)
@@ -224,6 +279,8 @@ class ErrorFeed:
                         message=row["message"],
                         context=ctx,
                         source=row["source"] or "",
+                        component=row["component"] or "",
+                        run_id=row["run_id"] or "",
                         timestamp=ts,
                     )
                 )

@@ -15,6 +15,8 @@ from social_hook.bot.commands import (
     _save_rejection_note,
     cmd_approve,
     cmd_cancel,
+    cmd_errors,
+    cmd_health,
     cmd_help,
     cmd_pause,
     cmd_pending,
@@ -35,7 +37,7 @@ from social_hook.constants import PROJECT_NAME, PROJECT_SLUG
 from social_hook.db import get_connection, init_database, insert_draft, insert_project
 from social_hook.filesystem import generate_id
 from social_hook.messaging.base import InboundMessage, MessagingAdapter, SendResult
-from social_hook.models import Draft, Project
+from social_hook.models.core import Draft, Project
 
 
 @pytest.fixture(autouse=True)
@@ -173,7 +175,7 @@ class TestCmdPending:
     @patch("social_hook.bot.commands._get_conn")
     def test_with_pending_drafts(self, mock_conn, mock_adapter, temp_dir):
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -210,7 +212,7 @@ class TestCmdPending:
     def test_deferred_icon_in_pending(self, mock_conn, mock_adapter, temp_dir):
         """Deferred drafts should show the pause icon in /pending output."""
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -248,7 +250,7 @@ class TestCmdPending:
     def test_deferred_count_in_status(self, mock_conn, mock_send, mock_adapter, temp_dir):
         """cmd_status should include deferred count."""
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -365,7 +367,7 @@ class TestCmdApprove:
     @patch("social_hook.bot.commands._get_conn")
     def test_approve_success(self, mock_conn, mock_send, mock_adapter, temp_dir):
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -407,7 +409,7 @@ class TestCmdApprove:
     @patch("social_hook.bot.commands._get_conn")
     def test_approve_wrong_status(self, mock_conn, mock_send, mock_adapter, temp_dir):
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -452,7 +454,7 @@ class TestCmdReject:
     @patch("social_hook.bot.commands._get_conn")
     def test_reject_success(self, mock_conn, mock_send, mock_adapter, temp_dir):
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -497,7 +499,7 @@ class TestCmdSchedule:
     @patch("social_hook.bot.commands._get_conn")
     def test_schedule_with_time(self, mock_conn, mock_send, mock_adapter, temp_dir):
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -545,7 +547,7 @@ class TestCmdCancel:
     @patch("social_hook.bot.commands._get_conn")
     def test_cancel_success(self, mock_conn, mock_send, mock_adapter, temp_dir):
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -590,7 +592,7 @@ class TestCmdRetry:
     @patch("social_hook.bot.commands._get_conn")
     def test_retry_failed_draft(self, mock_conn, mock_send, mock_adapter, temp_dir):
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -628,7 +630,7 @@ class TestCmdRetry:
     @patch("social_hook.bot.commands._get_conn")
     def test_retry_non_failed_draft(self, mock_conn, mock_send, mock_adapter, temp_dir):
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -771,7 +773,7 @@ class TestCmdReview:
     def test_review_sends_formatted_with_buttons(self, mock_conn, mock_adapter, temp_dir):
         from social_hook.bot.commands import cmd_review
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -852,7 +854,7 @@ class TestCmdRejectReason:
     @patch("social_hook.bot.commands._get_conn")
     def test_reject_with_reason(self, mock_conn, mock_send, mock_adapter, temp_dir):
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -966,7 +968,7 @@ class TestPendingEditSaves:
         """Mock pending edit, send message, verify update_draft called."""
         from social_hook.bot.buttons import PendingReply, _pending_replies
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1020,7 +1022,7 @@ class TestPendingEditSaves:
         """Verify insert_draft_change called with changed_by='human'."""
         from social_hook.bot.buttons import PendingReply, _pending_replies
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1096,7 +1098,7 @@ class TestPendingReplyHandlers:
         """Schedule custom pending reply should parse ISO datetime and schedule."""
         from social_hook.bot.buttons import PendingReply, _pending_replies
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1146,7 +1148,7 @@ class TestPendingReplyHandlers:
         """Reject note pending reply should reject draft with note."""
         from social_hook.bot.buttons import PendingReply, _pending_replies
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1196,7 +1198,7 @@ class TestPendingReplyHandlers:
         """Invalid datetime should show error and re-set pending reply."""
         from social_hook.bot.buttons import PendingReply, _pending_replies
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1244,7 +1246,7 @@ class TestPendingReplyHandlers:
         """Schedule custom should call emit_data_event."""
         from social_hook.bot.buttons import PendingReply, _pending_replies
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1287,7 +1289,7 @@ class TestPendingReplyHandlers:
         """Reject with note should call emit_data_event."""
         from social_hook.bot.buttons import PendingReply, _pending_replies
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1331,7 +1333,7 @@ class TestSubstituteHandler:
     def test_substitute_saves_content(self, mock_conn, mock_send, mock_adapter, temp_dir):
         """Substitute operation saves content to DB."""
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1379,7 +1381,7 @@ class TestSubstituteHandler:
     def test_substitute_uses_chat_context(self, mock_conn, mock_send, mock_adapter, temp_dir):
         """Verify draft_id resolved from get_chat_draft_context when not in params."""
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1444,7 +1446,7 @@ class TestReviewEvaluatorContext:
         """Verify angle, post_category in formatted review output."""
         from social_hook.bot.commands import cmd_review
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1489,7 +1491,7 @@ class TestExpertRefineSaves:
     def test_expert_refine_saves_to_db(self, mock_conn, mock_send, mock_adapter, temp_dir):
         """Verify update_draft called after refine_draft action."""
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1675,7 +1677,7 @@ class TestHandleMessageContext:
     ):
         """Verify gatekeeper.route() called with draft_context and project_id."""
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1740,7 +1742,7 @@ class TestBuildSystemSnapshot:
     def test_basic_snapshot(self, temp_dir):
         """Snapshot includes project, drafts, and config sections."""
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1836,7 +1838,7 @@ class TestBuildSystemSnapshot:
     def test_posted_at_none(self, temp_dir):
         """Snapshot handles posts with posted_at=None gracefully."""
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -1864,7 +1866,7 @@ class TestBuildSystemSnapshot:
 
         # Insert a post with posted_at (SQLite default handles this)
         from social_hook.db.operations import insert_post
-        from social_hook.models import Post
+        from social_hook.models.core import Post
 
         post = Post(
             id=generate_id("post"),
@@ -2079,7 +2081,7 @@ class TestBuildChatHistory:
 def _make_test_draft(conn, temp_dir, status="draft", platform="x"):
     """Helper to create a project + decision + draft for tests."""
     from social_hook.db import insert_decision
-    from social_hook.models import Decision
+    from social_hook.models.core import Decision
 
     project = Project(id=generate_id("project"), name="test", repo_path=str(temp_dir))
     insert_project(conn, project)
@@ -2391,7 +2393,7 @@ class TestBtnUnapprove:
         """Unapprove an approved draft -> status becomes draft."""
         from social_hook.bot.buttons import btn_unapprove
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2431,7 +2433,7 @@ class TestBtnUnapprove:
         """Cannot unapprove a draft that is not approved."""
         from social_hook.bot.buttons import btn_unapprove
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2475,7 +2477,7 @@ class TestBtnUnschedule:
         """Unschedule a scheduled draft -> status becomes draft."""
         from social_hook.bot.buttons import btn_unschedule
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2515,7 +2517,7 @@ class TestBtnUnschedule:
         """Cannot unschedule a draft that is not scheduled."""
         from social_hook.bot.buttons import btn_unschedule
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2558,7 +2560,7 @@ class TestBtnReopen:
         """Reopen a cancelled draft -> status becomes draft."""
         from social_hook.bot.buttons import btn_reopen
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2598,7 +2600,7 @@ class TestBtnReopen:
         """Reopen a rejected draft -> status becomes draft, last_error cleared."""
         from social_hook.bot.buttons import btn_reopen
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2640,7 +2642,7 @@ class TestBtnReopen:
         """Cannot reopen a draft that is not cancelled or rejected."""
         from social_hook.bot.buttons import btn_reopen
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2679,7 +2681,7 @@ class TestBtnReopen:
         """Intro drafts cannot be reopened."""
         from social_hook.bot.buttons import btn_reopen
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2723,7 +2725,7 @@ class TestApplyExpertResultUnpack:
         """_generate_media returns 4 values; _apply_expert_result should not crash."""
         from social_hook.bot.commands import _apply_expert_result
         from social_hook.db import get_draft, insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2780,7 +2782,7 @@ class TestButtonRestoration:
         """_save_edit sends response with buttons attached."""
         from social_hook.bot.commands import _save_edit
         from social_hook.db import insert_decision
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2853,7 +2855,7 @@ class TestResyncThreadTweets:
         from social_hook.bot.commands import _save_edit
         from social_hook.db import insert_decision
         from social_hook.db.operations import get_draft_tweets, insert_draft_tweet
-        from social_hook.models import Decision, DraftTweet
+        from social_hook.models.core import Decision, DraftTweet
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2911,7 +2913,7 @@ class TestResyncThreadTweets:
         from social_hook.bot.commands import _save_edit
         from social_hook.db import insert_decision
         from social_hook.db.operations import get_draft_tweets
-        from social_hook.models import Decision
+        from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2952,7 +2954,7 @@ class TestResyncThreadTweets:
             insert_draft_tweet,
             replace_draft_tweets,
         )
-        from social_hook.models import Decision, DraftTweet
+        from social_hook.models.core import Decision, DraftTweet
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -3001,3 +3003,173 @@ class TestResyncThreadTweets:
         assert len(tweets) == 2
         assert tweets[0].content == "new A"
         assert tweets[1].content == "new B"
+
+
+class TestCmdErrors:
+    """Tests for /errors command."""
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_no_errors(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        cmd_errors(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "No recent errors" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_shows_errors(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models.infra import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        ops.insert_system_error(
+            conn,
+            SystemErrorRecord(
+                id=generate_id("err"),
+                severity="error",
+                message="Token refresh failed",
+                source="trigger",
+            ),
+        )
+
+        cmd_errors(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "Recent Errors" in text
+        assert "Token refresh failed" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_severity_filter(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models.infra import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        ops.insert_system_error(
+            conn,
+            SystemErrorRecord(
+                id=generate_id("err"),
+                severity="warning",
+                message="Slow query",
+                source="web",
+            ),
+        )
+
+        cmd_errors(mock_adapter, "123", "warning", None)
+        text = mock_send.call_args[0][2]
+        assert "Slow query" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_limit_arg(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models.infra import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        for i in range(5):
+            ops.insert_system_error(
+                conn,
+                SystemErrorRecord(
+                    id=generate_id("err"),
+                    severity="error",
+                    message=f"Error {i}",
+                ),
+            )
+
+        cmd_errors(mock_adapter, "123", "3", None)
+        text = mock_send.call_args[0][2]
+        assert "Recent Errors" in text
+        assert "(3)" in text
+
+    @patch("social_hook.bot.commands._send")
+    def test_invalid_arg(self, mock_send, mock_adapter):
+        cmd_errors(mock_adapter, "123", "bogus", None)
+        text = mock_send.call_args[0][2]
+        assert "Usage" in text
+
+    @patch("social_hook.bot.commands.cmd_errors")
+    def test_route_errors(self, mock_errors, mock_adapter):
+        msg = _make_inbound("/errors")
+        handle_command(msg, mock_adapter)
+        mock_errors.assert_called_once()
+
+    @patch("social_hook.bot.commands.cmd_health")
+    def test_route_health(self, mock_health, mock_adapter):
+        msg = _make_inbound("/health")
+        handle_command(msg, mock_adapter)
+        mock_health.assert_called_once()
+
+
+class TestCmdHealth:
+    """Tests for /health command."""
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_healthy(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        cmd_health(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "HEALTHY" in text
+        assert "Errors in last 24h: 0" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_degraded(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models.infra import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        ops.insert_system_error(
+            conn,
+            SystemErrorRecord(
+                id=generate_id("err"),
+                severity="error",
+                message="Something broke",
+            ),
+        )
+
+        cmd_health(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "DEGRADED" in text
+        assert "error: 1" in text
+
+    @patch("social_hook.bot.commands._send")
+    @patch("social_hook.bot.commands._get_conn")
+    def test_critical(self, mock_conn, mock_send, mock_adapter, temp_dir):
+        from social_hook.db import operations as ops
+        from social_hook.models.infra import SystemErrorRecord
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        ops.insert_system_error(
+            conn,
+            SystemErrorRecord(
+                id=generate_id("err"),
+                severity="critical",
+                message="DB corrupted",
+            ),
+        )
+
+        cmd_health(mock_adapter, "123", "", None)
+        text = mock_send.call_args[0][2]
+        assert "CRITICAL" in text

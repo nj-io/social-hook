@@ -28,18 +28,15 @@ from social_hook.db.operations import (
     update_topic_status,
     upsert_oauth_token,
 )
-from social_hook.models import (
-    SUGGESTION_STATUSES,
-    TOPIC_STATUSES,
+from social_hook.models.content import (
     ContentSuggestion,
     ContentTopic,
-    Draft,
     DraftPattern,
     EvaluationCycle,
-    OAuthToken,
-    Post,
-    SystemErrorRecord,
 )
+from social_hook.models.core import Draft, Post
+from social_hook.models.enums import SUGGESTION_STATUSES, TOPIC_STATUSES
+from social_hook.models.infra import OAuthToken, SystemErrorRecord
 
 # =============================================================================
 # Schema & Table Creation
@@ -828,7 +825,8 @@ class TestStatusConstants:
         assert "holding" in TOPIC_STATUSES
         assert "partial" in TOPIC_STATUSES
         assert "covered" in TOPIC_STATUSES
-        assert len(TOPIC_STATUSES) == 4
+        assert "dismissed" in TOPIC_STATUSES
+        assert len(TOPIC_STATUSES) == 5
 
     def test_suggestion_statuses(self):
         assert "pending" in SUGGESTION_STATUSES

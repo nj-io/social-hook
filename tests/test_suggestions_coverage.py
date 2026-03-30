@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from social_hook.models import Project
+from social_hook.models.core import Project
 from social_hook.suggestions import create_suggestion, dismiss_suggestion, evaluate_suggestion
 
 # =============================================================================
