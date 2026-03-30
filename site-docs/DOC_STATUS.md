@@ -58,8 +58,8 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Page | Status | Notes |
 |------|--------|-------|
-| pipeline.md | partial | Preview mode section updated; still needs targets/routing/topics integration |
-| narrative-arcs.md | stale | Arcs now tied to strategies — needs update |
+| pipeline.md | stale | Preview mode fixed; still missing: two-stage evaluation (analyzer+evaluator), batch evaluation, interval gating, per-strategy decisions, topic queues, targets vs legacy paths |
+| narrative-arcs.md | partial | Arcs now strategy-scoped (`strategy` field); `episode_type` → `episode_tags`; core concepts (debt, lifecycle) still accurate |
 | voice-memory.md | complete | |
 | media-generation.md | complete | |
 | targets.md | missing | New core concept — waiting_approval |
@@ -72,7 +72,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Page | Status | Notes |
 |------|--------|-------|
-| config.md | updated | OAuth 2.0 env vars fixed; needs targets config section |
+| config.md | stale | OAuth 2.0 env vars correct; missing sections: rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus |
 | content-config.md | complete | |
 | social-context.md | complete | |
 
@@ -103,6 +103,8 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] examples/ directory (#22)
 - [ ] Scheduling deep-dive (how optimal times are calculated, posting windows, rate limits)
 - [ ] Agent-first CLI equivalents — interactive commands like `setup` need non-interactive agent equivalents, then documented
-- [x] ~~Enrich docstrings for 9 new CLI command groups~~ (done — group help enriched, subcommands already well-documented)
+- [ ] Enrich docstrings for partial/poor CLI commands — inspect (2 poor, 2 partial), manual (3 partial), draft (7 partial), decision (2 partial), strategy (1 partial), target (1 partial)
+- [ ] config.md expansion — add sections for rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus
+- [ ] pipeline.md rewrite — two-stage evaluation, commit analyzer, batch evaluation, interval gating, per-strategy decisions, targets vs legacy paths
 - [ ] Testing guide — unit tests, E2E test suite, snapshots, VCR cassettes, verification scripts (source: docs/E2E_TESTING.md, docs/CLAUDE.md E2E section)
 - [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)
