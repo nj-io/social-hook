@@ -27,29 +27,32 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `content *` | ok | Group help enriched; subcommand docstrings already good |
 | `credentials *` | ok | Group help enriched; subcommand docstrings already good |
 | `cycles *` | ok | Group help enriched; subcommand docstrings already good |
-| `strategy *` | ok | Group help enriched; subcommand docstrings already good |
+| `strategy *` | partial | `show` lacks field descriptions |
 | `logs *` | ok | Replaced `system *`; query, tail, clear, health subcommands |
-| `target *` | ok | Group help enriched; subcommand docstrings already good |
+| `target *` | partial | `enable` lacks explanation of re-enable behavior |
 | `topics *` | ok | Group help enriched; subcommand docstrings already good |
+| `decision *` | partial | `list` and `delete` lack context on what decisions are |
+| `inspect *` | poor | `log` and `pending` just restate command names; `usage` and `platforms` lack detail |
+| `manual *` | partial | `draft`, `consolidate`, `post` — single-line, no examples, no LLM context |
 | `draft approve` | ok | Enriched: explains scheduler interaction |
 | `draft cancel` | ok | Enriched: explains queue removal |
 | `draft retry` | ok | Enriched: explains re-queuing |
 | `draft quick-approve` | ok | Enriched: explains combined approve + optimal scheduling |
 | `draft schedule` | ok | Enriched: explains auto-scheduling vs explicit --time |
-| `draft edit` | ok | Has example |
+| `draft edit` | partial | Missing: change history, thread re-sync |
 | `draft list` | ok | Has examples |
-| `draft media-edit` | ok | Has example |
-| `draft media-regen` | ok | |
+| `draft media-edit` | partial | Missing: what a media spec is, expected JSON structure |
+| `draft media-regen` | partial | Missing: what media spec is |
 | `draft media-remove` | ok | |
 | `draft post-now` | ok | |
 | `draft promote` | ok | Has example |
-| `draft redraft` | ok | Has example |
-| `draft reject` | ok | Has example |
-| `draft reopen` | ok | |
+| `draft redraft` | partial | Missing: what Expert agent is, that this is an LLM op |
+| `draft reject` | partial | Missing: cascading re-draft for intros, voice memory storage |
+| `draft reopen` | partial | Missing: intro draft restriction, resulting status |
 | `draft show` | ok | |
-| `draft unapprove` | ok | |
+| `draft unapprove` | partial | Missing: resulting status, when to use |
 | `draft connect` | ok | New: links preview draft to an account |
-| `draft unschedule` | ok | |
+| `draft unschedule` | partial | Missing: resulting status, when to use |
 
 ## Conceptual Docs (site-docs/concepts/)
 
