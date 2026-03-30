@@ -27,39 +27,39 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `content *` | ok | Group help enriched; subcommand docstrings already good |
 | `credentials *` | ok | Group help enriched; subcommand docstrings already good |
 | `cycles *` | ok | Group help enriched; subcommand docstrings already good |
-| `strategy *` | partial | `show` lacks field descriptions |
+| `strategy *` | ok | `show` enriched with displayed fields |
 | `logs *` | ok | Replaced `system *`; query, tail, clear, health subcommands |
-| `target *` | partial | `enable` lacks explanation of re-enable behavior |
+| `target *` | ok | `enable` enriched with re-enable behavior |
 | `topics *` | ok | Group help enriched; subcommand docstrings already good |
-| `decision *` | partial | `list` and `delete` lack context on what decisions are |
-| `inspect *` | poor | `log` and `pending` just restate command names; `usage` and `platforms` lack detail |
-| `manual *` | partial | `draft`, `consolidate`, `post` — single-line, no examples, no LLM context |
+| `decision *` | ok | `list` and `delete` enriched with decision context |
+| `inspect *` | ok | `log`, `pending`, `usage`, `platforms` all enriched with detail and examples |
+| `manual *` | ok | `draft`, `consolidate`, `post` enriched with LLM context and examples |
 | `draft approve` | ok | Enriched: explains scheduler interaction |
 | `draft cancel` | ok | Enriched: explains queue removal |
 | `draft retry` | ok | Enriched: explains re-queuing |
 | `draft quick-approve` | ok | Enriched: explains combined approve + optimal scheduling |
 | `draft schedule` | ok | Enriched: explains auto-scheduling vs explicit --time |
-| `draft edit` | partial | Missing: change history, thread re-sync |
+| `draft edit` | ok | Enriched: change history, thread re-split |
 | `draft list` | ok | Has examples |
-| `draft media-edit` | partial | Missing: what a media spec is, expected JSON structure |
-| `draft media-regen` | partial | Missing: what media spec is |
+| `draft media-edit` | ok | Enriched: media spec structure explanation |
+| `draft media-regen` | ok | Enriched: media spec workflow |
 | `draft media-remove` | ok | |
 | `draft post-now` | ok | |
 | `draft promote` | ok | Has example |
-| `draft redraft` | partial | Missing: what Expert agent is, that this is an LLM op |
-| `draft reject` | partial | Missing: cascading re-draft for intros, voice memory storage |
-| `draft reopen` | partial | Missing: intro draft restriction, resulting status |
+| `draft redraft` | ok | Enriched: Expert agent, LLM op, change history |
+| `draft reject` | ok | Enriched: cascading re-draft, voice memory |
+| `draft reopen` | ok | Enriched: intro restriction, resulting status |
 | `draft show` | ok | |
-| `draft unapprove` | partial | Missing: resulting status, when to use |
+| `draft unapprove` | ok | Enriched: resulting status, when to use |
 | `draft connect` | ok | New: links preview draft to an account |
-| `draft unschedule` | partial | Missing: resulting status, when to use |
+| `draft unschedule` | ok | Enriched: resulting status, when to use |
 
 ## Conceptual Docs (site-docs/concepts/)
 
 | Page | Status | Notes |
 |------|--------|-------|
-| pipeline.md | stale | Preview mode fixed; still missing: two-stage evaluation (analyzer+evaluator), batch evaluation, interval gating, per-strategy decisions, topic queues, targets vs legacy paths |
-| narrative-arcs.md | partial | Arcs now strategy-scoped (`strategy` field); `episode_type` → `episode_tags`; core concepts (debt, lifecycle) still accurate |
+| pipeline.md | complete | Rewritten: two-stage eval (analyzer+evaluator), batch evaluation, interval gating, per-strategy decisions, target routing, evaluation cycles, preview mode |
+| narrative-arcs.md | complete | Updated: strategy-scoped arcs, `episode_tags` (was `episode_type`) |
 | voice-memory.md | complete | |
 | media-generation.md | complete | |
 | targets.md | missing | New core concept — waiting_approval |
@@ -92,6 +92,9 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-03-30 | |
 | `ruff check src/ tests/` passes | 2026-03-30 | |
 | `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-03-30 | 28 errors, all `import-untyped` or pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-03-30 | 16 commands across 6 files enriched |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-03-30 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-03-30 | |
 
 ## Backlog (waiting_approval)
 
@@ -103,8 +106,8 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] examples/ directory (#22)
 - [ ] Scheduling deep-dive (how optimal times are calculated, posting windows, rate limits)
 - [ ] Agent-first CLI equivalents — interactive commands like `setup` need non-interactive agent equivalents, then documented
-- [ ] Enrich docstrings for partial/poor CLI commands — inspect (2 poor, 2 partial), manual (3 partial), draft (7 partial), decision (2 partial), strategy (1 partial), target (1 partial)
+- [x] ~~Enrich docstrings for partial/poor CLI commands~~ (done — 16 commands enriched across inspect, decision, manual, draft, strategy, target)
 - [ ] config.md expansion — add sections for rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus
-- [ ] pipeline.md rewrite — two-stage evaluation, commit analyzer, batch evaluation, interval gating, per-strategy decisions, targets vs legacy paths
+- [x] ~~pipeline.md rewrite~~ (done — two-stage evaluation, commit analyzer, batch evaluation, interval gating, per-strategy decisions, target routing)
 - [ ] Testing guide — unit tests, E2E test suite, snapshots, VCR cassettes, verification scripts (source: docs/E2E_TESTING.md, docs/CLAUDE.md E2E section)
 - [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)
