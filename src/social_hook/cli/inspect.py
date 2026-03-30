@@ -12,7 +12,15 @@ def log(
     limit: int = typer.Option(20, "--limit", "-n", help="Number of entries"),
     json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """View decision log."""
+    """View the decision log showing evaluation outcomes for commits.
+
+    Each entry shows the decision ID, type (draft/skip/defer), commit hash,
+    and reasoning. Filter by project or view across all projects.
+
+    Examples:
+        social-hook inspect log
+        social-hook inspect log my-project --limit 5 --json
+    """
     from social_hook.db import (
         get_all_recent_decisions,
         get_recent_decisions,
@@ -50,7 +58,15 @@ def pending(
     project_id: str | None = typer.Argument(None, help="Project ID (optional)"),
     json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """View pending drafts."""
+    """View drafts awaiting action (draft, approved, scheduled, or deferred).
+
+    Pending drafts are those not yet posted or in a terminal state. Use this
+    to see what content is queued and needs review or approval.
+
+    Examples:
+        social-hook inspect pending
+        social-hook inspect pending my-project --json
+    """
     from social_hook.db import (
         get_all_pending_drafts,
         get_pending_drafts,
@@ -89,7 +105,15 @@ def usage(
     ),
     json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """View token usage and costs."""
+    """View token usage and costs.
+
+    Shows aggregated LLM token consumption and costs by model. Use --recent
+    to see individual operations with timestamps and commit hashes.
+
+    Examples:
+        social-hook inspect usage --days 7
+        social-hook inspect usage --recent 10
+    """
     from social_hook.db import get_recent_usage, get_usage_summary, init_database
     from social_hook.filesystem import get_db_path
 
@@ -159,7 +183,15 @@ def platforms(
     ctx: typer.Context,
     json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """List configured platforms with enabled/disabled status."""
+    """List configured platforms with enabled/disabled status.
+
+    Shows each platform's name, priority, type, and account tier from the
+    global config.
+
+    Examples:
+        social-hook inspect platforms
+        social-hook inspect platforms --json
+    """
     from social_hook.config import load_full_config
 
     config_path = ctx.obj.get("config") if ctx.obj else None
