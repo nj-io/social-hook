@@ -1,6 +1,6 @@
 # social-hook topics
 
-Content topic queue.
+Manage the prioritised content topic queue per strategy.
 
 ---
 

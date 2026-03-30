@@ -1,6 +1,6 @@
 # social-hook content
 
-Content suggestions and operations.
+Submit content ideas, combine topics, and trigger hero launch drafts.
 
 ---
 

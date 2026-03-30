@@ -1,6 +1,6 @@
 # social-hook credentials
 
-Platform credential management.
+Manage API keys and secrets in ~/.social-hook/.env.
 
 ---
 

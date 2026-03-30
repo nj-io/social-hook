@@ -222,10 +222,8 @@ Stored in `~/.social-hook/.env`. Real environment variables override file values
 | `OPENAI_API_KEY` | `openai/` models | OpenAI API key |
 | `OPENROUTER_API_KEY` | `openrouter/` models | OpenRouter API key |
 | `OLLAMA_BASE_URL` | `ollama/` models | Ollama server URL |
-| `X_API_KEY` | X platform | X/Twitter API key |
-| `X_API_SECRET` | X platform | X/Twitter API secret |
-| `X_ACCESS_TOKEN` | X platform | X/Twitter access token |
-| `X_ACCESS_TOKEN_SECRET` | X platform | X/Twitter access token secret |
+| `X_CLIENT_ID` | X platform | OAuth 2.0 client ID |
+| `X_CLIENT_SECRET` | X platform | OAuth 2.0 client secret |
 | `LINKEDIN_CLIENT_ID` | LinkedIn | OAuth client ID |
 | `LINKEDIN_CLIENT_SECRET` | LinkedIn | OAuth client secret |
 | `LINKEDIN_ACCESS_TOKEN` | LinkedIn | Access token |

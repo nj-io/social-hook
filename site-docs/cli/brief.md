@@ -1,6 +1,6 @@
 # social-hook brief
 
-Project brief management.
+View and edit the project brief used by the evaluator and drafter.
 
 ---
 

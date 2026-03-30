@@ -103,7 +103,11 @@ def reject(
     draft_id: str = typer.Argument(..., help="Draft ID to reject"),
     reason: str | None = typer.Option(None, "--reason", "-r", help="Rejection reason"),
 ):
-    """Reject a draft (saves reason as voice memory when --reason provided).
+    """Reject a draft and optionally record feedback as voice memory.
+
+    When --reason is provided, the feedback is saved to voice memory so the
+    drafter learns from it in future runs. If the draft is an intro draft,
+    rejection cascades to re-draft the introduction for that platform.
 
     Example: social-hook draft reject draft-abc123 --reason "too technical for the audience"
     """
@@ -240,7 +244,10 @@ def reopen(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to reopen"),
 ):
-    """Reopen a cancelled or rejected draft.
+    """Reopen a cancelled or rejected draft, returning it to 'draft' status.
+
+    Intro drafts cannot be reopened -- create a new draft instead.
+    Clears any previous error message on the draft.
 
     Example: social-hook draft reopen draft-abc123
     """
@@ -269,7 +276,10 @@ def unapprove(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to unapprove"),
 ):
-    """Revert approval on a draft.
+    """Revert approval on a draft, returning it to 'draft' status.
+
+    Use when you approved a draft prematurely and want to make further
+    edits before scheduling or posting.
 
     Example: social-hook draft unapprove draft-abc123
     """
@@ -293,7 +303,10 @@ def unschedule(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to unschedule"),
 ):
-    """Revert scheduling on a draft.
+    """Revert scheduling on a draft, returning it to 'draft' status.
+
+    Clears the scheduled time. Use when you need to edit or reschedule
+    a draft that was already queued for posting.
 
     Example: social-hook draft unschedule draft-abc123
     """
@@ -347,6 +360,9 @@ def edit(
 ):
     """Edit draft content.
 
+    Records the change in the draft's change history (visible in draft show).
+    If the draft is a thread, tweet boundaries are automatically re-split.
+
     Example: social-hook draft edit draft-abc123 --content "Updated post text here"
     """
     from social_hook.db import operations as ops
@@ -386,6 +402,10 @@ def redraft(
     angle: str = typer.Option(..., "--angle", "-a", help="New angle or direction for the draft"),
 ):
     """Redraft content using the Expert agent with a new angle.
+
+    Calls the Expert LLM agent to rewrite the draft with a different
+    direction. May also update the media spec. Changes are recorded
+    in the draft's change history.
 
     Example: social-hook draft redraft draft-abc123 --angle "focus on the performance gains"
     """
@@ -661,6 +681,10 @@ def media_regen(
 ):
     """Regenerate media for a draft using its stored media spec.
 
+    The media spec is a JSON object describing what to generate (e.g., code
+    snippet image, diagram). Edit the spec first with media-edit, then run
+    this command to produce a new file from the updated spec.
+
     Example: social-hook draft media-regen draft-abc123
     """
     from social_hook.adapters.registry import get_media_adapter
@@ -767,6 +791,10 @@ def media_edit(
     spec: str = typer.Option(..., "--spec", "-s", help="New media spec as JSON string"),
 ):
     """Edit the media spec for a draft.
+
+    The media spec is a JSON object that controls media generation (e.g.,
+    code snippet, language, theme). After editing, run media-regen to
+    produce a new media file from the updated spec.
 
     Example: social-hook draft media-edit draft-abc123 --spec '{"code": "print(42)", "language": "python"}'
     """

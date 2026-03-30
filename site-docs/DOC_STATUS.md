@@ -1,5 +1,5 @@
-<!-- last_run_commit: 21c6a1ffe50cdf762497b4b5c0b0879ddc1fdc56 -->
-<!-- last_run_date: 2026-03-24 -->
+<!-- last_run_commit: 6688d91b2ee4da630f9dec8dae1d776ae89b5a4c -->
+<!-- last_run_date: 2026-03-30 -->
 
 # Documentation Status
 
@@ -9,46 +9,62 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Command | Coverage | Notes |
 |---------|----------|-------|
-| `quickstart` | poor | "Run the quickstart flow" — says nothing about what it does |
-| `consolidation-tick` | poor | No context on when/why to run |
-| `scheduler-tick` | poor | No context on when/why to run |
-| `discover` | poor | "Two-pass project discovery" is jargon |
-| `setup` | partial | `--only` component values unexplained |
-| `test` | poor | No explanation of `--compare`/`--output` workflow |
-| `trigger` | poor | Doesn't explain how it differs from `test` |
+| `quickstart` | ok | Enriched: explains full onboarding flow |
+| `consolidation-tick` | ok | Enriched: explains hold processing, modes, cron usage |
+| `scheduler-tick` | ok | Enriched: explains posting, deferred promotion, cron |
+| `discover` | ok | Enriched: explains two-pass LLM analysis |
+| `setup` | partial | `--only` component values still unexplained |
+| `test` | ok | Enriched: explains dry-run, --output/--compare |
+| `trigger` | ok | Enriched: explains full pipeline, contrasts with test |
 | `init` | ok | |
 | `events` | ok | Has examples |
 | `help` | ok | Has examples |
 | `rate-limits` | ok | Has examples |
 | `version` | ok | |
-| `web` | poor | "Start the web dashboard" — no detail on what it offers |
-| `draft approve` | poor | Just restates the command name |
-| `draft cancel` | poor | Just restates the command name |
-| `draft retry` | poor | Just restates the command name |
-| `draft quick-approve` | poor | No explanation of what "optimal time" means |
-| `draft schedule` | partial | Doesn't explain auto-scheduling behavior |
-| `draft edit` | ok | Has example |
+| `web` | ok | Enriched: explains dashboard capabilities |
+| `account *` | ok | Group help enriched; subcommand docstrings already good |
+| `brief *` | ok | Group help enriched; subcommand docstrings already good |
+| `content *` | ok | Group help enriched; subcommand docstrings already good |
+| `credentials *` | ok | Group help enriched; subcommand docstrings already good |
+| `cycles *` | ok | Group help enriched; subcommand docstrings already good |
+| `strategy *` | ok | `show` enriched with displayed fields |
+| `logs *` | ok | Replaced `system *`; query, tail, clear, health subcommands |
+| `target *` | ok | `enable` enriched with re-enable behavior |
+| `topics *` | ok | Group help enriched; subcommand docstrings already good |
+| `decision *` | ok | `list` and `delete` enriched with decision context |
+| `inspect *` | ok | `log`, `pending`, `usage`, `platforms` all enriched with detail and examples |
+| `manual *` | ok | `draft`, `consolidate`, `post` enriched with LLM context and examples |
+| `draft approve` | ok | Enriched: explains scheduler interaction |
+| `draft cancel` | ok | Enriched: explains queue removal |
+| `draft retry` | ok | Enriched: explains re-queuing |
+| `draft quick-approve` | ok | Enriched: explains combined approve + optimal scheduling |
+| `draft schedule` | ok | Enriched: explains auto-scheduling vs explicit --time |
+| `draft edit` | ok | Enriched: change history, thread re-split |
 | `draft list` | ok | Has examples |
-| `draft media-edit` | ok | Has example |
-| `draft media-regen` | ok | |
+| `draft media-edit` | ok | Enriched: media spec structure explanation |
+| `draft media-regen` | ok | Enriched: media spec workflow |
 | `draft media-remove` | ok | |
 | `draft post-now` | ok | |
 | `draft promote` | ok | Has example |
-| `draft redraft` | ok | Has example |
-| `draft reject` | ok | Has example |
-| `draft reopen` | ok | |
+| `draft redraft` | ok | Enriched: Expert agent, LLM op, change history |
+| `draft reject` | ok | Enriched: cascading re-draft, voice memory |
+| `draft reopen` | ok | Enriched: intro restriction, resulting status |
 | `draft show` | ok | |
-| `draft unapprove` | ok | |
-| `draft unschedule` | ok | |
+| `draft unapprove` | ok | Enriched: resulting status, when to use |
+| `draft connect` | ok | New: links preview draft to an account |
+| `draft unschedule` | ok | Enriched: resulting status, when to use |
 
 ## Conceptual Docs (site-docs/concepts/)
 
 | Page | Status | Notes |
 |------|--------|-------|
-| pipeline.md | complete | 298 lines, thorough stage-by-stage walkthrough |
-| narrative-arcs.md | complete | |
+| pipeline.md | complete | Rewritten: two-stage eval (analyzer+evaluator), batch evaluation, interval gating, per-strategy decisions, target routing, evaluation cycles, preview mode |
+| narrative-arcs.md | complete | Updated: strategy-scoped arcs, `episode_tags` (was `episode_type`) |
 | voice-memory.md | complete | |
 | media-generation.md | complete | |
+| targets.md | missing | New core concept — waiting_approval |
+| topics.md | missing | New content source system — waiting_approval |
+| routing.md | missing | New target routing system — waiting_approval |
 | web-dashboard.md | missing | No page exists — waiting_approval |
 | scheduling.md | missing | Covered briefly in config.md — waiting_approval |
 
@@ -56,7 +72,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Page | Status | Notes |
 |------|--------|-------|
-| config.md | complete | Full field-by-field reference |
+| config.md | stale | OAuth 2.0 env vars correct; missing sections: rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus |
 | content-config.md | complete | |
 | social-context.md | complete | |
 
@@ -64,17 +80,34 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Page | Status | Notes |
 |------|--------|-------|
-| installation.md | complete | Leads with quickstart |
-| quickstart.md | complete | Step-by-step guide |
+| installation.md | complete | Accurate for current quickstart flow; targets workflow addendum in backlog |
+| quickstart.md | complete | Preview draft → promote flow still valid; targets onboarding in backlog |
 
 ## Recurring Checks
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-03-30 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-03-30 | Fixed: `system` → `logs` |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-03-30 | |
+| `ruff check src/ tests/` passes | 2026-03-30 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-03-30 | 28 errors, all `import-untyped` or pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-03-30 | 16 commands across 6 files enriched |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-03-30 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-03-30 | |
 
 ## Backlog (waiting_approval)
 
+- [ ] Targets concept page — how accounts, targets, and strategies work
+- [ ] Topics concept page — content sources, topic queue, suggestions
+- [ ] Routing concept page — how drafts get routed to targets
 - [ ] Web dashboard usage guide (#19)
 - [ ] Workflow tutorials (#20)
 - [ ] examples/ directory (#22)
 - [ ] Scheduling deep-dive (how optimal times are calculated, posting windows, rate limits)
+- [ ] Agent-first CLI equivalents — interactive commands like `setup` need non-interactive agent equivalents, then documented
+- [x] ~~Enrich docstrings for partial/poor CLI commands~~ (done — 16 commands enriched across inspect, decision, manual, draft, strategy, target)
+- [ ] config.md expansion — add sections for rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus
+- [x] ~~pipeline.md rewrite~~ (done — two-stage evaluation, commit analyzer, batch evaluation, interval gating, per-strategy decisions, target routing)
+- [ ] Testing guide — unit tests, E2E test suite, snapshots, VCR cassettes, verification scripts (source: docs/E2E_TESTING.md, docs/CLAUDE.md E2E section)
+- [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)

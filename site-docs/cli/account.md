@@ -1,6 +1,6 @@
 # social-hook account
 
-Platform account management.
+Manage OAuth-authenticated platform accounts (X, LinkedIn).
 
 ---
 
