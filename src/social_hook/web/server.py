@@ -1556,7 +1556,11 @@ async def api_decision_branches(project_id: str):
 
 
 @app.get("/api/projects/{project_id}/import-preview")
-async def api_import_preview(project_id: str, branch: str | None = Query(None)):
+async def api_import_preview(
+    project_id: str,
+    branch: str | None = Query(None),
+    limit: int | None = Query(None, ge=1),
+):
     """Preview how many commits can be imported for a project."""
     conn = _get_conn()
     try:
@@ -1564,7 +1568,7 @@ async def api_import_preview(project_id: str, branch: str | None = Query(None)):
         from social_hook.import_commits import get_import_preview
 
         preview: dict[str, Any] = get_import_preview(
-            conn, project["id"], project["repo_path"], branch
+            conn, project["id"], project["repo_path"], branch, limit=limit
         )
 
         # Include git repo branches so the import modal can show them
@@ -1594,8 +1598,10 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
 
     Body:
         branch: Target branch name (optional — omit to import from default branch)
+        limit: Maximum number of recent commits to import (optional — omit for all)
     """
     branch = body.get("branch")
+    limit = body.get("limit")
 
     conn = _get_conn()
     try:
@@ -1619,7 +1625,7 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
 
         conn2 = _get_conn()
         try:
-            return import_project_commits(conn2, pid, repo_path, branch)
+            return import_project_commits(conn2, pid, repo_path, branch, limit=limit)
         finally:
             conn2.close()
 
