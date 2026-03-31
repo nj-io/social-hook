@@ -178,9 +178,13 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                     <div className="flex flex-col gap-1">
                       <Badge value={cycle.status} variant="status" />
                       {!!cycle.draft_count && (
-                        <span className="text-xs text-muted-foreground">
+                        <Link
+                          href={`/drafts?from=${projectId}`}
+                          className="text-xs text-accent hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <CycleStatusCounts cycle={cycle} />
-                        </span>
+                        </Link>
                       )}
                     </div>
                   </td>
