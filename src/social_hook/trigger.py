@@ -74,6 +74,7 @@ class TriggerContext:
     verbose: bool
     show_prompt: bool
     existing_decision_id: str | None = None
+    task_id: str | None = None  # background task ID for stage tracking
 
 
 def ensure_project_brief(
@@ -340,6 +341,7 @@ def run_trigger(
     trigger_source: str = "commit",
     existing_decision_id: str | None = None,
     current_branch: str | None = None,
+    task_id: str | None = None,
 ) -> int:
     """Run the commit-to-draft trigger pipeline.
 
@@ -605,6 +607,7 @@ def run_trigger(
             verbose=verbose,
             show_prompt=show_prompt,
             existing_decision_id=existing_decision_id,
+            task_id=task_id,
         )
 
         # Reset counter (was incremented by early gate)
@@ -625,6 +628,8 @@ def run_trigger(
 
         # Single-commit path: run stage 1 inline
         db.emit_data_event("pipeline", PipelineStage.ANALYZING, commit_hash[:8], project.id)
+        if ctx.task_id:
+            ctx.db.emit_task_stage(ctx.task_id, "analyzing", "Analyzing commit", project.id)
         try:
             from social_hook.llm.analyzer import CommitAnalyzer
 
@@ -653,6 +658,8 @@ def run_trigger(
             return result
 
         db.emit_data_event("pipeline", PipelineStage.EVALUATING, commit_hash[:8], project.id)
+        if ctx.task_id:
+            ctx.db.emit_task_stage(ctx.task_id, "evaluating", "Evaluating strategies", project.id)
 
     # Guard: targets configured but no content strategies defined
     if has_targets and not config.content_strategies:
@@ -1239,6 +1246,8 @@ def _run_targets_path(
 
     # -- Phase E: Decision creation --
     ctx.db.emit_data_event("pipeline", PipelineStage.DECIDING, commit_hash[:8], ctx.project.id)
+    if ctx.task_id:
+        ctx.db.emit_task_stage(ctx.task_id, "deciding", "Processing decision", ctx.project.id)
 
     # Validate topic_id references belong to correct strategy (LLM Output Validation)
     for strategy_name, strat_decision in evaluation.strategies.items():
@@ -1423,6 +1432,8 @@ def _run_targets_path(
         from social_hook.routing import route_to_targets
 
         ctx.db.emit_data_event("pipeline", PipelineStage.DRAFTING, commit_hash[:8], ctx.project.id)
+        if ctx.task_id:
+            ctx.db.emit_task_stage(ctx.task_id, "drafting", "Drafting content", ctx.project.id)
 
         target_actions = route_to_targets(evaluation.strategies, ctx.config, ctx.conn)
         draftable_actions = [a for a in target_actions if a.action == "draft"]
@@ -1564,6 +1575,8 @@ def evaluate_batch(
     ctx.db.emit_data_event(
         "pipeline", PipelineStage.ANALYZING, trigger_commit_hash[:8], ctx.project.id
     )
+    if ctx.task_id:
+        ctx.db.emit_task_stage(ctx.task_id, "analyzing", "Analyzing commit", ctx.project.id)
     analyzer_result = None
     try:
         analyzer = CommitAnalyzer(evaluator_client)
@@ -1612,6 +1625,8 @@ def evaluate_batch(
     ctx.db.emit_data_event(
         "pipeline", PipelineStage.EVALUATING, trigger_commit_hash[:8], ctx.project.id
     )
+    if ctx.task_id:
+        ctx.db.emit_task_stage(ctx.task_id, "evaluating", "Evaluating strategies", ctx.project.id)
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(

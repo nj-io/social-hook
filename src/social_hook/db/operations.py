@@ -2265,6 +2265,28 @@ def emit_data_event(
         logger.debug("Failed to emit data event", exc_info=True)
 
 
+def emit_task_stage(
+    conn: sqlite3.Connection,
+    task_id: str,
+    stage: str,
+    label: str,
+    project_id: str = "",
+) -> None:
+    """Emit a task stage change event. Frontend updates task progress in-memory.
+
+    Reusable by any background flow. Call via ctx.db for DryRunContext safety.
+    Stage names are freeform strings. Stage data is in-memory only on the frontend.
+    """
+    emit_data_event(
+        conn,
+        "task",
+        "stage",
+        task_id,
+        project_id,
+        extra={"stage": stage, "stage_label": label},
+    )
+
+
 # =============================================================================
 # OAuth Tokens
 # =============================================================================

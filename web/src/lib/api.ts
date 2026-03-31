@@ -479,6 +479,10 @@ export interface BackgroundTask {
   error: string | null;
   created_at: string;
   updated_at: string | null;
+  // Client-side stage tracking (in-memory, set from SSE events)
+  current_stage?: string;
+  stage_label?: string;
+  stage_started_at?: string;
 }
 
 export async function fetchTasks(params: {

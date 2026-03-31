@@ -307,6 +307,8 @@ export interface DataChangeEvent {
   project_id: string;
   content?: string;
   platform?: string;
+  stage?: string;
+  stage_label?: string;
 }
 
 export interface Memory {

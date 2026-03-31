@@ -565,8 +565,12 @@ export default function ProjectDetailPage() {
                     function renderDecisionRow(d: Decision) {
                     const isExpanded = expandedDecisions.has(d.id);
                     const isCreating = isTaskRunning(d.id);
-                    const isProcessing = isTaskRunning(`retrigger-${d.id}`) || d.decision === "processing";
+                    const batchTask = getTask("batch-evaluate");
+                    const isBatchRunning = batchTask?.status === "running";
+                    const isProcessing = isTaskRunning(`retrigger-${d.id}`) || d.decision === "processing" || (isBatchRunning && !!d.batch_id);
                     const evalTask = getTask(`retrigger-${d.id}`);
+                    const stageLabel = batchTask?.stage_label || evalTask?.stage_label;
+                    const stageTime = batchTask?.stage_started_at || evalTask?.stage_started_at;
                     const result = draftResult[d.id];
                     return (
                       <tr
@@ -711,8 +715,8 @@ export default function ProjectDetailPage() {
                             ) : (d.decision === "imported" || d.decision === "processing" || (d.decision === "deferred_eval" && !d.batch_id)) ? (
                               <AsyncButton
                                 loading={isProcessing}
-                                startTime={evalTask?.created_at}
-                                loadingText="Processing"
+                                startTime={stageTime || evalTask?.created_at || batchTask?.created_at}
+                                loadingText={stageLabel || "Processing"}
                                 onClick={async () => {
                                   setActionError(null);
                                   try {

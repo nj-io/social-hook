@@ -78,7 +78,13 @@ export function useBackgroundTasks(
           const existing = next.get(t.ref_id);
           // Only update if we're tracking this ref_id or it's running
           if (existing || t.status === "running") {
-            next.set(t.ref_id, t);
+            // Preserve in-memory stage data (not stored in DB)
+            next.set(t.ref_id, {
+              ...t,
+              current_stage: existing?.current_stage,
+              stage_label: existing?.stage_label,
+              stage_started_at: existing?.stage_started_at,
+            });
           }
         }
         // Fire callback for tasks that just completed
@@ -118,8 +124,28 @@ export function useBackgroundTasks(
       if (!data) return;
       if (data.entity !== "task") return;
       if (data.project_id && data.project_id !== projectId) return;
-      // A task changed — refresh from DB to get full state
-      refreshTasks();
+
+      if (data.action === "stage") {
+        // Stage change — update in-memory (no DB round-trip)
+        setTasks((prev) => {
+          const next = new Map(prev);
+          for (const [refId, task] of next) {
+            if (task.id === data.entity_id) {
+              next.set(refId, {
+                ...task,
+                current_stage: data.stage,
+                stage_label: data.stage_label,
+                stage_started_at: new Date().toISOString(),
+              });
+              break;
+            }
+          }
+          return next;
+        });
+      } else {
+        // started/completed/failed — full refetch from DB
+        refreshTasks();
+      }
     });
 
     return () => removeListener(listenerId);

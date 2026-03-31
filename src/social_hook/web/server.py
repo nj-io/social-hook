@@ -2016,6 +2016,8 @@ async def api_retrigger_decision(decision_id: str):
     finally:
         conn.close()
 
+    _retrigger_task_id: list[str | None] = [None]
+
     def _blocking_retrigger():
         from social_hook.trigger import run_trigger
 
@@ -2025,6 +2027,7 @@ async def api_retrigger_decision(decision_id: str):
             trigger_source="manual",
             existing_decision_id=decision_id,
             current_branch=decision_branch,
+            task_id=_retrigger_task_id[0],
         )
         return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
@@ -2034,6 +2037,7 @@ async def api_retrigger_decision(decision_id: str):
         project_id=project_id,
         fn=_blocking_retrigger,
     )
+    _retrigger_task_id[0] = task_id
     return JSONResponse(
         status_code=202,
         content={"task_id": task_id, "status": "processing"},
@@ -2113,6 +2117,8 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
     finally:
         conn.close()
 
+    _task_id_holder: list[str | None] = [None]
+
     def _blocking_batch_evaluate():
         import sqlite3 as _sqlite3
 
@@ -2172,6 +2178,7 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
                 verbose=False,
                 show_prompt=False,
                 existing_decision_id=last_decision.id,
+                task_id=_task_id_holder[0],
             )
 
             # Re-fetch decisions from fresh connection as Decision objects
@@ -2228,6 +2235,7 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
         project_id=project_id,
         fn=_blocking_batch_evaluate,
     )
+    _task_id_holder[0] = task_id
     return JSONResponse(
         status_code=202,
         content={"task_id": task_id, "status": "processing"},
