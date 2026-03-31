@@ -99,19 +99,27 @@ export async function fetchDecisionBranches(id: string): Promise<{ branches: str
 export async function fetchImportPreview(
   id: string,
   branch?: string | null,
+  limit?: number | null,
 ): Promise<{ total_commits: number; already_tracked: number; importable: number }> {
-  const params = branch ? `?branch=${encodeURIComponent(branch)}` : "";
-  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-preview${params}`);
+  const params = new URLSearchParams();
+  if (branch) params.set("branch", branch);
+  if (limit) params.set("limit", String(limit));
+  const qs = params.toString();
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-preview${qs ? `?${qs}` : ""}`);
 }
 
 export async function importCommits(
   id: string,
   branch?: string | null,
+  limit?: number | null,
 ): Promise<{ task_id: string; status: string }> {
+  const body: Record<string, unknown> = {};
+  if (branch) body.branch = branch;
+  if (limit) body.limit = limit;
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-commits`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(branch ? { branch } : {}),
+    body: JSON.stringify(body),
   });
 }
 

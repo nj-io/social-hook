@@ -72,6 +72,7 @@ export default function ProjectDetailPage() {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importPreview, setImportPreview] = useState<{ total_commits: number; already_tracked: number; importable: number; branches?: string[] } | null>(null);
   const [importBranch, setImportBranch] = useState<string>("");
+  const [importLimit, setImportLimit] = useState<string>("");
   const [importLoading, setImportLoading] = useState(false);
   const [importRefreshKey, setImportRefreshKey] = useState(0);
   const [topicNameById, setTopicNameById] = useState<Record<string, string>>({});
@@ -624,6 +625,12 @@ export default function ProjectDetailPage() {
                             </p>
                             {isExpanded && (
                               <div className="mt-2 space-y-2">
+                                {d.reasoning && d.decision !== "processing" && (
+                                  <div className="rounded border border-border bg-muted/50 p-2">
+                                    <p className="text-xs font-medium text-muted-foreground">Reasoning</p>
+                                    <p className="mt-1 whitespace-pre-wrap text-xs">{d.reasoning}</p>
+                                  </div>
+                                )}
                                 {d.commit_message && (
                                   <div className="rounded border border-border bg-muted/50 p-2">
                                     <p className="text-xs font-medium text-muted-foreground">Commit Message</p>
@@ -661,11 +668,11 @@ export default function ProjectDetailPage() {
                             )}
                           </div>
                         </td>
-                        <td className="py-2 pr-4 text-xs">
+                        <td className="py-2 pr-4 text-xs max-w-[300px]">
                           {d.decision === "deferred_eval" && d.batch_id ? (
                             <span className="text-muted-foreground">Included in batch <code className="rounded bg-muted px-1 py-0.5 text-xs">{d.batch_id.slice(0, 12)}</code></span>
                           ) : (
-                            <p className="whitespace-pre-wrap">{d.decision === "processing" ? "" : (d.reasoning || "-")}</p>
+                            <p className={isExpanded ? "whitespace-pre-wrap" : "truncate"}>{d.decision === "processing" ? "" : (d.reasoning || "-")}</p>
                           )}
                         </td>
                         <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
@@ -999,8 +1006,9 @@ export default function ProjectDetailPage() {
             onChange={async (e) => {
               const branch = e.target.value;
               setImportBranch(branch);
+              const lim = importLimit ? parseInt(importLimit, 10) : null;
               try {
-                const preview = await fetchImportPreview(id, branch || null);
+                const preview = await fetchImportPreview(id, branch || null, lim && lim > 0 ? lim : null);
                 setImportPreview(preview);
               } catch { setImportPreview(null); }
             }}
@@ -1010,6 +1018,25 @@ export default function ProjectDetailPage() {
               <option key={b} value={b}>{b}</option>
             ))}
           </select>
+        </div>
+        <div className="mt-3">
+          <label className="text-xs text-muted-foreground">Limit (optional)</label>
+          <input
+            type="number"
+            min="1"
+            placeholder="All commits"
+            className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
+            value={importLimit}
+            onChange={async (e) => {
+              const val = e.target.value;
+              setImportLimit(val);
+              const lim = val ? parseInt(val, 10) : null;
+              try {
+                const preview = await fetchImportPreview(id, importBranch || null, lim && lim > 0 ? lim : null);
+                setImportPreview(preview);
+              } catch { setImportPreview(null); }
+            }}
+          />
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button
@@ -1023,7 +1050,8 @@ export default function ProjectDetailPage() {
             onClick={async () => {
               setImportLoading(true);
               try {
-                const res = await importCommits(id, importBranch || null);
+                const lim = importLimit ? parseInt(importLimit, 10) : null;
+                const res = await importCommits(id, importBranch || null, lim && lim > 0 ? lim : null);
                 trackTask(res.task_id, "__import__", "import_commits");
                 // Poll for completion since WebSocket callback can miss fast tasks
                 const poll = setInterval(async () => {
