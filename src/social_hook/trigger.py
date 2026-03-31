@@ -42,6 +42,20 @@ class AnalyzerOutcome:
 
 
 @dataclass
+class TargetsPathResult:
+    """Result from the targets pipeline path.
+
+    exit_code: 0 = success, non-zero = failure (matches run_trigger conventions).
+    cycle_id: The evaluation cycle ID created by this pipeline run.
+    decision_id: The trigger decision ID created/upserted by this pipeline run.
+    """
+
+    exit_code: int
+    cycle_id: str | None = None
+    decision_id: str | None = None
+
+
+@dataclass
 class TriggerContext:
     """Shared context for trigger pipeline functions.
 
@@ -656,7 +670,7 @@ def run_trigger(
 
     # --- New targets path: when config.targets has real target entries ---
     if has_targets:
-        result = _run_targets_path(
+        path_result = _run_targets_path(
             ctx=ctx,
             evaluation=evaluation,
             analysis=analysis,
@@ -666,7 +680,7 @@ def run_trigger(
             analyzer_result=analyzer_result,
         )
         conn.close()
-        return result
+        return path_result.exit_code
 
     # --- Legacy path: single "default" target ---
     logger.warning("No targets configured. Using legacy platform-based drafting.")
@@ -1092,12 +1106,11 @@ def _run_targets_path(
     analyzer_result=None,
     trigger_type: str = "commit",
     batch_commit_hashes: list[str] | None = None,
-) -> int:
+    batch_deferred_ids: list[str] | None = None,
+) -> TargetsPathResult:
     """New targets pipeline path: multi-strategy -> multi-target routing."""
     from social_hook.models import EvaluationCycle
-
-    def _val(x):
-        return x.value if hasattr(x, "value") else x
+    from social_hook.parsing import enum_value as _val
 
     # Create evaluation cycle record
     cycle = EvaluationCycle(
@@ -1107,6 +1120,15 @@ def _run_targets_path(
         trigger_ref=",".join(batch_commit_hashes) if batch_commit_hashes else commit_hash,
     )
     ctx.db.insert_evaluation_cycle(cycle)
+
+    # -- Phase A: Associate deferred batch decisions with this cycle immediately --
+    if batch_deferred_ids:
+        try:
+            ops.mark_deferred_decisions_batched(ctx.conn, batch_deferred_ids, cycle.id)
+            for did in batch_deferred_ids:
+                ctx.db.emit_data_event("decision", "updated", did, ctx.project.id)
+        except Exception:
+            logger.warning("Batch membership marking failed (non-fatal)", exc_info=True)
 
     # If stage 1 analyzer produced a result, use it for enrichment
     if analyzer_result is not None:
@@ -1175,6 +1197,9 @@ def _run_targets_path(
             )
         except Exception:
             logger.warning("Topic creation from analyzer suggestions failed", exc_info=True)
+
+    # -- Phase E: Decision creation --
+    ctx.db.emit_data_event("pipeline", PipelineStage.DECIDING, commit_hash[:8], ctx.project.id)
 
     # Validate topic_id references belong to correct strategy (LLM Output Validation)
     for strategy_name, strat_decision in evaluation.strategies.items():
@@ -1252,6 +1277,14 @@ def _run_targets_path(
     else:
         ctx.db.insert_decision(decision)
     ctx.db.emit_data_event("decision", "created", decision.id, ctx.project.id)
+
+    # Set batch_id on trigger decision (after it's been created/upserted)
+    if batch_deferred_ids:
+        ctx.conn.execute(
+            "UPDATE decisions SET batch_id = ? WHERE id = ?",
+            (cycle.id, decision.id),
+        )
+        ctx.conn.commit()
 
     # Arc activation for draftable strategies
     if is_draftable(decision.decision):
@@ -1422,7 +1455,7 @@ def _run_targets_path(
                 dry_run=ctx.dry_run,
             )
 
-    return 0
+    return TargetsPathResult(exit_code=0, cycle_id=cycle.id, decision_id=decision.id)
 
 
 def evaluate_batch(
@@ -1453,11 +1486,7 @@ def evaluate_batch(
     from social_hook.llm.analyzer import CommitAnalyzer
     from social_hook.llm.evaluator import Evaluator
 
-    # 0. Mark deferred decisions as "processing" so UI shows all rows as active
     deferred_ids = [d.id for d in deferred_commits]
-    ops.mark_decisions_processing(ctx.conn, deferred_ids)
-    for d in deferred_commits:
-        ctx.db.emit_data_event("decision", "updated", d.id, ctx.project.id)
 
     # 1. Build combined CommitInfo from all deferred hashes + trigger hash
     all_hashes = [d.commit_hash for d in deferred_commits] + [trigger_commit_hash]
@@ -1570,7 +1599,7 @@ def evaluate_batch(
             print(f"Batch evaluation failed: {e}", file=sys.stderr)
         return 3
 
-    # 4. Run full targets pipeline
+    # 4. Run full targets pipeline (batch membership marked inside Phase A + E)
     analysis = evaluation.commit_analysis
     try:
         result = _run_targets_path(
@@ -1583,50 +1612,30 @@ def evaluate_batch(
             analyzer_result=analyzer_result,
             trigger_type="batch",
             batch_commit_hashes=all_hashes,
+            batch_deferred_ids=deferred_ids,
         )
     except Exception as e:
         logger.error("Batch targets path failed: %s", e)
+        # Error recovery: clear batch_id on deferred decisions (leave decision column for caller)
+        if deferred_ids:
+            try:
+                placeholders = ",".join("?" * len(deferred_ids))
+                ctx.conn.execute(
+                    f"UPDATE decisions SET batch_id = NULL WHERE id IN ({placeholders})",
+                    deferred_ids,
+                )
+                ctx.conn.commit()
+            except Exception:
+                logger.warning("Batch_id rollback failed", exc_info=True)
         return 3
 
-    # 5. After success: mark ALL decisions in the batch with batch_id
-    if result == 0:
-        # Get cycle ID from the cycle just inserted by _run_targets_path
-        recent_cycles = ops.get_recent_cycles(ctx.conn, ctx.project.id, limit=1)
-        cycle_id = recent_cycles[0].id if recent_cycles else "unknown"
-
-        # Mark deferred decisions with batch_id
-        deferred_ids = [d.id for d in deferred_commits]
-        if deferred_ids:
-            ops.mark_deferred_decisions_batched(ctx.conn, deferred_ids, cycle_id)
-            for d in deferred_commits:
-                ctx.db.emit_data_event("decision", "updated", d.id, ctx.project.id)
-
-        # Also set batch_id on the trigger decision so all batch members are grouped
-        trigger_decision_id = ctx.existing_decision_id
-        if not trigger_decision_id:
-            # Find the decision created by _run_targets_path for the trigger commit
-            row = ctx.conn.execute(
-                "SELECT id FROM decisions WHERE project_id = ? AND commit_hash = ? ORDER BY created_at DESC LIMIT 1",
-                (ctx.project.id, trigger_commit_hash),
-            ).fetchone()
-            if row:
-                trigger_decision_id = row[0]
-        if trigger_decision_id:
-            ctx.conn.execute(
-                "UPDATE decisions SET batch_id = ? WHERE id = ?",
-                (cycle_id, trigger_decision_id),
-            )
-            ctx.conn.commit()
-            ctx.db.emit_data_event("decision", "updated", trigger_decision_id, ctx.project.id)
-
+    if result.exit_code == 0:
         if ctx.verbose:
-            print(f"Batch evaluation complete: {len(all_hashes)} commits, cycle {cycle_id}")
+            print(f"Batch evaluation complete: {len(all_hashes)} commits, cycle {result.cycle_id}")
     else:
-        logger.warning(
-            "Batch targets path returned non-zero (%d), not marking deferred decisions", result
-        )
+        logger.warning("Batch targets path returned non-zero (%d)", result.exit_code)
 
-    return result
+    return result.exit_code
 
 
 def _trigger_brief_update(

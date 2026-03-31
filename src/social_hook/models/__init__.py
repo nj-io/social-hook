@@ -77,6 +77,7 @@ class PipelineStage:
     DISCOVERING = "discovering"  # project discovery / brief generation
     ANALYZING = "analyzing"  # stage 1 commit analysis
     EVALUATING = "evaluating"  # stage 2 strategy evaluation
+    DECIDING = "deciding"  # decision creation + arc activation + queue actions
     DRAFTING = "drafting"  # draft creation
     PROMOTING = "promoting"  # draft promotion / scheduling
     QUEUED = "queued"  # commit deferred by interval gating
