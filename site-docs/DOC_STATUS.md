@@ -95,6 +95,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | All CLI commands with poor/partial docstrings have been enriched | 2026-03-31 | 16 commands across 6 files enriched |
 | `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-03-31 | |
 | `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-03-31 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-03-31 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
 
 ## Backlog (waiting_approval)
 
@@ -105,7 +106,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] Workflow tutorials (#20)
 - [ ] examples/ directory (#22)
 - [ ] Scheduling deep-dive (how optimal times are calculated, posting windows, rate limits)
-- [ ] Agent-first CLI equivalents — interactive commands like `setup` need non-interactive agent equivalents, then documented
+- [x] ~~Agent-first CLI equivalents~~ (done — `credentials add --set`, all destructive commands have `--yes`, `setup` bypass via direct config.yaml)
 - [x] ~~Enrich docstrings for partial/poor CLI commands~~ (done — 16 commands enriched across inspect, decision, manual, draft, strategy, target)
 - [ ] config.md expansion — add sections for rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus
 - [x] ~~pipeline.md rewrite~~ (done — two-stage evaluation, commit analyzer, batch evaluation, interval gating, per-strategy decisions, target routing)

@@ -98,14 +98,21 @@ def add(
     name: str = typer.Option(
         None, "--name", "-n", help="Credential entry name (default: platform name)"
     ),
+    set_values: list[str] = typer.Option(
+        [],
+        "--set",
+        help="Set a key non-interactively (KEY=VALUE). Repeat for multiple keys.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Add or update a platform credential entry.
 
     Prompts for the required API keys for the specified platform.
     Static app credentials are stored in the .env file.
+    Use --set to bypass prompts for agent/CI use.
 
     Example: social-hook credentials add --platform x --name x-main
+    Example: social-hook credentials add --platform x --set X_CLIENT_ID=abc --set X_CLIENT_SECRET=xyz
     """
     from social_hook.config.env import load_env
     from social_hook.filesystem import get_env_path
@@ -130,20 +137,46 @@ def add(
     keys = platform_keys[platform]
     env_path = get_env_path()
 
+    # Parse --set values
+    set_map: dict[str, str] = {}
+    for item in set_values:
+        if "=" not in item:
+            msg = f"Invalid --set format: {item!r}. Use KEY=VALUE."
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+        k, v = item.split("=", 1)
+        if k not in keys:
+            valid = ", ".join(keys)
+            msg = f"Unknown key {k!r} for {platform}. Valid: {valid}"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+        set_map[k] = v
+
     # Load existing env
     try:
         existing = load_env()
     except Exception:
         existing = {}
 
-    # Prompt for each key
+    # Use --set values if provided, otherwise prompt interactively
     new_values = {}
-    for key in keys:
-        current = existing.get(key, "")
-        masked = f"{'*' * (len(current) - 4)}{current[-4:]}" if len(current) > 4 else "(not set)"
-        value = typer.prompt(f"{key} [{masked}]", default="", show_default=False)
-        if value:
-            new_values[key] = value
+    if set_map:
+        new_values = set_map
+    else:
+        for key in keys:
+            current = existing.get(key, "")
+            masked = (
+                f"{'*' * (len(current) - 4)}{current[-4:]}" if len(current) > 4 else "(not set)"
+            )
+            value = typer.prompt(f"{key} [{masked}]", default="", show_default=False)
+            if value:
+                new_values[key] = value
 
     if not new_values:
         typer.echo("No changes made.")

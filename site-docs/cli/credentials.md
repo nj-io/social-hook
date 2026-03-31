@@ -10,8 +10,10 @@ Add or update a platform credential entry.
 
 Prompts for the required API keys for the specified platform.
 Static app credentials are stored in the .env file.
+Use --set to bypass prompts for agent/CI use.
 
 Example: social-hook credentials add --platform x --name x-main
+Example: social-hook credentials add --platform x --set X_CLIENT_ID=abc --set X_CLIENT_SECRET=xyz
 
 **Options:**
 
@@ -19,6 +21,7 @@ Example: social-hook credentials add --platform x --name x-main
 |------|------|---------|-------------|
 | `--platform` | string |  | Platform name (x, linkedin, telegram) |
 | `--name`, `-n` | string |  | Credential entry name (default: platform name) |
+| `--set` | string | [] | Set a key non-interactively (KEY=VALUE). Repeat for multiple keys. |
 | `--json` | boolean | false | Output as JSON |
 
 ---
