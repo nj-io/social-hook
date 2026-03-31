@@ -43,6 +43,7 @@ Links the draft's target to an existing OAuth account, clearing preview mode.
 The account's platform must match the draft's platform.
 
 Example: social-hook draft connect draft-abc123 --account my-x-account
+Example: social-hook draft connect draft-abc123 --account my-x-account --yes  (skip confirmation)
 
 **Arguments:**
 
@@ -169,6 +170,7 @@ Post a draft immediately to its platform.
 Requires platform credentials in ~/.social-hook/.env.
 
 Example: social-hook draft post-now draft_abc123
+Example: social-hook draft post-now draft_abc123 --yes  (skip confirmation)
 
 **Arguments:**
 

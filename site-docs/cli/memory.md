@@ -23,6 +23,8 @@ Add a voice memory to the project.
 
 Clear all voice memories for a project.
 
+Example: social-hook memory clear --yes  (skip confirmation)
+
 **Options:**
 
 | Flag | Type | Default | Description |

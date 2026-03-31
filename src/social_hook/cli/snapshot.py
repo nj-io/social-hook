@@ -61,6 +61,7 @@ def save(
     """Save a snapshot of the current database.
 
     Example: social-hook snapshot save before-refactor
+    Example: social-hook snapshot save before-refactor --yes  (overwrite without prompting)
     """
     from social_hook.filesystem import get_db_path
 
@@ -101,6 +102,7 @@ def restore(
     """Restore a database snapshot (backs up current DB first).
 
     Example: social-hook snapshot restore before-refactor
+    Example: social-hook snapshot restore before-refactor --yes  (skip confirmation)
     """
     from social_hook.filesystem import get_db_path
 

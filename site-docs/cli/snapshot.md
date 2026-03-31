@@ -59,6 +59,7 @@ Example: social-hook snapshot reset --yes
 Restore a database snapshot (backs up current DB first).
 
 Example: social-hook snapshot restore before-refactor
+Example: social-hook snapshot restore before-refactor --yes  (skip confirmation)
 
 **Arguments:**
 
@@ -80,6 +81,7 @@ Example: social-hook snapshot restore before-refactor
 Save a snapshot of the current database.
 
 Example: social-hook snapshot save before-refactor
+Example: social-hook snapshot save before-refactor --yes  (overwrite without prompting)
 
 **Arguments:**
 

@@ -13,6 +13,7 @@ This permanently removes the decision and all linked drafts from the
 database. This action cannot be undone.
 
 Example: social-hook decision delete decision-abc123
+Example: social-hook decision delete decision-abc123 --yes  (skip confirmation)
 
 **Arguments:**
 
@@ -59,6 +60,7 @@ This re-runs the evaluator LLM, which may produce a different angle,
 episode type, or even skip the commit entirely.
 
 Example: social-hook decision retrigger decision-abc123
+Example: social-hook decision retrigger decision-abc123 --yes  (skip confirmation)
 
 **Arguments:**
 
@@ -88,6 +90,7 @@ the decision ID directly.
 
 Example: social-hook decision rewind abc1234
 Example: social-hook decision rewind decision_abc123
+Example: social-hook decision rewind abc1234 --yes  (skip confirmation)
 
 **Arguments:**
 

@@ -36,6 +36,7 @@ def delete(
     database. This action cannot be undone.
 
     Example: social-hook decision delete decision-abc123
+    Example: social-hook decision delete decision-abc123 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
 
@@ -88,6 +89,7 @@ def retrigger(
     episode type, or even skip the commit entirely.
 
     Example: social-hook decision retrigger decision-abc123
+    Example: social-hook decision retrigger decision-abc123 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
 
@@ -180,6 +182,7 @@ def rewind(
 
     Example: social-hook decision rewind abc1234
     Example: social-hook decision rewind decision_abc123
+    Example: social-hook decision rewind abc1234 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
     from social_hook.filesystem import get_db_path
