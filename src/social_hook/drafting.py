@@ -607,80 +607,6 @@ def draft_for_targets(
     return all_results
 
 
-def _pick_lead_platform(platforms: dict) -> tuple[str, Any]:
-    """Pick the most constrained platform (lowest max_length) as the lead.
-
-    When max_length is None, treat as unconstrained (infinity).
-    This ensures adaptation only expands (safe), never truncates (lossy).
-    """
-    lead_name = None
-    lead_rpcfg = None
-    lead_limit = float("inf")
-    for pname, rpcfg in platforms.items():
-        limit = rpcfg.max_length if rpcfg.max_length is not None else float("inf")
-        # Also consider tier char limits for builtin platforms
-        if rpcfg.account_tier:
-            tier_limit = TIER_CHAR_LIMITS.get(rpcfg.account_tier, float("inf"))
-            limit = min(limit, tier_limit)
-        if limit < lead_limit:
-            lead_limit = limit
-            lead_name = pname
-            lead_rpcfg = rpcfg
-    # Fallback: first platform if all are unconstrained
-    if lead_name is None:
-        lead_name = next(iter(platforms))
-        lead_rpcfg = platforms[lead_name]
-    return lead_name, lead_rpcfg
-
-
-def _unthread_content(thread_content: str) -> str:
-    """Reverse thread formatting: join tweets into a single post.
-
-    Strips numbered markers (1/, 2/, ...) and joins with double newlines.
-    """
-    # Strip numbered markers
-    stripped = re.sub(r"(?:^|\n+)\d+/\s*", "\n\n", thread_content)
-    # Split and rejoin cleanly
-    paragraphs = [p.strip() for p in stripped.split("\n\n") if p.strip()]
-    return "\n\n".join(paragraphs)
-
-
-def _adapt_content_for_platform(
-    content: str,
-    was_threaded: bool,
-    target_platform: str,
-    max_length: int | None,
-) -> str:
-    """Adapt lead draft content for a different platform.
-
-    - Thread -> non-thread: unthread (join with double newlines)
-    - Single -> any: pass through
-    - Apply char limit truncation (should rarely fire since lead is most constrained)
-    """
-    adapted = content
-    # Thread to non-thread: flatten
-    if was_threaded and target_platform != "x":
-        adapted = _unthread_content(content)
-    elif not was_threaded:
-        # Single post works everywhere — pass through
-        pass
-    else:
-        # Threaded content staying on X — pass through
-        pass
-
-    # Apply char limit if set (safety net — lead is most constrained so this rarely truncates)
-    if max_length and len(adapted) > max_length:
-        logger.warning(
-            "Adapted content for %s exceeds max_length (%d > %d), truncating",
-            target_platform,
-            len(adapted),
-            max_length,
-        )
-        adapted = adapted[:max_length]
-
-    return adapted
-
-
 def _draft_shared_group(
     platforms,
     drafter,
@@ -703,61 +629,94 @@ def _draft_shared_group(
     arc_id: str | None = None,
     cycle_id: str | None = None,
 ) -> list[DraftResult]:
-    """Draft once for the most constrained platform, adapt for the rest.
+    """Single LLM call produces per-platform variants for a shared strategy group.
 
-    Saves LLM calls when multiple targets share a strategy group.
-    Each platform still gets its own Draft row, scheduling, and preview_mode.
+    Each platform gets its own Draft row, scheduling, and preview_mode.
+    The LLM receives all platform constraints and produces optimized variants.
     """
-    # Pick the lead platform (most constrained)
-    lead_name, lead_rpcfg = _pick_lead_platform(platforms)
-
-    if verbose:
-        print(f"Shared group: lead platform={lead_name}, adapting for {len(platforms) - 1} others")
-
-    # Resolve identity + intro state for lead
     from social_hook.config.yaml import resolve_identity
     from social_hook.db import operations as _id_ops
 
-    lead_is_introduced = context.platform_introduced.get(lead_name, False)
-    lead_identity = resolve_identity(config, lead_name)
-    lead_post_count = len([p for p in context.recent_posts if p.platform == lead_name])
-    lead_is_first = not lead_is_introduced
-    lead_first_date = _id_ops.get_first_post_date(conn, project.id, lead_name)
+    if verbose:
+        print(f"Shared group: {len(platforms)} platforms, single multi-variant LLM call")
 
-    # Single LLM call for the lead platform
+    # Build platform_configs list (deduplicated by platform name)
+    platform_configs: list[tuple[str, Any]] = []
+    seen_platforms: set[str] = set()
+    first_pname = None
+    first_rpcfg = None
+    for pname, rpcfg in platforms.items():
+        real_name = rpcfg.name  # platform name like "x", not target name like "lead-timeline"
+        if real_name not in seen_platforms:
+            seen_platforms.add(real_name)
+            platform_configs.append((real_name, rpcfg))
+            if first_pname is None:
+                first_pname, first_rpcfg = pname, rpcfg
+
+    # Resolve per-platform identity + intro state
+    platform_intro_states: dict[str, dict] = {}
+    for real_name, _rpcfg in platform_configs:
+        is_introduced = context.platform_introduced.get(real_name, False)
+        post_count = len([p for p in context.recent_posts if p.platform == real_name])
+        platform_intro_states[real_name] = {
+            "is_first": not is_introduced,
+            "post_count": post_count,
+        }
+
+    # Use first platform for system prompt identity/intro context
+    first_real = first_rpcfg.name if first_rpcfg else "x"
+    first_identity = resolve_identity(config, first_real)
+    first_is_introduced = context.platform_introduced.get(first_real, False)
+    first_post_count = len([p for p in context.recent_posts if p.platform == first_real])
+    first_first_date = _id_ops.get_first_post_date(conn, project.id, first_real)
+
+    # Single LLM call with all platform constraints
     try:
-        lead_draft_result = drafter.create_draft(
+        draft_result = drafter.create_draft(
             evaluation,
             context,
             commit,
             db,
-            platform=lead_name,
-            platform_config=lead_rpcfg,
+            platform=first_real,
+            platform_configs=platform_configs,
             arc_context=arc_context,
             config=project_config.context if project_config else None,
             media_config=config.media_generation,
             media_guidance=project_config.media_guidance if project_config else None,
             referenced_posts=referenced_posts,
-            platform_introduced=lead_is_introduced,
-            identity=lead_identity,
-            target_post_count=lead_post_count,
-            is_first_post=lead_is_first,
-            first_post_date=lead_first_date,
+            platform_introduced=first_is_introduced,
+            identity=first_identity,
+            target_post_count=first_post_count,
+            is_first_post=not first_is_introduced,
+            first_post_date=first_first_date,
             content_source_context=content_source_context,
+            platform_intro_states=platform_intro_states,
         )
-        lead_draft_result.platform = lead_name
     except Exception as e:
-        logger.error(f"LLM API error during shared-group drafting (lead={lead_name}): {e}")
+        logger.error(f"LLM API error during shared-group drafting: {e}")
         if verbose:
-            print(f"LLM API error during shared-group drafting (lead={lead_name}): {e}")
+            print(f"LLM API error during shared-group drafting: {e}")
         return []
 
-    # Generate media once from lead draft
+    # Build variant lookup by platform name
+    variant_by_platform: dict[str, Any] = {}
+    if draft_result.variants:
+        for v in draft_result.variants:
+            variant_by_platform[v.platform] = v
+    if not variant_by_platform:
+        # Fallback: no variants returned — use flat content for all platforms
+        logger.warning(
+            "Drafter returned no variants for shared group — using flat content for all platforms"
+        )
+
+    draft_reasoning = draft_result.reasoning
+
+    # Generate media once from the draft result
     media_paths, media_type_str, media_spec_dict, media_error = [], None, None, None
-    _mt = getattr(lead_draft_result, "media_type", None)
+    _mt = getattr(draft_result, "media_type", None)
     if _mt is not None and hasattr(_mt, "value"):
         _mt = _mt.value
-    _ms = getattr(lead_draft_result, "media_spec", None)
+    _ms = getattr(draft_result, "media_spec", None)
     if _mt and _mt != "none":
         if not _ms:
             logger.warning(
@@ -775,71 +734,66 @@ def _draft_shared_group(
                 project_config=project_config,
             )
 
-    # Check if lead draft needs threading
-    lead_was_threaded = _needs_thread(
-        lead_draft_result,
-        lead_name,
-        lead_rpcfg.account_tier or "free",
-        thread_min=config.scheduling.thread_min_tweets,
-    )
-    lead_thread_tweets: list[str] = []
-    if lead_was_threaded:
-        lead_thread_result = drafter.create_thread(
-            evaluation,
-            context,
-            commit,
-            db,
-            platform=lead_name,
-            media_config=config.media_generation,
-            media_guidance=project_config.media_guidance if project_config else None,
-            identity=lead_identity,
-            target_post_count=lead_post_count,
-            is_first_post=lead_is_first,
-            first_post_date=lead_first_date,
-        )
-        lead_thread_tweets = _parse_thread_tweets(
-            lead_thread_result.content,
-            thread_min=config.scheduling.thread_min_tweets,
-        )
-        lead_content = lead_thread_result.content
-        lead_reasoning = lead_thread_result.reasoning
-    else:
-        lead_content = lead_draft_result.content
-        lead_reasoning = lead_draft_result.reasoning
-
-    # Now create a Draft + DraftResult for each platform (lead + adapted)
+    # Create a Draft + DraftResult for each platform using variant content
     results: list[DraftResult] = []
 
     for pname, rpcfg in platforms.items():
         try:
             platform_is_introduced = context.platform_introduced.get(pname, False)
+            real_name = rpcfg.name
 
-            if pname == lead_name:
-                # Lead platform: use original content
-                draft_content = lead_content
-                draft_reasoning = lead_reasoning
-                thread_tweets = lead_thread_tweets
+            # Get variant content for this platform (fallback to flat content)
+            variant = variant_by_platform.get(real_name)
+            if variant:
+                draft_content = variant.content
+                variant_format_hint = variant.format_hint
+                variant_beat_count = variant.beat_count
             else:
-                # Adapted platform: transform lead content
-                draft_content = _adapt_content_for_platform(
-                    lead_content,
-                    was_threaded=lead_was_threaded,
-                    target_platform=rpcfg.name,
-                    max_length=rpcfg.max_length,
-                )
-                draft_reasoning = lead_reasoning
-                # Adapted platforms don't get thread tweets (unthreaded above)
-                if lead_was_threaded and rpcfg.name == "x":
-                    # X-to-X adaptation: re-parse threads
-                    thread_tweets = _parse_thread_tweets(
-                        draft_content,
-                        thread_min=config.scheduling.thread_min_tweets,
-                    )
-                else:
-                    thread_tweets = []
+                draft_content = draft_result.content
+                variant_format_hint = draft_result.format_hint
+                variant_beat_count = draft_result.beat_count
 
-                if verbose:
-                    print(f"  Adapted draft for {pname} from lead {lead_name}")
+            # Per-platform thread validation
+            from types import SimpleNamespace
+
+            variant_obj = SimpleNamespace(
+                content=draft_content,
+                format_hint=variant_format_hint,
+                beat_count=variant_beat_count,
+            )
+            was_threaded = _needs_thread(
+                variant_obj,
+                real_name,
+                rpcfg.account_tier or "free",
+                thread_min=config.scheduling.thread_min_tweets,
+            )
+            thread_tweets: list[str] = []
+            if was_threaded:
+                # Thread validation triggered — need a separate create_thread call
+                p_identity = resolve_identity(config, real_name)
+                p_intro = platform_intro_states.get(real_name, {})
+                p_first_date = _id_ops.get_first_post_date(conn, project.id, real_name)
+                thread_result = drafter.create_thread(
+                    evaluation,
+                    context,
+                    commit,
+                    db,
+                    platform=real_name,
+                    media_config=config.media_generation,
+                    media_guidance=project_config.media_guidance if project_config else None,
+                    identity=p_identity,
+                    target_post_count=p_intro.get("post_count", 0),
+                    is_first_post=p_intro.get("is_first", False),
+                    first_post_date=p_first_date,
+                )
+                thread_tweets = _parse_thread_tweets(
+                    thread_result.content,
+                    thread_min=config.scheduling.thread_min_tweets,
+                )
+                draft_content = thread_result.content
+
+            if verbose:
+                print(f"  {pname} ({real_name}): variant {'found' if variant else 'fallback'}")
 
             # Per-platform scheduling
             schedule = calculate_optimal_time(
