@@ -2134,9 +2134,9 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
             except ConfigError:
                 project_config = ProjectConfig(repo_path=repo_path)
 
-            # Use first decision's commit hash as reference
-            first_hash = decisions[0].commit_hash
-            commit = parse_commit_info(first_hash, repo_path)
+            # Use last decision as trigger (evaluate_batch convention)
+            last_decision = decisions[-1]
+            commit = parse_commit_info(last_decision.commit_hash, repo_path)
             context = assemble_evaluator_context(db, project_id, project_config)
 
             evaluator_client = create_client(config.models.evaluator, config)
@@ -2148,10 +2148,11 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
                 project=proj,
                 commit=commit,
                 project_config=project_config,
-                current_branch=decisions[0].branch,
+                current_branch=last_decision.branch,
                 dry_run=False,
                 verbose=False,
                 show_prompt=False,
+                existing_decision_id=last_decision.id,
             )
 
             # Re-fetch decisions from fresh connection as Decision objects
@@ -2161,10 +2162,25 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
                 if d:
                     batch_decisions.append(d)
 
+            # Separate trigger (last) from deferred (the rest).
+            # evaluate_batch adds trigger_commit_hash to the hash list,
+            # so deferred_commits must NOT include the trigger to avoid duplication.
+            # The trigger decision's existing ID is passed so _run_targets_path
+            # reuses the row instead of creating a new one (UNIQUE constraint).
+            trigger_decision = batch_decisions[-1]
+            deferred_decisions = batch_decisions[:-1]
+            trigger_hash = trigger_decision.commit_hash
+
+            # Update TriggerContext with the trigger commit's info
+            commit = parse_commit_info(trigger_hash, repo_path)
+            ctx.commit = commit
+            ctx.existing_decision_id = trigger_decision.id
+            ctx.current_branch = trigger_decision.branch
+
             result = evaluate_batch(
                 ctx=ctx,
-                deferred_commits=batch_decisions,
-                trigger_commit_hash=first_hash,
+                deferred_commits=deferred_decisions,
+                trigger_commit_hash=trigger_hash,
                 context=context,
                 evaluator_client=evaluator_client,
             )

@@ -290,8 +290,10 @@ def batch_evaluate(
                 except ConfigError:
                     project_config = ProjectConfig(repo_path=repo_path)
 
-                first_hash = decisions[0].commit_hash
-                commit = parse_commit_info(first_hash, repo_path)
+                # Use last decision as trigger (evaluate_batch convention)
+                last_decision = decisions[-1]
+                trigger_hash = last_decision.commit_hash
+                commit = parse_commit_info(trigger_hash, repo_path)
                 context = assemble_evaluator_context(db, project_id, project_config)
                 evaluator_client = create_client(config.models.evaluator, config)
 
@@ -302,10 +304,11 @@ def batch_evaluate(
                     project=proj2,
                     commit=commit,
                     project_config=project_config,
-                    current_branch=decisions[0].branch,
+                    current_branch=last_decision.branch,
                     dry_run=dry_run,
                     verbose=False,
                     show_prompt=False,
+                    existing_decision_id=last_decision.id,
                 )
 
                 # Re-fetch decisions from fresh connection
@@ -315,10 +318,13 @@ def batch_evaluate(
                     if d:
                         batch_decisions.append(d)
 
+                # Separate trigger (last) from deferred (the rest)
+                deferred_decisions = batch_decisions[:-1]
+
                 result = evaluate_batch(
                     ctx=tctx,
-                    deferred_commits=batch_decisions,
-                    trigger_commit_hash=first_hash,
+                    deferred_commits=deferred_decisions,
+                    trigger_commit_hash=trigger_hash,
                     context=context,
                     evaluator_client=evaluator_client,
                 )
