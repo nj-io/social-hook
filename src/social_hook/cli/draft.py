@@ -527,6 +527,7 @@ def post_now(
     Requires platform credentials in ~/.social-hook/.env.
 
     Example: social-hook draft post-now draft_abc123
+    Example: social-hook draft post-now draft_abc123 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
 
@@ -1130,6 +1131,7 @@ def connect(
     The account's platform must match the draft's platform.
 
     Example: social-hook draft connect draft-abc123 --account my-x-account
+    Example: social-hook draft connect draft-abc123 --account my-x-account --yes  (skip confirmation)
     """
     from social_hook.config.yaml import load_full_config, save_config
     from social_hook.db import operations as ops

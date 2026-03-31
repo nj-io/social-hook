@@ -8,6 +8,9 @@ Media management.
 
 Remove orphaned files from media cache.
 
+Example: social-hook media gc --dry-run
+Example: social-hook media gc --yes  (skip confirmation)
+
 **Options:**
 
 | Flag | Type | Default | Description |

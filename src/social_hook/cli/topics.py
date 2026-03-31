@@ -308,6 +308,7 @@ def dismiss(
     by auto-seeding. Use 'topics list --include-dismissed' to see them.
 
     Example: social-hook topics dismiss topic_abc123
+    Example: social-hook topics dismiss topic_abc123 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
 

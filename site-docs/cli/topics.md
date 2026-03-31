@@ -33,6 +33,7 @@ Dismissed topics are hidden from the queue and will not be recreated
 by auto-seeding. Use 'topics list --include-dismissed' to see them.
 
 Example: social-hook topics dismiss topic_abc123
+Example: social-hook topics dismiss topic_abc123 --yes  (skip confirmation)
 
 **Arguments:**
 

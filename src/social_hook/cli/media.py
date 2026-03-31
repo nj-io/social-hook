@@ -13,7 +13,11 @@ def media_gc(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be removed"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ):
-    """Remove orphaned files from media cache."""
+    """Remove orphaned files from media cache.
+
+    Example: social-hook media gc --dry-run
+    Example: social-hook media gc --yes  (skip confirmation)
+    """
     from social_hook.db.connection import init_database
     from social_hook.filesystem import cleanup_orphaned_media, get_db_path
 
