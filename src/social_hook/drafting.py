@@ -529,8 +529,21 @@ def draft_for_targets(
 
     all_results: list[DraftResult] = []
 
-    # Collect accountless targets — these get preview_mode=True on their drafts
-    _preview_targets = {ta.target_name for ta in draft_actions if not ta.target_config.account}
+    # Collect targets that can't be posted — preview_mode=True on their drafts
+    # Preview if: no account configured, OR account has no OAuth credentials
+    _preview_targets: set[str] = set()
+    for ta in draft_actions:
+        if not ta.target_config.account:
+            _preview_targets.add(ta.target_name)
+        elif ta.target_config.account:
+            # Account exists — check if it has OAuth tokens
+            account_name = ta.target_config.account
+            token_row = conn.execute(
+                "SELECT 1 FROM oauth_tokens WHERE account_name = ? LIMIT 1",
+                (account_name,),
+            ).fetchone()
+            if not token_row:
+                _preview_targets.add(ta.target_name)
 
     def _resolve_target_platform(ta):
         """Resolve a ResolvedPlatformConfig for a target action."""
