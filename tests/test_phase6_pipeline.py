@@ -36,13 +36,14 @@ class FakeConfig:
     platform_settings: dict = field(default_factory=dict)
 
 
-def _make_draft(platform="x", draft_id="draft_1", target_id=None, topic_id=None):
+def _make_draft(platform="x", draft_id="draft_1", target_id=None, topic_id=None, arc_id=None):
     """Create a minimal draft-like object."""
     return SimpleNamespace(
         platform=platform,
         id=draft_id,
         target_id=target_id,
         topic_id=topic_id,
+        arc_id=arc_id,
         project_id="proj_1",
         decision_id="dec_1",
         content="Test post content",
@@ -253,20 +254,27 @@ class TestTopicStatusOnPost:
         )
         db.commit()
 
-    def test_topic_updated_on_post(self, db):
-        """When a draft with topic_id is posted, topic status should be set to 'covered'."""
-        # Create a topic
+    def test_topic_covered_on_post_no_arc(self, db):
+        """When a draft without arc_id is posted, topic status should be 'covered'."""
+        # Create a topic with hold_reason to verify it gets cleared
         db.execute(
-            "INSERT INTO content_topics (id, project_id, strategy, topic, status) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("topic_1", "proj_1", "building-public", "auth system", "partial"),
+            "INSERT INTO content_topics (id, project_id, strategy, topic, status, hold_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "topic_1",
+                "proj_1",
+                "building-public",
+                "auth system",
+                "holding",
+                "waiting for more commits",
+            ),
         )
         db.commit()
 
         draft_id = "draft_topic_test"
         self._insert_draft(db, draft_id=draft_id, topic_id="topic_1", target_id="t1")
 
-        draft = _make_draft(draft_id=draft_id, target_id="t1", topic_id="topic_1")
+        draft = _make_draft(draft_id=draft_id, target_id="t1", topic_id="topic_1", arc_id=None)
         result = SimpleNamespace(
             success=True,
             external_id="ext_123",
@@ -284,6 +292,39 @@ class TestTopicStatusOnPost:
         topic = ops.get_topic(db, "topic_1")
         assert topic is not None
         assert topic.status == "covered"
+        assert topic.hold_reason is None  # hold_reason cleared
+        assert topic.last_posted_at is not None  # last_posted_at set
+
+    def test_topic_partial_on_post_with_arc(self, db):
+        """When a draft with arc_id is posted, topic status should be 'partial'."""
+        db.execute(
+            "INSERT INTO content_topics (id, project_id, strategy, topic, status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("topic_2", "proj_1", "building-public", "auth system", "holding"),
+        )
+        db.commit()
+
+        draft_id = "draft_arc_test"
+        self._insert_draft(db, draft_id=draft_id, topic_id="topic_2", target_id="t1")
+
+        draft = _make_draft(draft_id=draft_id, target_id="t1", topic_id="topic_2", arc_id="arc_1")
+        result = SimpleNamespace(
+            success=True,
+            external_id="ext_789",
+            external_url="https://x.com/test/789",
+        )
+        config = SimpleNamespace(notification_level="drafts_only")
+
+        with (
+            patch("social_hook.scheduler.send_notification"),
+            patch("social_hook.scheduler.ops.get_draft_tweets", return_value=[]),
+            patch("social_hook.scheduler.ops.get_decision", return_value=None),
+        ):
+            record_post_success(db, draft, result, config, "test-project")
+
+        topic = ops.get_topic(db, "topic_2")
+        assert topic is not None
+        assert topic.status == "partial"
 
     def test_no_topic_id_no_update(self, db):
         """When draft has no topic_id, no topic status update happens."""
@@ -305,38 +346,6 @@ class TestTopicStatusOnPost:
         ):
             # Should not raise — just verifies it runs cleanly
             record_post_success(db, draft, result, config, "test-project")
-
-
-# =============================================================================
-# 6.2: Topic status completeness — trigger _run_targets_path
-# =============================================================================
-
-
-class TestTopicStatusOnDraft:
-    """Test topic status update after draft creation in _run_targets_path."""
-
-    def test_topic_status_partial_with_arc(self):
-        """Strategy with topic_id and arc_id should set topic to 'partial'."""
-        sd = SimpleNamespace(action="draft", topic_id="topic_1", arc_id="arc_1", reason="test")
-
-        def _val(x):
-            return x.value if hasattr(x, "value") else x
-
-        # Verify the logic: if arc_id present, new_status should be "partial"
-        if _val(sd.action) == "draft" and sd.topic_id:
-            new_status = "partial" if sd.arc_id else "covered"
-        assert new_status == "partial"
-
-    def test_topic_status_covered_without_arc(self):
-        """Strategy with topic_id but no arc_id should set topic to 'covered'."""
-        sd = SimpleNamespace(action="draft", topic_id="topic_1", arc_id=None, reason="test")
-
-        def _val(x):
-            return x.value if hasattr(x, "value") else x
-
-        if _val(sd.action) == "draft" and sd.topic_id:
-            new_status = "partial" if sd.arc_id else "covered"
-        assert new_status == "covered"
 
 
 # =============================================================================

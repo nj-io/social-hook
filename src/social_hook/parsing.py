@@ -57,6 +57,11 @@ def safe_int(
         return default
 
 
+def enum_value(x: Any) -> Any:
+    """Extract .value from enums or return unchanged. Use instead of inline _val() helpers."""
+    return x.value if hasattr(x, "value") else x
+
+
 def check_unknown_keys(
     data: dict,
     known_keys: set[str],

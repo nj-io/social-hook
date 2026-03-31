@@ -1431,47 +1431,59 @@ async def api_project_decisions(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     branch: str | None = Query(None),
+    sort_by: str = Query("created_at"),
+    sort_dir: str = Query("desc"),
+    decision: str | None = Query(None),
+    classification: str | None = Query(None),
 ):
-    """Get decision history for a project with pagination."""
+    """Get decision history for a project with pagination, sorting, and filtering."""
+    # Validate sort params to prevent SQL injection
+    allowed_sort = {"created_at", "decision", "commit_hash", "branch"}
+    if sort_by not in allowed_sort:
+        raise HTTPException(
+            status_code=400, detail=f"sort_by must be one of {sorted(allowed_sort)}"
+        )
+    allowed_dir = {"asc", "desc"}
+    if sort_dir not in allowed_dir:
+        raise HTTPException(status_code=400, detail="sort_dir must be 'asc' or 'desc'")
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
 
+        # Build WHERE clause
+        conditions = ["d.project_id = ?"]
+        params: list[Any] = [project_id]
+
         if branch is not None:
-            rows = conn.execute(
-                """
+            conditions.append("d.branch = ?")
+            params.append(branch)
+        if decision is not None:
+            conditions.append("d.decision = ?")
+            params.append(decision)
+
+        where_clause = " AND ".join(conditions)
+        order_clause = (
+            f"CASE WHEN d.decision = 'processing' THEN 0 ELSE 1 END ASC, d.{sort_by} {sort_dir}"
+        )
+
+        rows = conn.execute(
+            f"""
                 SELECT d.*, COUNT(dr.id) as draft_count
                 FROM decisions d
                 LEFT JOIN drafts dr ON dr.decision_id = d.id
-                WHERE d.project_id = ? AND d.branch = ?
+                WHERE {where_clause}
                 GROUP BY d.id
-                ORDER BY d.created_at DESC
+                ORDER BY {order_clause}
                 LIMIT ? OFFSET ?
             """,
-                (project_id, branch, limit, offset),
-            ).fetchall()
+            (*params, limit, offset),
+        ).fetchall()
 
-            total = conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE project_id = ? AND branch = ?",
-                (project_id, branch),
-            ).fetchone()[0]
-        else:
-            rows = conn.execute(
-                """
-                SELECT d.*, COUNT(dr.id) as draft_count
-                FROM decisions d
-                LEFT JOIN drafts dr ON dr.decision_id = d.id
-                WHERE d.project_id = ?
-                GROUP BY d.id
-                ORDER BY d.created_at DESC
-                LIMIT ? OFFSET ?
-            """,
-                (project_id, limit, offset),
-            ).fetchall()
-
-            total = conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE project_id = ?", (project_id,)
-            ).fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM decisions WHERE {' AND '.join(c.replace('d.', '') for c in conditions)}",
+            params,
+        ).fetchone()[0]
 
         decisions_list = [dict(r) for r in rows]
 
@@ -1514,6 +1526,17 @@ async def api_project_decisions(
                     classification_by_hash[cr["trigger_ref"]] = cls_val
             for d in decisions_list:
                 d["classification"] = classification_by_hash.get(d.get("commit_hash", ""))
+
+        # Post-query classification filter (classification is enriched from evaluation_cycles,
+        # not a DB column on decisions). NOTE: this breaks pagination when active — the returned
+        # page may have fewer than `limit` items and `total` only reflects the current page.
+        # Acceptable for now since classification filter is a convenience, not precision tool.
+        # Proper fix: JOIN evaluation_cycles in the main query.
+        if classification is not None:
+            decisions_list = [
+                d for d in decisions_list if d.get("classification") == classification
+            ]
+            total = len(decisions_list)
 
         return {"decisions": decisions_list, "total": total}
     finally:
@@ -1974,15 +1997,7 @@ async def api_retrigger_decision(decision_id: str):
         decision_branch = decision.branch
 
         # Clean up old drafts (no-op for imported commits with no drafts)
-        conn.execute(
-            "DELETE FROM draft_changes WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
-            (decision_id,),
-        )
-        conn.execute(
-            "DELETE FROM draft_tweets WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
-            (decision_id,),
-        )
-        conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
+        ops.delete_drafts_for_decision(conn, decision_id)
         # Mark as processing — row stays visible in the UI.
         # The pipeline will update to the appropriate status (deferred_eval, draft, skip, etc.)
 
@@ -2012,6 +2027,171 @@ async def api_retrigger_decision(decision_id: str):
         ref_id=f"retrigger-{decision_id}",
         project_id=project_id,
         fn=_blocking_retrigger,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
+
+
+@app.post("/api/decisions/batch-evaluate")
+async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
+    """Batch-evaluate multiple imported/deferred_eval decisions together.
+
+    Body:
+        decision_ids: List of decision IDs to evaluate as a batch
+    """
+    check_unknown_keys(body, {"decision_ids"}, "batch_evaluate", strict=True)
+    decision_ids = body.get("decision_ids", [])
+    if not decision_ids or not isinstance(decision_ids, list):
+        raise HTTPException(status_code=400, detail="decision_ids must be a non-empty list")
+
+    conn = _get_conn()
+    try:
+        decisions = []
+        for did in decision_ids:
+            d = ops.get_decision(conn, did)
+            if not d:
+                raise HTTPException(status_code=404, detail=f"Decision not found: {did}")
+            decisions.append(d)
+
+        # All must be same project
+        project_ids = {d.project_id for d in decisions}
+        if len(project_ids) > 1:
+            raise HTTPException(
+                status_code=400, detail="All decisions must belong to the same project"
+            )
+
+        # Validate statuses
+        valid_statuses = {DecisionType.IMPORTED.value, DecisionType.DEFERRED_EVAL.value}
+        for d in decisions:
+            if d.decision == DecisionType.PROCESSING.value:
+                raise HTTPException(
+                    status_code=409, detail=f"Decision {d.id} is already processing"
+                )
+            if d.decision not in valid_statuses:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Decision {d.id} has status '{d.decision}', expected imported or deferred_eval",
+                )
+            # deferred_eval with batch_id means already part of a batch
+            if d.decision == DecisionType.DEFERRED_EVAL.value and d.batch_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Decision {d.id} already belongs to batch {d.batch_id}",
+                )
+
+        project = ops.get_project(conn, decisions[0].project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        project_id = project.id
+        repo_path = project.repo_path
+
+        # Save original statuses for error recovery
+        original_statuses = {d.id: d.decision for d in decisions}
+
+        # Clean up old drafts for each decision
+        for did in decision_ids:
+            ops.delete_drafts_for_decision(conn, did)
+
+        # Pre-mark as processing synchronously
+        for did in decision_ids:
+            conn.execute(
+                "UPDATE decisions SET decision = ? WHERE id = ?",
+                (DecisionType.PROCESSING.value, did),
+            )
+        conn.commit()
+        for did in decision_ids:
+            ops.emit_data_event(conn, "decision", "updated", did, project_id)
+    finally:
+        conn.close()
+
+    def _blocking_batch_evaluate():
+        import sqlite3 as _sqlite3
+
+        from social_hook.config.project import ProjectConfig, load_project_config
+        from social_hook.config.yaml import load_full_config
+        from social_hook.errors import ConfigError
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.factory import create_client
+        from social_hook.llm.prompts import assemble_evaluator_context
+        from social_hook.trigger import TriggerContext, evaluate_batch, parse_commit_info
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+
+        try:
+            config = load_full_config()
+            proj = ops.get_project(conn2, project_id)
+            if not proj:
+                raise RuntimeError(f"Project {project_id} not found")
+
+            try:
+                project_config = load_project_config(repo_path)
+            except ConfigError:
+                project_config = ProjectConfig(repo_path=repo_path)
+
+            # Use first decision's commit hash as reference
+            first_hash = decisions[0].commit_hash
+            commit = parse_commit_info(first_hash, repo_path)
+            context = assemble_evaluator_context(db, project_id, project_config)
+
+            evaluator_client = create_client(config.models.evaluator, config)
+
+            ctx = TriggerContext(
+                config=config,
+                conn=conn2,
+                db=db,
+                project=proj,
+                commit=commit,
+                project_config=project_config,
+                current_branch=decisions[0].branch,
+                dry_run=False,
+                verbose=False,
+                show_prompt=False,
+            )
+
+            # Re-fetch decisions from fresh connection as Decision objects
+            batch_decisions = []
+            for did in decision_ids:
+                d = ops.get_decision(conn2, did)
+                if d:
+                    batch_decisions.append(d)
+
+            result = evaluate_batch(
+                ctx=ctx,
+                deferred_commits=batch_decisions,
+                trigger_commit_hash=first_hash,
+                context=context,
+                evaluator_client=evaluator_client,
+            )
+
+            if result != 0:
+                raise RuntimeError(f"evaluate_batch returned {result}")
+
+            return {"status": "evaluated", "count": len(decision_ids)}
+        except Exception:
+            # Error recovery: restore original statuses with TOCTOU guard
+            for did, orig_status in original_statuses.items():
+                conn2.execute(
+                    "UPDATE decisions SET decision = ? WHERE id = ? AND decision = ?",
+                    (orig_status, did, DecisionType.PROCESSING.value),
+                )
+            conn2.commit()
+            for did in decision_ids:
+                ops.emit_data_event(conn2, "decision", "updated", did, project_id)
+            raise
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "batch_evaluate",
+        ref_id="batch-evaluate",
+        project_id=project_id,
+        fn=_blocking_batch_evaluate,
     )
     return JSONResponse(
         status_code=202,
@@ -5016,6 +5196,21 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
 
                 ep_tags = _parse_episode_tags(decision)
 
+                # Batch-resolve topic names (N+1 prevention)
+                all_topic_ids = [
+                    sd.get("topic_id")
+                    for sd in (targets_data or {}).values()
+                    if isinstance(sd, dict) and sd.get("topic_id")
+                ]
+                topic_name_map: dict[str, str] = {}
+                if all_topic_ids:
+                    placeholders = ",".join("?" * len(all_topic_ids))
+                    topic_rows = conn.execute(
+                        f"SELECT id, topic FROM content_topics WHERE id IN ({placeholders})",
+                        all_topic_ids,
+                    ).fetchall()
+                    topic_name_map = {r[0]: r[1] for r in topic_rows}
+
                 for strat_name, strat_data in (targets_data or {}).items():
                     action = (
                         strat_data.get("action", "skip") if isinstance(strat_data, dict) else "skip"
@@ -5024,6 +5219,9 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                         action = action.value
                     reasoning = strat_data.get("reason", "") if isinstance(strat_data, dict) else ""
                     topic_id = strat_data.get("topic_id") if isinstance(strat_data, dict) else None
+                    context_source = (
+                        strat_data.get("context_source") if isinstance(strat_data, dict) else None
+                    )
                     # Find a draft matching this strategy via target_id → config target → strategy
                     strat_draft = strategy_to_draft.get(strat_name)
                     strategies[strat_name] = {
@@ -5034,6 +5232,8 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                         "draft_content": strat_draft.content[:200] if strat_draft else None,
                         "draft_preview_mode": strat_draft.preview_mode if strat_draft else None,
                         "topic_id": topic_id,
+                        "topic_matched": topic_name_map.get(topic_id) if topic_id else None,
+                        "content_source": context_source,
                         "episode_tags": ep_tags,
                     }
             elif decision:

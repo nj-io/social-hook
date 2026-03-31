@@ -170,8 +170,12 @@ def record_post_success(conn, draft, result, config, project_name: str, dry_run:
 
     # Update topic status when a draft with topic_id is posted
     if draft.topic_id and not dry_run:
-        ops.update_topic_status(conn, draft.topic_id, "covered")
-        logger.info("Topic %s status -> covered (draft %s posted)", draft.topic_id, draft.id)
+        try:
+            new_status = "partial" if draft.arc_id else "covered"
+            ops.update_topic_posted(conn, draft.topic_id, new_status)
+            ops.emit_data_event(conn, "topic", "updated", draft.topic_id, draft.project_id)
+        except Exception:
+            logger.warning("Topic status update failed (non-fatal)", exc_info=True)
 
     send_notification(
         config,

@@ -332,8 +332,10 @@ def assemble_strategy_posting_state(
         commit_count = getattr(topic, "commit_count", 0)
         last_commit = getattr(topic, "last_commit_at", None)
         since_part = f", since {_relative_time(last_commit)}" if last_commit else ""
+        reason = getattr(topic, "hold_reason", "") or ""
+        reason_part = f' — "{reason}"' if reason else ""
         topics_by_strategy.setdefault(strategy_name, []).append(
-            f"{name} ({commit_count} commits{since_part})"
+            f"{name} ({commit_count} commits{since_part}){reason_part}"
         )
 
     # --- Group active arcs by strategy ---
@@ -578,15 +580,22 @@ def assemble_evaluator_prompt(
             status = getattr(t, "status", "")
             name = getattr(t, "topic", "")
             commits = getattr(t, "commit_count", 0)
-            topics_by_strat.setdefault(strat, []).append(f"{name} [{status}] ({commits} commits)")
+            tid = getattr(t, "id", "")
+            desc = getattr(t, "description", "") or ""
+            desc_part = f" — {desc}" if desc else ""
+            reason = getattr(t, "hold_reason", "") or ""
+            reason_part = f' — "{reason}"' if reason else ""
+            topics_by_strat.setdefault(strat, []).append(
+                f"{name} [id={tid}] [{status}]{reason_part} ({commits} commits){desc_part}"
+            )
         for strat_name, topic_items in topics_by_strat.items():
             topic_lines.append(f"\n### {strat_name}")
             for item in topic_items:
                 topic_lines.append(f"- {item}")
         topic_section = "\n".join(topic_lines)
-        # Cap at ~500 tokens (~2000 chars)
-        if len(topic_section) > 2000:
-            topic_section = topic_section[:2000] + "\n[...topic queue truncated]"
+        # Cap at ~2000 tokens (~8000 chars) — topics now include IDs + descriptions
+        if len(topic_section) > 8000:
+            topic_section = topic_section[:8000] + "\n[...topic queue truncated]"
         sections.append(topic_section)
 
     # Memories
@@ -797,6 +806,7 @@ def assemble_drafter_prompt(
     target_post_count: int = 0,
     is_first_post: bool = False,
     first_post_date: str | None = None,
+    content_source_context: dict[str, str] | None = None,
 ) -> str:
     """Assemble full drafter system prompt with context.
 
@@ -1012,6 +1022,14 @@ def assemble_drafter_prompt(
             sections.append(
                 f'- [{getattr(p, "platform", "?")}]{url_part}: "{content_preview}" ({time_ago})'
             )
+
+    # Content Source Context (resolved from content_sources registry)
+    if content_source_context:
+        sections.append("\n---\n## Content Source Context")
+        for source_type, content in content_source_context.items():
+            if content:
+                sections.append(f"\n### {source_type}")
+                sections.append(content)
 
     # Recent posts
     if recent_posts:

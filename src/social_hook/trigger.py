@@ -570,6 +570,37 @@ def run_trigger(
             conn.close()
             return result
 
+        # Single-commit path: run stage 1 inline
+        db.emit_data_event("pipeline", PipelineStage.ANALYZING, commit_hash[:8], project.id)
+        try:
+            from social_hook.llm.analyzer import CommitAnalyzer
+
+            stage1 = CommitAnalyzer(evaluator_client)
+            analyzer_result = stage1.analyze(
+                commit=commit, context=context, db=db, show_prompt=show_prompt
+            )
+            if verbose:
+                cls = (
+                    analyzer_result.commit_analysis.classification.value
+                    if analyzer_result.commit_analysis.classification
+                    else "unknown"
+                )
+                print(f"Stage 1 complete (classification: {cls})")
+        except Exception as e:
+            logger.warning("Commit analyzer failed (non-fatal): %s", e, exc_info=True)
+            analyzer_result = None
+
+        # Trivial check on fresh analysis
+        if analyzer_result is not None and _is_trivial_classification(analyzer_result):
+            logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
+            result = _run_trivial_skip(
+                ctx=ctx, analyzer_result=analyzer_result, commit_hash=commit_hash
+            )
+            conn.close()
+            return result
+
+        db.emit_data_event("pipeline", PipelineStage.EVALUATING, commit_hash[:8], project.id)
+
     # Guard: targets configured but no content strategies defined
     if has_targets and not config.content_strategies:
         logger.warning("Targets configured but no content strategies defined — skipping evaluation")
@@ -1145,11 +1176,34 @@ def _run_targets_path(
         except Exception:
             logger.warning("Topic creation from analyzer suggestions failed", exc_info=True)
 
+    # Validate topic_id references belong to correct strategy (LLM Output Validation)
+    for strategy_name, strat_decision in evaluation.strategies.items():
+        if strat_decision.topic_id:
+            referenced_topic = ops.get_topic(ctx.conn, strat_decision.topic_id)
+            if referenced_topic is None:
+                logger.warning(
+                    "Evaluator referenced nonexistent topic %s for strategy %s, stripping",
+                    strat_decision.topic_id,
+                    strategy_name,
+                )
+                strat_decision.topic_id = None
+            elif referenced_topic.strategy != strategy_name:
+                logger.warning(
+                    "Evaluator referenced topic %s (strategy=%s) from strategy %s, stripping",
+                    strat_decision.topic_id,
+                    referenced_topic.strategy,
+                    strategy_name,
+                )
+                strat_decision.topic_id = None
+
     # Update content topic statuses for held topics
     for _strategy_name, strat_decision in evaluation.strategies.items():
         action = _val(strat_decision.action)
         if action == "hold" and strat_decision.topic_id:
-            ops.update_topic_status(ctx.conn, strat_decision.topic_id, "holding")
+            ops.update_topic_hold(ctx.conn, strat_decision.topic_id, strat_decision.reason)
+            ops.emit_data_event(
+                ctx.conn, "topic", "updated", strat_decision.topic_id, ctx.project.id
+            )
 
     # Derive overall decision from per-strategy decisions
     decision_type = _determine_overall_decision(evaluation.strategies)
@@ -1316,6 +1370,7 @@ def _run_targets_path(
                 project_config=ctx.project_config,
                 dry_run=ctx.dry_run,
                 verbose=ctx.verbose,
+                cycle_id=cycle.id,
             )
 
             # Increment arc post count if drafts were created for an arc
@@ -1328,15 +1383,6 @@ def _run_targets_path(
                         print(f"Incremented post count for arc: {decision.arc_id}")
                 except Exception as e:
                     logger.warning(f"Arc post count increment failed (non-fatal): {e}")
-
-            # Update topic status for strategies that drafted with a topic_id
-            if draft_results and not ctx.dry_run:
-                for _sn, sd in evaluation.strategies.items():
-                    if _val(sd.action) == "draft" and sd.topic_id:
-                        new_status = "partial" if sd.arc_id else "covered"
-                        ops.update_topic_status(ctx.conn, sd.topic_id, new_status)
-                        if ctx.verbose:
-                            print(f"Topic {sd.topic_id} status -> {new_status}")
 
             draft_results_for_notification = draft_results
         else:

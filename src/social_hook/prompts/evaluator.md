@@ -167,6 +167,12 @@ For each `draft` decision, specify what context the drafter needs via `context_s
 
 This tells the routing layer what to assemble for the drafter. Omit `context_source` to use defaults (brief + commits).
 
+When your decision relates to a content topic from the Topic Queue, you MUST:
+1. Set `topic_id` to the topic's exact ID as shown in `[id=...]` in the Topic Queue — do not invent IDs
+2. Set `context_source` with `types` including `"topic"` and `topic_id` matching your chosen topic
+
+If you reference a topic in your reasoning but don't set its ID, the draft won't be linked to the topic.
+
 ## Deferred Evaluations
 
 When batch_throttled mode is active, multiple deferred triggers may be combined into your current evaluation. In this case:

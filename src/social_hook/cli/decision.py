@@ -156,6 +156,214 @@ def retrigger(
         raise typer.Exit(exit_code)
 
 
+@app.command("batch-evaluate")
+def batch_evaluate(
+    ctx: typer.Context,
+    decision_ids: list[str] = typer.Argument(..., help="Decision IDs to evaluate as a batch"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Evaluate multiple imported/deferred decisions as a single batch.
+
+    Groups the decisions and runs a combined evaluation through the full
+    pipeline (commit analysis, evaluation, drafting, notifications).
+    All decisions must belong to the same project and have status
+    'imported' or 'deferred_eval' (without an existing batch_id).
+
+    Example: social-hook decision batch-evaluate dec_abc123 dec_def456
+    """
+    from social_hook.db import operations as ops
+
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+    dry_run = ctx.obj.get("dry_run", False) if ctx.obj else False
+
+    conn = _get_conn()
+    try:
+        # Validate all decisions exist
+        decisions = []
+        for did in decision_ids:
+            d = ops.get_decision(conn, did)
+            if not d:
+                typer.echo(f"Decision not found: {did}", err=True)
+                raise typer.Exit(1)
+            decisions.append(d)
+
+        # All must be same project
+        project_ids = {d.project_id for d in decisions}
+        if len(project_ids) > 1:
+            typer.echo("All decisions must belong to the same project.", err=True)
+            raise typer.Exit(1)
+
+        # Validate statuses
+        from social_hook.models.enums import DecisionType
+
+        valid_statuses = {DecisionType.IMPORTED.value, DecisionType.DEFERRED_EVAL.value}
+        for d in decisions:
+            if d.decision not in valid_statuses:
+                typer.echo(
+                    f"Decision {d.id} has status '{d.decision}', "
+                    "expected 'imported' or 'deferred_eval'.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            if d.decision == DecisionType.DEFERRED_EVAL.value and d.batch_id:
+                typer.echo(
+                    f"Decision {d.id} already belongs to batch {d.batch_id}.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+        proj = ops.get_project(conn, decisions[0].project_id)
+        if not proj:
+            typer.echo(f"Project not found: {decisions[0].project_id}", err=True)
+            raise typer.Exit(1)
+
+        # Verify --project matches if provided
+        if project:
+            repo_path_check = _resolve_project(project)
+            proj_check = ops.get_project_by_path(conn, repo_path_check)
+            if not proj_check or proj_check.id != proj.id:
+                typer.echo(
+                    f"Decisions belong to project '{proj.name}', "
+                    f"not the project at {repo_path_check}.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+        if not yes:
+            typer.echo(f"Batch evaluate {len(decisions)} decision(s):")
+            for d in decisions:
+                typer.echo(f"  {d.id[:14]}  {d.commit_hash[:7]}  {d.decision}")
+            typer.echo()
+            confirm = typer.confirm("Proceed?")
+            if not confirm:
+                typer.echo("Cancelled.")
+                return
+
+        # Save original statuses for error recovery
+        original_statuses = {d.id: d.decision for d in decisions}
+
+        # Clean up old drafts for each decision
+        for did in decision_ids:
+            ops.delete_drafts_for_decision(conn, did)
+
+        # Pre-mark as processing
+        for did in decision_ids:
+            conn.execute(
+                "UPDATE decisions SET decision = ? WHERE id = ?",
+                (DecisionType.PROCESSING.value, did),
+            )
+        conn.commit()
+        for did in decision_ids:
+            ops.emit_data_event(conn, "decision", "updated", did, proj.id)
+
+        repo_path = proj.repo_path
+        project_id = proj.id
+    finally:
+        conn.close()
+
+    # Run evaluation (synchronous, with spinner)
+    from social_hook.cli._spinner import spinner
+
+    try:
+        with spinner(f"Evaluating batch of {len(decisions)} decision(s)..."):
+            from social_hook.config.project import ProjectConfig, load_project_config
+            from social_hook.config.yaml import load_full_config
+            from social_hook.errors import ConfigError
+            from social_hook.llm.dry_run import DryRunContext
+            from social_hook.llm.factory import create_client
+            from social_hook.llm.prompts import assemble_evaluator_context
+            from social_hook.trigger import TriggerContext, evaluate_batch, parse_commit_info
+
+            conn2 = _get_conn()
+            db = DryRunContext(conn2, dry_run=dry_run)
+
+            try:
+                config = load_full_config()
+                proj2 = ops.get_project(conn2, project_id)
+                if not proj2:
+                    raise RuntimeError(f"Project {project_id} not found")
+
+                try:
+                    project_config = load_project_config(repo_path)
+                except ConfigError:
+                    project_config = ProjectConfig(repo_path=repo_path)
+
+                first_hash = decisions[0].commit_hash
+                commit = parse_commit_info(first_hash, repo_path)
+                context = assemble_evaluator_context(db, project_id, project_config)
+                evaluator_client = create_client(config.models.evaluator, config)
+
+                tctx = TriggerContext(
+                    config=config,
+                    conn=conn2,
+                    db=db,
+                    project=proj2,
+                    commit=commit,
+                    project_config=project_config,
+                    current_branch=decisions[0].branch,
+                    dry_run=dry_run,
+                    verbose=False,
+                    show_prompt=False,
+                )
+
+                # Re-fetch decisions from fresh connection
+                batch_decisions = []
+                for did in decision_ids:
+                    d = ops.get_decision(conn2, did)
+                    if d:
+                        batch_decisions.append(d)
+
+                result = evaluate_batch(
+                    ctx=tctx,
+                    deferred_commits=batch_decisions,
+                    trigger_commit_hash=first_hash,
+                    context=context,
+                    evaluator_client=evaluator_client,
+                )
+
+                if result != 0:
+                    raise RuntimeError(f"evaluate_batch returned {result}")
+            finally:
+                conn2.close()
+    except Exception as exc:
+        # Error recovery: restore original statuses
+        conn3 = _get_conn()
+        try:
+            for did, orig_status in original_statuses.items():
+                conn3.execute(
+                    "UPDATE decisions SET decision = ? WHERE id = ? AND decision = ?",
+                    (orig_status, did, DecisionType.PROCESSING.value),
+                )
+            conn3.commit()
+            for did in decision_ids:
+                ops.emit_data_event(conn3, "decision", "updated", did, project_id)
+        finally:
+            conn3.close()
+
+        if json_output:
+            typer.echo(
+                json_mod.dumps(
+                    {"success": False, "error": str(exc), "count": len(decision_ids)},
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(f"Batch evaluation failed: {exc}")
+        raise typer.Exit(2) from None
+
+    if json_output:
+        typer.echo(
+            json_mod.dumps(
+                {"success": True, "count": len(decision_ids)},
+                indent=2,
+            )
+        )
+    else:
+        typer.echo(f"Batch evaluation complete ({len(decision_ids)} decisions).")
+
+
 @app.command()
 def rewind(
     ctx: typer.Context,
@@ -333,15 +541,28 @@ def list_cmd(
             return
 
         typer.echo(
-            f"{'ID':<16} {'Commit':<9} {'Decision':<10} {'Media':<14} {'Angle':<30} {'Date'}"
+            f"{'ID':<16} {'Commit':<9} {'Decision':<14} {'Media':<14} {'Angle':<30} {'Date'}"
         )
-        typer.echo("-" * 99)
+        typer.echo("-" * 103)
+
+        # Group deferred_eval decisions with same batch_id for visual separators
+        seen_batches: set[str] = set()
         for d in decisions:
+            bid = d.batch_id
+            if bid and bid not in seen_batches:
+                seen_batches.add(bid)
+                batch_members = [x for x in decisions if x.batch_id == bid]
+                if len(batch_members) > 1:
+                    typer.echo(f"  --- batch {bid[:14]} ({len(batch_members)} decisions) ---")
+
             did = d.id[:14]
             commit = d.commit_hash[:7]
+            decision_str = d.decision
+            if bid:
+                decision_str = f"{d.decision}*"
             media = (d.media_tool or "—")[:12]
             angle = (d.angle or "")[:28]
             date = str(d.created_at)[:19] if d.created_at else ""
-            typer.echo(f"{did:<16} {commit:<9} {d.decision:<10} {media:<14} {angle:<30} {date}")
+            typer.echo(f"{did:<16} {commit:<9} {decision_str:<14} {media:<14} {angle:<30} {date}")
     finally:
         conn.close()

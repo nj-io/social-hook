@@ -380,6 +380,7 @@ export interface Topic {
   topic: string;
   description?: string;
   status: string;
+  hold_reason?: string;
   priority_rank: number;
   commit_count?: number;
   last_posted_at?: string;

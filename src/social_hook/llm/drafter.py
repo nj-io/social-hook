@@ -44,6 +44,7 @@ class Drafter:
         target_post_count: int = 0,
         is_first_post: bool = False,
         first_post_date: str | None = None,
+        content_source_context: dict[str, str] | None = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit.
 
@@ -84,6 +85,7 @@ class Drafter:
             target_post_count=target_post_count,
             is_first_post=is_first_post,
             first_post_date=first_post_date,
+            content_source_context=content_source_context,
         )
 
         # Build narrative-aware user message

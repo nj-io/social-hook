@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260328075443
+SCHEMA_VERSION = 20260330135609
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     suggestion_id   TEXT,
     pattern_id      TEXT,
     preview_mode    INTEGER NOT NULL DEFAULT 0,
+    arc_id          TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -117,6 +118,7 @@ CREATE INDEX IF NOT EXISTS idx_drafts_scheduled ON drafts(status, scheduled_time
 CREATE INDEX IF NOT EXISTS idx_drafts_intro ON drafts(project_id) WHERE is_intro = 1;
 CREATE INDEX IF NOT EXISTS idx_drafts_reference_post ON drafts(reference_post_id) WHERE reference_post_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_drafts_target ON drafts(target_id) WHERE target_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_drafts_topic_id ON drafts(topic_id) WHERE topic_id IS NOT NULL;
 
 -- Draft Tweets (Thread Support)
 CREATE TABLE IF NOT EXISTS draft_tweets (
@@ -309,6 +311,7 @@ CREATE TABLE IF NOT EXISTS content_topics (
     priority_rank INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'uncovered'
         CHECK (status IN ('uncovered', 'holding', 'partial', 'covered', 'dismissed')),
+    hold_reason TEXT,
     commit_count INTEGER NOT NULL DEFAULT 0,
     last_commit_at TEXT,
     last_posted_at TEXT,

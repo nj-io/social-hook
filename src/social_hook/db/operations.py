@@ -742,13 +742,26 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
             media_paths, media_type, media_spec, media_spec_used, suggested_time, scheduled_time,
             reasoning, superseded_by, retry_count, last_error, is_intro, post_format,
             reference_post_id, target_id, evaluation_cycle_id, topic_id, suggestion_id, pattern_id,
-            preview_mode)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            preview_mode, arc_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         draft.to_row(),
     )
     conn.commit()
     return draft.id
+
+
+def delete_drafts_for_decision(conn: sqlite3.Connection, decision_id: str) -> None:
+    """Delete all drafts (and related draft_changes, draft_tweets) for a decision."""
+    conn.execute(
+        "DELETE FROM draft_changes WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
+        (decision_id,),
+    )
+    conn.execute(
+        "DELETE FROM draft_tweets WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
+        (decision_id,),
+    )
+    conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
 
 
 def clear_draft_preview_mode(conn: sqlite3.Connection, draft_id: str) -> None:
@@ -2388,6 +2401,41 @@ def update_topic_status(conn: sqlite3.Connection, topic_id: str, status: str) ->
     )
     conn.commit()
     return cursor.rowcount > 0
+
+
+def update_topic_hold(conn: sqlite3.Connection, topic_id: str, reason: str | None) -> bool:
+    """Set topic to 'holding' with hold_reason atomically. Returns True if updated."""
+    cursor = conn.execute(
+        "UPDATE content_topics SET status = 'holding', hold_reason = ? WHERE id = ?",
+        (reason, topic_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def update_topic_posted(conn: sqlite3.Connection, topic_id: str, status: str) -> bool:
+    """Update topic after posting: set status, clear hold_reason, set last_posted_at."""
+    cursor = conn.execute(
+        "UPDATE content_topics SET status = ?, hold_reason = NULL, last_posted_at = datetime('now') WHERE id = ?",
+        (status, topic_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_posts_by_topic_id(conn: sqlite3.Connection, topic_id: str) -> list:
+    """Get recent posts linked to a topic via drafts. Returns list of Post objects."""
+    rows = conn.execute(
+        """
+        SELECT p.* FROM posts p
+        JOIN drafts d ON p.draft_id = d.id
+        WHERE d.topic_id = ?
+        ORDER BY p.posted_at DESC
+        LIMIT 5
+        """,
+        (topic_id,),
+    ).fetchall()
+    return [Post.from_dict(dict(row)) for row in rows]
 
 
 def update_topic_priority(conn: sqlite3.Connection, topic_id: str, priority_rank: int) -> bool:

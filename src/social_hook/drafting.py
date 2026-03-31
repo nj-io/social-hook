@@ -135,6 +135,10 @@ def _draft_for_resolved_platforms(
     verbose: bool = False,
     preview_targets: set[str] | None = None,
     shared_group: bool = False,
+    content_source_context: dict[str, str] | None = None,
+    topic_id: str | None = None,
+    arc_id: str | None = None,
+    cycle_id: str | None = None,
 ) -> list[DraftResult]:
     """Core drafting loop: create drafter client, draft per platform, schedule, insert.
 
@@ -218,6 +222,10 @@ def _draft_for_resolved_platforms(
             preview_targets=preview_targets,
             arc_context=arc_context,
             referenced_posts=referenced_posts,
+            content_source_context=content_source_context,
+            topic_id=topic_id,
+            arc_id=arc_id,
+            cycle_id=cycle_id,
         )
 
     # 5b. Draft for each target platform (default: one LLM call per platform)
@@ -253,6 +261,7 @@ def _draft_for_resolved_platforms(
                 target_post_count=target_post_count,
                 is_first_post=is_first_post,
                 first_post_date=first_post_date,
+                content_source_context=content_source_context,
             )
 
             # Override platform: LLM may return any string for unconstrained field
@@ -347,6 +356,9 @@ def _draft_for_resolved_platforms(
                 if media_error and not media_paths
                 else None,
                 preview_mode=bool(preview_targets and pname in preview_targets),
+                topic_id=topic_id,
+                arc_id=arc_id,
+                evaluation_cycle_id=cycle_id,
             )
 
             # Set reference post info from evaluator (prefer same-platform for native quote)
@@ -456,6 +468,7 @@ def draft_for_targets(
     project_config=None,
     dry_run: bool = False,
     verbose: bool = False,
+    cycle_id: str | None = None,
 ) -> list[DraftResult]:
     """Draft for resolved target actions.
 
@@ -491,6 +504,16 @@ def draft_for_targets(
             continue
         # Get context source spec from the strategy decision
         spec = getattr(ta.strategy_decision, "context_source", None)
+        topic_id = getattr(ta.strategy_decision, "topic_id", None)
+        if topic_id:
+            if spec is None:
+                from social_hook.llm.schemas import ContextSourceSpec
+
+                spec = ContextSourceSpec(types=["topic"], topic_id=topic_id)
+            else:
+                if "topic" not in spec.types:
+                    spec.types.append("topic")
+                spec.topic_id = topic_id  # always sync to match top-level topic_id
         if spec and hasattr(spec, "types") and spec.types:
             kwargs: dict[str, Any] = {
                 "conn": conn,
@@ -526,7 +549,13 @@ def draft_for_targets(
         )
         return resolve_platform(platform_name, raw, config.scheduling)
 
-    def _draft_batch(platforms_map, shared_group: bool = False):
+    def _draft_batch(
+        platforms_map,
+        shared_group: bool = False,
+        content_source_context: dict[str, str] | None = None,
+        topic_id: str | None = None,
+        arc_id: str | None = None,
+    ):
         """Run _draft_for_resolved_platforms with shared kwargs."""
         return _draft_for_resolved_platforms(
             platforms_map,
@@ -543,16 +572,37 @@ def draft_for_targets(
             verbose=verbose,
             preview_targets=_preview_targets,
             shared_group=shared_group,
+            content_source_context=content_source_context,
+            topic_id=topic_id,
+            arc_id=arc_id,
+            cycle_id=cycle_id,
         )
 
     # Process grouped targets (shared draft per group — single LLM call)
     for _group_name, group_targets in groups.items():
         platforms_for_group = {ta.target_name: _resolve_target_platform(ta) for ta in group_targets}
-        all_results.extend(_draft_batch(platforms_for_group, shared_group=True))
+        content_ctx = resolved_context.get(group_targets[0].target_config.strategy, {})
+        all_results.extend(
+            _draft_batch(
+                platforms_for_group,
+                shared_group=True,
+                content_source_context=content_ctx or None,
+                topic_id=getattr(group_targets[0].strategy_decision, "topic_id", None),
+                arc_id=getattr(group_targets[0].strategy_decision, "arc_id", None),
+            )
+        )
 
     # Process ungrouped targets individually
     for ta in ungrouped:
-        all_results.extend(_draft_batch({ta.target_name: _resolve_target_platform(ta)}))
+        content_ctx = resolved_context.get(ta.target_config.strategy, {})
+        all_results.extend(
+            _draft_batch(
+                {ta.target_name: _resolve_target_platform(ta)},
+                content_source_context=content_ctx or None,
+                topic_id=getattr(ta.strategy_decision, "topic_id", None),
+                arc_id=getattr(ta.strategy_decision, "arc_id", None),
+            )
+        )
 
     return all_results
 
@@ -648,6 +698,10 @@ def _draft_shared_group(
     preview_targets: set[str] | None = None,
     arc_context=None,
     referenced_posts=None,
+    content_source_context: dict[str, str] | None = None,
+    topic_id: str | None = None,
+    arc_id: str | None = None,
+    cycle_id: str | None = None,
 ) -> list[DraftResult]:
     """Draft once for the most constrained platform, adapt for the rest.
 
@@ -689,6 +743,7 @@ def _draft_shared_group(
             target_post_count=lead_post_count,
             is_first_post=lead_is_first,
             first_post_date=lead_first_date,
+            content_source_context=content_source_context,
         )
         lead_draft_result.platform = lead_name
     except Exception as e:
@@ -820,6 +875,9 @@ def _draft_shared_group(
                 if media_error and not media_paths
                 else None,
                 preview_mode=bool(preview_targets and pname in preview_targets),
+                topic_id=topic_id,
+                arc_id=arc_id,
+                evaluation_cycle_id=cycle_id,
             )
 
             # Set reference post info from evaluator

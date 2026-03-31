@@ -125,6 +125,8 @@ class TestDraftForTargetsGrouping:
         account_config = AccountConfig(platform=account_platform, tier="free")
         strategy_decision = MagicMock()
         strategy_decision.context_source = None
+        strategy_decision.topic_id = None
+        strategy_decision.arc_id = None
         return RoutedTarget(
             target_name=target_name,
             target_config=target_config,
@@ -212,6 +214,8 @@ class TestDraftForTargetsGrouping:
         account_config = AccountConfig(platform="x")
         strategy_decision = MagicMock()
         strategy_decision.context_source = None
+        strategy_decision.topic_id = None
+        strategy_decision.arc_id = None
 
         skip_action = RoutedTarget(
             target_name="x-feed",
@@ -255,6 +259,8 @@ class TestDraftForTargetsGrouping:
         account_config = AccountConfig(platform="x")
         strategy_decision = MagicMock()
         strategy_decision.context_source = None
+        strategy_decision.topic_id = None
+        strategy_decision.arc_id = None
 
         ta = RoutedTarget(
             target_name="x-preview",

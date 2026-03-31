@@ -75,11 +75,19 @@ export async function fetchProjectDecisions(
   limit?: number,
   offset?: number,
   branch?: string | null,
+  sortBy?: string,
+  sortDir?: string,
+  decision?: string | null,
+  classification?: string | null,
 ): Promise<{ decisions: Decision[]; total: number }> {
   const params = new URLSearchParams();
   if (limit != null) params.set("limit", String(limit));
   if (offset != null) params.set("offset", String(offset));
   if (branch) params.set("branch", branch);
+  if (sortBy) params.set("sort_by", sortBy);
+  if (sortDir) params.set("sort_dir", sortDir);
+  if (decision) params.set("decision", decision);
+  if (classification) params.set("classification", classification);
   const qs = params.toString();
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/decisions${qs ? `?${qs}` : ""}`);
 }
@@ -411,6 +419,16 @@ export async function retriggerDecision(
 ): Promise<{ task_id: string; status: string }> {
   return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}/retrigger`, {
     method: "POST",
+  });
+}
+
+export async function batchEvaluateDecisions(
+  decisionIds: string[],
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch("/api/decisions/batch-evaluate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision_ids: decisionIds }),
   });
 }
 
