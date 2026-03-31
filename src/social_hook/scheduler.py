@@ -455,6 +455,20 @@ def _drain_batch(conn, config, project, deferred):
             show_prompt=False,
         )
         context = assemble_evaluator_context(db, project.id, project_config)
+
+        # Ensure project has a brief (runs discovery if missing)
+        from social_hook.trigger import ensure_project_brief
+
+        ensure_project_brief(
+            config=config,
+            project_config=project_config,
+            conn=conn,
+            db=db,
+            project=project,
+            context=context,
+            entity_id=trigger_hash[:8],
+        )
+
         evaluator_client = create_client(config.models.evaluator, config)
 
         evaluate_batch(

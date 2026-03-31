@@ -2145,6 +2145,19 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
             commit = parse_commit_info(last_decision.commit_hash, repo_path)
             context = assemble_evaluator_context(db, project_id, project_config)
 
+            # Ensure project has a brief (runs discovery if missing)
+            from social_hook.trigger import ensure_project_brief
+
+            ensure_project_brief(
+                config=config,
+                project_config=project_config,
+                conn=conn2,
+                db=db,
+                project=proj,
+                context=context,
+                entity_id=last_decision.commit_hash[:8],
+            )
+
             evaluator_client = create_client(config.models.evaluator, config)
 
             ctx = TriggerContext(
