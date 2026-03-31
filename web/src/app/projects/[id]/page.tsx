@@ -629,12 +629,6 @@ export default function ProjectDetailPage() {
                             </p>
                             {isExpanded && (
                               <div className="mt-2 space-y-2">
-                                {d.reasoning && d.decision !== "processing" && (
-                                  <div className="rounded border border-border bg-muted/50 p-2">
-                                    <p className="text-xs font-medium text-muted-foreground">Reasoning</p>
-                                    <p className="mt-1 whitespace-pre-wrap text-xs">{d.reasoning}</p>
-                                  </div>
-                                )}
                                 {d.commit_message && (
                                   <div className="rounded border border-border bg-muted/50 p-2">
                                     <p className="text-xs font-medium text-muted-foreground">Commit Message</p>
@@ -672,7 +666,7 @@ export default function ProjectDetailPage() {
                             )}
                           </div>
                         </td>
-                        <td className="py-2 pr-4 text-xs max-w-[300px]">
+                        <td className="py-2 pr-4 text-xs">
                           {d.decision === "deferred_eval" && d.batch_id ? (
                             <span className="text-muted-foreground">Included in batch <code className="rounded bg-muted px-1 py-0.5 text-xs">{d.batch_id.slice(0, 12)}</code></span>
                           ) : (
