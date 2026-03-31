@@ -1,5 +1,5 @@
-<!-- last_run_commit: 6688d91b2ee4da630f9dec8dae1d776ae89b5a4c -->
-<!-- last_run_date: 2026-03-30 -->
+<!-- last_run_commit: eb11c6e861db2c40b665bf84b91dbaaeb0721210 -->
+<!-- last_run_date: 2026-03-31 -->
 
 # Documentation Status
 
@@ -13,7 +13,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `consolidation-tick` | ok | Enriched: explains hold processing, modes, cron usage |
 | `scheduler-tick` | ok | Enriched: explains posting, deferred promotion, cron |
 | `discover` | ok | Enriched: explains two-pass LLM analysis |
-| `setup` | partial | `--only` component values still unexplained |
+| `setup` | ok | `--only` help text lists all valid component values |
 | `test` | ok | Enriched: explains dry-run, --output/--compare |
 | `trigger` | ok | Enriched: explains full pipeline, contrasts with test |
 | `init` | ok | |
@@ -87,14 +87,14 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-03-30 | |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-03-30 | Fixed: `system` → `logs` |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-03-30 | |
-| `ruff check src/ tests/` passes | 2026-03-30 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-03-30 | 28 errors, all `import-untyped` or pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-03-30 | 16 commands across 6 files enriched |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-03-30 | |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-03-30 | |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-03-31 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-03-31 | |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-03-31 | |
+| `ruff check src/ tests/` passes | 2026-03-31 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-03-31 | 28 errors, all `import-untyped` or pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-03-31 | 16 commands across 6 files enriched |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-03-31 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-03-31 | |
 
 ## Backlog (waiting_approval)
 
