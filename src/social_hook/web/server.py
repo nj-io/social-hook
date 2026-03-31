@@ -4129,9 +4129,10 @@ async def api_add_target(project_id: str, body: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=400, detail="'account' is required")
     name = body.get("name")
     if not name:
-        # Auto-generate name from account + destination
+        # Auto-generate name from account + strategy + destination
+        strategy = body.get("strategy", "default")
         destination = body.get("destination", "timeline")
-        name = f"{account}-{destination}"
+        name = f"{account}-{strategy}-{destination}"
 
     tgt_data: dict[str, Any] = {"account": account}
     for field in (
