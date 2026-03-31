@@ -1114,12 +1114,17 @@ def _run_diagnostics(
             for name, sd in evaluation.strategies.items()
         }
 
+        # Build set of accounts with OAuth credentials (for preview mode diagnostics)
+        cred_rows = ctx.conn.execute("SELECT account_name FROM oauth_tokens").fetchall()
+        _accounts_with_creds = {r[0] for r in cred_rows}
+
         diag_context = {
             "strategies": strategies,
             "config_targets": ctx.config.targets or {},
             "config_strategies": ctx.config.content_strategies or {},
             "config_platforms": ctx.config.platforms or {},
             "config_accounts": ctx.config.accounts or {},
+            "accounts_with_creds": _accounts_with_creds,
             "decision_type": decision_type,
             "hold_limit_forced": hold_limit_forced,
             "has_targets": bool(ctx.config.targets),

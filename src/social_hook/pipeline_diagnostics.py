@@ -112,7 +112,8 @@ def _check_targets_single_pass(ctx: DiagnosticContext) -> list[Diagnostic]:
         platform = flex_get(tcfg, "platform")
         strategy = flex_get(tcfg, "strategy")
 
-        # preview_mode_targets: no account connected
+        # preview_mode_targets: no account connected or account has no credentials
+        accounts_with_creds = ctx.get("accounts_with_creds") or set()
         if not account:
             results.append(
                 Diagnostic(
@@ -121,6 +122,16 @@ def _check_targets_single_pass(ctx: DiagnosticContext) -> list[Diagnostic]:
                     message=f"Target '{tname}' is in preview mode (no account connected)",
                     suggestion=f"Connect an account to target '{tname}' to enable posting",
                     context={"target": tname},
+                )
+            )
+        elif account not in accounts_with_creds:
+            results.append(
+                Diagnostic(
+                    code="preview_mode_targets",
+                    severity=INFO,
+                    message=f"Target '{tname}' is in preview mode (account '{account}' has no credentials)",
+                    suggestion=f"Run 'social-hook account add' to authorize account '{account}'",
+                    context={"target": tname, "account": account},
                 )
             )
 
