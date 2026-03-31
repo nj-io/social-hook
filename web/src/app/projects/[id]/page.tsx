@@ -25,6 +25,7 @@ import {
 import type { Decision, Memory, PostRecord, ProjectDetail, Topic, UsageSummary } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
 import { RateLimitCard } from "@/components/rate-limit-card";
@@ -666,14 +667,16 @@ export default function ProjectDetailPage() {
                             )}
                           </div>
                         </td>
-                        <td className="py-2 pr-4 text-xs">
+                        <td className="py-2 pr-4 text-xs max-w-[300px]">
                           {d.decision === "deferred_eval" && d.batch_id ? (
                             <span className="text-muted-foreground">Included in batch <code className="rounded bg-muted px-1 py-0.5 text-xs">{d.batch_id.slice(0, 12)}</code></span>
                           ) : (
-                            <p className={isExpanded ? "whitespace-pre-wrap" : "truncate"}>{d.decision === "processing" ? "" : (d.reasoning || "-")}</p>
+                            <ExpandableText text={d.decision === "processing" ? "" : d.reasoning} expanded={isExpanded} />
                           )}
                         </td>
-                        <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
+                        <td className="py-2 pr-4 text-xs max-w-[200px]">
+                          <ExpandableText text={d.angle} expanded={isExpanded} />
+                        </td>
                         <td className="hidden py-2 pr-4 sm:table-cell">
                           {d.episode_type ? <Badge value={d.episode_type} variant="category" /> : <span className="text-xs">-</span>}
                         </td>

@@ -944,8 +944,6 @@ def _combine_strategy_reasoning(
     for name, decision in strategies.items():
         parts.append(f"{name}: {decision.reason}")
     combined = "; ".join(parts)
-    if len(combined) > 500:
-        combined = combined[:497] + "..."
     return combined
 
 
