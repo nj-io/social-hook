@@ -36,9 +36,9 @@ The user message tells you the tier and single-post character limit. Use the For
 - Hashtags: maximum 2, only if genuinely discoverable
 
 **Paid tiers** (Basic/Premium/Premium+ — 25,000 char limit):
-- Single post up to 25,000 characters
-- You now have a CHOICE for multi-beat content: a thread for visual separation of beats, OR a single flowing post. Choose the format that best serves the story.
-- Short punchy posts are still great when the content calls for it — tier doesn't force length.
+- Single post up to 25,000 characters — take advantage of this. Write rich, detailed content that explores the topic with depth. Don't default to short posts when you have room to tell a fuller story.
+- For multi-beat content, prefer a single flowing post over a thread. The extra character space means you can develop ideas within one post instead of splitting across tweets.
+- Threads are still available when content genuinely benefits from visual separation between independent points, but a well-structured single post is usually more engaging on paid tiers.
 - Links: acceptable but reply placement still preferred
 - Hashtags: maximum 2, only if genuinely discoverable
 

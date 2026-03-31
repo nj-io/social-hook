@@ -124,9 +124,10 @@ class Drafter:
         if is_intro:
             intro_info = (
                 "IMPORTANT: This is the FIRST POST for this project on this platform. "
-                "The audience has never heard of it. Write an introductory "
+                "The audience has never heard of it. Write a substantial introductory "
                 "post that tells the story of what this project is, what "
-                "problem it solves, and why it matters. Don't just summarize "
+                "problem it solves, and why it matters. Give the reader enough depth "
+                "to understand and care. Don't just summarize "
                 "the commit — introduce the project. Use the README and "
                 "project documentation in the system prompt for context.\n"
             )
