@@ -1588,16 +1588,36 @@ def evaluate_batch(
         logger.error("Batch targets path failed: %s", e)
         return 3
 
-    # 5. After success: mark deferred decisions with batch_id
+    # 5. After success: mark ALL decisions in the batch with batch_id
     if result == 0:
         # Get cycle ID from the cycle just inserted by _run_targets_path
         recent_cycles = ops.get_recent_cycles(ctx.conn, ctx.project.id, limit=1)
         cycle_id = recent_cycles[0].id if recent_cycles else "unknown"
 
+        # Mark deferred decisions with batch_id
         deferred_ids = [d.id for d in deferred_commits]
-        ops.mark_deferred_decisions_batched(ctx.conn, deferred_ids, cycle_id)
-        for d in deferred_commits:
-            ctx.db.emit_data_event("decision", "updated", d.id, ctx.project.id)
+        if deferred_ids:
+            ops.mark_deferred_decisions_batched(ctx.conn, deferred_ids, cycle_id)
+            for d in deferred_commits:
+                ctx.db.emit_data_event("decision", "updated", d.id, ctx.project.id)
+
+        # Also set batch_id on the trigger decision so all batch members are grouped
+        trigger_decision_id = ctx.existing_decision_id
+        if not trigger_decision_id:
+            # Find the decision created by _run_targets_path for the trigger commit
+            row = ctx.conn.execute(
+                "SELECT id FROM decisions WHERE project_id = ? AND commit_hash = ? ORDER BY created_at DESC LIMIT 1",
+                (ctx.project.id, trigger_commit_hash),
+            ).fetchone()
+            if row:
+                trigger_decision_id = row[0]
+        if trigger_decision_id:
+            ctx.conn.execute(
+                "UPDATE decisions SET batch_id = ? WHERE id = ?",
+                (cycle_id, trigger_decision_id),
+            )
+            ctx.conn.commit()
+            ctx.db.emit_data_event("decision", "updated", trigger_decision_id, ctx.project.id)
 
         if ctx.verbose:
             print(f"Batch evaluation complete: {len(all_hashes)} commits, cycle {cycle_id}")

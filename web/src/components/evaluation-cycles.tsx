@@ -324,7 +324,7 @@ function StrategyOutcomeCard({
           <p><span className="text-muted-foreground">Arc: </span>{outcome.arc_reference}</p>
         )}
         {outcome.content_source && (
-          <p><span className="text-muted-foreground">Source: </span>{outcome.content_source}</p>
+          <p><span className="text-muted-foreground">Source: </span>{typeof outcome.content_source === "string" ? outcome.content_source : (outcome.content_source as Record<string, unknown>).types ? (outcome.content_source as Record<string, unknown[]>).types.join(", ") : JSON.stringify(outcome.content_source)}</p>
         )}
 
         {/* Draft section with inline actions */}
