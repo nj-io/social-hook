@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { WebEvent } from "@/lib/types";
+import type { WebEvent, DataChangeEvent } from "@/lib/types";
 import { clearChatHistory, fetchChatHistory } from "@/lib/api";
 import { useGateway } from "@/lib/gateway-context";
+import { useToast } from "@/lib/toast-context";
 import { getSessionId } from "@/lib/session";
 import { ButtonRow } from "./button-row";
 
@@ -11,9 +12,11 @@ export function ChatPanel() {
   const [events, setEvents] = useState<WebEvent[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [chatTaskId, setChatTaskId] = useState<string | null>(null);
   const lastIdRef = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const { connected, send, sendCommand, addListener, removeListener } = useGateway();
+  const { addToast } = useToast();
 
   const addEvents = useCallback((newEvents: WebEvent[]) => {
     setEvents((prev) => {
@@ -49,10 +52,26 @@ export function ChatPanel() {
   // Register listener for chat events
   useEffect(() => {
     addListener("chat-panel", (envelope) => {
+      // Track background task from ack with task_id
+      if (envelope.type === "ack" && envelope.payload?.task_id) {
+        setChatTaskId(envelope.payload.task_id as string);
+      }
       if (envelope.type === "event" && envelope.payload) {
         const ev = envelope.payload as unknown as WebEvent;
-        // Skip data_change events — handled by useDataEvents
-        if (ev.type === "data_change") return;
+        // Handle task completion/failure for tracked chat tasks
+        if (ev.type === "data_change") {
+          const data = ev.data as unknown as DataChangeEvent | undefined;
+          if (data?.entity === "task" && data.entity_id === chatTaskId) {
+            if (data.action === "completed" || data.action === "failed") {
+              setChatTaskId(null);
+              setSending(false);
+              if (data.action === "failed") {
+                addToast("Message failed", { variant: "error" });
+              }
+            }
+          }
+          return; // data_change events handled by useDataEvents
+        }
         if (ev.id) {
           if (ev.id > lastIdRef.current) lastIdRef.current = ev.id;
           addEvents([ev]);
@@ -102,10 +121,13 @@ export function ChatPanel() {
     try {
       const command = text.startsWith("/") ? "send_command" : "send_message";
       sendCommand(command, text);
-      // WS events will arrive via onEvent callback and replace/supplement the optimistic message
+      // For send_message: sending stays true until background task completes (via ack listener)
+      // For send_command: no background task, clear sending immediately
+      if (command === "send_command") {
+        setSending(false);
+      }
+      // send_message: setSending(false) happens in the ack/task-completion listener
     } catch {
-      // Error will appear in chat if server responds
-    } finally {
       setSending(false);
     }
   }
