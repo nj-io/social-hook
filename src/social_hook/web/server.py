@@ -570,7 +570,7 @@ def _dispatch_chat_message(msg: InboundMessage, adapter, config, chat_id: str) -
         project_id=project_id,
         fn=_blocking,
     )
-    return _task_holder[0]
+    return _task_holder[0]  # type: ignore[return-value]  # always set by _run_background_task
 
 
 @app.post("/api/callback")
