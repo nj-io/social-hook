@@ -31,6 +31,9 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
     }
     onUpdate();
     setActionPending("");
+    setTextPrompt(null);
+    setTextInput("");
+    setSubmenu(null);
   }, [onUpdate]);
   const { trackTask } = useBackgroundTasks(draft.project_id, onTaskCompleted);
 
@@ -76,16 +79,20 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
       // Then send the text as a message (returns 202 with task_id)
       const res = await sendMessage(textInput.trim());
       if (res.task_id) {
-        // Track background task — onTaskCompleted will call onUpdate + clear actionPending
+        // Track background task — onTaskCompleted clears UI state when done
         trackTask(res.task_id, `action-${draft.id}-${Date.now()}`, "chat_message");
+        // Keep text prompt visible in loading state — cleared by onTaskCompleted
       } else {
+        // Synchronous completion — clear immediately
         onUpdate();
         setActionPending("");
+        setTextPrompt(null);
+        setTextInput("");
+        setSubmenu(null);
       }
     } catch {
       onUpdate();
       setActionPending("");
-    } finally {
       setTextPrompt(null);
       setTextInput("");
       setSubmenu(null);
