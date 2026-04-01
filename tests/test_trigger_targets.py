@@ -96,16 +96,16 @@ class TestCombineStrategyReasoning:
         assert "s2: reason 2" in result
         assert "; " in result
 
-    def test_long_reasoning_truncated(self):
-        """Long combined reasoning is truncated to 500 chars."""
+    def test_long_reasoning_not_truncated(self):
+        """Full reasoning is preserved — no truncation."""
         strategies = {
             f"strategy-{i}": StrategyDecisionInput(action="skip", reason="x" * 100)
             for i in range(10)
         }
         result = _combine_strategy_reasoning(strategies)
         assert "strategy-0: " in result
-        assert len(result) <= 500
-        assert result.endswith("...")
+        assert "strategy-9: " in result
+        assert len(result) > 500
 
 
 # =============================================================================

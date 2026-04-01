@@ -46,15 +46,12 @@ def _combine_strategy_reasoning(
     """Combine per-strategy reasoning into a single string for the Decision record.
 
     Format: "strategy-name: reason; strategy-name: reason"
-    Truncate to 500 chars if needed.
+    Full reasoning is preserved — no truncation.
     """
     parts = []
     for name, decision in strategies.items():
         parts.append(f"{name}: {decision.reason}")
-    combined = "; ".join(parts)
-    if len(combined) > 500:
-        combined = combined[:497] + "..."
-    return combined
+    return "; ".join(parts)
 
 
 def _is_trivial_classification(analyzer_result) -> bool:
