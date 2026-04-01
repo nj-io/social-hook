@@ -154,6 +154,8 @@ def evaluate_batch(
     ctx.db.emit_data_event(
         "pipeline", PipelineStage.ANALYZING, trigger_commit_hash[:8], ctx.project.id
     )
+    if ctx.task_id:
+        ctx.db.emit_task_stage(ctx.task_id, "analyzing", "Analyzing commit", ctx.project.id)
     analyzer_result = None
     try:
         analyzer = CommitAnalyzer(evaluator_client)
@@ -188,6 +190,8 @@ def evaluate_batch(
     ctx.db.emit_data_event(
         "pipeline", PipelineStage.EVALUATING, trigger_commit_hash[:8], ctx.project.id
     )
+    if ctx.task_id:
+        ctx.db.emit_task_stage(ctx.task_id, "evaluating", "Evaluating strategies", ctx.project.id)
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(
