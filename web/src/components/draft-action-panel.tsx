@@ -58,11 +58,17 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
   async function handlePromote(platform: string) {
     setActionPending("promote");
     try {
-      await promoteDraft(draft.id, platform);
-      onUpdate();
+      const res = await promoteDraft(draft.id, platform);
+      if (res.task_id) {
+        trackTask(res.task_id, `promote-${draft.id}-${Date.now()}`, "promote");
+        // Keep loading state — onTaskCompleted handles cleanup
+      } else {
+        onUpdate();
+        setActionPending("");
+        setSubmenu(null);
+      }
     } catch {
       onUpdate();
-    } finally {
       setActionPending("");
       setSubmenu(null);
     }
