@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workbench Architecture</title>
+<style>
+  :root { --bg: #0d1117; --fg: #c9d1d9; --border: #30363d; --accent: #58a6ff; --accent2: #f0883e; --accent3: #8b949e; --green: #3fb950; --red: #f85149; --purple: #bc8cff; --yellow: #d29922; --card: #161b22; --card2: #1c2128; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; padding: 40px; line-height: 1.5; }
+  h1 { font-size: 28px; margin-bottom: 8px; color: #fff; }
+  h2 { font-size: 20px; margin: 40px 0 16px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent2); }
+  .subtitle { color: var(--accent3); margin-bottom: 32px; font-size: 14px; }
+  .diagram { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 32px; margin: 24px 0; overflow-x: auto; }
+  .diagram pre { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; line-height: 1.45; color: var(--fg); white-space: pre; }
+  .layer-label { color: var(--accent); font-weight: 600; }
+  .component { color: var(--green); }
+  .existing { color: var(--accent3); }
+  .new { color: var(--accent2); }
+  .data { color: var(--purple); }
+  .flow { color: var(--yellow); }
+  .section { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; margin: 16px 0; }
+  .section ul { padding-left: 20px; }
+  .section li { margin: 6px 0; font-size: 14px; }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; margin-left: 6px; vertical-align: middle; }
+  .tag-new { background: rgba(240,136,62,0.15); color: var(--accent2); border: 1px solid rgba(240,136,62,0.3); }
+  .tag-existing { background: rgba(139,148,158,0.15); color: var(--accent3); border: 1px solid rgba(139,148,158,0.3); }
+  .tag-open { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+  .tag-deferred { background: rgba(210,153,34,0.15); color: var(--yellow); border: 1px solid rgba(210,153,34,0.3); }
+  .tag-decided { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+  .legend { display: flex; gap: 20px; margin: 16px 0 32px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  .legend-color { width: 12px; height: 12px; border-radius: 3px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .note { font-size: 13px; color: var(--accent3); font-style: italic; margin: 8px 0; }
+  .divider { border-top: 1px solid var(--border); margin: 40px 0; }
+  .callout { background: rgba(88,166,255,0.08); border: 1px solid rgba(88,166,255,0.2); border-radius: 6px; padding: 12px 16px; margin: 12px 0; font-size: 13px; }
+  .callout-warn { background: rgba(210,153,34,0.08); border-color: rgba(210,153,34,0.2); }
+  .callout-green { background: rgba(63,185,80,0.08); border-color: rgba(63,185,80,0.2); }
+  code { background: rgba(110,118,129,0.15); padding: 2px 6px; border-radius: 4px; font-size: 13px; font-family: 'JetBrains Mono', monospace; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+  th { background: var(--card2); color: var(--accent); font-weight: 600; }
+  td { background: var(--card); }
+</style>
+</head>
+<body>
+
+<h1>E2E Workbench Architecture</h1>
+<p class="subtitle">Exploration, prompt comparison, and regression testing for the social-hook LLM pipeline &mdash; v3 (2026-04-01)</p>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-color" style="background:var(--accent2)"></div> New (to build)</div>
+  <div class="legend-item"><div class="legend-color" style="background:var(--green)"></div> Decided</div>
+  <div class="legend-item"><div class="legend-color" style="background:var(--accent3)"></div> Existing (reuse)</div>
+  <div class="legend-item"><div class="legend-color" style="background:var(--purple)"></div> Data stores</div>
+  <div class="legend-item"><div class="legend-color" style="background:var(--yellow)"></div> Data flow</div>
+</div>
+
+<div class="callout">
+  <strong>Provider context:</strong> Default LLM provider is <code>claude-cli</code> (Claude Code subscription).
+  All LLM calls are <strong>$0</strong> but <strong>~30-120s each</strong> via subprocess.
+  Cost model is <strong>wall-clock time</strong>, not dollars.
+</div>
+
+<!-- ================================================================ -->
+<!-- 1. SYSTEM OVERVIEW                                                -->
+<!-- ================================================================ -->
+
+<h2>1. System Overview</h2>
+
+<div class="diagram"><pre>
+<span class="layer-label">┌─ UI LAYER (React + Next.js) ──────────────────────────────────────────────────────────┐</span>
+│                                                                                       │
+│  <span class="new">┌─────────────────────┐</span>   <span class="new">┌──────────────────┐</span>   <span class="new">┌───────────────────────────┐</span>  │
+│  <span class="new">│  State Builder Form │</span>   <span class="new">│  Prompt Editor   │</span>   <span class="new">│  Results & Comparison     │</span>  │
+│  <span class="new">│                     │</span>   <span class="new">│                  │</span>   <span class="new">│                           │</span>  │
+│  <span class="new">│  RJSF + @rjsf/      │</span>   <span class="new">│  Monaco editor   │</span>   <span class="new">│  Prompt section viewer    │</span>  │
+│  <span class="new">│  shadcn theme       │</span>   <span class="new">│  Version list    │</span>   <span class="new">│  Per-stage structured out │</span>  │
+│  <span class="new">│                     │</span>   <span class="new">│  Diff view       │</span>   <span class="new">│  Routing breakdown        │</span>  │
+│  <span class="new">│  Flow selector ───┐ │</span>   <span class="new">│  Activate btn    │</span>   <span class="new">│  Side-by-side comparison  │</span>  │
+│  <span class="new">│  Snapshot picker  │ │</span>   <span class="new">│                  │</span>   <span class="new">│  Per-strategy cards       │</span>  │
+│  <span class="new">│  Override fields  │ │</span>   <span class="new">└────────┬─────────┘</span>   <span class="new">│  Progress stream (SSE)    │</span>  │
+│  <span class="new">│  Flow-specific    │ │</span>            <span class="flow">│</span>           <span class="new">└─────────────┬─────────────┘</span>  │
+│  <span class="new">│    inputs         │ │</span>            <span class="flow">│</span>                         <span class="flow">│</span>              │
+│  <span class="new">│  [Assemble] btn   │ │</span>            <span class="flow">│</span>                         <span class="flow">│</span>              │
+│  <span class="new">│  [Run] btn        │ │</span>            <span class="flow">│</span>                         <span class="flow">│</span>              │
+│  <span class="new">│  [Replay] btn     │ │</span>            <span class="flow">│</span>                         <span class="flow">│</span>              │
+│  <span class="new">└───────────────┬───┘ │</span>            <span class="flow">│</span>                         <span class="flow">│</span>              │
+│          <span class="flow">JSON Schema</span> <span class="flow"> │</span>            <span class="flow">│</span>                    <span class="flow">structured JSON</span>        │
+<span class="layer-label">└──────────────┬──────┼────────────┼─────────────────────────┼──────────────────────────┘</span>
+               <span class="flow">│      │            │                         │</span>
+<span class="layer-label">┌─ API LAYER (FastAPI) ─┼────────────┼─────────────────────────┼──────────────────────────┐</span>
+│              <span class="flow">│      │            │                         │</span>                          │
+│  <span class="new">GET /workbench/schema</span> <span class="flow">│</span>  <span class="new">GET/PUT /workbench/prompts</span>   <span class="new">GET /workbench/results</span>          │
+│              <span class="flow">│      │            │                         │</span>                          │
+│  <span class="new">POST /workbench/assemble</span>  ─ zero cost: assembled prompt + routing simulation          │
+│  <span class="new">POST /workbench/run</span>       ─ single trigger/flow execution with full capture            │
+│  <span class="new">POST /workbench/replay</span>    ─ sequential commit sequence via run_trigger()               │
+│  <span class="new">POST /workbench/compare</span>   ─ parallel prompt version comparison                         │
+│  <span class="new">GET  /workbench/snapshots</span> ─ list/load/save named snapshots                             │
+│  <span class="new">GET  /workbench/progress</span>  ─ SSE stream for replay progress                             │
+│  <span class="new">GET  /workbench/flows</span>     ─ list registered flows + their input schemas                │
+│                                                                                       │
+<span class="layer-label">└───────────────────────────────────────┬───────────────────────────────────────────────┘</span>
+                                        <span class="flow">│</span>
+<span class="layer-label">┌─ ENGINE LAYER ────────────────────────┼───────────────────────────────────────────────┐</span>
+│                                       <span class="flow">│</span>                                               │
+│  <span class="layer-label">GENERIC (zero social-hook imports — reusable per REUSABILITY.md)</span>                    │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
+│  <span class="new">workbench/engine/</span>                                                                   │
+│  <span class="new">┌──────────────┐ ┌────────────────┐ ┌────────────────┐ ┌─────────────────────┐</span>  │
+│  <span class="new">│ fabricator.py │ │ capture.py     │ │ runner.py      │ │ versions.py         │</span>  │
+│  <span class="new">│              │ │                │ │                │ │                     │</span>  │
+│  <span class="new">│ Accepts:     │ │ Accepts:       │ │ Accepts:       │ │ Filesystem-based    │</span>  │
+│  <span class="new">│  db, schema, │ │  assembler_fn, │ │  trigger_fn,   │ │ prompt version mgmt │</span>  │
+│  <span class="new">│  overrides,  │ │  section_delim │ │  progress_cb   │ │                     │</span>  │
+│  <span class="new">│  time_shifts │ │                │ │                │ │ list/save/activate/ │</span>  │
+│  <span class="new">│              │ │ Returns:       │ │ Returns:       │ │ diff                │</span>  │
+│  <span class="new">│              │ │  PromptSnapshot│ │  CapturedResult│ │                     │</span>  │
+│  <span class="new">└──────────────┘ └────────────────┘ └────────────────┘ └─────────────────────┘</span>  │
+│  <span class="new">┌──────────────┐ ┌────────────────┐ ┌────────────────────────────────────────┐</span>  │
+│  <span class="new">│ replay.py    │ │ comparison.py  │ │ models.py                              │</span>  │
+│  <span class="new">│              │ │                │ │                                        │</span>  │
+│  <span class="new">│ Sequential   │ │ prompt_diff()  │ │ PromptSnapshot, CapturedResult,        │</span>  │
+│  <span class="new">│ trigger_fn   │ │ output_diff()  │ │ ReplayResult, ComparisonResult,        │</span>  │
+│  <span class="new">│ calls with   │ │ replay_diff()  │ │ ProgressEvent, FlowConfig              │</span>  │
+│  <span class="new">│ progress     │ │                │ │ (generic dataclasses)                  │</span>  │
+│  <span class="new">└──────────────┘ └────────────────┘ └────────────────────────────────────────┘</span>  │
+│                                                                                       │
+│  <span class="layer-label">PROJECT-SPECIFIC (social-hook domain, imports freely)</span>                               │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
+│  <span class="new">workbench/</span>                                                                          │
+│  <span class="new">┌──────────────┐ ┌────────────────┐ ┌────────────────┐ ┌─────────────────────┐</span>  │
+│  <span class="new">│ state.py     │ │ overrides.py   │ │ hooks.py       │ │ presets.py           │</span>  │
+│  <span class="new">│              │ │                │ │                │ │                     │</span>  │
+│  <span class="new">│ WorkbenchState│ │ Translates     │ │ FLOWS registry │ │ Snapshot presets,   │</span>  │
+│  <span class="new">│ (Pydantic)   │ │ state → DB ops │ │ wires each flow│ │ commit sequences,   │</span>  │
+│  <span class="new">│              │ │                │ │ to its trigger │ │ content templates   │</span>  │
+│  <span class="new">│ Flow selector│ │ Knows:         │ │ + assembler    │ │                     │</span>  │
+│  <span class="new">│ + per-flow   │ │ db.operations, │ │                │ │ Knows: COMMITS[],   │</span>  │
+│  <span class="new">│   inputs     │ │ models.*       │ │ 10+ FlowConfig │ │ e2e constants       │</span>  │
+│  <span class="new">└──────────────┘ └────────────────┘ └────────────────┘ └─────────────────────┘</span>  │
+│  <span class="new">┌────────────────────────────────────────────────────────────────────────────┐</span>     │
+│  <span class="new">│ api.py — FastAPI endpoints for /workbench/*                                │</span>     │
+│  <span class="new">│ drift.py — CI drift detection tests (entities, flows, signatures)          │</span>     │
+│  <span class="new">└────────────────────────────────────────────────────────────────────────────┘</span>     │
+│                                                                                       │
+<span class="layer-label">└───────────────────────────────────────┬───────────────────────────────────────────────┘</span>
+                                        <span class="flow">│</span>
+<span class="layer-label">┌─ EXISTING LLM FLOWS (unchanged, wrapped by hooks.py) ┬────────────────────────────────┐</span>
+│                                       <span class="flow">│</span>              │                                │
+│  <span class="layer-label">Trigger Pipeline (targets-path)</span>     <span class="flow">│</span>              │ <span class="layer-label">Independent Flows</span>              │
+│  <span class="existing">┌──────────┐ ┌──────────┐ ┌───┴────┐</span>        │ <span class="existing">┌──────────────────────────┐</span>  │
+│  <span class="existing">│ interval │→│ analyzer │→│evaluatr│</span>        │ <span class="existing">│ Gatekeeper               │</span>  │
+│  <span class="existing">│ gate     │ │ (stg 1)  │ │(stg 2) │</span>        │ <span class="existing">│  assemble_gatekeeper_    │</span>  │
+│  <span class="existing">└──────────┘ └──────────┘ └────────┘</span>        │ <span class="existing">│  prompt() → route_action │</span>  │
+│       <span class="existing">│</span>                          <span class="existing">│</span>            │ <span class="existing">├──────────────────────────┤</span>  │
+│       <span class="existing">│ deferred?</span>        <span class="existing">┌────────┴───────┐</span>  │ <span class="existing">│ Expert / Angle Change    │</span>  │
+│       <span class="existing">│ YES→fast ret</span>     <span class="existing">│ routing.py     │</span>  │ <span class="existing">│  assemble_expert_prompt()│</span>  │
+│       <span class="existing">│ NO →batch eval</span>   <span class="existing">│ (deterministic)│</span>  │ <span class="existing">│  → expert_response       │</span>  │
+│       <span class="existing">│</span>                  <span class="existing">└────────┬───────┘</span>  │ <span class="existing">├──────────────────────────┤</span>  │
+│       <span class="existing">│</span>                  <span class="existing">┌────────┴───────┐</span>  │ <span class="existing">│ Media Spec Generation    │</span>  │
+│       <span class="existing">│</span>                  <span class="existing">│ drafting.py    │</span>  │ <span class="existing">│  assemble_spec_gen_      │</span>  │
+│       <span class="existing">│</span>                  <span class="existing">│ (stg 3, groups)│</span>  │ <span class="existing">│  prompt()→generate_spec  │</span>  │
+│       <span class="existing">│</span>                  <span class="existing">└────────────────┘</span>  │ <span class="existing">├──────────────────────────┤</span>  │
+│       <span class="existing">│</span>                                      │ <span class="existing">│ Brief Gen / Update       │</span>  │
+│  <span class="layer-label">Also uses trigger pipeline:</span>          │ <span class="existing">│  inline prompts →        │</span>  │
+│  <span class="existing">• force_draft_topic()</span>                 │ <span class="existing">│  generate/update_brief   │</span>  │
+│  <span class="existing">• evaluate_suggestion()</span>               │ <span class="existing">├──────────────────────────┤</span>  │
+│  <span class="existing">• consolidation re-eval</span>               │ <span class="existing">│ Discovery (2-pass)       │</span>  │
+│  <span class="existing">• batch drain</span>                         │ <span class="existing">│ Strategy Classifier      │</span>  │
+│  <span class="existing">• summary trigger (drafter only)</span>      │ <span class="existing">│ Narrative Extraction     │</span>  │
+│                                       │ <span class="existing">└──────────────────────────┘</span>  │
+│                                       │                                │
+│  <span class="existing">┌────────────────────────────────────┴───────────────────────────────────┐</span>  │
+│  <span class="existing">│ prompts.py — assemble_*_prompt() functions (conditional sections)      │</span>  │
+│  <span class="existing">│ claude_cli.py — subprocess: claude -p ($0, ~30-120s, 300s timeout)     │</span>  │
+│  <span class="existing">└────────────────────────────────────────────────────────────────────────┘</span>  │
+│                                                                                       │
+<span class="layer-label">└───────────────────────────────────────┬───────────────────────────────────────────────┘</span>
+                                        <span class="flow">│</span>
+<span class="layer-label">┌─ DATA LAYER ──────────────────────────┼───────────────────────────────────────────────┐</span>
+│                                       <span class="flow">│</span>                                               │
+│  <span class="existing">┌──────────────────┐</span>  <span class="new">┌───────────────┴──────────────┐</span>  <span class="new">┌─────────────────────┐</span>  │
+│  <span class="existing">│  SQLite DB       │</span>  <span class="new">│  Snapshot Library            │</span>  <span class="new">│  Prompt Versions    │</span>  │
+│  <span class="existing">│  (existing)      │</span>  <span class="new">│                              │</span>  <span class="new">│                     │</span>  │
+│  <span class="existing">│                  │</span>  <span class="new">│  ~/.social-hook/snapshots/   │</span>  <span class="new">│  ~/.social-hook/    │</span>  │
+│  <span class="existing">│  22 tables       │</span>  <span class="new">│    {name}.db + {name}.json   │</span>  <span class="new">│  prompts/versions/  │</span>  │
+│  <span class="existing">│  (see §6 for     │</span>  <span class="new">│    (metadata: project_id,    │</span>  <span class="new">│    evaluator/       │</span>  │
+│  <span class="existing">│   full list)     │</span>  <span class="new">│     provider, prompt_vers,   │</span>  <span class="new">│    drafter/         │</span>  │
+│  <span class="existing">│                  │</span>  <span class="new">│     interval, commits[])     │</span>  <span class="new">│    gatekeeper/      │</span>  │
+│  <span class="existing">└──────────────────┘</span>  <span class="new">└──────────────────────────────┘</span>  <span class="new">│    metadata.json    │</span>  │
+│                                                          <span class="new">└─────────────────────┘</span>  │
+│                         <span class="new">┌──────────────────────────────┐</span>                        │
+│                         <span class="new">│  Analysis Cache              │</span>                        │
+│                         <span class="new">│  (stage 1 per commit hash    │</span>                        │
+│                         <span class="new">│   + brief hash — reusable    │</span>                        │
+│                         <span class="new">│   across prompt versions)    │</span>                        │
+│                         <span class="new">└──────────────────────────────┘</span>                        │
+│                                                                                       │
+<span class="layer-label">└───────────────────────────────────────────────────────────────────────────────────────┘</span>
+</pre></div>
+
+<!-- ================================================================ -->
+<!-- 2. MULTI-FLOW REGISTRY                                            -->
+<!-- ================================================================ -->
+
+<h2>2. Multi-Flow Architecture</h2>
+
+<div class="callout-green callout">
+  Every LLM flow follows the same shape: <strong>fabricated state → assembled prompt → LLM call → structured output</strong>.
+  The generic engine handles all flows. Project-specific <code>hooks.py</code> registers each flow with its trigger function and assembler.
+</div>
+
+<div class="diagram"><pre>
+<span class="layer-label">FLOW REGISTRY (hooks.py — project-specific)</span>
+
+  <span class="new">FLOWS</span> = {
+  ┌─────────────────┬───────────────────────────┬──────────────────────────┬───────────────┐
+  │ Flow ID         │ Trigger Function          │ Assembler(s)             │ Output Schema │
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">trigger</span>         │ <span class="existing">run_trigger()</span>             │ <span class="existing">assemble_evaluator_prompt</span>│ LogEvaluation │
+  │                 │                           │ <span class="existing">assemble_drafter_prompt</span>  │ CreateDraft   │
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">gatekeeper</span>      │ <span class="existing">Gatekeeper.route()</span>        │ <span class="existing">assemble_gatekeeper_prompt│</span>RouteAction   │
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">expert</span>          │ <span class="existing">Expert.handle()</span>           │ <span class="existing">assemble_expert_prompt</span>   │ ExpertResponse│
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">media_spec</span>      │ <span class="existing">_blocking_generate_spec()</span> │ <span class="existing">assemble_spec_gen_prompt</span> │ media spec {} │
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">brief_update</span>    │ <span class="existing">update_brief_from_commit()</span>│ inline prompt             │ update_brief  │
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">discovery</span>       │ <span class="existing">discover_project()</span>        │ inline prompts (2 pass)   │ select/summary│
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">topic_draft</span>     │ <span class="existing">force_draft_topic()</span>       │ <span class="existing">assemble_evaluator_prompt</span>│ LogEvaluation │
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">suggestion_eval</span> │ <span class="existing">evaluate_suggestion()</span>     │ <span class="existing">assemble_evaluator_prompt</span>│ LogEvaluation │
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">consolidation</span>   │ <span class="existing">_process_re_evaluate()</span>    │ <span class="existing">assemble_evaluator_prompt</span>│ LogEvaluation │
+  ├─────────────────┼───────────────────────────┼──────────────────────────┼───────────────┤
+  │ <span class="component">narrative</span>       │ <span class="existing">NarrativeExtractor.extract</span>│ hardcoded prompt          │ ExtractNarr.  │
+  └─────────────────┴───────────────────────────┴──────────────────────────┴───────────────┘
+  }
+
+  <span class="accent3">The generic engine calls trigger_fn and assembler_fn as opaque callables.</span>
+  <span class="accent3">Each flow is just a different pair of functions. Adding a new flow = one FlowConfig entry.</span>
+
+
+<span class="layer-label">FLOW SELECTOR IN THE PYDANTIC STATE MODEL (state.py)</span>
+
+  WorkbenchState
+  ├── <span class="new">flow</span>: "trigger" | "gatekeeper" | "expert" | "media_spec" | ...
+  │
+  ├── <span class="component">Common state</span> (snapshot + overrides — shared across all flows)
+  │   ├── snapshot, narrative_debt, lifecycle, arcs[], topics[],
+  │   │   strategies{}, targets{}, accounts{}, scheduling,
+  │   │   platform_introduced, memories, context_notes,
+  │   │   social_context, commit_analysis_interval, ...
+  │   │
+  │   └── prompt_versions: { evaluator: "v3", drafter: "v1", gatekeeper: "v2" }
+  │
+  └── <span class="component">Flow-specific inputs</span> (RJSF shows/hides based on flow selection)
+      ├── trigger_input:       { commit_hash }
+      ├── gatekeeper_input:    { user_message, draft_id, chat_history[] }
+      ├── expert_input:        { user_message, draft_id, escalation_reason }
+      ├── media_spec_input:    { draft_id, tool_name }
+      ├── topic_input:         { topic_id }
+      ├── suggestion_input:    { suggestion_text, strategy }
+      └── ...
+</pre></div>
+
+<!-- ================================================================ -->
+<!-- 3. TRIGGER PIPELINE DETAIL                                        -->
+<!-- ================================================================ -->
+
+<h2>3. Trigger Pipeline: Interval Gating, Routing &amp; Draft Groups</h2>
+
+<div class="diagram"><pre>
+<span class="layer-label">With commit_analysis_interval = 3:</span>
+
+  Commit 1 → <span class="existing">run_trigger()</span> → counter 0→1 → <span class="data">deferred_eval</span> (no LLM)  <span class="accent3">[0.2s]</span>
+  Commit 2 → <span class="existing">run_trigger()</span> → counter 1→2 → <span class="data">deferred_eval</span> (no LLM)  <span class="accent3">[0.2s]</span>
+  Commit 3 → <span class="existing">run_trigger()</span> → counter 2→3 ≥ threshold
+      <span class="flow">│</span>
+      <span class="flow">├──</span> reset counter to 0
+      <span class="flow">├──</span> gather deferred [commit1_dec, commit2_dec]
+      <span class="flow">├──</span> combine diffs: "--- Commit h1: ... ---\n{diff1}\n--- Commit h2: ..."
+      <span class="flow">│</span>
+      <span class="flow">├──</span> <span class="layer-label">Stage 1: Analyzer</span> on combined CommitInfo                <span class="accent3">[~30-120s]</span>
+      <span class="flow">│</span>     → classification, tags, summary, topic_suggestions
+      <span class="flow">│</span>     → (trivial? → skip all, fast return)
+      <span class="flow">│</span>
+      <span class="flow">├──</span> <span class="layer-label">Stage 2: Evaluator</span> on combined CommitInfo               <span class="accent3">[~30-120s]</span>
+      <span class="flow">│</span>     → per-STRATEGY decisions: { "building-public": draft, "product-news": hold }
+      <span class="flow">│</span>     → each with: action, reason, angle, arc_id, topic_id, media_tool, ...
+      <span class="flow">│</span>     → queue_actions: { strategy → [supersede/merge/drop] }
+      <span class="flow">│</span>
+      <span class="flow">├──</span> <span class="layer-label">Routing</span> (deterministic, no LLM)                         <span class="accent3">[instant]</span>
+      <span class="flow">│</span>     <span class="existing">route_to_targets(strategy_decisions, config.targets)</span>
+      <span class="flow">│</span>
+      <span class="flow">│</span>     Strategy decisions          Target config             Routed actions
+      <span class="flow">│</span>     ┌──────────────────┐       ┌──────────────────┐       ┌──────────────────┐
+      <span class="flow">│</span>     │ building-public:  │       │ x-dev:           │       │ x-dev:     draft │
+      <span class="flow">│</span>     │   action: draft   │──────→│   strategy: bp   │──────→│ x-community:     │
+      <span class="flow">│</span>     │                   │       │   primary: true   │       │   draft (source  │
+      <span class="flow">│</span>     │ product-news:     │       │ x-community:     │       │   x-dev fired)   │
+      <span class="flow">│</span>     │   action: hold    │──┐    │   strategy: bp   │       │ li-product: skip │
+      <span class="flow">│</span>     └──────────────────┘  │    │   source: x-dev  │       │   (strategy=hold) │
+      <span class="flow">│</span>                            │    │ li-product:      │       │ li-community:     │
+      <span class="flow">│</span>                            └───→│   strategy: pn   │──────→│   skip (source   │
+      <span class="flow">│</span>                                 │   primary: true   │       │   li-prod skipped)│
+      <span class="flow">│</span>                                 │ li-community:    │       └──────────────────┘
+      <span class="flow">│</span>                                 │   strategy: pn   │
+      <span class="flow">│</span>                                 │   source: li-prod│       Draft groups:
+      <span class="flow">│</span>                                 └──────────────────┘       { bp: [x-dev,
+      <span class="flow">│</span>                                                               x-community] }
+      <span class="flow">│</span>
+      <span class="flow">├──</span> <span class="layer-label">Stage 3: Drafter</span> (one LLM call per draft group)         <span class="accent3">[~30-120s]</span>
+      <span class="flow">│</span>     group "building-public":
+      <span class="flow">│</span>       → 1 drafter call → content + variants[x-dev, x-community]
+      <span class="flow">│</span>       → Draft inserts with target_id, is_intro, preview_mode
+      <span class="flow">│</span>
+      <span class="flow">└──</span> return 0
+
+  <span class="new">ReplayEngine</span> just calls run_trigger() for each commit.
+  <span class="accent3">Gating, batching, routing, draft groups all happen organically inside.</span>
+</pre></div>
+
+<!-- ================================================================ -->
+<!-- 4. CAPTURED OUTPUT                                                -->
+<!-- ================================================================ -->
+
+<h2>4. Captured Output Structure</h2>
+
+<div class="diagram"><pre>
+<span class="new">CapturedResult</span>
+├── <span class="component">flow</span>          "trigger" | "gatekeeper" | "expert" | "media_spec" | ...
+├── <span class="component">type</span>          "deferred" | "trivial_skip" | "evaluation" | "batch_evaluation"
+│                 <span class="accent3">(trigger flow only — other flows are always "evaluation")</span>
+├── <span class="component">commits</span>       [hash, ...]  (1 for single, N for batch, null for non-trigger flows)
+│
+├── <span class="component">prompts</span>       <span class="accent3">(one per assembler used in this flow)</span>
+│   ├── [role]: <span class="new">PromptSnapshot</span>
+│   │   ├── template        <span class="existing">← the .md file (or inline string)</span>
+│   │   ├── assembled       <span class="existing">← full assembled prompt text</span>
+│   │   ├── sections[]      <span class="new">← parsed on "---\n## " delimiters</span>
+│   │   │   └── { name, content, token_count, present: bool }
+│   │   ├── total_tokens
+│   │   ├── diff_mode       "full" | "reduced" | "skipped" <span class="accent3">(trigger only)</span>
+│   │   ├── compacted       bool
+│   │   └── omitted[]       ["Held Commits", ...]
+│   │
+│   <span class="accent3">Examples by flow:</span>
+│   ├── trigger:    { evaluator: PromptSnapshot, drafter: PromptSnapshot }
+│   ├── gatekeeper: { gatekeeper: PromptSnapshot }
+│   ├── expert:     { expert: PromptSnapshot }
+│   └── media_spec: { spec_gen: PromptSnapshot }
+│
+├── <span class="component">routing</span>       <span class="accent3">(trigger flow only — deterministic layer between stage2 and stage3)</span>
+│   ├── target_actions
+│   │   └── [target_name]: { action, strategy, reason, source_resolved,
+│   │                         draft_group, scheduling_check }
+│   ├── draft_groups
+│   │   └── [strategy_name]: { targets[], primary_target }
+│   ├── skipped_targets
+│   │   └── [target_name]: { reason: "strategy_hold" | "source_skipped" | "deferred" }
+│   └── preview_targets     [strategy_name, ...]  <span class="accent3">(strategies with no target)</span>
+│
+├── <span class="component">output</span>        <span class="accent3">(the LLM's structured response — schema varies by flow)</span>
+│   │
+│   ├── <span class="layer-label">trigger flow:</span>
+│   │   ├── stage1: <span class="existing">CommitAnalysisResult</span>
+│   │   │   ├── classification, episode_tags[], summary, technical_detail
+│   │   │   ├── topic_suggestions[]
+│   │   │   └── brief_update
+│   │   ├── stage2: <span class="existing">LogEvaluationInput</span>
+│   │   │   ├── strategies
+│   │   │   │   └── [name]: { action, reason, angle, post_category,
+│   │   │   │                  arc_id, new_arc_theme, reference_posts[],
+│   │   │   │                  media_tool, topic_id, context_source,
+│   │   │   │                  consolidate_with[] }
+│   │   │   └── queue_actions
+│   │   │       └── [name]: [{ action, draft_id, reason, merge_group, merge_instruction }]
+│   │   └── stage3: <span class="accent3">(grouped by draft group, not flat list)</span>
+│   │       └── draft_groups
+│   │           └── [strategy]: { targets[], drafter_output: <span class="existing">CreateDraftInput</span>
+│   │                              { content, reasoning, format_hint, beat_count,
+│   │                                media_type, media_spec, variants[] },
+│   │                              resulting_drafts: [{ target, draft_id, status }] }
+│   │
+│   ├── <span class="layer-label">gatekeeper flow:</span>
+│   │   └── <span class="existing">RouteActionInput</span> { action, operation, params, escalation_reason }
+│   │
+│   ├── <span class="layer-label">expert flow:</span>
+│   │   └── <span class="existing">ExpertResponseInput</span> { action, reasoning, refined_content,
+│   │                                refined_media_spec, answer, context_note }
+│   │
+│   ├── <span class="layer-label">media_spec flow:</span>
+│   │   └── spec dict { code?, language?, title?, diagram?, prompt?, url? }
+│   │
+│   └── <span class="layer-label">other flows:</span> their respective tool output schemas
+│
+├── <span class="component">db_mutations</span>  [{ table, op, data }]
+│
+└── <span class="component">metadata</span>
+    ├── flow, commit_hashes, prompt_versions, snapshot_base
+    ├── overrides_applied, duration_ms, llm_calls
+    └── accuracy_warning    <span class="accent3">"Snapshot built with evaluator v1" | null</span>
+</pre></div>
+
+<!-- ================================================================ -->
+<!-- 5. INTERACTION FLOWS                                              -->
+<!-- ================================================================ -->
+
+<h2>5. Interaction Flows (Time-Based Cost Model)</h2>
+
+<div class="diagram"><pre>
+<span class="layer-label">LAYER 0: Prompt Diff + Routing Sim (instant, $0)</span>
+<span class="accent3">Primary exploration tool. Use for 90% of work. Works for ALL flows.</span>
+
+  User selects flow ──→ User adjusts state ──→ User selects prompt version
+          <span class="flow">│                       │                         │</span>
+          <span class="flow">└───────────────────────┴─────────────────────────┘</span>
+                                    <span class="flow">│</span>
+                    <span class="new">StateFabricator</span> + <span class="new">PromptCapture</span>
+                    calls the flow's assembler_fn with fabricated state
+                                    <span class="flow">│</span>
+                                    <span class="flow">▼</span>
+                    <span class="new">PromptSnapshot</span> { sections[], tokens, omitted[] }
+
+  <span class="layer-label">Trigger flow bonus: Routing Simulation (also instant)</span>
+                    <span class="new">RoutingCapture</span>
+                    calls <span class="existing">route_to_targets()</span> with fabricated/mock strategy decisions
+                                    <span class="flow">│</span>
+                                    <span class="flow">▼</span>
+                    Target actions, draft groups, skipped targets (and why),
+                    scheduling constraint hits — all without LLM cost
+
+  <span class="layer-label">Expert flow example:</span>
+    State: snapshot "mid-lifecycle" + draft with OAuth content
+    Input: user_message = "make it more technical, show the code"
+    Result: Expert assembled prompt showing:
+      ## Project Context, ## Author Identity, ## Project Summary,
+      ## Current Draft (content + media), ## User Message, ## Escalation
+    → See exactly what the expert LLM would receive. Zero cost.
+
+
+<span class="layer-label">LAYER 1: Single Execution (~1-5 min, $0)</span>
+<span class="accent3">One flow execution with full capture. Works for ALL flows.</span>
+
+  <span class="new">PipelineRunner</span>.run(flow, state, input)
+          <span class="flow">│</span>
+          <span class="flow">▼</span>
+  Calls the flow's trigger_fn, captures prompts + output + mutations
+          <span class="flow">│</span>
+          <span class="flow">▼</span>
+  <span class="new">CapturedResult</span> — prompts, routing (if trigger), output, db_mutations
+
+  <span class="accent3">Time varies by flow:</span>
+    trigger:     ~2-5 min (analyzer + evaluator + drafter)
+    gatekeeper:  ~30-60s  (single Haiku call)
+    expert:      ~1-2 min (single drafter-model call)
+    media_spec:  ~1-2 min (single drafter-model call)
+    discovery:   ~3-8 min (2 LLM passes + brief gen)
+
+
+<span class="layer-label">LAYER 2: Commit Sequence (~5-15 min, $0, trigger flow only)</span>
+<span class="accent3">Sequential run_trigger() calls. Gating and batching happen organically.</span>
+
+  <span class="new">ReplayEngine</span>.run(commits[:9], prompt_versions={...})
+          <span class="flow">│</span>
+          <span class="flow">├──</span> commit 1 → run_trigger → <span class="accent3">deferred (0.2s)</span>
+          <span class="flow">├──</span> commit 2 → run_trigger → <span class="accent3">deferred (0.2s)</span>
+          <span class="flow">├──</span> commit 3 → run_trigger → <span class="component">BATCH [1,2,3]</span> <span class="accent3">(~3 min)</span>   ──┐
+          <span class="flow">├──</span> commit 4 → deferred                                   │ progress
+          <span class="flow">├──</span> commit 5 → deferred                                   │ via SSE
+          <span class="flow">├──</span> commit 6 → <span class="component">BATCH [4,5,6]</span> <span class="accent3">(~3 min)</span>                     │
+          <span class="flow">├──</span> commit 7 → deferred                                   │
+          <span class="flow">├──</span> commit 8 → deferred                                   │
+          <span class="flow">└──</span> commit 9 → <span class="component">BATCH [7,8,9]</span> <span class="accent3">(~3 min)</span>                   ──┘
+          <span class="flow">│</span>
+          <span class="flow">▼</span>
+  <span class="new">ReplayResult</span> { per_commit[], batch_points[], final_snapshot }
+
+
+<span class="layer-label">LAYER 3: Parallel Prompt Comparison (~10-20 min, $0)</span>
+<span class="accent3">Same wall-clock as single replay, 2x data. Works for any flow.</span>
+
+  <span class="new">ComparisonEngine</span>.compare(flow, state, input, versions={...})
+          <span class="flow">│</span>
+          <span class="flow">├──</span> version A: run flow with prompt v1 ──┐  (parallel,
+          <span class="flow">└──</span> version B: run flow with prompt v3 ──┘   separate DBs)
+          <span class="flow">│</span>
+          <span class="flow">▼</span>
+  <span class="new">ComparisonResult</span> { versions: { "v1": CapturedResult, "v3": CapturedResult } }
+</pre></div>
+
+<!-- ================================================================ -->
+<!-- 6. STATE MODEL                                                    -->
+<!-- ================================================================ -->
+
+<h2>6. State: Declarative Overrides on Organic Base</h2>
+
+<div class="diagram"><pre>
+  <span class="data">Snapshot (organic)</span>                    <span class="new">Overrides (declarative)</span>
+  ┌──────────────────────────┐         ┌──────────────────────────┐
+  │ Realistic LLM content:   │         │ Surgical variable tweaks: │
+  │  • decision reasoning    │         │  • narrative_debt = 6     │
+  │  • post content          │         │  • add arc "New Theme"    │
+  │  • arc themes + posts    │         │  • lifecycle = "launch"   │
+  │  • project brief         │         │  • add pending drafts     │
+  │  • topic suggestions     │         │  • set platform_intro     │
+  │                          │         │                          │
+  │ Consistent cross-refs:   │         │ Pipeline config:          │
+  │  • arc_id on decisions   │         │  • interval = 3           │
+  │  • topic_id on drafts    │         │  • strategies / targets   │
+  │  • reference_post_id     │         │  • accounts, scheduling   │
+  │  • batch_id on cycles    │         │  • rate_limits            │
+  │                          │         │                          │
+  │ Accumulated counters:    │         │ Prompt version:           │
+  │  • topic commit_counts   │         │  • evaluator = "v3"       │
+  │  • arc post_counts       │         │  • drafter = "v1"         │
+  │  • analysis_commit_count │         │  • gatekeeper = "v2"      │
+  │  • usage_log entries     │         │                          │
+  │                          │         │ Time travel:              │
+  │ Chat history:            │         │  • last_post = "8h ago"   │
+  │  • for gatekeeper flow   │         │  • project_age = "5d"     │
+  │                          │         │                          │
+  │ Existing drafts:         │         │ Mock strategy decisions:  │
+  │  • for expert/media flows│         │  (for routing sim without │
+  │                          │         │   running evaluator)      │
+  └────────────┬─────────────┘         └────────────┬─────────────┘
+               │                                    │
+               └──────────────┬─────────────────────┘
+                              <span class="flow">▼</span>
+                    <span class="new">StateFabricator</span>
+                    1. Copy snapshot DB to temp
+                    2. Apply overrides (INSERT/UPDATE)
+                    3. Apply time shifts
+                    4. Set analysis_commit_count
+                    5. Load prompt versions
+                              <span class="flow">│</span>
+                              <span class="flow">▼</span>
+                    Prepared DB + prompts ready for
+                    any flow's PromptCapture or PipelineRunner
+
+               <span class="accent3">⚠  State built with evaluator v1</span>
+               <span class="accent3">   Running with evaluator v3</span>
+               <span class="accent3">   Accumulated history reflects v1 decisions</span>
+               <span class="accent3">   Use replay (layer 2-3) for accurate comparison</span>
+</pre></div>
+
+<!-- ================================================================ -->
+<!-- 7. PYDANTIC → RJSF                                                -->
+<!-- ================================================================ -->
+
+<h2>7. UI Generation: Pydantic &rarr; JSON Schema &rarr; RJSF Form</h2>
+
+<div class="diagram"><pre>
+  <span class="new">Python: Pydantic Model</span>                    <span class="new">React: RJSF Component</span>
+  ┌──────────────────────────────┐       ┌────────────────────────────────┐
+  │ class WorkbenchState:        │       │ &lt;Form                          │
+  │   flow: FlowType = "trigger"│  <span class="flow">GET</span>  │   schema={schema}              │
+  │   snapshot: str | None       │──<span class="flow">───</span>→│   uiSchema={uiSchema}         │
+  │   debt: int = Field(ge=0)   │       │   validator={ajvValidator}     │
+  │   interval: int = Field(    │       │   onChange={handleChange}     │
+  │     ge=1, default=1)        │       │ /&gt;                            │
+  │   lifecycle: LifecycleSpec  │       │                                │
+  │   arcs: list[ArcSpec]       │       │ Renders as:                    │
+  │   strategies: dict[...]     │       │  Flow: [trigger ▾]             │
+  │   targets: dict[...]        │       │  ─────────────────             │
+  │   accounts: dict[...]       │       │  [Snapshot ▾] dropdown         │
+  │                              │       │  [Debt ═══●══] slider          │
+  │   # Flow-specific inputs    │       │  [Interval ═●═] slider (1-5)  │
+  │   trigger_input: ...        │       │  Lifecycle: [build ▾] [0.7]   │
+  │   gatekeeper_input: ...     │       │  Arcs: [+ Add Arc]            │
+  │   expert_input: ...         │       │  Strategies: [+ Add]          │
+  │   media_spec_input: ...     │       │  Targets: [+ Add]             │
+  │                              │       │  ─────────────────             │
+  │ Exposed via:                 │       │  <span class="accent3">(shows flow-specific fields</span>   │
+  │   .model_json_schema()       │       │   <span class="accent3">based on flow selection)</span>     │
+  │                              │       │  Commit: [hash ▾]             │
+  └──────────────────────────────┘       │  -or-                         │
+                                         │  User message: [________]     │
+                                         │  Draft: [select ▾]            │
+                                         │  ─────────────────             │
+                                         │  [Assemble] [Run] [Replay]    │
+                                         └────────────────────────────────┘
+</pre></div>
+
+<!-- ================================================================ -->
+<!-- 8. REUSABILITY                                                    -->
+<!-- ================================================================ -->
+
+<h2>8. Reusability: Generic Engine + Project Wrappers</h2>
+
+<div class="callout">
+  Follows copy-paste architecture per <code>docs/REUSABILITY.md</code>.
+  Generic engine has <strong>zero social-hook imports</strong>. Dependencies injected via constructor args.
+</div>
+
+<div class="diagram"><pre>
+<span class="layer-label">GENERIC ENGINE (workbench/engine/) — stdlib + pydantic only</span>
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │ fabricator.py    db: Connection, overrides: dict, time_shifts: dict   │
+  │ capture.py       assembler_fn: Callable, section_delim: str          │
+  │ runner.py        trigger_fn: Callable, progress_cb: Callable         │
+  │ replay.py        runner: PipelineRunner, db_copy_fn: Callable        │
+  │ comparison.py    snapshots/results (generic dataclasses)             │
+  │ models.py        PromptSnapshot, CapturedResult, FlowConfig, etc.    │
+  │ versions.py      base_dir: Path (filesystem prompt versioning)       │
+  │                                                                        │
+  │ Tests: tests/workbench/engine/test_*.py (travel with the code)        │
+  └────────────────────────────────────────────────────────────────────────┘
+
+<span class="layer-label">PROJECT WRAPPERS (workbench/) — NOT reusable, imports social_hook freely</span>
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │ state.py       WorkbenchState Pydantic model (arcs, topics, etc.)     │
+  │ overrides.py   state → db.operations calls                           │
+  │ hooks.py       FLOWS registry (10+ FlowConfig entries)               │
+  │ presets.py     snapshot presets, commit sequences, content templates  │
+  │ api.py         FastAPI /workbench/* endpoints                        │
+  │ drift.py       CI tests: entity coverage, flow coverage, signatures  │
+  └────────────────────────────────────────────────────────────────────────┘
+
+<span class="layer-label">TO REUSE ON ANOTHER PROJECT:</span>
+
+  1. Copy workbench/engine/ (7 files)
+  2. Write your own state.py (Pydantic model for YOUR domain)
+  3. Write your own hooks.py (register YOUR flows with trigger_fn + assembler_fn)
+  4. Write your own overrides.py (YOUR db operations)
+  5. RJSF frontend pattern is identical — different JSON Schema
+</pre></div>
+
+<!-- ================================================================ -->
+<!-- 9. MAINTENANCE                                                    -->
+<!-- ================================================================ -->
+
+<h2>9. Maintenance &amp; Drift Detection</h2>
+
+<div class="diagram"><pre>
+<span class="layer-label">TWO TYPES OF COUPLING:</span>
+
+  <span class="component">Type 1: Tight (fails loudly — good)</span>
+  hooks.py calls run_trigger(), assemble_*_prompt(), Expert.handle() directly.
+  Signature changes → TypeError immediately.
+
+  <span class="new">Type 2: Loose (drifts silently — needs detection)</span>
+  WorkbenchState has fields for arcs, topics, strategies, etc.
+  New entity added → nothing breaks, but can't fabricate the new thing.
+  New LLM flow added → workbench doesn't know it exists.
+
+
+<span class="layer-label">DRIFT DETECTION (CI tests in drift.py):</span>
+
+  <span class="new">test_workbench_covers_domain_entities()</span>
+    Compares domain models to WorkbenchState fields.
+    Fails with: "Domain entities not in WorkbenchState: {campaigns}"
+
+  <span class="new">test_workbench_covers_all_flows()</span>
+    Compares known LLM flows to FLOWS registry.
+    Fails with: "Flows not registered in workbench: {campaign_eval}"
+
+  <span class="new">test_assembler_signatures_match()</span>
+    Inspects assemble_*_prompt() signatures vs. hook wrappers.
+    Fails when new required parameter added.
+
+
+<span class="layer-label">WHAT STAYS IN SYNC AUTOMATICALLY (no maintenance):</span>
+
+  ✓ Captured LLM output — raw Pydantic model, new fields appear for free
+  ✓ Prompt sections — parsed dynamically on "---\n## " delimiters
+  ✓ Snapshots — full DB copy, includes any new tables/data
+  ✓ Routing behavior — calls route_to_targets() directly
+  ✓ Schema changes — CapturedResult stores JSON, not typed fields
+
+
+<span class="layer-label">WHAT NEEDS MANUAL UPDATE (~15-30 min per change):</span>
+
+  ✗ New domain entity → add to state.py + overrides.py + drift test
+  ✗ New LLM flow → add FlowConfig to hooks.py + input model to state.py
+  ✗ New required param on assembler → update hook wrapper
+
+
+<span class="layer-label">CONVENTION (CODING_PRACTICES.md):</span>
+
+  "When you add a new domain entity or LLM flow:
+   update workbench/state.py, overrides.py, hooks.py.
+   Same rule as REUSABILITY.md — update when interfaces change."
+</pre></div>
+
+<!-- ================================================================ -->
+<!-- 10. STATUS                                                        -->
+<!-- ================================================================ -->
+
+<h2>10. Status of Decisions</h2>
+
+<div class="cols">
+
+<div class="section">
+<h3>Decided <span class="tag tag-decided">DECIDED</span></h3>
+<ul>
+  <li><strong>Python DSL</strong> as the engine layer (not YAML, not custom DSL)</li>
+  <li><strong>Pydantic models</strong> as single source of truth (validation + UI generation + DSL)</li>
+  <li><strong>RJSF + @rjsf/shadcn</strong> for auto-generated React forms from JSON Schema</li>
+  <li><strong>Snapshot + override</strong> hybrid for state (organic base + declarative tweaks)</li>
+  <li><strong>Prompt versioning</strong> via filesystem (<code>~/.social-hook/prompts/versions/</code>)</li>
+  <li><strong>Derived prompt capture</strong> — assembled prompts with section breakdown, token counts, omitted sections — for every flow</li>
+  <li><strong>4-layer time model</strong> — prompt diff (instant) → single execution (~1-5 min) → commit sequence (~5-15 min) → parallel comparison (~10-20 min)</li>
+  <li><strong>Stage 1 caching</strong> — reuse analyzer results across prompt versions</li>
+  <li><strong>Full structured output capture</strong> — per-strategy reasoning/angle/arc/topic/queue-actions; per-target draft reasoning/format/media; flow-specific output schemas</li>
+  <li><strong>Routing as explicit capture layer</strong> — between stage2 and stage3, shows per-target actions, draft groups, skip reasons, scheduling constraint hits</li>
+  <li><strong>Layer 0 includes routing simulation</strong> — fabricate strategy decisions, test routing at zero cost without LLM</li>
+  <li><strong>Multi-flow architecture</strong> — 10+ flows registered via FlowConfig (trigger, gatekeeper, expert, media_spec, brief, discovery, topic_draft, suggestion_eval, consolidation, narrative). Same engine, different trigger_fn + assembler_fn</li>
+  <li><strong>Replay calls run_trigger() directly</strong> — does NOT manage interval gating/batching; observes organic behavior including deferred_eval, batch evaluation, combined diffs</li>
+  <li><strong>claude-cli as default provider</strong> — $0 cost, time is the constraint; layer 0 (prompt diff) is primary exploration tool</li>
+  <li><strong>SSE progress streaming</strong> — mandatory for layers 2-3</li>
+  <li><strong>Reusable engine</strong> — <code>workbench/engine/</code> has zero social-hook imports; copy-paste architecture per REUSABILITY.md</li>
+  <li><strong>Targets + accounts + mock_strategy_decisions</strong> in state model — test routing configurations at zero cost</li>
+  <li><strong>Draft groups in capture</strong> — stage3 grouped by strategy/draft-group, not flat list</li>
+  <li><strong>Drift detection via CI tests</strong> — entity coverage, flow coverage, signature matching. Convention in CODING_PRACTICES.md.</li>
+  <li><strong>Accuracy warnings</strong> — flag when snapshot prompt version ≠ run prompt version</li>
+  <li><strong>Existing pipeline unchanged</strong> — workbench wraps, doesn't modify</li>
+  <li><strong>Existing E2E suite preserved</strong> — workbench is additive</li>
+</ul>
+</div>
+
+<div class="section">
+<h3>Open / Deferred <span class="tag tag-open">OPEN</span></h3>
+<ul>
+  <li><strong>Snapshot library curation</strong> — which commit sequences, how many presets, naming convention. Should snapshots record interval + chat history? <span class="tag tag-open">OPEN</span></li>
+  <li><strong>Content templates for fabricated state</strong> — realistic seeded reasoning/content when not using snapshots <span class="tag tag-deferred">DEFERRED</span></li>
+  <li><strong>Regression mode</strong> — running workbench scenarios in CI (pytest integration, assertion language, pass/fail) <span class="tag tag-deferred">DEFERRED</span></li>
+  <li><strong>History / run persistence</strong> — where to store past runs for trend analysis <span class="tag tag-open">OPEN</span></li>
+  <li><strong>DB isolation for workbench runs</strong> — temp copy vs separate connection vs in-memory <span class="tag tag-open">OPEN</span></li>
+  <li><strong>Media generation in workbench</strong> — stub or real? Adds ~30s per media tool call <span class="tag tag-open">OPEN</span></li>
+  <li><strong>Replay cancel / resume</strong> — abort long replay, resume from last completed batch point <span class="tag tag-deferred">DEFERRED</span></li>
+  <li><strong>Rate-limit drain testing</strong> — the scheduler's <code>_drain_deferred_evaluations</code> (processed=0) is separate from interval gating (processed=1) <span class="tag tag-open">OPEN</span></li>
+  <li><strong>skip_drafting optimization</strong> — halves LLM time during replay; decide if drafter capture needed for comparison <span class="tag tag-open">OPEN</span></li>
+  <li><strong>Gatekeeper chat sequence testing</strong> — multi-turn conversation replay (message 1 → route → message 2 → escalate → expert) <span class="tag tag-deferred">DEFERRED</span></li>
+  <li><strong>Expert flow chaining</strong> — test gatekeeper → expert escalation as a composed flow <span class="tag tag-deferred">DEFERRED</span></li>
+  <li><strong>Inline prompt flows</strong> — brief gen/update, discovery, classifier use inline prompts not .md files. Versioning story differs from file-based prompts <span class="tag tag-open">OPEN</span></li>
+  <li><strong>Record &amp; replay</strong> — capture full LLM interactions for zero-cost organic state reconstruction <span class="tag tag-deferred">DEFERRED</span></li>
+  <li><strong>Notebook interface</strong> — Jupyter as alternative exploration surface <span class="tag tag-deferred">DEFERRED</span></li>
+  <li><strong>REUSABILITY.md entry</strong> — write "Files to Copy" section once engine stabilizes <span class="tag tag-deferred">DEFERRED</span></li>
+  <li><strong>Allure / reporting for regression layer</strong> <span class="tag tag-deferred">DEFERRED</span></li>
+</ul>
+</div>
+
+</div>
+
+<div class="divider"></div>
+<p class="note">v3 — 2026-04-01. Added: multi-flow registry (10+ flows), routing as explicit capture layer, routing simulation at layer 0, draft group capture, targets/accounts/mock_strategy_decisions in state model, drift detection &amp; maintenance strategy, inline-prompt versioning as open question.</p>
+
+</body>
+</html>

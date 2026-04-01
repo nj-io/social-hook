@@ -12,7 +12,7 @@ from social_hook.messaging.base import (
     OutboundMessage,
     SendResult,
 )
-from social_hook.models import Draft
+from social_hook.models.core import Draft
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -284,7 +284,7 @@ class TestHandleCycleExpand:
         from social_hook.db import operations as ops
 
         # Insert a project and decision first
-        from social_hook.models import Decision, Project
+        from social_hook.models.core import Decision, Project
 
         project = Project(id="proj-1", name="test-proj", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -344,7 +344,7 @@ class TestHandleCycleApprove:
     def test_approves_editable_drafts(self, temp_db):
         from social_hook.bot.buttons import handle_cycle_approve
         from social_hook.db import operations as ops
-        from social_hook.models import Decision, Project
+        from social_hook.models.core import Decision, Project
 
         project = Project(id="proj-1", name="test-proj", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -383,7 +383,7 @@ class TestHandleCycleApprove:
         """Approve All with mixed statuses: approves editable, skips terminal, reports count."""
         from social_hook.bot.buttons import handle_cycle_approve
         from social_hook.db import operations as ops
-        from social_hook.models import Decision, Project
+        from social_hook.models.core import Decision, Project
 
         project = Project(id="proj-1", name="test-proj", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -442,7 +442,7 @@ class TestHandleCycleView:
     def test_view_single_draft(self, temp_db):
         from social_hook.bot.buttons import handle_cycle_view
         from social_hook.db import operations as ops
-        from social_hook.models import Decision, Project
+        from social_hook.models.core import Decision, Project
 
         project = Project(id="proj-1", name="test-proj", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -477,7 +477,8 @@ class TestHandleArcApprove:
     def test_arc_approve_sets_active(self, temp_db):
         from social_hook.bot.buttons import handle_arc_approve
         from social_hook.db import operations as ops
-        from social_hook.models import Arc, Project
+        from social_hook.models.core import Project
+        from social_hook.models.narrative import Arc
 
         project = Project(id="proj-1", name="test-proj", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)
@@ -503,7 +504,8 @@ class TestHandleArcDismiss:
     def test_arc_dismiss_sets_abandoned(self, temp_db):
         from social_hook.bot.buttons import handle_arc_dismiss
         from social_hook.db import operations as ops
-        from social_hook.models import Arc, Project
+        from social_hook.models.core import Project
+        from social_hook.models.narrative import Arc
 
         project = Project(id="proj-1", name="test-proj", repo_path="/tmp/test")
         ops.insert_project(temp_db, project)

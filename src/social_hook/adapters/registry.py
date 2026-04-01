@@ -1,50 +1,97 @@
-"""Media adapter registry with lazy initialization."""
+"""Media adapter registry with lazy initialization.
+
+Uses AdapterRegistry for dispatch instead of if/elif chains.
+Each media tool is registered with its factory, metadata, and
+class location for schema introspection.
+"""
 
 import importlib
 import logging
 from typing import Any
 
 from social_hook.adapters.media.base import MediaAdapter
+from social_hook.registry import AdapterRegistry
 
 logger = logging.getLogger(__name__)
 
-# Lazy singleton cache
-_adapter_cache: dict[str, MediaAdapter] = {}
+# Module-level registry for media adapters
+_media_registry = AdapterRegistry("media")
 
-# All available media adapter names
-MEDIA_ADAPTER_NAMES = ["mermaid", "nano_banana_pro", "playwright", "ray_so"]
 
-# Adapter class locations for lazy import
-_ADAPTER_CLASSES = {
-    "mermaid": ("social_hook.adapters.media.mermaid", "MermaidAdapter"),
-    "nano_banana_pro": ("social_hook.adapters.media.nanabananapro", "NanaBananaAdapter"),
-    "ray_so": ("social_hook.adapters.media.rayso", "RaySoAdapter"),
-    "playwright": ("social_hook.adapters.media.playwright", "PlaywrightAdapter"),
-}
+def _create_mermaid(**_kw) -> MediaAdapter:
+    from social_hook.adapters.media.mermaid import MermaidAdapter
 
-# Display metadata for each tool
-_TOOL_METADATA = {
-    "mermaid": {
+    return MermaidAdapter()
+
+
+def _create_nano_banana_pro(*, api_key: str | None = None, **_kw) -> MediaAdapter:
+    if not api_key:
+        raise ValueError("nano_banana_pro requires api_key (GEMINI_API_KEY)")
+    from social_hook.adapters.media.nanabananapro import NanaBananaAdapter
+
+    return NanaBananaAdapter(api_key=api_key)
+
+
+def _create_playwright(**_kw) -> MediaAdapter:
+    from social_hook.adapters.media.playwright import PlaywrightAdapter
+
+    return PlaywrightAdapter()
+
+
+def _create_ray_so(**_kw) -> MediaAdapter:
+    from social_hook.adapters.media.rayso import RaySoAdapter
+
+    return RaySoAdapter()
+
+
+# Register at module load (lazy imports inside each factory function)
+_media_registry.register(
+    "mermaid",
+    _create_mermaid,
+    metadata={
         "display_name": "Mermaid",
         "description": "Flowcharts, sequence diagrams, and other Mermaid.js diagrams",
+        "class_module": "social_hook.adapters.media.mermaid",
+        "class_name": "MermaidAdapter",
     },
-    "nano_banana_pro": {
+)
+_media_registry.register(
+    "nano_banana_pro",
+    _create_nano_banana_pro,
+    metadata={
         "display_name": "Nano Banana Pro",
         "description": "AI-generated images from text prompts (Gemini)",
+        "class_module": "social_hook.adapters.media.nanabananapro",
+        "class_name": "NanaBananaAdapter",
     },
-    "ray_so": {
+)
+_media_registry.register(
+    "ray_so",
+    _create_ray_so,
+    metadata={
         "display_name": "Ray.so",
         "description": "Beautiful code snippet screenshots via ray.so",
+        "class_module": "social_hook.adapters.media.rayso",
+        "class_name": "RaySoAdapter",
     },
-    "playwright": {
+)
+_media_registry.register(
+    "playwright",
+    _create_playwright,
+    metadata={
         "display_name": "Playwright",
         "description": "Browser screenshots of any webpage",
+        "class_module": "social_hook.adapters.media.playwright",
+        "class_name": "PlaywrightAdapter",
     },
-}
+)
+
+# Backward-compatible constant — derived from registry, not a separate data structure
+MEDIA_ADAPTER_NAMES = _media_registry.names()
 
 
 def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | None:
-    """Get media adapter by name with lazy initialization.
+    """Get media adapter by name with lazy initialization and caching.
 
     Args:
         name: One of "mermaid", "nano_banana_pro", "playwright", "ray_so"
@@ -56,49 +103,27 @@ def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | N
     Raises:
         ValueError: If nano_banana_pro requested without api_key
     """
-    if name in _adapter_cache:
-        return _adapter_cache[name]
+    if not _media_registry.has(name):
+        logger.warning(
+            "Unknown media adapter: %s (available: %s)",
+            name,
+            _media_registry.names(),
+        )
+        return None
 
-    adapter: MediaAdapter | None = None
-
-    if name == "mermaid":
-        from social_hook.adapters.media.mermaid import MermaidAdapter
-
-        adapter = MermaidAdapter()
-
-    elif name == "nano_banana_pro":
-        if not api_key:
-            raise ValueError("nano_banana_pro requires api_key (GEMINI_API_KEY)")
-        from social_hook.adapters.media.nanabananapro import NanaBananaAdapter
-
-        adapter = NanaBananaAdapter(api_key=api_key)
-
-    elif name == "playwright":
-        from social_hook.adapters.media.playwright import PlaywrightAdapter
-
-        adapter = PlaywrightAdapter()
-
-    elif name == "ray_so":
-        from social_hook.adapters.media.rayso import RaySoAdapter
-
-        adapter = RaySoAdapter()
-
-    else:
-        logger.warning("Unknown media adapter: %s (available: %s)", name, MEDIA_ADAPTER_NAMES)
-
-    if adapter:
-        _adapter_cache[name] = adapter
-
-    return adapter
+    result: MediaAdapter = _media_registry.get_or_create(name, api_key=api_key)
+    return result
 
 
 def clear_adapter_cache() -> None:
     """Clear the adapter cache. Useful for testing."""
-    _adapter_cache.clear()
+    _media_registry.clear_cache()
 
 
 def get_tool_spec_schema(name: str) -> dict:
     """Get spec schema for a media tool by name (no instantiation needed).
+
+    Uses class location stored in registry metadata for lazy import.
 
     Args:
         name: Tool name (e.g. "mermaid", "ray_so")
@@ -106,11 +131,13 @@ def get_tool_spec_schema(name: str) -> dict:
     Returns:
         Schema dict with "required" and "optional" keys
     """
-    entry = _ADAPTER_CLASSES.get(name)
-    if not entry:
+    meta = _media_registry.get_metadata(name)
+    class_module = meta.get("class_module")
+    class_name = meta.get("class_name")
+    if not class_module or not class_name:
         return {"required": {}, "optional": {}}
-    mod = importlib.import_module(entry[0])
-    cls = getattr(mod, entry[1])
+    mod = importlib.import_module(class_module)
+    cls = getattr(mod, class_name)
     result: dict[str, Any] = cls.spec_schema()
     return result
 
@@ -135,8 +162,8 @@ def list_available_tools() -> list[dict]:
         List of dicts with name, display_name, description, required_fields
     """
     result = []
-    for name in MEDIA_ADAPTER_NAMES:
-        meta = _TOOL_METADATA.get(name, {})
+    for name in _media_registry.names():
+        meta = _media_registry.get_metadata(name)
         schema = get_tool_spec_schema(name)
         result.append(
             {

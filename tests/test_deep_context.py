@@ -13,7 +13,8 @@ from social_hook.content_sources import (
 )
 from social_hook.db import operations as ops
 from social_hook.filesystem import generate_id
-from social_hook.models import ContentTopic, Decision, Project
+from social_hook.models.content import ContentTopic
+from social_hook.models.core import Decision, Project
 
 
 class TestGetCommitDiff:

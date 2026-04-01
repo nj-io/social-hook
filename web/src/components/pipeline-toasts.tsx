@@ -19,7 +19,7 @@ export function PipelineToasts() {
       const data = inner.data as DataChangeEvent;
 
       if (data.entity === "pipeline") {
-        // Pipeline stage events — maps to PipelineStage constants from models/__init__.py
+        // Pipeline stage events — maps to PipelineStage constants from models/enums.py
         const stageMessages: Record<string, string> = {
           discovering: "Generating project brief",
           analyzing: "Analyzing commit",

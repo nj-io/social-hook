@@ -565,7 +565,7 @@ def run(harness, runner, adapter):
     def g21():
         from social_hook.db import insert_draft
         from social_hook.filesystem import generate_id
-        from social_hook.models import Draft
+        from social_hook.models.core import Draft
 
         # Create two drafts sharing the same decision_id
         draft_a = harness.seed_draft(

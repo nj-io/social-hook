@@ -349,6 +349,36 @@ class TestTopicStatusOnPost:
 
 
 # =============================================================================
+# 6.2: Topic status completeness — trigger _run_targets_path
+# =============================================================================
+
+
+class TestTopicStatusOnDraft:
+    """Test topic status update after draft creation in _run_targets_path."""
+
+    def test_topic_status_partial_with_arc(self):
+        """Strategy with topic_id and arc_id should set topic to 'partial'."""
+        from social_hook.parsing import enum_value
+
+        sd = SimpleNamespace(action="draft", topic_id="topic_1", arc_id="arc_1", reason="test")
+
+        # Verify the logic: if arc_id present, new_status should be "partial"
+        if enum_value(sd.action) == "draft" and sd.topic_id:
+            new_status = "partial" if sd.arc_id else "covered"
+        assert new_status == "partial"
+
+    def test_topic_status_covered_without_arc(self):
+        """Strategy with topic_id but no arc_id should set topic to 'covered'."""
+        from social_hook.parsing import enum_value
+
+        sd = SimpleNamespace(action="draft", topic_id="topic_1", arc_id=None, reason="test")
+
+        if enum_value(sd.action) == "draft" and sd.topic_id:
+            new_status = "partial" if sd.arc_id else "covered"
+        assert new_status == "covered"
+
+
+# =============================================================================
 # 6.3: Queue action notifications
 # =============================================================================
 

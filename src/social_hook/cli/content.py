@@ -56,7 +56,7 @@ def suggest(
     """
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import ContentSuggestion
+    from social_hook.models.content import ContentSuggestion
 
     json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
@@ -170,7 +170,7 @@ def dismiss(
                 typer.echo(msg)
             raise typer.Exit(1)
 
-        from social_hook.models import ContentSuggestion
+        from social_hook.models.content import ContentSuggestion
 
         suggestion = ContentSuggestion.from_dict(dict(rows[0]))
 

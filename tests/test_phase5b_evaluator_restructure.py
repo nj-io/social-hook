@@ -18,7 +18,7 @@ from social_hook.llm.schemas import (
     CommitClassification,
     TargetAction,
 )
-from social_hook.models import CommitInfo, Project
+from social_hook.models.core import CommitInfo, Project
 
 # =============================================================================
 # _is_trivial_classification

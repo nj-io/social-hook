@@ -11,7 +11,7 @@ from typing import Any
 from social_hook.config.platforms import resolve_platform
 from social_hook.config.yaml import TIER_CHAR_LIMITS
 from social_hook.filesystem import generate_id, get_base_path
-from social_hook.models import Draft, DraftTweet
+from social_hook.models.core import Draft, DraftTweet
 from social_hook.scheduling import ScheduleResult, calculate_optimal_time
 
 logger = logging.getLogger(__name__)
@@ -614,6 +614,60 @@ def draft_for_targets(
         )
 
     return all_results
+
+
+def _pick_lead_platform(platforms: dict) -> tuple[str, Any]:
+    """Pick the most constrained platform (lowest max_length) as the lead.
+
+    When max_length is None, treat as unconstrained (infinity).
+    This ensures adaptation only expands (safe), never truncates (lossy).
+    """
+    lead_name = None
+    lead_rpcfg = None
+    lead_limit = float("inf")
+    for pname, rpcfg in platforms.items():
+        limit = rpcfg.max_length if rpcfg.max_length is not None else float("inf")
+        if rpcfg.account_tier:
+            tier_limit = TIER_CHAR_LIMITS.get(rpcfg.account_tier, float("inf"))
+            limit = min(limit, tier_limit)
+        if limit < lead_limit:
+            lead_limit = limit
+            lead_name = pname
+            lead_rpcfg = rpcfg
+    if lead_name is None:
+        lead_name = next(iter(platforms))
+        lead_rpcfg = platforms[lead_name]
+    return lead_name, lead_rpcfg
+
+
+def _unthread_content(thread_content: str) -> str:
+    """Reverse thread formatting: join tweets into a single post."""
+    stripped = re.sub(r"(?:^|\n+)\d+/\s*", "\n\n", thread_content)
+    paragraphs = [p.strip() for p in stripped.split("\n\n") if p.strip()]
+    return "\n\n".join(paragraphs)
+
+
+def _adapt_content_for_platform(
+    content: str,
+    was_threaded: bool,
+    target_platform: str,
+    max_length: int | None,
+) -> str:
+    """Adapt lead draft content for a different platform."""
+    adapted = content
+    if was_threaded and target_platform != "x":
+        adapted = _unthread_content(content)
+
+    if max_length and len(adapted) > max_length:
+        logger.warning(
+            "Adapted content for %s exceeds max_length (%d > %d), truncating",
+            target_platform,
+            len(adapted),
+            max_length,
+        )
+        adapted = adapted[:max_length]
+
+    return adapted
 
 
 def _draft_shared_group(

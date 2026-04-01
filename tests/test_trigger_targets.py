@@ -10,7 +10,8 @@ from social_hook.llm.schemas import (
     StrategyDecisionInput,
     TargetAction,
 )
-from social_hook.models import CommitInfo, ContentTopic, Project
+from social_hook.models.content import ContentTopic
+from social_hook.models.core import CommitInfo, Project
 from social_hook.trigger import (
     _combine_strategy_reasoning,
     _determine_overall_decision,
@@ -95,16 +96,16 @@ class TestCombineStrategyReasoning:
         assert "s2: reason 2" in result
         assert "; " in result
 
-    def test_long_reasoning_not_truncated(self):
-        """Full reasoning is preserved — no truncation."""
+    def test_long_reasoning_truncated(self):
+        """Long combined reasoning is truncated to 500 chars."""
         strategies = {
             f"strategy-{i}": StrategyDecisionInput(action="skip", reason="x" * 100)
             for i in range(10)
         }
         result = _combine_strategy_reasoning(strategies)
         assert "strategy-0: " in result
-        assert "strategy-9: " in result
-        assert len(result) > 500
+        assert len(result) <= 500
+        assert result.endswith("...")
 
 
 # =============================================================================

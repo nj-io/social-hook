@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from social_hook.db import operations as ops
 from social_hook.llm.schemas import LogEvaluationInput
-from social_hook.models import Decision, Project
+from social_hook.models.core import Decision, Project
 from social_hook.narrative.arcs import (
     create_arc,
     get_arc,
@@ -485,7 +485,8 @@ class TestDraftingArcContext:
         from social_hook.drafting import draft_for_platforms
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.schemas import CreateDraftInput
-        from social_hook.models import CommitInfo, ProjectContext
+        from social_hook.models.context import ProjectContext
+        from social_hook.models.core import CommitInfo
         from social_hook.scheduling import ScheduleResult
 
         # Set up project and arc
@@ -590,7 +591,8 @@ class TestDraftingArcContext:
         from social_hook.drafting import draft_for_platforms
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.schemas import CreateDraftInput
-        from social_hook.models import CommitInfo, ProjectContext
+        from social_hook.models.context import ProjectContext
+        from social_hook.models.core import CommitInfo
         from social_hook.scheduling import ScheduleResult
 
         project = _setup_project(temp_db)

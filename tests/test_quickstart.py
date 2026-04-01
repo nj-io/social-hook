@@ -15,7 +15,7 @@ from social_hook.cli.quickstart import (
     _error_exit,
     _run_batch_evaluate,
 )
-from social_hook.models import Decision, Draft, Project
+from social_hook.models.core import Decision, Draft, Project
 
 runner = CliRunner()
 

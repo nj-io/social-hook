@@ -1,6 +1,6 @@
 # social-hook strategy
 
-Content strategy management.
+View and customize content strategies (voice, audience, editorial rules).
 
 ---
 
@@ -127,6 +127,10 @@ Example: social-hook strategy reset building-public --yes
 ### `social-hook strategy show`
 
 Show full strategy definition (merges template + project override).
+
+Displays the strategy's label, description, type (built-in or custom),
+and fields: audience, voice, angle, post_when, avoid, format_preference,
+and media_preference.
 
 Example: social-hook strategy show building-public
 

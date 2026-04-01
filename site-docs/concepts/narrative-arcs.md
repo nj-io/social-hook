@@ -21,7 +21,7 @@ Arcs are created in two ways:
 1. **Evaluator-initiated** — When the evaluator sees a commit that starts a new storyline, it sets `new_arc_theme` in its response. Social Hook creates the arc automatically.
 2. **Manual** — `social-hook arc create "Auth migration"` creates an arc that the evaluator can assign commits to.
 
-There's a hard limit of **3 active arcs per project**. This prevents narrative sprawl — if you're telling too many stories at once, none of them land. When the limit is hit, the evaluator must complete or abandon an existing arc before starting a new one.
+Arcs are scoped to a **strategy** (via the `strategy` field on the `Arc` dataclass). A project can have multiple strategies, and each strategy has its own set of arcs. There's a hard limit of **3 active arcs per strategy** (`max_arcs_per_strategy` in config). This prevents narrative sprawl — if you're telling too many stories at once, none of them land. When the limit is hit, the evaluator must complete or abandon an existing arc before starting a new one.
 
 ### Assignment
 
@@ -71,8 +71,8 @@ This prevents the account from becoming a stream of disconnected updates. After 
 
 The evaluator also sees:
 
-- **Portfolio window** — The last N posts (default 10) for variety analysis. It avoids repeating the same episode type too often.
-- **Episode preferences** — Your configured favored and avoided episode types.
+- **Portfolio window** — The last N posts (default 10) for variety analysis. It avoids repeating the same episode tags too often.
+- **Episode preferences** — Your configured favored and avoided episode tags (via `EpisodePreferences` with `favor` and `avoid` lists).
 
 Together with arcs and narrative debt, these mechanisms produce a posting pattern that feels intentional rather than automated.
 

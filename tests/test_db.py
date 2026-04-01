@@ -61,18 +61,9 @@ from social_hook.db import (
     update_project_summary,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models import (
-    Arc,
-    Decision,
-    Draft,
-    DraftChange,
-    DraftTweet,
-    Lifecycle,
-    NarrativeDebt,
-    Post,
-    Project,
-    UsageLog,
-)
+from social_hook.models.core import Decision, Draft, DraftChange, DraftTweet, Post, Project
+from social_hook.models.infra import UsageLog
+from social_hook.models.narrative import Arc, Lifecycle, NarrativeDebt
 
 # =============================================================================
 # T1: Database Initialization

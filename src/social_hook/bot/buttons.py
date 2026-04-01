@@ -12,7 +12,7 @@ from social_hook.messaging.base import (
     MessagingAdapter,
     OutboundMessage,
 )
-from social_hook.models import EDITABLE_STATUSES, TERMINAL_STATUSES
+from social_hook.models.enums import EDITABLE_STATUSES, TERMINAL_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -755,7 +755,7 @@ def btn_media_regen(
         from social_hook.db import get_draft, update_draft
         from social_hook.db.operations import insert_draft_change
         from social_hook.filesystem import generate_id, get_base_path
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         draft = get_draft(conn, draft_id)
         if not draft or not draft.media_type or not draft.media_spec:
@@ -854,7 +854,7 @@ def btn_media_retry(
         from social_hook.db import get_draft, update_draft
         from social_hook.db.operations import insert_draft_change
         from social_hook.filesystem import generate_id, get_base_path
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         draft = get_draft(conn, draft_id)
         if not draft or not draft.media_type or not draft.media_spec:
@@ -945,7 +945,7 @@ def btn_media_remove(
         from social_hook.db import get_draft, update_draft
         from social_hook.db.operations import insert_draft_change
         from social_hook.filesystem import generate_id
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         draft = get_draft(conn, draft_id)
         if not draft:
@@ -1155,7 +1155,7 @@ def btn_media_confirm_gen(
         from social_hook.db import get_draft, update_draft
         from social_hook.db.operations import insert_draft_change
         from social_hook.filesystem import generate_id, get_base_path
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         draft = get_draft(conn, draft_id)
         if not draft or not draft.media_type or not draft.media_spec:
@@ -1793,7 +1793,7 @@ def btn_promote_to(
         from social_hook.errors import ConfigError
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
-        from social_hook.models import CommitInfo
+        from social_hook.models.core import CommitInfo
 
         try:
             project_config = load_project_config(project.repo_path)

@@ -8,7 +8,7 @@ from social_hook.db import (
     insert_project,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models import Project
+from social_hook.models.core import Project
 
 
 class TestRegisterCommand:

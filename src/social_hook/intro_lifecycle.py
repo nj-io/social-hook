@@ -62,7 +62,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False, skip_intro=False) 
         from social_hook.config.yaml import load_full_config
         from social_hook.drafting import draft_for_platforms
         from social_hook.llm.dry_run import DryRunContext
-        from social_hook.models import CommitInfo
+        from social_hook.models.core import CommitInfo
 
         config = load_full_config()
         db = DryRunContext(conn, dry_run=False)

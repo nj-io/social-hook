@@ -58,7 +58,17 @@ def safe_int(
 
 
 def enum_value(x: Any) -> Any:
-    """Extract .value from enums or return unchanged. Use instead of inline _val() helpers."""
+    """Extract .value from an enum, or return x unchanged.
+
+    Use at system boundaries when a value may be either an enum member
+    or a plain string (e.g., LLM tool call outputs, config values).
+
+    Args:
+        x: An enum member (returns x.value) or any other value (returned as-is).
+
+    Returns:
+        The extracted value.
+    """
     return x.value if hasattr(x, "value") else x
 
 

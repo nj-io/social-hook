@@ -6,7 +6,7 @@ import logging
 import typer
 
 from social_hook.cli.utils import resolve_project
-from social_hook.models import PENDING_STATUSES
+from social_hook.models.enums import PENDING_STATUSES
 
 app = typer.Typer(no_args_is_help=True)
 logger = logging.getLogger(__name__)
@@ -311,6 +311,9 @@ def enable(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Re-enable a disabled target.
+
+    Sets the target status back to 'active'. Previously cancelled drafts
+    are not restored -- new drafts will be created on the next trigger.
 
     Example: social-hook target enable product/timeline
     """

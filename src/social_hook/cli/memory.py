@@ -76,7 +76,10 @@ def clear(
     project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ):
-    """Clear all voice memories for a project."""
+    """Clear all voice memories for a project.
+
+    Example: social-hook memory clear --yes  (skip confirmation)
+    """
     from social_hook.config.project import clear_memories
 
     repo_path = _resolve_project(project)

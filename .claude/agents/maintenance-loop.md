@@ -39,9 +39,15 @@ approval_required:                    # Work that needs PR comment approval firs
 
 ### Step 1: Setup
 
+Always start from the latest target branch:
+
 ```bash
-git checkout <branch> && git pull origin <branch>
+git fetch origin <branch>
+git checkout <branch>
+git pull origin <branch>
 ```
+
+All maintenance branches are created from the target branch (step 8), never from a worktree's working branch.
 
 Run any `setup` commands from config. Then detect environment:
 
@@ -90,7 +96,7 @@ For each change in the diff:
 - If it falls under `autonomous` rules — do it
 - If it needs new content — check if previously approved (from step 4 or state file)
   - If approved — do it
-  - If not — add to "Waiting for review" in the PR
+  - If not — add to "Backlog" in the PR
 
 ### Step 6: Run checks
 
@@ -134,7 +140,7 @@ Create manually: gh pr create --base <branch> --head <loop_name>/maintenance-<da
 ## Summary
 - <bullet per change made>
 
-## Waiting for review
+## Backlog
 - [ ] <item> — <what it is and why it needs approval>
 
 ## State

@@ -12,7 +12,8 @@ from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
 from social_hook.llm.schemas import CreateDraftInput
-from social_hook.models import CommitInfo, ProjectContext
+from social_hook.models.context import ProjectContext
+from social_hook.models.core import CommitInfo
 
 
 class Drafter:

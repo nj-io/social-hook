@@ -31,7 +31,12 @@ def delete(
 ):
     """Delete a decision and its associated drafts.
 
+    A decision is the evaluator's verdict on a commit (draft, skip, or defer).
+    This permanently removes the decision and all linked drafts from the
+    database. This action cannot be undone.
+
     Example: social-hook decision delete decision-abc123
+    Example: social-hook decision delete decision-abc123 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
 
@@ -84,6 +89,7 @@ def retrigger(
     episode type, or even skip the commit entirely.
 
     Example: social-hook decision retrigger decision-abc123
+    Example: social-hook decision retrigger decision-abc123 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
 
@@ -404,6 +410,7 @@ def rewind(
 
     Example: social-hook decision rewind abc1234
     Example: social-hook decision rewind decision_abc123
+    Example: social-hook decision rewind abc1234 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
     from social_hook.filesystem import get_db_path
@@ -433,7 +440,7 @@ def rewind(
                     (proj.id, escaped + "%"),
                 ).fetchall()
                 if len(rows) == 1:
-                    from social_hook.models import Decision
+                    from social_hook.models.core import Decision
 
                     decision = Decision.from_dict(dict(rows[0]))
                 elif len(rows) > 1:
@@ -537,7 +544,13 @@ def list_cmd(
 ):
     """List decisions for a project.
 
-    Example: social-hook decision list --project .
+    Decisions are evaluator outcomes for commits (draft, skip, or defer).
+    Each row shows the decision ID, commit hash, type, media tool, content
+    angle, and date.
+
+    Examples:
+        social-hook decision list --project .
+        social-hook decision list --limit 50 --json
     """
     from social_hook.db import operations as ops
 

@@ -8,7 +8,12 @@ Decision management.
 
 Delete a decision and its associated drafts.
 
+A decision is the evaluator's verdict on a commit (draft, skip, or defer).
+This permanently removes the decision and all linked drafts from the
+database. This action cannot be undone.
+
 Example: social-hook decision delete decision-abc123
+Example: social-hook decision delete decision-abc123 --yes  (skip confirmation)
 
 **Arguments:**
 
@@ -29,7 +34,13 @@ Example: social-hook decision delete decision-abc123
 
 List decisions for a project.
 
-Example: social-hook decision list --project .
+Decisions are evaluator outcomes for commits (draft, skip, or defer).
+Each row shows the decision ID, commit hash, type, media tool, content
+angle, and date.
+
+Examples:
+    social-hook decision list --project .
+    social-hook decision list --limit 50 --json
 
 **Options:**
 
@@ -49,6 +60,7 @@ This re-runs the evaluator LLM, which may produce a different angle,
 episode type, or even skip the commit entirely.
 
 Example: social-hook decision retrigger decision-abc123
+Example: social-hook decision retrigger decision-abc123 --yes  (skip confirmation)
 
 **Arguments:**
 
@@ -78,6 +90,7 @@ the decision ID directly.
 
 Example: social-hook decision rewind abc1234
 Example: social-hook decision rewind decision_abc123
+Example: social-hook decision rewind abc1234 --yes  (skip confirmation)
 
 **Arguments:**
 

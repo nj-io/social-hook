@@ -158,6 +158,10 @@ def show(
 ):
     """Show full strategy definition (merges template + project override).
 
+    Displays the strategy's label, description, type (built-in or custom),
+    and fields: audience, voice, angle, post_when, avoid, format_preference,
+    and media_preference.
+
     Example: social-hook strategy show building-public
     """
     json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)

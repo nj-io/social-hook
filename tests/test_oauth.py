@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from social_hook.oauth_pkce import generate_pkce
 from social_hook.setup.oauth import (
     OAUTH_PLATFORMS,
     _build_auth_url,
     _CallbackHandler,
     _exchange_code,
-    _generate_pkce,
     _save_tokens,
     run_pkce_flow,
     validate_token,
@@ -41,17 +41,17 @@ class TestOAuthPlatformConfigRegistry:
 
 class TestGeneratePkce:
     def test_returns_non_empty_strings(self):
-        verifier, challenge = _generate_pkce()
+        verifier, challenge = generate_pkce()
         assert isinstance(verifier, str) and len(verifier) > 0
         assert isinstance(challenge, str) and len(challenge) > 0
 
     def test_verifier_length(self):
-        verifier, _ = _generate_pkce()
+        verifier, _ = generate_pkce()
         # RFC 7636: verifier must be 43-128 chars
         assert 43 <= len(verifier) <= 128
 
     def test_challenge_is_base64url(self):
-        _, challenge = _generate_pkce()
+        _, challenge = generate_pkce()
         # base64url characters only (no padding)
         import re
 
@@ -288,8 +288,10 @@ class TestRunPkceFlow:
 
         with (
             patch.object(sys, "stdin", mock_stdin),
-            patch("social_hook.setup.oauth.http.server.HTTPServer", return_value=MagicMock()),
-            patch("social_hook.setup.oauth.threading.Thread", return_value=mock_thread_inst),
+            patch(
+                "social_hook.setup.oauth.start_callback_server",
+                return_value=(MagicMock(), mock_thread_inst),
+            ),
             patch("social_hook.setup.oauth.secrets.token_urlsafe", return_value="fixed_state"),
             patch("social_hook.setup.oauth._exchange_code", mock_exchange),
             patch("social_hook.setup.oauth._save_tokens", mock_save),
@@ -331,8 +333,10 @@ class TestRunPkceFlow:
 
         with (
             patch.object(sys, "stdin", mock_stdin),
-            patch("social_hook.setup.oauth.http.server.HTTPServer", return_value=MagicMock()),
-            patch("social_hook.setup.oauth.threading.Thread", return_value=mock_thread_inst),
+            patch(
+                "social_hook.setup.oauth.start_callback_server",
+                return_value=(MagicMock(), mock_thread_inst),
+            ),
             patch("social_hook.setup.oauth.secrets.token_urlsafe", return_value="fixed_state"),
             patch("social_hook.setup.oauth._exchange_code", mock_exchange),
             patch("social_hook.setup.oauth._save_tokens", mock_save),
@@ -369,8 +373,10 @@ class TestRunPkceFlow:
 
         with (
             patch.object(sys, "stdin", mock_stdin),
-            patch("social_hook.setup.oauth.http.server.HTTPServer", return_value=MagicMock()),
-            patch("social_hook.setup.oauth.threading.Thread", return_value=mock_thread_inst),
+            patch(
+                "social_hook.setup.oauth.start_callback_server",
+                return_value=(MagicMock(), mock_thread_inst),
+            ),
             patch("social_hook.setup.oauth.secrets.token_urlsafe", return_value="fixed_state"),
             patch("social_hook.setup.oauth._exchange_code", return_value=mock_resp),
             pytest.raises(RuntimeError, match="Token exchange failed"),
@@ -390,8 +396,10 @@ class TestRunPkceFlow:
 
         with (
             patch.object(sys, "stdin", mock_stdin),
-            patch("social_hook.setup.oauth.http.server.HTTPServer", return_value=MagicMock()),
-            patch("social_hook.setup.oauth.threading.Thread", return_value=mock_thread_inst),
+            patch(
+                "social_hook.setup.oauth.start_callback_server",
+                return_value=(MagicMock(), mock_thread_inst),
+            ),
             pytest.raises(RuntimeError, match="No authorization code received"),
         ):
             run_pkce_flow("x", "cid", "csec", port=4000)
@@ -412,8 +420,10 @@ class TestRunPkceFlow:
 
         with (
             patch.object(sys, "stdin", mock_stdin),
-            patch("social_hook.setup.oauth.http.server.HTTPServer", return_value=MagicMock()),
-            patch("social_hook.setup.oauth.threading.Thread", return_value=mock_thread_inst),
+            patch(
+                "social_hook.setup.oauth.start_callback_server",
+                return_value=(MagicMock(), mock_thread_inst),
+            ),
             pytest.raises(RuntimeError, match="Authorization failed"),
         ):
             run_pkce_flow("x", "cid", "csec", port=4000)
@@ -434,8 +444,10 @@ class TestRunPkceFlow:
 
         with (
             patch.object(sys, "stdin", mock_stdin),
-            patch("social_hook.setup.oauth.http.server.HTTPServer", return_value=MagicMock()),
-            patch("social_hook.setup.oauth.threading.Thread", return_value=mock_thread_inst),
+            patch(
+                "social_hook.setup.oauth.start_callback_server",
+                return_value=(MagicMock(), mock_thread_inst),
+            ),
             patch("social_hook.setup.oauth.secrets.token_urlsafe", return_value="expected_state"),
             pytest.raises(RuntimeError, match="State mismatch"),
         ):

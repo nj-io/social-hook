@@ -67,9 +67,14 @@ nav:
   - CLI Reference:
     - Overview: cli/index.md
     - Commands: cli/root-commands.md
+    - account: cli/account.md
     - arc: cli/arc.md
     - bot: cli/bot.md
+    - brief: cli/brief.md
     - config: cli/config.md
+    - content: cli/content.md
+    - credentials: cli/credentials.md
+    - cycles: cli/cycles.md
     - decision: cli/decision.md
     - draft: cli/draft.md
     - inspect: cli/inspect.md
@@ -79,6 +84,10 @@ nav:
     - memory: cli/memory.md
     - project: cli/project.md
     - snapshot: cli/snapshot.md
+    - strategy: cli/strategy.md
+    - logs: cli/logs.md
+    - target: cli/target.md
+    - topics: cli/topics.md
   - Concepts:
     - Overview: concepts/index.md
     - How the Pipeline Works: concepts/pipeline.md

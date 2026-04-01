@@ -935,7 +935,7 @@ def verify(live: bool = False, transcript_arg: str | None = None) -> bool:
             prompt_db_path = tmp_path / "prompt_test.db"
             prompt_conn = init_database(prompt_db_path)
             from social_hook.db.operations import insert_project
-            from social_hook.models import Project
+            from social_hook.models.core import Project
 
             prompt_project = Project(
                 id="proj_prompt_test",

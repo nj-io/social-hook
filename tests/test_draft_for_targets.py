@@ -6,7 +6,7 @@ from social_hook.config.targets import AccountConfig, TargetConfig
 from social_hook.config.yaml import Config, SchedulingConfig
 from social_hook.drafting import draft_for_targets
 from social_hook.llm.schemas import StrategyDecisionInput, TargetAction
-from social_hook.models import Project
+from social_hook.models.core import Project
 from social_hook.routing import RoutedTarget
 
 

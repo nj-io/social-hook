@@ -7,7 +7,7 @@ from social_hook.config.yaml import Config, RateLimitsConfig
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Project
+from social_hook.models.core import Decision, Project
 from social_hook.scheduler import (
     _drain_batch,
     _drain_deferred_evaluations,

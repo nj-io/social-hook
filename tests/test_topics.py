@@ -4,7 +4,7 @@ import pytest
 
 from social_hook.db import init_database
 from social_hook.db import operations as ops
-from social_hook.models import ContentTopic
+from social_hook.models.content import ContentTopic
 from social_hook.topics import (
     get_evaluable_topics,
     is_positioning_strategy,

@@ -4,26 +4,23 @@ from datetime import datetime
 
 import pytest
 
-from social_hook.models import (
+from social_hook.models.core import Decision, Draft, Project
+from social_hook.models.enums import (
     ARC_STATUSES,
     EDITABLE_STATUSES,
     PENDING_STATUSES,
     TERMINAL_STATUSES,
-    Arc,
     ArcStatus,
-    Decision,
     DecisionType,
-    Draft,
     DraftStatus,
-    Lifecycle,
     LifecyclePhase,
     PostCategory,
     PostFormat,
-    Project,
-    UsageLog,
     is_draftable,
     is_held,
 )
+from social_hook.models.infra import UsageLog
+from social_hook.models.narrative import Arc, Lifecycle
 
 # =============================================================================
 # T3: Core Data Models

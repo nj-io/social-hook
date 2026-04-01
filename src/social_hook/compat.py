@@ -48,18 +48,17 @@ def make_eval_compat(
     if target is None:
         raise KeyError(f"Evaluation missing target '{target_name}'")
 
-    def _val(x):
-        return x.value if hasattr(x, "value") else x
+    from social_hook.parsing import enum_value
 
     return SimpleNamespace(
         decision=decision_str,
         reasoning=target.reason,
         angle=target.angle,
         episode_type=None,
-        post_category=_val(target.post_category),
+        post_category=enum_value(target.post_category),
         arc_id=target.arc_id,
         new_arc_theme=target.new_arc_theme,
-        media_tool=_val(target.media_tool),
+        media_tool=enum_value(target.media_tool),
         reference_posts=target.reference_posts,
         commit_summary=evaluation.commit_analysis.summary,
         include_project_docs=target.include_project_docs,

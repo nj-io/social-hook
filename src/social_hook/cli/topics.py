@@ -9,7 +9,7 @@ from typing import NoReturn
 import typer
 
 from social_hook.cli.utils import resolve_project
-from social_hook.models import TOPIC_STATUSES
+from social_hook.models.enums import TOPIC_STATUSES
 from social_hook.parsing import safe_int
 
 app = typer.Typer(no_args_is_help=True)
@@ -150,7 +150,7 @@ def add(
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import ContentTopic
+    from social_hook.models.content import ContentTopic
 
     json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
@@ -308,6 +308,7 @@ def dismiss(
     by auto-seeding. Use 'topics list --include-dismissed' to see them.
 
     Example: social-hook topics dismiss topic_abc123
+    Example: social-hook topics dismiss topic_abc123 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
 

@@ -4,7 +4,7 @@ import sqlite3
 
 from social_hook.config.project import StrategyConfig
 from social_hook.db import operations as ops
-from social_hook.models import Lifecycle
+from social_hook.models.narrative import Lifecycle
 
 
 def detect_lifecycle_phase(signals: dict) -> Lifecycle:

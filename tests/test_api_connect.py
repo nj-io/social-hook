@@ -8,7 +8,7 @@ import yaml
 from social_hook.constants import DB_FILENAME
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
-from social_hook.models import Draft
+from social_hook.models.core import Draft
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -214,7 +214,7 @@ class TestNarrativeCapturePausedProject:
         from social_hook.db.connection import init_database as real_init_db
         from social_hook.db.operations import insert_project
         from social_hook.filesystem import generate_id
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         conn = real_init_db(temp_dir / "test.db")
         mock_init_db.return_value = conn
@@ -261,7 +261,7 @@ class TestNarrativeCaptureHaikuReject:
         from social_hook.db.connection import init_database as real_init_db
         from social_hook.db.operations import insert_project
         from social_hook.filesystem import generate_id
-        from social_hook.models import Project
+        from social_hook.models.core import Project
 
         conn = real_init_db(temp_dir / "test.db")
         mock_init_db.return_value = conn

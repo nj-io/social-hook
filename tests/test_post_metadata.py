@@ -6,7 +6,7 @@ from social_hook.adapters.models import PostResult
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Draft, DraftTweet, Project
+from social_hook.models.core import Decision, Draft, DraftTweet, Project
 from social_hook.scheduler import record_post_success
 
 

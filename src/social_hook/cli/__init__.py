@@ -1019,28 +1019,60 @@ from social_hook.cli.target import app as target_app
 from social_hook.cli.topics import app as topics_app
 
 # Platform credentials: list, add, validate, remove
-app.add_typer(credentials_app, name="credentials", help="Platform credential management.")
+app.add_typer(
+    credentials_app,
+    name="credentials",
+    help="Manage API keys and secrets in ~/.social-hook/.env.",
+)
 
 # Account management: list, add, validate, remove
-app.add_typer(account_app, name="account", help="Platform account management.")
+app.add_typer(
+    account_app,
+    name="account",
+    help="Manage OAuth-authenticated platform accounts (X, LinkedIn).",
+)
 
 # Target management: list, add, disable, enable
-app.add_typer(target_app, name="target", help="Content distribution targets.")
+app.add_typer(
+    target_app,
+    name="target",
+    help="Configure where content is distributed (account + destination + strategy).",
+)
 
 # Strategy management: list, show, edit, reset
-app.add_typer(strategy_app, name="strategy", help="Content strategy management.")
+app.add_typer(
+    strategy_app,
+    name="strategy",
+    help="View and customize content strategies (voice, audience, editorial rules).",
+)
 
 # Topic queue: list, add, reorder, status, draft-now
-app.add_typer(topics_app, name="topics", help="Content topic queue.")
+app.add_typer(
+    topics_app,
+    name="topics",
+    help="Manage the prioritised content topic queue per strategy.",
+)
 
 # Brief management: show, edit
-app.add_typer(brief_app, name="brief", help="Project brief management.")
+app.add_typer(
+    brief_app,
+    name="brief",
+    help="View and edit the project brief used by the evaluator and drafter.",
+)
 
 # Content suggestions: suggest, list, dismiss, combine, hero-launch
-app.add_typer(content_app, name="content", help="Content suggestions and operations.")
+app.add_typer(
+    content_app,
+    name="content",
+    help="Submit content ideas, combine topics, and trigger hero launch drafts.",
+)
 
 # Evaluation cycles: list, show
-app.add_typer(cycles_app, name="cycles", help="Evaluation cycle history.")
+app.add_typer(
+    cycles_app,
+    name="cycles",
+    help="Inspect evaluation cycle history and per-strategy outcomes.",
+)
 
 # Log queries, tailing, and health
 app.add_typer(logs_app, name="logs", help="Log queries, tailing, and health.")

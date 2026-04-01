@@ -43,6 +43,7 @@ Links the draft's target to an existing OAuth account, clearing preview mode.
 The account's platform must match the draft's platform.
 
 Example: social-hook draft connect draft-abc123 --account my-x-account
+Example: social-hook draft connect draft-abc123 --account my-x-account --yes  (skip confirmation)
 
 **Arguments:**
 
@@ -63,6 +64,9 @@ Example: social-hook draft connect draft-abc123 --account my-x-account
 ### `social-hook draft edit`
 
 Edit draft content.
+
+Records the change in the draft's change history (visible in draft show).
+If the draft is a thread, tweet boundaries are automatically re-split.
 
 Example: social-hook draft edit draft-abc123 --content "Updated post text here"
 
@@ -107,6 +111,10 @@ Example: social-hook draft list --tag auth
 
 Edit the media spec for a draft.
 
+The media spec is a JSON object that controls media generation (e.g.,
+code snippet, language, theme). After editing, run media-regen to
+produce a new media file from the updated spec.
+
 Example: social-hook draft media-edit draft-abc123 --spec '{"code": "print(42)", "language": "python"}'
 
 **Arguments:**
@@ -126,6 +134,10 @@ Example: social-hook draft media-edit draft-abc123 --spec '{"code": "print(42)",
 ### `social-hook draft media-regen`
 
 Regenerate media for a draft using its stored media spec.
+
+The media spec is a JSON object describing what to generate (e.g., code
+snippet image, diagram). Edit the spec first with media-edit, then run
+this command to produce a new file from the updated spec.
 
 Example: social-hook draft media-regen draft-abc123
 
@@ -158,6 +170,7 @@ Post a draft immediately to its platform.
 Requires platform credentials in ~/.social-hook/.env.
 
 Example: social-hook draft post-now draft_abc123
+Example: social-hook draft post-now draft_abc123 --yes  (skip confirmation)
 
 **Arguments:**
 
@@ -219,6 +232,10 @@ Example: social-hook draft quick-approve draft_abc123
 
 Redraft content using the Expert agent with a new angle.
 
+Calls the Expert LLM agent to rewrite the draft with a different
+direction. May also update the media spec. Changes are recorded
+in the draft's change history.
+
 Example: social-hook draft redraft draft-abc123 --angle "focus on the performance gains"
 
 **Arguments:**
@@ -237,7 +254,11 @@ Example: social-hook draft redraft draft-abc123 --angle "focus on the performanc
 
 ### `social-hook draft reject`
 
-Reject a draft (saves reason as voice memory when --reason provided).
+Reject a draft and optionally record feedback as voice memory.
+
+When --reason is provided, the feedback is saved to voice memory so the
+drafter learns from it in future runs. If the draft is an intro draft,
+rejection cascades to re-draft the introduction for that platform.
 
 Example: social-hook draft reject draft-abc123 --reason "too technical for the audience"
 
@@ -257,7 +278,10 @@ Example: social-hook draft reject draft-abc123 --reason "too technical for the a
 
 ### `social-hook draft reopen`
 
-Reopen a cancelled or rejected draft.
+Reopen a cancelled or rejected draft, returning it to 'draft' status.
+
+Intro drafts cannot be reopened -- create a new draft instead.
+Clears any previous error message on the draft.
 
 Example: social-hook draft reopen draft-abc123
 
@@ -334,7 +358,10 @@ Example: social-hook draft show draft-abc123
 
 ### `social-hook draft unapprove`
 
-Revert approval on a draft.
+Revert approval on a draft, returning it to 'draft' status.
+
+Use when you approved a draft prematurely and want to make further
+edits before scheduling or posting.
 
 Example: social-hook draft unapprove draft-abc123
 
@@ -348,7 +375,10 @@ Example: social-hook draft unapprove draft-abc123
 
 ### `social-hook draft unschedule`
 
-Revert scheduling on a draft.
+Revert scheduling on a draft, returning it to 'draft' status.
+
+Clears the scheduled time. Use when you need to edit or reschedule
+a draft that was already queued for posting.
 
 Example: social-hook draft unschedule draft-abc123
 

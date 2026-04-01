@@ -4,7 +4,8 @@ import pytest
 
 from social_hook.content.operations import combine_candidates, trigger_hero_launch
 from social_hook.db import operations as ops
-from social_hook.models import ContentTopic, Project
+from social_hook.models.content import ContentTopic
+from social_hook.models.core import Project
 
 
 def _seed_project(conn, project_id="proj_test", name="test-project"):
