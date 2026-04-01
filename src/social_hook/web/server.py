@@ -551,6 +551,28 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
 _LLM_CALLBACK_ACTIONS = {"media_gen_spec"}
 
 
+def _dispatch_chat_message(msg: InboundMessage, adapter, config, chat_id: str) -> str:
+    """Dispatch a chat message to a background task. Returns task_id."""
+    from social_hook.bot.commands import get_chat_draft_context, handle_message
+    from social_hook.filesystem import generate_id
+
+    ctx = get_chat_draft_context(chat_id)
+    project_id = ctx[1] if ctx else ""
+
+    _task_holder: list[str | None] = [None]
+
+    def _blocking():
+        handle_message(msg, adapter, config, task_id=_task_holder[0])
+
+    _task_holder[0] = _run_background_task(
+        "chat_message",
+        ref_id=f"msg-{generate_id('msg')}",
+        project_id=project_id,
+        fn=_blocking,
+    )
+    return _task_holder[0]
+
+
 @app.post("/api/callback")
 async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
     """Execute a button callback via the web adapter.
@@ -559,7 +581,6 @@ async def api_callback(body: CallbackRequest, x_session_id: str = Header("web"))
     Non-LLM actions (approve, reject, schedule, etc.) run synchronously.
     """
     from social_hook.bot.buttons import handle_callback
-    from social_hook.filesystem import generate_id
 
     adapter = _get_adapter(scope_id=x_session_id)
     config = _get_config()
@@ -574,6 +595,8 @@ async def api_callback(body: CallbackRequest, x_session_id: str = Header("web"))
 
     if body.action in _LLM_CALLBACK_ACTIONS:
         # Background task path for LLM callbacks
+        from social_hook.filesystem import generate_id
+
         _task_holder: list[str | None] = [None]
 
         def _blocking_callback():
@@ -617,9 +640,6 @@ async def api_message(body: MessageRequest, x_session_id: str = Header("web")):
     All messages are dispatched to a background task (Gatekeeper and Expert
     make LLM calls that take 2-60s). Returns 202 with task_id.
     """
-    from social_hook.bot.commands import get_chat_draft_context, handle_message
-    from social_hook.filesystem import generate_id
-
     adapter = _get_adapter(scope_id=x_session_id)
     config = _get_config()
     chat_id = f"web:{x_session_id}"
@@ -627,26 +647,11 @@ async def api_message(body: MessageRequest, x_session_id: str = Header("web")):
     # Persist user event synchronously (appears in chat immediately)
     adapter._insert_event("user", {"text": body.text})
 
-    # Resolve project_id from chat context (in-memory, fast)
-    ctx = get_chat_draft_context(chat_id)
-    project_id = ctx[1] if ctx else ""
-
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-
-    _task_holder: list[str | None] = [None]
-
-    def _blocking_message():
-        handle_message(msg, adapter, config, task_id=_task_holder[0])
-
-    _task_holder[0] = _run_background_task(
-        "chat_message",
-        ref_id=f"msg-{generate_id('msg')}",
-        project_id=project_id,
-        fn=_blocking_message,
-    )
+    task_id = _dispatch_chat_message(msg, adapter, config, chat_id)
     return JSONResponse(
         status_code=202,
-        content={"task_id": _task_holder[0], "status": "processing"},
+        content={"task_id": task_id, "status": "processing"},
     )
 
 
@@ -772,32 +777,15 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
                 )
                 await asyncio.to_thread(handle_callback, event, adapter, _get_config())
             elif command_type == "send_message":
-                from social_hook.bot.commands import get_chat_draft_context, handle_message
-                from social_hook.filesystem import generate_id
-
                 msg = InboundMessage(chat_id=chat_id, text=text, message_id="web_0")
-
-                # Dispatch to background task (Gatekeeper + Expert LLM calls)
-                ctx = get_chat_draft_context(chat_id)
-                _project_id = ctx[1] if ctx else ""
-                _ws_task_holder: list[str | None] = [None]
-
-                def _ws_blocking_message():
-                    handle_message(msg, adapter, _get_config(), task_id=_ws_task_holder[0])
-
-                _ws_task_holder[0] = _run_background_task(
-                    "chat_message",
-                    ref_id=f"msg-{generate_id('msg')}",
-                    project_id=_project_id,
-                    fn=_ws_blocking_message,
-                )
+                _ws_task_id = _dispatch_chat_message(msg, adapter, _get_config(), chat_id)
                 # Send deferred ack with task_id
                 await _hub.send(
                     client_id,
                     GatewayEnvelope(
                         type="ack",
                         reply_to=envelope.id,
-                        payload={"task_id": _ws_task_holder[0]},
+                        payload={"task_id": _ws_task_id},
                     ),
                 )
             else:

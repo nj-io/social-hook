@@ -1084,16 +1084,12 @@ def _handle_expert_escalation(
             except Exception:
                 logger.debug("Failed to resolve expert context", exc_info=True)
 
-        if task_id:
-            _stage_conn = _get_conn()
-            try:
-                from social_hook.db import operations as _stage_ops
+        if task_id and db:
+            from social_hook.db import operations as _stage_ops
 
-                _stage_ops.emit_task_stage(
-                    _stage_conn, task_id, "thinking", "Drafting response", project_id or ""
-                )
-            finally:
-                _stage_conn.close()
+            _stage_ops.emit_task_stage(
+                db.conn, task_id, "thinking", "Drafting response", project_id or ""
+            )
 
         result = expert.handle(
             draft=draft,

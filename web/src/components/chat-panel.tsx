@@ -12,7 +12,7 @@ export function ChatPanel() {
   const [events, setEvents] = useState<WebEvent[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [chatTaskId, setChatTaskId] = useState<string | null>(null);
+  const chatTaskIdRef = useRef<string | null>(null);
   const lastIdRef = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const { connected, send, sendCommand, addListener, removeListener } = useGateway();
@@ -54,16 +54,16 @@ export function ChatPanel() {
     addListener("chat-panel", (envelope) => {
       // Track background task from ack with task_id
       if (envelope.type === "ack" && envelope.payload?.task_id) {
-        setChatTaskId(envelope.payload.task_id as string);
+        chatTaskIdRef.current = envelope.payload.task_id as string;
       }
       if (envelope.type === "event" && envelope.payload) {
         const ev = envelope.payload as unknown as WebEvent;
         // Handle task completion/failure for tracked chat tasks
         if (ev.type === "data_change") {
           const data = ev.data as unknown as DataChangeEvent | undefined;
-          if (data?.entity === "task" && data.entity_id === chatTaskId) {
+          if (data?.entity === "task" && data.entity_id === chatTaskIdRef.current) {
             if (data.action === "completed" || data.action === "failed") {
-              setChatTaskId(null);
+              chatTaskIdRef.current = null;
               setSending(false);
               if (data.action === "failed") {
                 addToast("Message failed", { variant: "error" });
