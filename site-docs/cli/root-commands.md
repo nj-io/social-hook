@@ -98,6 +98,8 @@ and generates an introductory draft — all in one command.
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--key` | string |  | Anthropic API key (skips prompt) |
+| `--strategy`, `-s` | string |  | Content strategy template ID (repeatable). Default: building-public. |
+| `--branch`, `-b` | string |  | Set a trigger branch filter on the project after registration. |
 | `--evaluate-last` | integer | 0 | Evaluate last N commits for additional drafts (max 5) |
 | `--yes`, `-y` | boolean | false | Skip all confirmation prompts |
 | `--json` | boolean | false | JSON output |

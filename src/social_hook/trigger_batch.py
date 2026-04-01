@@ -237,7 +237,7 @@ def evaluate_batch(
         return 3
 
     # 5. After success: mark deferred decisions with batch_id
-    exit_code = result.exit_code if hasattr(result, "exit_code") else result
+    exit_code: int = result.exit_code if hasattr(result, "exit_code") else result  # type: ignore[assignment]
     if exit_code == 0:
         # Get cycle ID from the cycle just inserted by _run_targets_path
         recent_cycles = ops.get_recent_cycles(ctx.conn, ctx.project.id, limit=1)
