@@ -12,6 +12,7 @@ interface StepVoiceProps {
   onPetPeevesChange: (v: string[]) => void;
   onGrammarPrefsChange: (v: Record<string, boolean>) => void;
   templatePreFilled: boolean;
+  primaryStrategyName?: string;
 }
 
 const TONE_PRESETS = [
@@ -40,6 +41,7 @@ export function StepVoice({
   onPetPeevesChange,
   onGrammarPrefsChange,
   templatePreFilled,
+  primaryStrategyName,
 }: StepVoiceProps) {
   const [newSample, setNewSample] = useState("");
   const [newPeeve, setNewPeeve] = useState("");
@@ -49,8 +51,8 @@ export function StepVoice({
     return (
       <div className="animate-wizard-dissolve space-y-4">
         <div>
-          <h3 className="text-lg font-semibold">Voice & Style</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Pre-filled from your strategy template.</p>
+          <h3 className="text-lg font-semibold">Voice & Style{primaryStrategyName ? ` (${primaryStrategyName})` : ""}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Pre-filled from your {primaryStrategyName || "strategy"} template. Other strategies use their template defaults.</p>
         </div>
         <div className="rounded-md border border-border bg-muted/50 p-4 text-sm">
           <p><strong>Tone:</strong> {voiceTone}</p>
@@ -70,9 +72,9 @@ export function StepVoice({
   return (
     <div className="animate-wizard-dissolve space-y-4">
       <div>
-        <h3 className="text-lg font-semibold">Voice & Style</h3>
+        <h3 className="text-lg font-semibold">Voice & Style{primaryStrategyName ? ` (${primaryStrategyName})` : ""}</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Define the tone and style for your content.
+          Define the tone and style for your {primaryStrategyName || "primary"} strategy.
         </p>
       </div>
 

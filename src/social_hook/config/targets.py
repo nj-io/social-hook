@@ -182,10 +182,16 @@ def validate_targets_config(config: Config) -> None:
             )
 
     # --- Strategy reference validation ---
+    # Valid strategies = config overrides + built-in templates
+    from social_hook.setup.templates import STRATEGY_TEMPLATES
+
+    valid_strategies = set(config.content_strategies.keys()) | {
+        t.id for t in STRATEGY_TEMPLATES if t.id != "custom"
+    }
     for target_name, target in config.targets.items():
         if not target.strategy:
             raise ConfigError(f"Target '{target_name}' has empty strategy (required field)")
-        if target.strategy not in config.content_strategies:
+        if target.strategy not in valid_strategies:
             raise ConfigError(
                 f"Target '{target_name}' references unknown strategy '{target.strategy}'"
             )

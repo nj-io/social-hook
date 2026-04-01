@@ -1,11 +1,9 @@
-"""Tests for shared-group drafting pipeline: _pick_lead_platform, _unthread_content, _draft_shared_group, preview_mode."""
+"""Tests for shared-group drafting pipeline: _draft_shared_group, preview_mode."""
 
 from unittest.mock import MagicMock, patch
 
 from social_hook.drafting import (
     _draft_for_resolved_platforms,
-    _pick_lead_platform,
-    _unthread_content,
 )
 from social_hook.models.core import CommitInfo
 
@@ -62,97 +60,6 @@ def _make_evaluation():
     ev.episode_tags = ["test"]
     ev.reference_posts = None
     return ev
-
-
-# =============================================================================
-# _pick_lead_platform
-# =============================================================================
-
-
-class TestPickLeadPlatform:
-    """Tests for _pick_lead_platform."""
-
-    def test_picks_lowest_max_length(self):
-        """Should pick the platform with the lowest max_length."""
-        platforms = {
-            "linkedin": _make_rpcfg(max_length=3000, name="linkedin"),
-            "x": _make_rpcfg(max_length=280, name="x"),
-        }
-        name, rpcfg = _pick_lead_platform(platforms)
-        assert name == "x"
-
-    def test_uses_tier_char_limits_when_no_max_length(self):
-        """When max_length is None, tier limits are used."""
-        platforms = {
-            "linkedin": _make_rpcfg(max_length=3000, name="linkedin"),
-            "x": _make_rpcfg(max_length=None, account_tier="free", name="x"),
-        }
-        name, _ = _pick_lead_platform(platforms)
-        # X free tier = 280, LinkedIn = 3000 -> X wins
-        assert name == "x"
-
-    def test_tier_limit_combines_with_max_length(self):
-        """tier limit should be combined via min() with max_length."""
-        platforms = {
-            "x": _make_rpcfg(max_length=500, account_tier="free", name="x"),
-        }
-        name, _ = _pick_lead_platform(platforms)
-        assert name == "x"
-        # The effective limit is min(500, 280) = 280 from free tier
-
-    def test_all_unconstrained_picks_first(self):
-        """When all platforms are unconstrained, pick the first one."""
-        platforms = {
-            "a": _make_rpcfg(max_length=None, name="a"),
-            "b": _make_rpcfg(max_length=None, name="b"),
-        }
-        name, _ = _pick_lead_platform(platforms)
-        assert name == "a"
-
-    def test_single_platform(self):
-        """Single platform is always the lead."""
-        platforms = {
-            "linkedin": _make_rpcfg(max_length=3000, name="linkedin"),
-        }
-        name, _ = _pick_lead_platform(platforms)
-        assert name == "linkedin"
-
-
-# =============================================================================
-# _unthread_content
-# =============================================================================
-
-
-class TestUnthreadContent:
-    """Tests for _unthread_content."""
-
-    def test_simple_numbered_thread(self):
-        """1/ first\n\n2/ second -> first\n\nsecond"""
-        thread = "1/ first\n\n2/ second"
-        result = _unthread_content(thread)
-        assert result == "first\n\nsecond"
-
-    def test_three_part_thread(self):
-        thread = "1/ Alpha\n\n2/ Beta\n\n3/ Gamma"
-        result = _unthread_content(thread)
-        assert result == "Alpha\n\nBeta\n\nGamma"
-
-    def test_preserves_content_within_tweets(self):
-        """Content within tweets should remain intact."""
-        thread = "1/ This has multiple lines\nwithin it\n\n2/ And so does this"
-        result = _unthread_content(thread)
-        assert "This has multiple lines" in result
-        assert "And so does this" in result
-
-    def test_single_paragraph_no_markers(self):
-        """Content without markers passes through cleanly."""
-        content = "Just a single paragraph with no thread markers."
-        result = _unthread_content(content)
-        assert result == "Just a single paragraph with no thread markers."
-
-    def test_empty_string(self):
-        result = _unthread_content("")
-        assert result == ""
 
 
 # =============================================================================

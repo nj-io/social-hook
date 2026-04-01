@@ -307,6 +307,8 @@ export interface DataChangeEvent {
   project_id: string;
   content?: string;
   platform?: string;
+  stage?: string;
+  stage_label?: string;
 }
 
 export interface Memory {
@@ -380,6 +382,7 @@ export interface Topic {
   topic: string;
   description?: string;
   status: string;
+  hold_reason?: string;
   priority_rank: number;
   commit_count?: number;
   last_posted_at?: string;

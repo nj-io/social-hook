@@ -136,7 +136,7 @@ def show(
         # Get related decisions (via commit_hash pattern for synthetic decisions)
         decision_rows = conn.execute(
             """
-            SELECT id, decision, reasoning, commit_hash
+            SELECT id, decision, reasoning, commit_hash, targets
             FROM decisions
             WHERE project_id = ? AND (
                 commit_hash LIKE 'combine:%' OR
@@ -149,6 +149,30 @@ def show(
         ).fetchall()
         decisions = [dict(r) for r in decision_rows]
 
+        # Extract per-strategy outcomes from decision targets
+        strategy_outcomes: dict[str, dict] = {}
+        for d in decisions:
+            targets_raw = d.get("targets")
+            if not targets_raw:
+                continue
+            targets_data = safe_json_loads(targets_raw, "decision.targets", default={})
+            for strat_name, outcome in targets_data.items():
+                if isinstance(outcome, dict):
+                    strategy_outcomes[strat_name] = outcome
+
+        # Batch-resolve topic names for any topic_ids in strategy outcomes
+        topic_ids = {o.get("topic_id") for o in strategy_outcomes.values() if o.get("topic_id")}
+        topic_names: dict[str, str] = {}
+        if topic_ids:
+            valid_ids = [tid for tid in topic_ids if tid is not None]
+            if valid_ids:
+                placeholders = ",".join("?" * len(valid_ids))
+                topic_rows = conn.execute(
+                    f"SELECT id, topic FROM content_topics WHERE id IN ({placeholders})",
+                    valid_ids,
+                ).fetchall()
+                topic_names = {r[0]: r[1] for r in topic_rows}
+
         # Get batched decisions (deferred commits included in this cycle)
         batched_rows = conn.execute(
             "SELECT id, decision, commit_hash, commit_message FROM decisions WHERE batch_id = ?",
@@ -157,10 +181,19 @@ def show(
         batched = [dict(r) for r in batched_rows]
 
         if json_output:
+            # Enrich strategy outcomes with resolved topic names
+            enriched_outcomes = {}
+            for sn, outcome in strategy_outcomes.items():
+                entry = dict(outcome)
+                tid = entry.get("topic_id")
+                if tid and tid in topic_names:
+                    entry["topic_name"] = topic_names[tid]
+                enriched_outcomes[sn] = entry
             typer.echo(
                 json_mod.dumps(
                     {
                         "cycle": cycle.to_dict(),
+                        "strategy_outcomes": enriched_outcomes,
                         "drafts": drafts,
                         "decisions": decisions,
                         "batched_commits": batched,
@@ -176,6 +209,18 @@ def show(
         if cycle.trigger_ref:
             typer.echo(f"  Ref:      {cycle.trigger_ref}")
         typer.echo(f"  Created:  {cycle.created_at}")
+
+        if strategy_outcomes:
+            typer.echo(f"\n  Strategy Outcomes ({len(strategy_outcomes)}):")
+            for sn, outcome in strategy_outcomes.items():
+                action = outcome.get("action", "?")
+                reason = (outcome.get("reason") or "")[:50]
+                topic_id = outcome.get("topic_id")
+                topic_part = ""
+                if topic_id:
+                    name = topic_names.get(topic_id, topic_id[:14])
+                    topic_part = f"  topic={name}"
+                typer.echo(f"    {sn:<20} {action:<10} {reason}{topic_part}")
 
         if batched:
             typer.echo(f"\n  Batched commits ({len(batched)}):")

@@ -301,6 +301,15 @@ class LogEvaluationInput(BaseModel):
             raise MalformedResponseError(f"Invalid log_evaluation input: {e}") from e
 
 
+class PlatformVariant(BaseModel):
+    """Per-platform content variant from a multi-platform drafter call."""
+
+    platform: str
+    content: str
+    format_hint: str | None = None
+    beat_count: int | None = None
+
+
 class CreateDraftInput(BaseModel):
     """Drafter tool call: create_draft."""
 
@@ -311,6 +320,7 @@ class CreateDraftInput(BaseModel):
     media_spec: dict[str, Any] | None = None
     format_hint: str | None = None
     beat_count: int | None = None
+    variants: list[PlatformVariant] | None = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -355,6 +365,29 @@ class CreateDraftInput(BaseModel):
                         "type": "integer",
                         "description": "Number of distinct narrative beats/steps in this content.",
                     },
+                    "variants": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "platform": {
+                                    "type": "string",
+                                    "description": "Platform name matching the requested variant",
+                                },
+                                "content": {
+                                    "type": "string",
+                                    "description": "Platform-optimized post content",
+                                },
+                                "format_hint": {
+                                    "type": "string",
+                                    "enum": ["single", "thread"],
+                                },
+                                "beat_count": {"type": "integer"},
+                            },
+                            "required": ["platform", "content"],
+                        },
+                        "description": "Per-platform content variants. Required when multiple platforms are specified in the user message.",
+                    },
                 },
                 "required": ["content", "platform", "reasoning"],
             },
@@ -373,6 +406,19 @@ class CreateDraftInput(BaseModel):
             else:
                 joined = "\n\n".join(str(item) for item in items)
             data = {**data, "content": joined}
+        # Normalize variant content (same list-to-string pattern, copy-based)
+        if data.get("variants"):
+            normalized_variants = []
+            for variant in data["variants"]:
+                if isinstance(variant.get("content"), list):
+                    vitems = variant["content"]
+                    if vitems and isinstance(vitems[0], dict) and "content" in vitems[0]:
+                        vjoined = "\n\n".join(item["content"] for item in vitems)
+                    else:
+                        vjoined = "\n\n".join(str(item) for item in vitems)
+                    variant = {**variant, "content": vjoined}
+                normalized_variants.append(variant)
+            data = {**data, "variants": normalized_variants}
         try:
             return cls.model_validate(data)
         except ValidationError as e:

@@ -92,7 +92,9 @@ class TestAutoConfigure:
             "social_hook.setup.wizard.discover_providers",
             return_value=providers,
         ):
-            _auto_configure(temp_dir, api_key=None, is_json=True, verbose=False)
+            _auto_configure(
+                temp_dir, api_key=None, strategies=["building-public"], is_json=True, verbose=False
+            )
 
         import yaml
 
@@ -111,7 +113,13 @@ class TestAutoConfigure:
             "social_hook.setup.wizard.discover_providers",
             return_value=providers,
         ):
-            _auto_configure(temp_dir, api_key="sk-test-key", is_json=True, verbose=False)
+            _auto_configure(
+                temp_dir,
+                api_key="sk-test-key",
+                strategies=["building-public"],
+                is_json=True,
+                verbose=False,
+            )
 
         import yaml
 
@@ -131,7 +139,9 @@ class TestAutoConfigure:
             ),
             pytest.raises(click.exceptions.Exit),
         ):
-            _auto_configure(temp_dir, api_key=None, is_json=True, verbose=False)
+            _auto_configure(
+                temp_dir, api_key=None, strategies=["building-public"], is_json=True, verbose=False
+            )
 
     def test_auto_configure_openrouter(self, temp_dir):
         """When openrouter is configured, use openrouter models."""
@@ -142,7 +152,9 @@ class TestAutoConfigure:
             "social_hook.setup.wizard.discover_providers",
             return_value=providers,
         ):
-            _auto_configure(temp_dir, api_key=None, is_json=True, verbose=False)
+            _auto_configure(
+                temp_dir, api_key=None, strategies=["building-public"], is_json=True, verbose=False
+            )
 
         import yaml
 

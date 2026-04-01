@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { EvaluationCycle, CycleStrategyOutcome, DiagnosticItem } from "@/lib/types";
 import type { BackgroundTask } from "@/lib/api";
-import { fetchCycles, approveAllCycleDrafts, sendCallback, connectDraft, draftNowTopic } from "@/lib/api";
+import { fetchCycles, approveAllCycleDrafts, sendCallback, connectDraft, draftNowTopic, fetchTopics } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
 import { AsyncButton } from "@/components/async-button";
@@ -17,6 +17,7 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
   const [expandedCycles, setExpandedCycles] = useState<Set<string>>(new Set());
   const [expandAll, setExpandAll] = useState(false);
   const [approvingCycle, setApprovingCycle] = useState<string | null>(null);
+  const [topicNameById, setTopicNameById] = useState<Record<string, string>>({});
 
   const loadRef = useRef<() => void>(() => {});
 
@@ -28,8 +29,14 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetchCycles(projectId);
+      const [res, topicsRes] = await Promise.all([
+        fetchCycles(projectId),
+        fetchTopics(projectId).catch(() => ({ topics: [] })),
+      ]);
       setCycles(res.cycles);
+      const lookup: Record<string, string> = {};
+      for (const t of topicsRes.topics) lookup[t.id] = t.topic;
+      setTopicNameById(lookup);
     } catch {
       // silent
     } finally {
@@ -128,6 +135,7 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                             trackTask={trackTask}
                             isTaskRunning={isRunning}
                             getTask={getTask}
+                            topicNameById={topicNameById}
                           />
                         ))}
                         {strategyEntries.some(([, o]) => o.draft_id && o.draft_status === "draft") && (
@@ -150,23 +158,33 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
                   </td>
                   <td className="py-3 pr-4">
                     <div className="flex flex-wrap gap-1">
-                      {strategyEntries.map(([name, outcome]) => (
-                        <span
-                          key={name}
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${decisionBadgeClass(outcome.decision)}`}
-                        >
-                          {name}: {outcome.decision}
-                        </span>
-                      ))}
+                      {strategyEntries.map(([name, outcome]) => {
+                        const topicName = outcome.topic_matched || (outcome.topic_id ? topicNameById[outcome.topic_id] : undefined);
+                        return (
+                          <span
+                            key={name}
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium ${decisionBadgeClass(outcome.decision)}`}
+                          >
+                            {name}: {outcome.decision}
+                            {topicName && (
+                              <span className="ml-1 opacity-70">({topicName})</span>
+                            )}
+                          </span>
+                        );
+                      })}
                     </div>
                   </td>
                   <td className="py-3 pr-4">
                     <div className="flex flex-col gap-1">
                       <Badge value={cycle.status} variant="status" />
                       {!!cycle.draft_count && (
-                        <span className="text-xs text-muted-foreground">
+                        <Link
+                          href={`/drafts?from=${projectId}`}
+                          className="text-xs text-accent hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <CycleStatusCounts cycle={cycle} />
-                        </span>
+                        </Link>
                       )}
                     </div>
                   </td>
@@ -212,6 +230,7 @@ function StrategyOutcomeCard({
   trackTask,
   isTaskRunning,
   getTask,
+  topicNameById,
 }: {
   strategy: string;
   outcome: CycleStrategyOutcome;
@@ -220,6 +239,7 @@ function StrategyOutcomeCard({
   trackTask: (taskId: string, refId: string, type: string) => void;
   isTaskRunning: (refId: string) => boolean;
   getTask: (refId: string) => BackgroundTask | null;
+  topicNameById: Record<string, string>;
 }) {
   const [actionPending, setActionPending] = useState("");
 
@@ -301,14 +321,14 @@ function StrategyOutcomeCard({
       )}
 
       <div className="mt-2 space-y-1 text-xs">
-        {outcome.topic_matched && (
-          <p><span className="text-muted-foreground">Topic: </span>{outcome.topic_matched}</p>
+        {(outcome.topic_matched || (outcome.topic_id && topicNameById[outcome.topic_id])) && (
+          <p><span className="text-muted-foreground">Topic: </span>{outcome.topic_matched || topicNameById[outcome.topic_id!]}</p>
         )}
         {outcome.arc_reference && (
           <p><span className="text-muted-foreground">Arc: </span>{outcome.arc_reference}</p>
         )}
         {outcome.content_source && (
-          <p><span className="text-muted-foreground">Source: </span>{outcome.content_source}</p>
+          <p><span className="text-muted-foreground">Source: </span>{typeof outcome.content_source === "string" ? outcome.content_source : (outcome.content_source as Record<string, unknown>).types ? (outcome.content_source as Record<string, unknown[]>).types.join(", ") : JSON.stringify(outcome.content_source)}</p>
         )}
 
         {/* Draft section with inline actions */}

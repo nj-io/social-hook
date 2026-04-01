@@ -26,6 +26,20 @@ class Drafter:
     def __init__(self, client: LLMClient) -> None:
         self.client = client
 
+    @staticmethod
+    def _build_platform_entries(
+        platform_configs: list[tuple[str, Any]],
+        intro_states: dict[str, dict] | None = None,
+    ):
+        """Yield (platform_name, config, intro_state) tuples, deduplicated by platform name."""
+        seen: set[str] = set()
+        states = intro_states or {}
+        for pname, pconfig in platform_configs:
+            if pname in seen:
+                continue
+            seen.add(pname)
+            yield pname, pconfig, states.get(pname, {})
+
     def create_draft(
         self,
         decision: Any,
@@ -37,6 +51,7 @@ class Drafter:
         arc_context: dict[str, Any] | None = None,
         config: ContextConfig | None = None,
         platform_config: Optional["ResolvedPlatformConfig"] = None,
+        platform_configs: list[tuple[str, Any]] | None = None,
         media_config: Optional["MediaGenerationConfig"] = None,
         media_guidance: dict[str, "MediaToolGuidance"] | None = None,
         referenced_posts: list | None = None,
@@ -45,6 +60,8 @@ class Drafter:
         target_post_count: int = 0,
         is_first_post: bool = False,
         first_post_date: str | None = None,
+        content_source_context: dict[str, str] | None = None,
+        platform_intro_states: dict[str, dict] | None = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit.
 
@@ -85,6 +102,7 @@ class Drafter:
             target_post_count=target_post_count,
             is_first_post=is_first_post,
             first_post_date=first_post_date,
+            content_source_context=content_source_context,
         )
 
         # Build narrative-aware user message
@@ -107,25 +125,73 @@ class Drafter:
         if is_intro:
             intro_info = (
                 "IMPORTANT: This is the FIRST POST for this project on this platform. "
-                "The audience has never heard of it. Write an introductory "
+                "The audience has never heard of it. Write a substantial introductory "
                 "post that tells the story of what this project is, what "
-                "problem it solves, and why it matters. Don't just summarize "
+                "problem it solves, and why it matters. Give the reader enough depth "
+                "to understand and care. Don't just summarize "
                 "the commit — introduce the project. Use the README and "
                 "project documentation in the system prompt for context.\n"
             )
 
-        if platform_config:
+        if platform_configs:
+            # Multi-platform shared group: build user message with all platform constraints
+            from social_hook.config.yaml import TIER_CHAR_LIMITS
+
+            platform_blocks = []
+            for i, (pname, pconfig, pintro_state) in enumerate(
+                self._build_platform_entries(platform_configs, platform_intro_states), 1
+            ):
+                pc_tier = pconfig.account_tier or "free"
+                char_limit = TIER_CHAR_LIMITS.get(pc_tier, 25000)
+                block = f"{i}. {pname} ({pc_tier} tier, {char_limit} char limit)"
+                # Platform-specific guidance
+                if pname == "x" and pc_tier == "free":
+                    block += " — use Format Selection Framework: punchy (<100), detailed (240-280), or thread (4+ beats)"
+                elif pname == "x":
+                    block += " — use Format Selection Framework, write at whatever length serves the narrative"
+                elif pname == "linkedin":
+                    block += " — professional tone, 3-5 hashtags, max 3000 chars"
+                # Per-platform intro state
+                if pintro_state.get("is_first"):
+                    block += "\n   First post on this platform. Write an introductory post."
+                elif pintro_state.get("post_count"):
+                    block += f"\n   {pintro_state['post_count']} previous posts on this platform."
+                platform_blocks.append(block)
+
+            user_content = (
+                f"{intro_info}"
+                f"Create content for this commit across multiple platforms.\n"
+                f"Commit: {commit.hash[:8]} - {commit.message}\n"
+                f"{angle_info}{episode_info}\n"
+                f"Platform variants needed:\n"
+                + "\n".join(platform_blocks)
+                + "\n\nUse the `variants` array to produce one content variant per platform.\n"
+                "Share the same angle/narrative but optimize format and length per platform.\n"
+                "Media is shared — set media_type/media_spec once at the top level."
+            )
+        elif platform_config and platform_config.name == "preview":
+            # Generic preview: no platform constraints
+            user_content = (
+                f"{intro_info}"
+                f"Create a social media post for this commit.\n"
+                f"Commit: {commit.hash[:8]} - {commit.message}\n"
+                f"{angle_info}{episode_info}\n"
+                f"This is a preview draft — no platform constraints. "
+                f"Write at whatever length and format best serves the content. "
+                f"Do not apply character limits or thread formatting."
+            )
+        elif platform_config:
             # Build platform-specific instructions from resolved config
-            platform_desc = f"Platform: {platform_config.name}"
+            pname = platform_config.name
+            platform_desc = f"Platform: {pname}"
             if platform_config.priority:
                 platform_desc += f" ({platform_config.priority})"
             pc_tier = platform_config.account_tier or "free"
-            if platform_config.account_tier:
-                from social_hook.config.yaml import TIER_CHAR_LIMITS
+            from social_hook.config.yaml import TIER_CHAR_LIMITS
 
-                char_limit = TIER_CHAR_LIMITS.get(pc_tier, 25000)
-                platform_desc += f", {pc_tier} tier, {char_limit} char limit"
-            elif platform_config.max_length:
+            char_limit = TIER_CHAR_LIMITS.get(pc_tier, 25000)
+            platform_desc += f", {pc_tier} tier, {char_limit} char limit"
+            if platform_config.max_length:
                 platform_desc += f", max {platform_config.max_length} chars"
             if platform_config.format:
                 platform_desc += f", format: {platform_config.format}"
@@ -134,20 +200,20 @@ class Drafter:
 
             user_content = (
                 f"{intro_info}"
-                f"Create a {platform} post for this commit.\n"
+                f"Create a {pname} post for this commit.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
                 f"{angle_info}{episode_info}\n"
                 f"{platform_desc}"
             )
 
             # X free tier specific format guidance
-            if platform == "x" and pc_tier == "free":
+            if pname == "x" and pc_tier == "free":
                 user_content += (
                     "\nUse the Format Selection Framework: punchy (<100), detailed (240-280), "
                     "or set format_hint='thread' if this needs multiple beats (4+). "
                     "Avoid links in main post."
                 )
-            elif platform == "x":
+            elif pname == "x":
                 user_content += (
                     "\nUse the Format Selection Framework. Write at whatever length serves the narrative. "
                     "Set beat_count for narrative beats. format_hint='thread' for visual separation."

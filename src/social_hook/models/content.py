@@ -23,6 +23,7 @@ class ContentTopic:
     commit_count: int = 0
     last_commit_at: str | None = None
     last_posted_at: str | None = None
+    hold_reason: str | None = None
     created_by: str = "user"
     created_at: str | None = None
 
@@ -44,6 +45,7 @@ class ContentTopic:
             "commit_count": self.commit_count,
             "last_commit_at": self.last_commit_at,
             "last_posted_at": self.last_posted_at,
+            "hold_reason": self.hold_reason,
             "created_by": self.created_by,
             "created_at": self.created_at,
         }
@@ -61,6 +63,7 @@ class ContentTopic:
             commit_count=d.get("commit_count", 0),
             last_commit_at=d.get("last_commit_at"),
             last_posted_at=d.get("last_posted_at"),
+            hold_reason=d.get("hold_reason"),
             created_by=d.get("created_by", "user"),
             created_at=d.get("created_at"),
         )

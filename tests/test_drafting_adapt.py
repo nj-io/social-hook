@@ -1,14 +1,10 @@
-"""Tests for _adapt_content_for_platform and draft_for_targets grouping."""
+"""Tests for draft_for_targets grouping."""
 
 from unittest.mock import MagicMock, patch
 
-from social_hook.drafting import _adapt_content_for_platform, draft_for_targets
+from social_hook.drafting import draft_for_targets
 from social_hook.models.core import CommitInfo
 from social_hook.routing import RoutedTarget
-
-# =============================================================================
-# Helpers
-# =============================================================================
 
 
 def _make_rpcfg(max_length=None, account_tier=None, name="x", **kwargs):
@@ -23,84 +19,6 @@ def _make_rpcfg(max_length=None, account_tier=None, name="x", **kwargs):
     for k, v in kwargs.items():
         setattr(rpcfg, k, v)
     return rpcfg
-
-
-# =============================================================================
-# _adapt_content_for_platform
-# =============================================================================
-
-
-class TestAdaptContentForPlatform:
-    """Tests for _adapt_content_for_platform."""
-
-    def test_threaded_x_to_linkedin_unthreads(self):
-        """Threaded X content is unthreaded for LinkedIn."""
-        thread = "1/ First point\n\n2/ Second point\n\n3/ Third point"
-        result = _adapt_content_for_platform(
-            content=thread,
-            was_threaded=True,
-            target_platform="linkedin",
-            max_length=None,
-        )
-        # Should be unthreaded — no numbered markers
-        assert "1/" not in result
-        assert "First point" in result
-        assert "Second point" in result
-
-    def test_threaded_x_to_x_passthrough(self):
-        """Threaded content staying on X passes through unchanged."""
-        thread = "1/ Alpha\n\n2/ Beta"
-        result = _adapt_content_for_platform(
-            content=thread,
-            was_threaded=True,
-            target_platform="x",
-            max_length=None,
-        )
-        assert result == thread
-
-    def test_single_post_passthrough(self):
-        """Non-threaded content passes through for any platform."""
-        content = "Just a normal post."
-        result = _adapt_content_for_platform(
-            content=content,
-            was_threaded=False,
-            target_platform="linkedin",
-            max_length=None,
-        )
-        assert result == content
-
-    def test_truncation_when_over_max_length(self):
-        """Content exceeding max_length gets truncated."""
-        content = "A" * 500
-        result = _adapt_content_for_platform(
-            content=content,
-            was_threaded=False,
-            target_platform="linkedin",
-            max_length=200,
-        )
-        assert len(result) == 200
-
-    def test_no_truncation_when_under_max_length(self):
-        """Content under max_length is not truncated."""
-        content = "Short post"
-        result = _adapt_content_for_platform(
-            content=content,
-            was_threaded=False,
-            target_platform="x",
-            max_length=280,
-        )
-        assert result == content
-
-    def test_none_max_length_no_truncation(self):
-        """max_length=None means no truncation."""
-        content = "A" * 10000
-        result = _adapt_content_for_platform(
-            content=content,
-            was_threaded=False,
-            target_platform="linkedin",
-            max_length=None,
-        )
-        assert len(result) == 10000
 
 
 # =============================================================================
@@ -125,6 +43,8 @@ class TestDraftForTargetsGrouping:
         account_config = AccountConfig(platform=account_platform, tier="free")
         strategy_decision = MagicMock()
         strategy_decision.context_source = None
+        strategy_decision.topic_id = None
+        strategy_decision.arc_id = None
         return RoutedTarget(
             target_name=target_name,
             target_config=target_config,
@@ -212,6 +132,8 @@ class TestDraftForTargetsGrouping:
         account_config = AccountConfig(platform="x")
         strategy_decision = MagicMock()
         strategy_decision.context_source = None
+        strategy_decision.topic_id = None
+        strategy_decision.arc_id = None
 
         skip_action = RoutedTarget(
             target_name="x-feed",
@@ -255,6 +177,8 @@ class TestDraftForTargetsGrouping:
         account_config = AccountConfig(platform="x")
         strategy_decision = MagicMock()
         strategy_decision.context_source = None
+        strategy_decision.topic_id = None
+        strategy_decision.arc_id = None
 
         ta = RoutedTarget(
             target_name="x-preview",

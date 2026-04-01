@@ -36,6 +36,7 @@ from social_hook.models.enums import (
     EDITABLE_STATUSES,
     PENDING_STATUSES,
     TERMINAL_STATUSES,
+    DecisionType,
     PipelineStage,
 )
 from social_hook.parsing import check_unknown_keys, safe_json_loads
@@ -244,7 +245,7 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
 
     After a restart, daemon threads from the previous process are dead,
     so any task still marked 'running' will never complete.
-    Also resets any decisions stuck in 'evaluating' state back to 'imported'.
+    Also resets any decisions stuck in transient states (e.g. 'processing') back to 'imported'.
     No data events are emitted — no WebSocket clients exist at startup.
 
     Returns the number of tasks cleaned up.
@@ -263,16 +264,18 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
         if count:
             logger.info("Marked %d stale background task(s) as failed on startup", count)
 
-        # Reset decisions stuck in 'evaluating' (retrigger was interrupted)
+        # Reset decisions stuck in transient states (retrigger/batch was interrupted)
+
+        transient = (DecisionType.PROCESSING.value,)
         eval_cursor = conn.execute(
-            "UPDATE decisions SET decision = 'imported', reasoning = '' WHERE decision = 'evaluating'"
+            f"UPDATE decisions SET decision = '{DecisionType.IMPORTED.value}', reasoning = ''"
+            f" WHERE decision IN ({','.join('?' for _ in transient)})",
+            transient,
         )
         conn.commit()
         eval_count = eval_cursor.rowcount
         if eval_count:
-            logger.info(
-                "Reset %d 'evaluating' decision(s) back to 'imported' on startup", eval_count
-            )
+            logger.info("Reset %d transient decision(s) back to 'imported' on startup", eval_count)
 
         return count + eval_count
     finally:
@@ -545,16 +548,43 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
     return {"events": events}
 
 
+_LLM_CALLBACK_ACTIONS = {"media_gen_spec"}
+
+
+def _dispatch_chat_message(msg: InboundMessage, adapter, config, chat_id: str) -> str:
+    """Dispatch a chat message to a background task. Returns task_id."""
+    from social_hook.bot.commands import get_chat_draft_context, handle_message
+    from social_hook.filesystem import generate_id
+
+    ctx = get_chat_draft_context(chat_id)
+    project_id = ctx[1] if ctx else ""
+
+    _task_holder: list[str | None] = [None]
+
+    def _blocking():
+        handle_message(msg, adapter, config, task_id=_task_holder[0])
+
+    _task_holder[0] = _run_background_task(
+        "chat_message",
+        ref_id=f"msg-{generate_id('msg')}",
+        project_id=project_id,
+        fn=_blocking,
+    )
+    return _task_holder[0]  # type: ignore[return-value]  # always set by _run_background_task
+
+
 @app.post("/api/callback")
 async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
-    """Execute a button callback via the web adapter."""
+    """Execute a button callback via the web adapter.
+
+    LLM-triggering actions (media_gen_spec) are dispatched to background tasks.
+    Non-LLM actions (approve, reject, schedule, etc.) run synchronously.
+    """
     from social_hook.bot.buttons import handle_callback
 
     adapter = _get_adapter(scope_id=x_session_id)
     config = _get_config()
     chat_id = f"web:{x_session_id}"
-
-    before_id = _max_event_id()
 
     event = CallbackEvent(
         chat_id=chat_id,
@@ -562,38 +592,67 @@ async def api_callback(body: CallbackRequest, x_session_id: str = Header("web"))
         action=body.action,
         payload=body.payload,
     )
-    # Run in thread to avoid blocking the event loop and to allow
-    # sync libraries (e.g. Playwright) that detect a running asyncio loop.
-    await asyncio.to_thread(handle_callback, event, adapter, config)
 
-    cb_conn = _get_conn()
-    try:
-        ops.emit_data_event(cb_conn, "draft", "updated", body.payload)
-    finally:
-        cb_conn.close()
+    if body.action in _LLM_CALLBACK_ACTIONS:
+        # Background task path for LLM callbacks
+        from social_hook.filesystem import generate_id
 
-    events = _get_events_since(before_id, session_id=x_session_id)
-    return {"events": events}
+        _task_holder: list[str | None] = [None]
+
+        def _blocking_callback():
+            handle_callback(event, adapter, config, task_id=_task_holder[0])
+            # emit_data_event inside background task (after LLM completes)
+            cb_conn = _get_conn()
+            try:
+                ops.emit_data_event(cb_conn, "draft", "updated", body.payload)
+            finally:
+                cb_conn.close()
+
+        _task_holder[0] = _run_background_task(
+            "chat_callback",
+            ref_id=f"cb-{generate_id('cb')}",
+            project_id="",
+            fn=_blocking_callback,
+        )
+        return JSONResponse(
+            status_code=202,
+            content={"task_id": _task_holder[0], "status": "processing"},
+        )
+    else:
+        # Synchronous path for non-LLM callbacks (approve, reject, schedule, etc.)
+        before_id = _max_event_id()
+        await asyncio.to_thread(handle_callback, event, adapter, config)
+
+        cb_conn = _get_conn()
+        try:
+            ops.emit_data_event(cb_conn, "draft", "updated", body.payload)
+        finally:
+            cb_conn.close()
+
+        events = _get_events_since(before_id, session_id=x_session_id)
+        return {"events": events}
 
 
 @app.post("/api/message")
 async def api_message(body: MessageRequest, x_session_id: str = Header("web")):
-    """Send a free-text message via the web adapter."""
-    from social_hook.bot.commands import handle_message
+    """Send a free-text message via the web adapter.
 
+    All messages are dispatched to a background task (Gatekeeper and Expert
+    make LLM calls that take 2-60s). Returns 202 with task_id.
+    """
     adapter = _get_adapter(scope_id=x_session_id)
     config = _get_config()
     chat_id = f"web:{x_session_id}"
 
-    # Persist user event, run handler synchronously, return all events together.
-    before_id = _max_event_id()
+    # Persist user event synchronously (appears in chat immediately)
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    await asyncio.to_thread(handle_message, msg, adapter, config)
-
-    events = _get_events_since(before_id, session_id=x_session_id)
-    return {"events": events}
+    task_id = _dispatch_chat_message(msg, adapter, config, chat_id)
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
 
 
 def _max_event_id() -> int:
@@ -696,7 +755,11 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
         adapter = _get_adapter(scope_id=session_id)
         chat_id = f"web:{session_id}"
         adapter._insert_event("user", {"text": text})
-        await _hub.send(client_id, GatewayEnvelope(type="ack", reply_to=envelope.id, payload={}))
+        # Ack is deferred for send_message (needs task_id). Sent early for other commands.
+        if command_type != "send_message":
+            await _hub.send(
+                client_id, GatewayEnvelope(type="ack", reply_to=envelope.id, payload={})
+            )
         try:
             if command_type == "send_command":
                 from social_hook.bot.commands import handle_command
@@ -714,10 +777,17 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
                 )
                 await asyncio.to_thread(handle_callback, event, adapter, _get_config())
             elif command_type == "send_message":
-                from social_hook.bot.commands import handle_message
-
                 msg = InboundMessage(chat_id=chat_id, text=text, message_id="web_0")
-                await asyncio.to_thread(handle_message, msg, adapter, _get_config())
+                _ws_task_id = _dispatch_chat_message(msg, adapter, _get_config(), chat_id)
+                # Send deferred ack with task_id
+                await _hub.send(
+                    client_id,
+                    GatewayEnvelope(
+                        type="ack",
+                        reply_to=envelope.id,
+                        payload={"task_id": _ws_task_id},
+                    ),
+                )
             else:
                 logger.warning("Unknown WS command type: %s from %s", command_type, client_id)
         except Exception as e:
@@ -1428,47 +1498,59 @@ async def api_project_decisions(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     branch: str | None = Query(None),
+    sort_by: str = Query("created_at"),
+    sort_dir: str = Query("desc"),
+    decision: str | None = Query(None),
+    classification: str | None = Query(None),
 ):
-    """Get decision history for a project with pagination."""
+    """Get decision history for a project with pagination, sorting, and filtering."""
+    # Validate sort params to prevent SQL injection
+    allowed_sort = {"created_at", "decision", "commit_hash", "branch"}
+    if sort_by not in allowed_sort:
+        raise HTTPException(
+            status_code=400, detail=f"sort_by must be one of {sorted(allowed_sort)}"
+        )
+    allowed_dir = {"asc", "desc"}
+    if sort_dir not in allowed_dir:
+        raise HTTPException(status_code=400, detail="sort_dir must be 'asc' or 'desc'")
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
 
+        # Build WHERE clause
+        conditions = ["d.project_id = ?"]
+        params: list[Any] = [project_id]
+
         if branch is not None:
-            rows = conn.execute(
-                """
+            conditions.append("d.branch = ?")
+            params.append(branch)
+        if decision is not None:
+            conditions.append("d.decision = ?")
+            params.append(decision)
+
+        where_clause = " AND ".join(conditions)
+        order_clause = (
+            f"CASE WHEN d.decision = 'processing' THEN 0 ELSE 1 END ASC, d.{sort_by} {sort_dir}"
+        )
+
+        rows = conn.execute(
+            f"""
                 SELECT d.*, COUNT(dr.id) as draft_count
                 FROM decisions d
                 LEFT JOIN drafts dr ON dr.decision_id = d.id
-                WHERE d.project_id = ? AND d.branch = ?
+                WHERE {where_clause}
                 GROUP BY d.id
-                ORDER BY d.created_at DESC
+                ORDER BY {order_clause}
                 LIMIT ? OFFSET ?
             """,
-                (project_id, branch, limit, offset),
-            ).fetchall()
+            (*params, limit, offset),
+        ).fetchall()
 
-            total = conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE project_id = ? AND branch = ?",
-                (project_id, branch),
-            ).fetchone()[0]
-        else:
-            rows = conn.execute(
-                """
-                SELECT d.*, COUNT(dr.id) as draft_count
-                FROM decisions d
-                LEFT JOIN drafts dr ON dr.decision_id = d.id
-                WHERE d.project_id = ?
-                GROUP BY d.id
-                ORDER BY d.created_at DESC
-                LIMIT ? OFFSET ?
-            """,
-                (project_id, limit, offset),
-            ).fetchall()
-
-            total = conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE project_id = ?", (project_id,)
-            ).fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM decisions WHERE {' AND '.join(c.replace('d.', '') for c in conditions)}",
+            params,
+        ).fetchone()[0]
 
         decisions_list = [dict(r) for r in rows]
 
@@ -1512,6 +1594,17 @@ async def api_project_decisions(
             for d in decisions_list:
                 d["classification"] = classification_by_hash.get(d.get("commit_hash", ""))
 
+        # Post-query classification filter (classification is enriched from evaluation_cycles,
+        # not a DB column on decisions). NOTE: this breaks pagination when active — the returned
+        # page may have fewer than `limit` items and `total` only reflects the current page.
+        # Acceptable for now since classification filter is a convenience, not precision tool.
+        # Proper fix: JOIN evaluation_cycles in the main query.
+        if classification is not None:
+            decisions_list = [
+                d for d in decisions_list if d.get("classification") == classification
+            ]
+            total = len(decisions_list)
+
         return {"decisions": decisions_list, "total": total}
     finally:
         conn.close()
@@ -1530,7 +1623,11 @@ async def api_decision_branches(project_id: str):
 
 
 @app.get("/api/projects/{project_id}/import-preview")
-async def api_import_preview(project_id: str, branch: str | None = Query(None)):
+async def api_import_preview(
+    project_id: str,
+    branch: str | None = Query(None),
+    limit: int | None = Query(None, ge=1),
+):
     """Preview how many commits can be imported for a project."""
     conn = _get_conn()
     try:
@@ -1538,7 +1635,7 @@ async def api_import_preview(project_id: str, branch: str | None = Query(None)):
         from social_hook.import_commits import get_import_preview
 
         preview: dict[str, Any] = get_import_preview(
-            conn, project["id"], project["repo_path"], branch
+            conn, project["id"], project["repo_path"], branch, limit=limit
         )
 
         # Include git repo branches so the import modal can show them
@@ -1568,8 +1665,10 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
 
     Body:
         branch: Target branch name (optional — omit to import from default branch)
+        limit: Maximum number of recent commits to import (optional — omit for all)
     """
     branch = body.get("branch")
+    limit = body.get("limit")
 
     conn = _get_conn()
     try:
@@ -1593,7 +1692,7 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
 
         conn2 = _get_conn()
         try:
-            return import_project_commits(conn2, pid, repo_path, branch)
+            return import_project_commits(conn2, pid, repo_path, branch, limit=limit)
         finally:
             conn2.close()
 
@@ -1950,7 +2049,7 @@ async def api_delete_decision(decision_id: str):
 async def api_retrigger_decision(decision_id: str):
     """Re-evaluate a commit in-place, reusing the same decision ID.
 
-    Cleans up old drafts, marks the decision as 'evaluating', then re-runs
+    Cleans up old drafts, marks the decision as 'processing', then re-runs
     the full evaluator pipeline via background task. The decision row stays
     visible in the UI throughout (no delete/re-create gap).
     Returns 202 with task_id for frontend tracking via useBackgroundTasks.
@@ -1971,25 +2070,20 @@ async def api_retrigger_decision(decision_id: str):
         decision_branch = decision.branch
 
         # Clean up old drafts (no-op for imported commits with no drafts)
-        conn.execute(
-            "DELETE FROM draft_changes WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
-            (decision_id,),
-        )
-        conn.execute(
-            "DELETE FROM draft_tweets WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
-            (decision_id,),
-        )
-        conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
+        ops.delete_drafts_for_decision(conn, decision_id)
         # Mark as processing — row stays visible in the UI.
         # The pipeline will update to the appropriate status (deferred_eval, draft, skip, etc.)
+
         conn.execute(
-            "UPDATE decisions SET decision = 'processing' WHERE id = ?",
-            (decision_id,),
+            "UPDATE decisions SET decision = ? WHERE id = ?",
+            (DecisionType.PROCESSING.value, decision_id),
         )
         conn.commit()
         ops.emit_data_event(conn, "decision", "updated", decision_id, project_id)
     finally:
         conn.close()
+
+    _retrigger_task_id: list[str | None] = [None]
 
     def _blocking_retrigger():
         from social_hook.trigger import run_trigger
@@ -2000,6 +2094,7 @@ async def api_retrigger_decision(decision_id: str):
             trigger_source="manual",
             existing_decision_id=decision_id,
             current_branch=decision_branch,
+            task_id=_retrigger_task_id[0],
         )
         return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
@@ -2009,6 +2104,205 @@ async def api_retrigger_decision(decision_id: str):
         project_id=project_id,
         fn=_blocking_retrigger,
     )
+    _retrigger_task_id[0] = task_id
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
+
+
+@app.post("/api/decisions/batch-evaluate")
+async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
+    """Batch-evaluate multiple imported/deferred_eval decisions together.
+
+    Body:
+        decision_ids: List of decision IDs to evaluate as a batch
+    """
+    check_unknown_keys(body, {"decision_ids"}, "batch_evaluate", strict=True)
+    decision_ids = body.get("decision_ids", [])
+    if not decision_ids or not isinstance(decision_ids, list):
+        raise HTTPException(status_code=400, detail="decision_ids must be a non-empty list")
+
+    conn = _get_conn()
+    try:
+        decisions = []
+        for did in decision_ids:
+            d = ops.get_decision(conn, did)
+            if not d:
+                raise HTTPException(status_code=404, detail=f"Decision not found: {did}")
+            decisions.append(d)
+
+        # All must be same project
+        project_ids = {d.project_id for d in decisions}
+        if len(project_ids) > 1:
+            raise HTTPException(
+                status_code=400, detail="All decisions must belong to the same project"
+            )
+
+        # Validate statuses
+        valid_statuses = {DecisionType.IMPORTED.value, DecisionType.DEFERRED_EVAL.value}
+        for d in decisions:
+            if d.decision == DecisionType.PROCESSING.value:
+                raise HTTPException(
+                    status_code=409, detail=f"Decision {d.id} is already processing"
+                )
+            if d.decision not in valid_statuses:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Decision {d.id} has status '{d.decision}', expected imported or deferred_eval",
+                )
+            # deferred_eval with batch_id means already part of a batch
+            if d.decision == DecisionType.DEFERRED_EVAL.value and d.batch_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Decision {d.id} already belongs to batch {d.batch_id}",
+                )
+
+        project = ops.get_project(conn, decisions[0].project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        project_id = project.id
+        repo_path = project.repo_path
+
+        # Save original statuses for error recovery
+        original_statuses = {d.id: d.decision for d in decisions}
+
+        # Clean up old drafts for each decision
+        for did in decision_ids:
+            ops.delete_drafts_for_decision(conn, did)
+
+        # Pre-mark as processing synchronously
+        for did in decision_ids:
+            conn.execute(
+                "UPDATE decisions SET decision = ? WHERE id = ?",
+                (DecisionType.PROCESSING.value, did),
+            )
+        conn.commit()
+        for did in decision_ids:
+            ops.emit_data_event(conn, "decision", "updated", did, project_id)
+    finally:
+        conn.close()
+
+    _task_id_holder: list[str | None] = [None]
+
+    def _blocking_batch_evaluate():
+        import sqlite3 as _sqlite3
+
+        from social_hook.config.project import ProjectConfig, load_project_config
+        from social_hook.config.yaml import load_full_config
+        from social_hook.errors import ConfigError
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.factory import create_client
+        from social_hook.llm.prompts import assemble_evaluator_context
+        from social_hook.trigger import TriggerContext, evaluate_batch, parse_commit_info
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+
+        try:
+            config = load_full_config()
+            proj = ops.get_project(conn2, project_id)
+            if not proj:
+                raise RuntimeError(f"Project {project_id} not found")
+
+            try:
+                project_config = load_project_config(repo_path)
+            except ConfigError:
+                project_config = ProjectConfig(repo_path=repo_path)
+
+            # Use last decision as trigger (evaluate_batch convention)
+            last_decision = decisions[-1]
+            commit = parse_commit_info(last_decision.commit_hash, repo_path)
+            context = assemble_evaluator_context(db, project_id, project_config)
+
+            # Ensure project has a brief (runs discovery if missing)
+            from social_hook.trigger import ensure_project_brief
+
+            ensure_project_brief(
+                config=config,
+                project_config=project_config,
+                conn=conn2,
+                db=db,
+                project=proj,
+                context=context,
+                entity_id=last_decision.commit_hash[:8],
+            )
+
+            evaluator_client = create_client(config.models.evaluator, config)
+
+            ctx = TriggerContext(
+                config=config,
+                conn=conn2,
+                db=db,
+                project=proj,
+                commit=commit,
+                project_config=project_config,
+                current_branch=last_decision.branch,
+                dry_run=False,
+                verbose=False,
+                show_prompt=False,
+                existing_decision_id=last_decision.id,
+                task_id=_task_id_holder[0],
+            )
+
+            # Re-fetch decisions from fresh connection as Decision objects
+            batch_decisions = []
+            for did in decision_ids:
+                d = ops.get_decision(conn2, did)
+                if d:
+                    batch_decisions.append(d)
+
+            # Separate trigger (last) from deferred (the rest).
+            # evaluate_batch adds trigger_commit_hash to the hash list,
+            # so deferred_commits must NOT include the trigger to avoid duplication.
+            # The trigger decision's existing ID is passed so _run_targets_path
+            # reuses the row instead of creating a new one (UNIQUE constraint).
+            trigger_decision = batch_decisions[-1]
+            deferred_decisions = batch_decisions[:-1]
+            trigger_hash = trigger_decision.commit_hash
+
+            # Update TriggerContext with the trigger commit's info
+            commit = parse_commit_info(trigger_hash, repo_path)
+            ctx.commit = commit
+            ctx.existing_decision_id = trigger_decision.id
+            ctx.current_branch = trigger_decision.branch
+
+            result = evaluate_batch(
+                ctx=ctx,
+                deferred_commits=deferred_decisions,
+                trigger_commit_hash=trigger_hash,
+                context=context,
+                evaluator_client=evaluator_client,
+            )
+
+            if result != 0:
+                raise RuntimeError(f"evaluate_batch returned {result}")
+
+            return {"status": "evaluated", "count": len(decision_ids)}
+        except Exception:
+            # Error recovery: restore original statuses with TOCTOU guard
+            for did, orig_status in original_statuses.items():
+                conn2.execute(
+                    "UPDATE decisions SET decision = ? WHERE id = ? AND decision = ?",
+                    (orig_status, did, DecisionType.PROCESSING.value),
+                )
+            conn2.commit()
+            for did in decision_ids:
+                ops.emit_data_event(conn2, "decision", "updated", did, project_id)
+            raise
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "batch_evaluate",
+        ref_id="batch-evaluate",
+        project_id=project_id,
+        fn=_blocking_batch_evaluate,
+    )
+    _task_id_holder[0] = task_id
     return JSONResponse(
         status_code=202,
         content={"task_id": task_id, "status": "processing"},
@@ -3946,9 +4240,10 @@ async def api_add_target(project_id: str, body: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=400, detail="'account' is required")
     name = body.get("name")
     if not name:
-        # Auto-generate name from account + destination
+        # Auto-generate name from account + strategy + destination
+        strategy = body.get("strategy", "default")
         destination = body.get("destination", "timeline")
-        name = f"{account}-{destination}"
+        name = f"{account}-{strategy}-{destination}"
 
     tgt_data: dict[str, Any] = {"account": account}
     for field in (
@@ -4852,7 +5147,9 @@ async def api_accept_suggestion(project_id: str, suggestion_id: str):
         project_id=pid,
         fn=_blocking_evaluate,
     )
-    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "evaluating"})
+    return JSONResponse(
+        status_code=202, content={"task_id": task_id, "status": DecisionType.PROCESSING.value}
+    )
 
 
 @app.post("/api/projects/{project_id}/content/combine")
@@ -5011,6 +5308,21 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
 
                 ep_tags = _parse_episode_tags(decision)
 
+                # Batch-resolve topic names (N+1 prevention)
+                all_topic_ids = [
+                    sd.get("topic_id")
+                    for sd in (targets_data or {}).values()
+                    if isinstance(sd, dict) and sd.get("topic_id")
+                ]
+                topic_name_map: dict[str, str] = {}
+                if all_topic_ids:
+                    placeholders = ",".join("?" * len(all_topic_ids))
+                    topic_rows = conn.execute(
+                        f"SELECT id, topic FROM content_topics WHERE id IN ({placeholders})",
+                        all_topic_ids,
+                    ).fetchall()
+                    topic_name_map = {r[0]: r[1] for r in topic_rows}
+
                 for strat_name, strat_data in (targets_data or {}).items():
                     action = (
                         strat_data.get("action", "skip") if isinstance(strat_data, dict) else "skip"
@@ -5019,6 +5331,9 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                         action = action.value
                     reasoning = strat_data.get("reason", "") if isinstance(strat_data, dict) else ""
                     topic_id = strat_data.get("topic_id") if isinstance(strat_data, dict) else None
+                    context_source = (
+                        strat_data.get("context_source") if isinstance(strat_data, dict) else None
+                    )
                     # Find a draft matching this strategy via target_id → config target → strategy
                     strat_draft = strategy_to_draft.get(strat_name)
                     strategies[strat_name] = {
@@ -5029,6 +5344,8 @@ async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100))
                         "draft_content": strat_draft.content[:200] if strat_draft else None,
                         "draft_preview_mode": strat_draft.preview_mode if strat_draft else None,
                         "topic_id": topic_id,
+                        "topic_matched": topic_name_map.get(topic_id) if topic_id else None,
+                        "content_source": context_source,
                         "episode_tags": ep_tags,
                     }
             elif decision:

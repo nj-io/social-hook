@@ -11,6 +11,7 @@ import {
   createDraftFromDecision,
   deleteDecision,
   retriggerDecision,
+  batchEvaluateDecisions,
   fetchEnabledPlatforms,
   consolidateDecisions,
   fetchMemories,
@@ -18,11 +19,13 @@ import {
   fetchImportPreview,
   importCommits,
   fetchTasks,
+  fetchTopics,
   type BackgroundTask,
 } from "@/lib/api";
-import type { Decision, Memory, PostRecord, ProjectDetail, UsageSummary } from "@/lib/types";
+import type { Decision, Memory, PostRecord, ProjectDetail, Topic, UsageSummary } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { MemoriesSection } from "@/components/memories-section";
 import { ArcsSection } from "@/components/arcs-section";
 import { RateLimitCard } from "@/components/rate-limit-card";
@@ -62,12 +65,18 @@ export default function ProjectDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [branchFilter, setBranchFilter] = useState<string>("");
+  const [sortKey, setSortKey] = useState<string>("created_at");
+  const [sortDir, setSortDir] = useState<string>("desc");
+  const [decisionFilter, setDecisionFilter] = useState<string>("");
+  const [classificationFilter, setClassificationFilter] = useState<string>("");
   const [decisionBranches, setDecisionBranches] = useState<string[]>([]);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importPreview, setImportPreview] = useState<{ total_commits: number; already_tracked: number; importable: number; branches?: string[] } | null>(null);
   const [importBranch, setImportBranch] = useState<string>("");
+  const [importLimit, setImportLimit] = useState<string>("");
   const [importLoading, setImportLoading] = useState(false);
   const [importRefreshKey, setImportRefreshKey] = useState(0);
+  const [topicNameById, setTopicNameById] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<"cycles" | "commits" | "topics" | "brief">(() => {
     if (typeof window === "undefined") return "cycles";
     const validTabs = ["cycles", "commits", "topics", "brief"] as const;
@@ -102,6 +111,8 @@ export default function ProjectDetailPage() {
         setImportRefreshKey((k) => k + 1);
       } else if (task.type === "retrigger") {
         reload();
+      } else if (task.type === "batch_evaluate") {
+        reload();
       }
     } else if (task.status === "failed") {
       const error = task.error ?? "Task failed";
@@ -112,6 +123,8 @@ export default function ProjectDetailPage() {
       } else if (task.type === "import_commits") {
         setImportLoading(false);
       } else if (task.type === "retrigger") {
+        setActionError(error);
+      } else if (task.type === "batch_evaluate") {
         setActionError(error);
       }
     }
@@ -132,7 +145,7 @@ export default function ProjectDetailPage() {
     try {
       const [detail, dec, po, us] = await Promise.all([
         fetchProjectDetail(id),
-        fetchProjectDecisions(id, DECISIONS_PER_PAGE, decisionOffset, branchFilter || null),
+        fetchProjectDecisions(id, DECISIONS_PER_PAGE, decisionOffset, branchFilter || null, sortKey, sortDir, decisionFilter || null, classificationFilter || null),
         fetchProjectPosts(id, 20),
         fetchProjectUsage(id),
       ]);
@@ -144,10 +157,15 @@ export default function ProjectDetailPage() {
       setUsage(us);
       loadMemories(detail.repo_path);
       fetchDecisionBranches(id).then(({ branches }) => setDecisionBranches(branches)).catch(() => {});
+      fetchTopics(id).then(({ topics }) => {
+        const lookup: Record<string, string> = {};
+        for (const t of topics) lookup[t.id] = t.topic;
+        setTopicNameById(lookup);
+      }).catch(() => {});
     } catch {
       // Silent refresh failure
     }
-  }, [id, decisionOffset, branchFilter, loadMemories]);
+  }, [id, decisionOffset, branchFilter, sortKey, sortDir, decisionFilter, classificationFilter, loadMemories]);
 
   useDataEvents(["decision", "draft", "post", "project", "arc", "task"], reload, id);
 
@@ -156,7 +174,7 @@ export default function ProjectDetailPage() {
       try {
         const [detail, dec, po, us, plat] = await Promise.all([
           fetchProjectDetail(id),
-          fetchProjectDecisions(id, DECISIONS_PER_PAGE, 0, branchFilter || null),
+          fetchProjectDecisions(id, DECISIONS_PER_PAGE, 0, branchFilter || null, sortKey, sortDir, decisionFilter || null, classificationFilter || null),
           fetchProjectPosts(id, 20),
           fetchProjectUsage(id),
           fetchEnabledPlatforms(),
@@ -170,6 +188,11 @@ export default function ProjectDetailPage() {
         setPlatformCount(plat.real_count);
         loadMemories(detail.repo_path);
         fetchDecisionBranches(id).then(({ branches }) => setDecisionBranches(branches)).catch(() => {});
+        fetchTopics(id).then(({ topics }) => {
+          const lookup: Record<string, string> = {};
+          for (const t of topics) lookup[t.id] = t.topic;
+          setTopicNameById(lookup);
+        }).catch(() => {});
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load project");
       } finally {
@@ -178,11 +201,11 @@ export default function ProjectDetailPage() {
     }
     load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, branchFilter, importRefreshKey, loadMemories]);
+  }, [id, branchFilter, sortKey, sortDir, decisionFilter, classificationFilter, importRefreshKey, loadMemories]);
 
   async function loadMoreDecisions(offset: number) {
     try {
-      const res = await fetchProjectDecisions(id, DECISIONS_PER_PAGE, offset, branchFilter || null);
+      const res = await fetchProjectDecisions(id, DECISIONS_PER_PAGE, offset, branchFilter || null, sortKey, sortDir, decisionFilter || null, classificationFilter || null);
       setDecisions(res.decisions);
       setDecisionOffset(offset);
       setHasMoreDecisions(res.decisions.length === DECISIONS_PER_PAGE);
@@ -399,6 +422,32 @@ export default function ProjectDetailPage() {
               ));
             })()}
           </select>
+          <select
+            className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            value={decisionFilter}
+            onChange={(e) => { setDecisionFilter(e.target.value); setDecisionOffset(0); }}
+          >
+            <option value="">All decisions</option>
+            <option value="draft">draft</option>
+            <option value="hold">hold</option>
+            <option value="skip">skip</option>
+            <option value="imported">imported</option>
+            <option value="deferred_eval">deferred</option>
+            <option value="processing">processing</option>
+          </select>
+          <select
+            className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            value={classificationFilter}
+            onChange={(e) => { setClassificationFilter(e.target.value); setDecisionOffset(0); }}
+          >
+            <option value="">All types</option>
+            <option value="feature">feature</option>
+            <option value="bugfix">bugfix</option>
+            <option value="refactor">refactor</option>
+            <option value="docs">docs</option>
+            <option value="chore">chore</option>
+            <option value="test">test</option>
+          </select>
           <button
             onClick={async () => {
               setImportModalOpen(true);
@@ -427,25 +476,102 @@ export default function ProjectDetailPage() {
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
                     <th className="pb-2 pr-2 font-medium w-8"></th>
-                    <th className="pb-2 pr-4 font-medium">Decision</th>
-                    <th className="pb-2 pr-4 font-medium">Commit</th>
-                    <th className="pb-2 pr-4 font-medium min-w-[200px]">Reasoning</th>
+                    <SortTh column="decision" label="Decision" sortKey={sortKey} sortDir={sortDir} onSort={(col) => { setSortKey(col); setSortDir(sortKey === col && sortDir === "asc" ? "desc" : "asc"); setDecisionOffset(0); }} />
+                    <SortTh column="commit_hash" label="Commit" sortKey={sortKey} sortDir={sortDir} onSort={(col) => { setSortKey(col); setSortDir(sortKey === col && sortDir === "asc" ? "desc" : "asc"); setDecisionOffset(0); }} />
+                    <th className="pb-2 pr-4 font-medium">Reasoning</th>
                     <th className="pb-2 pr-4 font-medium min-w-[120px]">Angle</th>
                     <th className="hidden pb-2 pr-4 font-medium sm:table-cell">Episode</th>
                     <th className="hidden pb-2 pr-4 font-medium md:table-cell">Category</th>
-                    <th className="pb-2 pr-4 font-medium">Date</th>
-                    <th className="hidden pb-2 pr-4 font-medium lg:table-cell">Branch</th>
+                    <SortTh column="created_at" label="Date" sortKey={sortKey} sortDir={sortDir} onSort={(col) => { setSortKey(col); setSortDir(sortKey === col && sortDir === "asc" ? "desc" : "asc"); setDecisionOffset(0); }} />
+                    <SortTh column="branch" label="Branch" sortKey={sortKey} sortDir={sortDir} onSort={(col) => { setSortKey(col); setSortDir(sortKey === col && sortDir === "asc" ? "desc" : "asc"); setDecisionOffset(0); }} className="hidden lg:table-cell" />
                     <th className="pb-2 pr-4 font-medium">Drafts</th>
                     <th className="pb-2 pr-4 font-medium">Actions</th>
                     <th className="pb-2 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {decisions.map((d) => {
+                  {(() => {
+                    const rows: React.ReactNode[] = [];
+                    const seenBatches2 = new Set<string>();
+                    for (let i = 0; i < decisions.length; i++) {
+                      const d = decisions[i];
+                      if (d.batch_id && !seenBatches2.has(d.batch_id)) {
+                        seenBatches2.add(d.batch_id);
+                        const batchMembers = decisions.filter((dd) => dd.batch_id === d.batch_id);
+                        const batchMemberIds = new Set(batchMembers.map((dd) => dd.id));
+                        const allSelected = batchMembers.every((dd) => selectedDecisions.has(dd.id));
+                        const someSelected = batchMembers.some((dd) => selectedDecisions.has(dd.id));
+                        // Batch header row
+                        rows.push(
+                          <tr
+                            key={`batch-${d.batch_id}`}
+                            className="bg-indigo-50/50 dark:bg-indigo-950/20"
+                          >
+                            <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={allSelected}
+                                ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                                onChange={() => {
+                                  setSelectedDecisions((prev) => {
+                                    const next = new Set(prev);
+                                    if (allSelected) {
+                                      batchMemberIds.forEach((bid) => next.delete(bid));
+                                    } else {
+                                      batchMemberIds.forEach((bid) => next.add(bid));
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                className="h-4 w-4 rounded border-border accent-accent"
+                              />
+                            </td>
+                            <td colSpan={11} className="py-2 pr-4">
+                              <div className="flex items-center gap-2">
+                                <code className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400">
+                                  batch {d.batch_id.slice(0, 12)}
+                                </code>
+                                <span className="text-xs text-muted-foreground">
+                                  {batchMembers.length} commit{batchMembers.length !== 1 ? "s" : ""}
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const ids = batchMembers.map((dd) => dd.id);
+                                    setSelectedDecisions(new Set(ids));
+                                    // Use consolidateDecisions directly
+                                    consolidateDecisions(ids).then((res) => {
+                                      trackTask(res.task_id, CONSOLIDATE_REF, "consolidate");
+                                    }).catch(() => {});
+                                  }}
+                                  className="rounded border border-indigo-300 px-2 py-0.5 text-[10px] font-medium text-indigo-700 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-400 dark:hover:bg-indigo-950"
+                                >
+                                  Create Draft
+                                </button>
+                              </div>
+                            </td>
+                          </tr>,
+                        );
+                        // Render each batch member
+                        for (const bd of batchMembers) {
+                          rows.push(renderDecisionRow(bd));
+                        }
+                      } else if (!d.batch_id) {
+                        rows.push(renderDecisionRow(d));
+                      }
+                      // Skip batch members that were already rendered in the group
+                    }
+                    return rows;
+
+                    function renderDecisionRow(d: Decision) {
                     const isExpanded = expandedDecisions.has(d.id);
                     const isCreating = isTaskRunning(d.id);
-                    const isProcessing = isTaskRunning(`retrigger-${d.id}`) || d.decision === "processing";
+                    const batchTask = getTask("batch-evaluate");
+                    const isBatchRunning = batchTask?.status === "running";
+                    const isProcessing = isTaskRunning(`retrigger-${d.id}`) || d.decision === "processing" || (isBatchRunning && !!d.batch_id);
                     const evalTask = getTask(`retrigger-${d.id}`);
+                    const stageLabel = batchTask?.stage_label || evalTask?.stage_label;
+                    const stageTime = batchTask?.stage_started_at || evalTask?.stage_started_at;
                     const result = draftResult[d.id];
                     return (
                       <tr
@@ -469,7 +595,27 @@ export default function ProjectDetailPage() {
                           />
                         </td>
                         <td className="py-2 pr-4">
-                          <Badge value={d.decision === "deferred_eval" && d.batch_id ? "batched" : d.decision} variant="decision" />
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge value={d.decision === "deferred_eval" && d.batch_id ? "batched" : d.decision} variant="decision" />
+                            {(() => {
+                              const topicIds = new Set<string>();
+                              if (d.targets && typeof d.targets === "object") {
+                                for (const v of Object.values(d.targets)) {
+                                  const tid = (v as Record<string, unknown>)?.topic_id;
+                                  if (typeof tid === "string" && tid) topicIds.add(tid);
+                                }
+                              }
+                              return Array.from(topicIds).map((tid) => (
+                                <span
+                                  key={tid}
+                                  className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-800 dark:bg-purple-900/30 dark:text-purple-400"
+                                  title={tid}
+                                >
+                                  {topicNameById[tid] || tid.slice(0, 10)}
+                                </span>
+                              ));
+                            })()}
+                          </div>
                         </td>
                         <td className="py-2 pr-4">
                           <div>
@@ -484,7 +630,7 @@ export default function ProjectDetailPage() {
                             </p>
                             {isExpanded && (
                               <div className="mt-2 space-y-2">
-                                {d.commit_message?.includes("\n") && (
+                                {d.commit_message && (
                                   <div className="rounded border border-border bg-muted/50 p-2">
                                     <p className="text-xs font-medium text-muted-foreground">Commit Message</p>
                                     <p className="mt-1 whitespace-pre-wrap text-xs">{d.commit_message}</p>
@@ -521,14 +667,16 @@ export default function ProjectDetailPage() {
                             )}
                           </div>
                         </td>
-                        <td className="py-2 pr-4 text-xs">
+                        <td className="py-2 pr-4 text-xs max-w-[300px]">
                           {d.decision === "deferred_eval" && d.batch_id ? (
                             <span className="text-muted-foreground">Included in batch <code className="rounded bg-muted px-1 py-0.5 text-xs">{d.batch_id.slice(0, 12)}</code></span>
                           ) : (
-                            <p className="whitespace-pre-wrap">{d.decision === "processing" ? "" : (d.reasoning || "-")}</p>
+                            <ExpandableText text={d.decision === "processing" ? "" : d.reasoning} expanded={isExpanded} />
                           )}
                         </td>
-                        <td className="py-2 pr-4 text-xs">{d.angle || "-"}</td>
+                        <td className="py-2 pr-4 text-xs max-w-[200px]">
+                          <ExpandableText text={d.angle} expanded={isExpanded} />
+                        </td>
                         <td className="hidden py-2 pr-4 sm:table-cell">
                           {d.episode_type ? <Badge value={d.episode_type} variant="category" /> : <span className="text-xs">-</span>}
                         </td>
@@ -536,7 +684,7 @@ export default function ProjectDetailPage() {
                           {d.post_category ? <Badge value={d.post_category} variant="category" /> : <span className="text-xs">-</span>}
                         </td>
                         <td className="py-2 pr-4 text-xs text-muted-foreground">
-                          {new Date(d.created_at).toLocaleDateString()}
+                          {new Date(d.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         </td>
                         <td className="hidden py-2 pr-4 lg:table-cell">
                           {d.branch ? (
@@ -548,7 +696,7 @@ export default function ProjectDetailPage() {
                         <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           {d.draft_count > 0 ? (
                             <Link
-                              href={`/drafts?from=${id}&name=${encodeURIComponent(project.name)}&decision=${encodeURIComponent(d.id)}`}
+                              href={`/drafts?from=${id}&name=${encodeURIComponent(project?.name ?? "")}&decision=${encodeURIComponent(d.id)}`}
                               className="text-xs text-accent hover:underline"
                             >
                               {d.draft_count} draft{d.draft_count !== 1 ? "s" : ""}
@@ -561,11 +709,11 @@ export default function ProjectDetailPage() {
                           <div className="flex items-center gap-1.5">
                             {d.decision === "deferred_eval" && d.batch_id ? (
                               <span className="text-xs text-muted-foreground">Batched</span>
-                            ) : (d.decision === "imported" || d.decision === "processing") ? (
+                            ) : (d.decision === "imported" || d.decision === "processing" || (d.decision === "deferred_eval" && !d.batch_id)) ? (
                               <AsyncButton
                                 loading={isProcessing}
-                                startTime={evalTask?.created_at}
-                                loadingText="Processing"
+                                startTime={stageTime || evalTask?.created_at || batchTask?.created_at}
+                                loadingText={stageLabel || "Processing"}
                                 onClick={async () => {
                                   setActionError(null);
                                   try {
@@ -612,7 +760,8 @@ export default function ProjectDetailPage() {
                         </td>
                       </tr>
                     );
-                  })}
+                    }
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -858,8 +1007,9 @@ export default function ProjectDetailPage() {
             onChange={async (e) => {
               const branch = e.target.value;
               setImportBranch(branch);
+              const lim = importLimit ? parseInt(importLimit, 10) : null;
               try {
-                const preview = await fetchImportPreview(id, branch || null);
+                const preview = await fetchImportPreview(id, branch || null, lim && lim > 0 ? lim : null);
                 setImportPreview(preview);
               } catch { setImportPreview(null); }
             }}
@@ -869,6 +1019,25 @@ export default function ProjectDetailPage() {
               <option key={b} value={b}>{b}</option>
             ))}
           </select>
+        </div>
+        <div className="mt-3">
+          <label className="text-xs text-muted-foreground">Limit (optional)</label>
+          <input
+            type="number"
+            min="1"
+            placeholder="All commits"
+            className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
+            value={importLimit}
+            onChange={async (e) => {
+              const val = e.target.value;
+              setImportLimit(val);
+              const lim = val ? parseInt(val, 10) : null;
+              try {
+                const preview = await fetchImportPreview(id, importBranch || null, lim && lim > 0 ? lim : null);
+                setImportPreview(preview);
+              } catch { setImportPreview(null); }
+            }}
+          />
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button
@@ -882,7 +1051,8 @@ export default function ProjectDetailPage() {
             onClick={async () => {
               setImportLoading(true);
               try {
-                const res = await importCommits(id, importBranch || null);
+                const lim = importLimit ? parseInt(importLimit, 10) : null;
+                const res = await importCommits(id, importBranch || null, lim && lim > 0 ? lim : null);
                 trackTask(res.task_id, "__import__", "import_commits");
                 // Poll for completion since WebSocket callback can miss fast tasks
                 const poll = setInterval(async () => {
@@ -929,9 +1099,10 @@ export default function ProjectDetailPage() {
               )}
               {(() => {
                 const selectedList = decisions.filter((d) => selectedDecisions.has(d.id));
-                const allImported = selectedList.length > 0 && selectedList.every((d) => d.decision === "imported");
-                const allEvaluated = selectedList.length > 0 && selectedList.every((d) => d.decision !== "imported");
-                const isMixed = !allImported && !allEvaluated;
+                const allEvaluable = selectedList.length > 0 && selectedList.every((d) => d.decision === "imported" || (d.decision === "deferred_eval" && !d.batch_id));
+                const allEvaluated = selectedList.length > 0 && selectedList.every((d) => d.decision !== "imported" && !(d.decision === "deferred_eval" && !d.batch_id));
+                const isMixed = !allEvaluable && !allEvaluated;
+                const batchEvalLoading = isTaskRunning("batch-evaluate");
                 return (
                   <>
                     <button
@@ -952,40 +1123,30 @@ export default function ProjectDetailPage() {
                       onClick={() => { setActionError(null); setConfirmDelete(true); }}
                       className="rounded-md border border-destructive/50 px-4 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
                     >
-                      {allImported
+                      {allEvaluable
                         ? `Remove ${selectedDecisions.size === 1 ? "import" : `${selectedDecisions.size} imports`}`
                         : `Delete ${selectedDecisions.size === 1 ? "decision" : `${selectedDecisions.size} decisions`}`}
                     </button>
-                    {allImported && selectedDecisions.size >= 1 && (
-                      <button
+                    {allEvaluable && selectedDecisions.size >= 1 && (
+                      <AsyncButton
+                        loading={batchEvalLoading}
+                        startTime={getTask("batch-evaluate")?.created_at}
+                        loadingText="Evaluating"
                         onClick={async () => {
-                          setActionLoading(true);
                           setActionError(null);
                           try {
-                            const results = await Promise.all(
-                              Array.from(selectedDecisions).map((did) => retriggerDecision(did))
-                            );
-                            for (let i = 0; i < results.length; i++) {
-                              const res = results[i];
-                              const did = Array.from(selectedDecisions)[i];
-                              if (res.task_id) {
-                                trackTask(res.task_id, `retrigger-${did}`, "retrigger");
-                              }
-                            }
+                            const res = await batchEvaluateDecisions(Array.from(selectedDecisions));
+                            trackTask(res.task_id, "batch-evaluate", "batch_evaluate");
                             setSelectedDecisions(new Set());
                           } catch (err) {
                             setActionError(err instanceof Error ? err.message : "Evaluate failed");
-                          } finally {
-                            setActionLoading(false);
                           }
                         }}
-                        disabled={actionLoading}
+                        disabled={batchEvalLoading}
                         className="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
                       >
-                        {actionLoading
-                          ? "Evaluating..."
-                          : `Evaluate (${selectedDecisions.size})`}
-                      </button>
+                        {`Evaluate (${selectedDecisions.size})`}
+                      </AsyncButton>
                     )}
                     {allEvaluated && selectedDecisions.size >= 2 && (
                       <button
@@ -999,7 +1160,7 @@ export default function ProjectDetailPage() {
                       </button>
                     )}
                     {isMixed && selectedDecisions.size >= 2 && (
-                      <span className="text-xs text-muted-foreground">Mixed selection — select only imported or only evaluated decisions</span>
+                      <span className="text-xs text-muted-foreground">Mixed selection — select only evaluable or only evaluated decisions</span>
                     )}
                   </>
                 );
@@ -1031,5 +1192,27 @@ function PlatformBadge({ platform }: { platform: string }) {
     <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
       {labels[platform] ?? platform}
     </span>
+  );
+}
+
+function SortTh({ column, label, sortKey, sortDir, onSort, className = "" }: {
+  column: string;
+  label: string;
+  sortKey: string;
+  sortDir: string;
+  onSort: (column: string) => void;
+  className?: string;
+}) {
+  const isActive = sortKey === column;
+  return (
+    <th
+      className={`pb-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground ${className}`}
+      onClick={() => onSort(column)}
+    >
+      {label}
+      {isActive && (
+        <span className="ml-1">{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>
+      )}
+    </th>
   );
 }

@@ -4,6 +4,33 @@ Decision management.
 
 ---
 
+### `social-hook decision batch-evaluate`
+
+Evaluate multiple imported/deferred decisions as a single batch.
+
+Groups the decisions and runs a combined evaluation through the full
+pipeline (commit analysis, evaluation, drafting, notifications).
+All decisions must belong to the same project and have status
+'imported' or 'deferred_eval' (without an existing batch_id).
+
+Example: social-hook decision batch-evaluate dec_abc123 dec_def456
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `decision_ids` | yes | Decision IDs to evaluate as a batch |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--project`, `-p` | string |  | Project path (default: cwd) |
+| `--yes`, `-y` | boolean | false | Skip confirmation |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
 ### `social-hook decision delete`
 
 Delete a decision and its associated drafts.

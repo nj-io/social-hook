@@ -75,11 +75,19 @@ export async function fetchProjectDecisions(
   limit?: number,
   offset?: number,
   branch?: string | null,
+  sortBy?: string,
+  sortDir?: string,
+  decision?: string | null,
+  classification?: string | null,
 ): Promise<{ decisions: Decision[]; total: number }> {
   const params = new URLSearchParams();
   if (limit != null) params.set("limit", String(limit));
   if (offset != null) params.set("offset", String(offset));
   if (branch) params.set("branch", branch);
+  if (sortBy) params.set("sort_by", sortBy);
+  if (sortDir) params.set("sort_dir", sortDir);
+  if (decision) params.set("decision", decision);
+  if (classification) params.set("classification", classification);
   const qs = params.toString();
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/decisions${qs ? `?${qs}` : ""}`);
 }
@@ -91,19 +99,27 @@ export async function fetchDecisionBranches(id: string): Promise<{ branches: str
 export async function fetchImportPreview(
   id: string,
   branch?: string | null,
+  limit?: number | null,
 ): Promise<{ total_commits: number; already_tracked: number; importable: number }> {
-  const params = branch ? `?branch=${encodeURIComponent(branch)}` : "";
-  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-preview${params}`);
+  const params = new URLSearchParams();
+  if (branch) params.set("branch", branch);
+  if (limit) params.set("limit", String(limit));
+  const qs = params.toString();
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-preview${qs ? `?${qs}` : ""}`);
 }
 
 export async function importCommits(
   id: string,
   branch?: string | null,
+  limit?: number | null,
 ): Promise<{ task_id: string; status: string }> {
+  const body: Record<string, unknown> = {};
+  if (branch) body.branch = branch;
+  if (limit) body.limit = limit;
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-commits`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(branch ? { branch } : {}),
+    body: JSON.stringify(body),
   });
 }
 
@@ -182,7 +198,7 @@ export async function sendCommand(text: string): Promise<{ events: WebEvent[] }>
   });
 }
 
-export async function sendCallback(action: string, payload: string): Promise<{ events: WebEvent[] }> {
+export async function sendCallback(action: string, payload: string): Promise<{ events: WebEvent[]; task_id?: string }> {
   return apiFetch("/api/callback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -202,7 +218,7 @@ export async function sendCallbackExtended(
   });
 }
 
-export async function sendMessage(text: string): Promise<{ events: WebEvent[] }> {
+export async function sendMessage(text: string): Promise<{ events: WebEvent[]; task_id?: string }> {
   return apiFetch("/api/message", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -414,6 +430,16 @@ export async function retriggerDecision(
   });
 }
 
+export async function batchEvaluateDecisions(
+  decisionIds: string[],
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch("/api/decisions/batch-evaluate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision_ids: decisionIds }),
+  });
+}
+
 // Promote
 export async function promoteDraft(
   draftId: string,
@@ -453,6 +479,10 @@ export interface BackgroundTask {
   error: string | null;
   created_at: string;
   updated_at: string | null;
+  // Client-side stage tracking (in-memory, set from SSE events)
+  current_stage?: string;
+  stage_label?: string;
+  stage_started_at?: string;
 }
 
 export async function fetchTasks(params: {

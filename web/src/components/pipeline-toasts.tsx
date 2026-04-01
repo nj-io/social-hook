@@ -24,6 +24,7 @@ export function PipelineToasts() {
           discovering: "Generating project brief",
           analyzing: "Analyzing commit",
           evaluating: "Evaluating strategies",
+          deciding: "Processing decision",
           drafting: "Drafting content",
           promoting: "Scheduling draft",
           queued: "Commit queued for batch evaluation",

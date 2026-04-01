@@ -154,6 +154,8 @@ def evaluate_batch(
     ctx.db.emit_data_event(
         "pipeline", PipelineStage.ANALYZING, trigger_commit_hash[:8], ctx.project.id
     )
+    if ctx.task_id:
+        ctx.db.emit_task_stage(ctx.task_id, "analyzing", "Analyzing commit", ctx.project.id)
     analyzer_result = None
     try:
         analyzer = CommitAnalyzer(evaluator_client)
@@ -188,6 +190,8 @@ def evaluate_batch(
     ctx.db.emit_data_event(
         "pipeline", PipelineStage.EVALUATING, trigger_commit_hash[:8], ctx.project.id
     )
+    if ctx.task_id:
+        ctx.db.emit_task_stage(ctx.task_id, "evaluating", "Evaluating strategies", ctx.project.id)
     try:
         evaluator = Evaluator(evaluator_client)
         evaluation = evaluator.evaluate(
@@ -233,7 +237,8 @@ def evaluate_batch(
         return 3
 
     # 5. After success: mark deferred decisions with batch_id
-    if result == 0:
+    exit_code: int = result.exit_code if hasattr(result, "exit_code") else result  # type: ignore[assignment]
+    if exit_code == 0:
         # Get cycle ID from the cycle just inserted by _run_targets_path
         recent_cycles = ops.get_recent_cycles(ctx.conn, ctx.project.id, limit=1)
         cycle_id = recent_cycles[0].id if recent_cycles else "unknown"
@@ -247,7 +252,8 @@ def evaluate_batch(
             print(f"Batch evaluation complete: {len(all_hashes)} commits, cycle {cycle_id}")
     else:
         logger.warning(
-            "Batch targets path returned non-zero (%d), not marking deferred decisions", result
+            "Batch targets path returned non-zero (%d), not marking deferred decisions",
+            exit_code,
         )
 
-    return result
+    return exit_code

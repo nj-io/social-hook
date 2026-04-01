@@ -157,14 +157,26 @@ class TestPreviewModeTargets:
         assert results[0].severity == DiagnosticSeverity.INFO
         assert "preview-x" in results[0].message
 
-    def test_target_with_account(self):
+    def test_target_with_account_and_creds(self):
         ctx = {
             "config_targets": {
                 "prod-x": {"strategy": "brand", "account": "product"},
             },
+            "accounts_with_creds": {"product"},
         }
         results = _target_results_by_code(ctx, "preview_mode_targets")
         assert results == []
+
+    def test_target_with_account_no_creds(self):
+        ctx = {
+            "config_targets": {
+                "prod-x": {"strategy": "brand", "account": "product"},
+            },
+            "accounts_with_creds": set(),
+        }
+        results = _target_results_by_code(ctx, "preview_mode_targets")
+        assert len(results) == 1
+        assert "no credentials" in results[0].message
 
     def test_empty_targets(self):
         results = _target_results_by_code({"config_targets": {}}, "preview_mode_targets")

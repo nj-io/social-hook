@@ -73,6 +73,7 @@ class PipelineStage:
     DISCOVERING = "discovering"
     ANALYZING = "analyzing"
     EVALUATING = "evaluating"
+    DECIDING = "deciding"  # decision creation + arc activation + queue actions
     DRAFTING = "drafting"
     PROMOTING = "promoting"
     QUEUED = "queued"

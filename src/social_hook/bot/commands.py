@@ -301,7 +301,10 @@ def handle_command(
 
 
 def handle_message(
-    msg: InboundMessage, adapter: MessagingAdapter, config: Any | None = None
+    msg: InboundMessage,
+    adapter: MessagingAdapter,
+    config: Any | None = None,
+    task_id: str | None = None,
 ) -> None:
     """Handle a free-text message by routing through Gatekeeper.
 
@@ -325,7 +328,7 @@ def handle_message(
     pending = get_pending_reply(chat_id)
     if pending:
         clear_pending_reply(chat_id)
-        _handle_pending_reply(adapter, chat_id, pending, text, config)
+        _handle_pending_reply(adapter, chat_id, pending, text, config, task_id=task_id)
         return
 
     try:
@@ -450,6 +453,13 @@ def handle_message(
             except Exception:
                 logger.debug("Failed to store inbound chat message", exc_info=True)
 
+            if task_id:
+                from social_hook.db import operations as ops
+
+                ops.emit_task_stage(
+                    _context_conn, task_id, "routing", "Understanding message", project_id or ""
+                )
+
             gatekeeper = Gatekeeper(client)
             route = gatekeeper.route(
                 user_message=text,
@@ -483,6 +493,7 @@ def handle_message(
                     draft=draft_obj,
                     project_id=project_id,
                     db=db,
+                    task_id=task_id,
                 )
 
             # Store outbound response
@@ -510,14 +521,14 @@ def handle_message(
         _send(adapter, chat_id, f"Error processing message: {e}")
 
 
-def _handle_pending_reply(adapter, chat_id, pending, text, config):
+def _handle_pending_reply(adapter, chat_id, pending, text, config, task_id=None):
     """Dispatch a pending reply to the appropriate handler."""
     if pending.type == "edit_text":
         _save_edit(adapter, chat_id, pending.draft_id, text)
     elif pending.type == "schedule_custom":
         _save_custom_schedule(adapter, chat_id, pending.draft_id, text, config)
     elif pending.type == "edit_angle":
-        _save_angle(adapter, chat_id, pending.draft_id, text)
+        _save_angle(adapter, chat_id, pending.draft_id, text, task_id=task_id)
     elif pending.type == "reject_note":
         _save_rejection_note(adapter, chat_id, pending.draft_id, text, config)
     elif pending.type == "edit_media_spec":
@@ -815,7 +826,7 @@ def _apply_expert_result(
     return True
 
 
-def _save_angle(adapter, chat_id, draft_id, text):
+def _save_angle(adapter, chat_id, draft_id, text, task_id=None):
     """Use Expert agent to redraft content with a new angle."""
     from social_hook.config.yaml import load_full_config
     from social_hook.db import get_draft
@@ -842,6 +853,11 @@ def _save_angle(adapter, chat_id, draft_id, text):
             return
 
         summary = ops.get_project_summary(conn, draft.project_id)
+
+        if task_id:
+            ops.emit_task_stage(
+                conn, task_id, "redrafting", "Redrafting with new angle", draft.project_id
+            )
 
         expert = Expert(client)
         result = expert.handle(
@@ -1016,6 +1032,7 @@ def _handle_expert_escalation(
     draft: Any = None,
     project_id: str | None = None,
     db: Any = None,
+    task_id: str | None = None,
 ) -> str | None:
     """Handle an Expert escalation. Returns response text for chat history.
 
@@ -1066,6 +1083,13 @@ def _handle_expert_escalation(
                     expert_identity = resolve_identity(full_config, draft.platform)
             except Exception:
                 logger.debug("Failed to resolve expert context", exc_info=True)
+
+        if task_id and db:
+            from social_hook.db import operations as _stage_ops
+
+            _stage_ops.emit_task_stage(
+                db.conn, task_id, "thinking", "Drafting response", project_id or ""
+            )
 
         result = expert.handle(
             draft=draft,

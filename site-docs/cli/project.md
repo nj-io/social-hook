@@ -31,19 +31,21 @@ Examples:
 
 Import historical git commits as imported decisions.
 
-Imports all past commits so the dashboard shows the full project timeline.
+Imports past commits so the dashboard shows the project timeline.
 Imported commits are NOT evaluated — use retrigger to evaluate them later.
 
 Examples:
     social-hook project import-commits
     social-hook project import-commits --branch main
-    social-hook project import-commits --id project_abc123
+    social-hook project import-commits --limit 50
+    social-hook project import-commits --branch main --limit 100
 
 **Options:**
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--branch`, `-b` | string |  | Import only this branch |
+| `--limit`, `-n` | integer |  | Import only the N most recent commits |
 | `--id`, `-i` | string |  | Project ID |
 | `--json` | boolean | false | Output as JSON |
 

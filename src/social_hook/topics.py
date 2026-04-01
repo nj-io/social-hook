@@ -401,6 +401,11 @@ def force_draft_topic(
             files_changed=[],
         )
 
+        # Fetch full evaluator context (same as run_trigger)
+        all_topics = ops.get_topics_by_project(conn, project.id, include_dismissed=False)
+        held_topics = [t for t in all_topics if t.status == "holding"]
+        active_arcs_all = ops.get_arcs_by_project(conn, project.id, status="active")
+
         # Create evaluator client and evaluate
         evaluator_client = create_client(config.models.evaluator, config)
         evaluator = Evaluator(evaluator_client)
@@ -411,6 +416,12 @@ def force_draft_topic(
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
             strategies=config.content_strategies or None,
+            media_config=config.media_generation,
+            media_guidance=project_config.media_guidance if project_config else None,
+            held_topics=held_topics,
+            active_arcs_all=active_arcs_all,
+            targets=config.targets,
+            all_topics=all_topics,
         )
 
         # Route and draft if targets config exists

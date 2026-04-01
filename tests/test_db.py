@@ -1305,9 +1305,9 @@ class TestDraftMediaFields:
             media_spec={"prompt": "test prompt", "width": 1024},
         )
 
-        # Verify to_row returns exactly 25 elements
+        # Verify to_row returns exactly 26 elements
         row = draft.to_row()
-        assert len(row) == 25
+        assert len(row) == 26
 
         # Verify round-trip via to_dict/from_dict
         d = draft.to_dict()

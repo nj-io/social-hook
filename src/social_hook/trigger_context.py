@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +55,21 @@ class TriggerContext:
     verbose: bool
     show_prompt: bool
     existing_decision_id: str | None = None
+    task_id: str | None = None  # background task ID for stage tracking
+
+
+@dataclass
+class TargetsPathResult:
+    """Result from the targets pipeline path.
+
+    exit_code: 0 = success, non-zero = failure (matches run_trigger conventions).
+    cycle_id: The evaluation cycle ID created by this pipeline run.
+    decision_id: The trigger decision ID created/upserted by this pipeline run.
+    """
+
+    exit_code: int
+    cycle_id: str | None = None
+    decision_id: str | None = None
 
 
 @dataclass
@@ -120,3 +136,112 @@ def fetch_evaluator_extras(
         held_topics=held_topics,
         active_arcs=active_arcs,
     )
+
+
+def ensure_project_brief(
+    config,
+    project_config,
+    conn,
+    db,
+    project,
+    context,
+    entity_id: str = "",
+    verbose: bool = False,
+) -> None:
+    """Ensure the project has a brief (discovery summary). Run discovery if missing, refresh if stale.
+
+    Shared by run_trigger and evaluate_batch so any evaluation path gets a brief.
+    Modifies ``context.project_summary`` and ``context.file_summaries`` in-place.
+    """
+    if getattr(context, "project_summary", None) is None:
+        fresh_summary = ops.get_project_summary(conn, project.id)
+        if fresh_summary:
+            context.project_summary = fresh_summary
+
+    if getattr(context, "project_summary", None) is None:
+        # No summary — run discovery
+        try:
+            from social_hook.llm.discovery import discover_project
+            from social_hook.llm.factory import create_client as _create_client
+
+            discovery_client = _create_client(config.models.evaluator, config, verbose=verbose)
+            summary, selected_files, file_summaries, prompt_docs = discover_project(
+                client=discovery_client,
+                repo_path=project.repo_path,
+                project_docs=project_config.context.project_docs if project_config else [],
+                max_discovery_tokens=project_config.context.max_discovery_tokens
+                if project_config
+                else 60000,
+                max_file_size=project_config.context.max_file_size if project_config else 256000,
+                db=db,
+                project_id=project.id,
+                on_progress=lambda stage: db.emit_data_event(
+                    "pipeline", stage, entity_id, project.id
+                ),
+            )
+            if summary:
+                db.update_project_summary(project.id, summary)
+                db.update_discovery_files(project.id, selected_files)
+                if file_summaries:
+                    db.upsert_file_summaries(project.id, file_summaries)
+                if prompt_docs:
+                    db.update_prompt_docs(project.id, prompt_docs)
+                db.emit_data_event("project", "updated", project.id, project.id)
+                context.project_summary = summary
+                context.file_summaries = file_summaries if file_summaries else []
+                if verbose:
+                    print(f"Project discovery complete: {len(selected_files)} files analyzed")
+        except Exception as e:
+            logger.warning("Project discovery failed (non-fatal): %s", e)
+            if verbose:
+                print(f"Project discovery skipped: {e}", file=sys.stderr)
+    elif project_config and project_config.summary:
+        # Summary exists — check if stale and needs refresh
+        try:
+            freshness = db.get_summary_freshness(project.id)
+            cfg = project_config.summary
+            needs_refresh = freshness["commits_since_summary"] >= cfg.refresh_after_commits or (
+                freshness["days_since_summary"] is not None
+                and freshness["days_since_summary"] >= cfg.refresh_after_days
+            )
+        except Exception:
+            logger.warning("Summary freshness check failed, skipping refresh", exc_info=True)
+            needs_refresh = False
+        if needs_refresh:
+            try:
+                from social_hook.llm.discovery import discover_project
+                from social_hook.llm.factory import create_client as _create_client
+
+                discovery_client = _create_client(config.models.evaluator, config, verbose=verbose)
+                summary, selected_files, file_summaries, prompt_docs = discover_project(
+                    client=discovery_client,
+                    repo_path=project.repo_path,
+                    project_docs=project_config.context.project_docs if project_config else [],
+                    max_discovery_tokens=project_config.context.max_discovery_tokens
+                    if project_config
+                    else 60000,
+                    max_file_size=project_config.context.max_file_size
+                    if project_config
+                    else 256000,
+                    db=db,
+                    project_id=project.id,
+                    on_progress=lambda stage: db.emit_data_event(
+                        "pipeline", stage, entity_id, project.id
+                    ),
+                )
+                if summary:
+                    db.update_project_summary(project.id, summary)
+                    db.update_discovery_files(project.id, selected_files)
+                    if file_summaries:
+                        db.upsert_file_summaries(project.id, file_summaries)
+                    if prompt_docs:
+                        db.update_prompt_docs(project.id, prompt_docs)
+                    db.emit_data_event("project", "updated", project.id, project.id)
+                    context.project_summary = summary
+                    context.file_summaries = file_summaries if file_summaries else []
+                    if verbose:
+                        print(f"Project summary refreshed: {len(selected_files)} files analyzed")
+            except Exception as e:
+                logger.warning("Project summary refresh failed (non-fatal): %s", e)
+                if verbose:
+                    print(f"Summary refresh skipped: {e}", file=sys.stderr)

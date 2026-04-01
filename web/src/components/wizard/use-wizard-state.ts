@@ -20,8 +20,8 @@ export interface PlatformEntry {
 }
 
 export interface WizardData {
-  // Step 0: Strategy
-  strategyId: string;
+  // Step 0: Strategy (multiple allowed)
+  strategyIds: string[];
   // Step 1: Identity
   identities: IdentityEntry[];
   defaultIdentity: string;
@@ -61,7 +61,7 @@ const DEFAULT_PLATFORMS: PlatformEntry[] = [
 
 export function createDefaultWizardData(): WizardData {
   return {
-    strategyId: "",
+    strategyIds: [],
     identities: [{ name: "", type: "myself", label: "", description: "", introHook: "" }],
     defaultIdentity: "",
     platforms: DEFAULT_PLATFORMS.map((p) => ({ ...p })),
@@ -136,7 +136,7 @@ export function useWizardState() {
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
-  const hasProgress = data.strategyId !== "" || data.identities.some((i) => i.label !== "");
+  const hasProgress = data.strategyIds.length > 0 || data.identities.some((i) => i.label !== "");
 
   return {
     data,
