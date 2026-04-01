@@ -198,7 +198,7 @@ export async function sendCommand(text: string): Promise<{ events: WebEvent[] }>
   });
 }
 
-export async function sendCallback(action: string, payload: string): Promise<{ events: WebEvent[] }> {
+export async function sendCallback(action: string, payload: string): Promise<{ events: WebEvent[]; task_id?: string }> {
   return apiFetch("/api/callback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -218,7 +218,7 @@ export async function sendCallbackExtended(
   });
 }
 
-export async function sendMessage(text: string): Promise<{ events: WebEvent[] }> {
+export async function sendMessage(text: string): Promise<{ events: WebEvent[]; task_id?: string }> {
   return apiFetch("/api/message", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

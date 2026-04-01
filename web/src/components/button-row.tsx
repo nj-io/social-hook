@@ -19,7 +19,9 @@ export function ButtonRow({ buttons, onEvents }: ButtonRowProps) {
   async function handleClick(action: string, payload: string) {
     try {
       const result = await sendCallback(action, payload);
-      onEvents?.(result.events);
+      if (result.events) {
+        onEvents?.(result.events);
+      }
     } catch {
       // Silently handle errors - the chat will show any server responses
     }

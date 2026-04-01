@@ -1061,6 +1061,15 @@ def btn_media_gen_spec(
                 )
                 spec_tool = build_spec_generation_tool(tool_name, schema)
                 client = create_client(config.models.drafter, config)
+
+                _task_id = kwargs.get("task_id")
+                if _task_id:
+                    from social_hook.db import operations as _stage_ops
+
+                    _stage_ops.emit_task_stage(
+                        conn, _task_id, "generating", "Generating media spec", draft.project_id
+                    )
+
                 response = client.complete(
                     messages=[{"role": "user", "content": prompt}],
                     tools=[spec_tool],
