@@ -1,5 +1,5 @@
-<!-- last_run_commit: eb11c6e861db2c40b665bf84b91dbaaeb0721210 -->
-<!-- last_run_date: 2026-03-31 -->
+<!-- last_run_commit: a4ee0a9e16da8531b4022df2f626a36cf9533039 -->
+<!-- last_run_date: 2026-04-02 -->
 
 # Documentation Status
 
@@ -81,21 +81,21 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | Page | Status | Notes |
 |------|--------|-------|
 | installation.md | complete | Accurate for current quickstart flow; targets workflow addendum in backlog |
-| quickstart.md | complete | Preview draft → promote flow still valid; targets onboarding in backlog |
+| quickstart.md | stale | Preview draft → promote flow still valid; missing `--strategy`/`--branch` flags (added in feat/targets merge); targets onboarding in backlog |
 
 ## Recurring Checks
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-03-31 | |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-03-31 | |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-03-31 | |
-| `ruff check src/ tests/` passes | 2026-03-31 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-03-31 | 28 errors, all `import-untyped` or pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-03-31 | 16 commands across 6 files enriched |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-03-31 | |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-03-31 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-03-31 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-02 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-02 | 23 CLI pages, all present in nav |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-02 | |
+| `ruff check src/ tests/` passes | 2026-04-02 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-02 | 26 errors (down from 28), all `import-untyped` or pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-04-02 | 16 commands across 6 files enriched |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-02 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-02 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-02 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
 
 ## Backlog (waiting_approval)
 
@@ -108,6 +108,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] Scheduling deep-dive (how optimal times are calculated, posting windows, rate limits)
 - [x] ~~Agent-first CLI equivalents~~ (done — `credentials add --set`, all destructive commands have `--yes`, `setup` bypass via direct config.yaml)
 - [x] ~~Enrich docstrings for partial/poor CLI commands~~ (done — 16 commands enriched across inspect, decision, manual, draft, strategy, target)
+- [ ] Quickstart strategy/branch docs — `quickstart` now has `--strategy`/`-s` (repeatable) and `--branch`/`-b` flags; `quickstart.md` and `installation.md` should document multi-strategy selection during onboarding
 - [ ] config.md expansion — add sections for rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus
 - [x] ~~pipeline.md rewrite~~ (done — two-stage evaluation, commit analyzer, batch evaluation, interval gating, per-strategy decisions, target routing)
 - [ ] Testing guide — unit tests, E2E test suite, snapshots, VCR cassettes, verification scripts (source: docs/E2E_TESTING.md, docs/CLAUDE.md E2E section)
