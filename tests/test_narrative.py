@@ -15,7 +15,8 @@ from social_hook.config.project import (
 from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.db import operations as ops
 from social_hook.errors import MaxArcsError
-from social_hook.models import Arc, Lifecycle, Project
+from social_hook.models.core import Project
+from social_hook.models.narrative import Arc, Lifecycle
 from social_hook.narrative.arcs import create_arc, get_active_arcs, get_arc, update_arc
 from social_hook.narrative.debt import (
     get_narrative_debt,

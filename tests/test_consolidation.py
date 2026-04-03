@@ -11,7 +11,7 @@ from social_hook.consolidation import consolidation_tick
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Project
+from social_hook.models.core import Decision, Project
 
 # =============================================================================
 # Helpers
@@ -344,6 +344,6 @@ class TestDecisionCommitSummary:
             commit_summary="New feature",
         )
         row = d.to_row()
-        # 19-element tuple; commit_summary is at index 14
-        assert len(row) == 19
+        # 20-element tuple; commit_summary is at index 14
+        assert len(row) == 20
         assert row[14] == "New feature"

@@ -6,7 +6,7 @@ from social_hook.config.platforms import OutputPlatformConfig
 from social_hook.config.yaml import Config
 from social_hook.db import init_database, insert_decision, insert_draft, insert_project
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Draft, Project
+from social_hook.models.core import Decision, Draft, Project
 
 
 def _make_config(**overrides):
@@ -252,7 +252,7 @@ class TestPostCommand:
             decision_id=decision.id,
             platform="x",
             content="Test",
-            status="draft",
+            status="posted",
         )
         insert_draft(conn, draft)
         conn.close()

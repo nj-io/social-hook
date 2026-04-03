@@ -12,7 +12,14 @@ interface StepSummaryProps {
 }
 
 export function StepSummary({ data, templates, onEditStep, saving, error }: StepSummaryProps) {
-  const template = templates.find((t) => t.id === data.strategyId);
+  const primaryId = data.strategyIds[0];
+  const strategyDisplay = data.strategyIds
+    .map((id) => {
+      const tmpl = templates.find((t) => t.id === id);
+      const name = tmpl?.name ?? id;
+      return id === primaryId ? `${name} (primary)` : name;
+    })
+    .join(", ") || "None selected";
   const enabledPlatforms = data.platforms.filter((p) => p.enabled);
 
   return (
@@ -25,7 +32,7 @@ export function StepSummary({ data, templates, onEditStep, saving, error }: Step
       </div>
 
       <div className="space-y-2">
-        <SummaryRow label="Strategy" value={template?.name ?? data.strategyId ?? "Custom"} onEdit={() => onEditStep(0)} />
+        <SummaryRow label="Strategies" value={strategyDisplay} onEdit={() => onEditStep(0)} />
 
         <SummaryRow
           label="Identities"

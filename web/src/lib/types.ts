@@ -146,6 +146,7 @@ export interface Draft {
   last_error?: string;
   retry_count?: number;
   is_intro: boolean;
+  preview_mode: boolean;
   post_format: string | null;
   reference_post_id: string | null;
   created_at: string;
@@ -198,9 +199,11 @@ export interface Decision {
   platforms: string;
   targets: Record<string, unknown>;
   consolidate_with: string[] | null;
+  classification?: string | null;
   draft_count: number;
   draft_ids?: string[];
   branch?: string | null;
+  batch_id?: string | null;
   created_at: string;
 }
 
@@ -304,6 +307,8 @@ export interface DataChangeEvent {
   project_id: string;
   content?: string;
   platform?: string;
+  stage?: string;
+  stage_label?: string;
 }
 
 export interface Memory {
@@ -322,6 +327,139 @@ export interface ProjectDetail extends Project {
   post_count: number;
   narrative_count: number;
   journey_capture_enabled?: boolean;
+}
+
+// --- Targets types ---
+
+export interface PlatformCredential {
+  name: string;
+  platform: string;
+  created_at: string;
+  valid?: boolean;
+}
+
+export interface Account {
+  name: string;
+  platform: string;
+  tier: string;
+  identity?: string;
+  created_at: string;
+  target_count?: number;
+}
+
+export interface Target {
+  id: string;
+  project_id: string;
+  account_name: string;
+  destination: string;
+  strategy: string;
+  frequency?: string;
+  enabled: boolean;
+  primary: boolean;
+  platform: string;
+  source?: string | null;
+  community_id?: string | null;
+  share_with_followers?: boolean;
+  created_at: string | null;
+}
+
+export interface Strategy {
+  name: string;
+  template: boolean;
+  audience?: string;
+  voice?: string;
+  angle?: string;
+  post_when?: string;
+  avoid?: string;
+  format_preference?: string;
+  media_preference?: string;
+}
+
+export interface Topic {
+  id: string;
+  project_id: string;
+  strategy: string;
+  topic: string;
+  description?: string;
+  status: string;
+  hold_reason?: string;
+  priority_rank: number;
+  commit_count?: number;
+  last_posted_at?: string;
+  created_by?: string;
+  last_commit_at?: string;
+  created_at: string;
+}
+
+export interface Brief {
+  sections: Record<string, string>;
+}
+
+export interface ContentSuggestion {
+  id: string;
+  project_id: string;
+  strategy?: string;
+  idea: string;
+  status: string;
+  created_at: string;
+}
+
+export interface DiagnosticItem {
+  code: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  suggestion: string | null;
+  context: Record<string, unknown>;
+}
+
+export interface EvaluationCycle {
+  id: string;
+  project_id: string;
+  trigger: string;
+  status: string;
+  strategies: Record<string, CycleStrategyOutcome>;
+  diagnostics?: DiagnosticItem[];
+  created_at: string;
+  draft_count?: number;
+  pending_count?: number;
+  approved_count?: number;
+  posted_count?: number;
+}
+
+export interface CycleStrategyOutcome {
+  decision: string;
+  reasoning?: string;
+  topic_matched?: string;
+  arc_reference?: string;
+  content_source?: string;
+  draft_id?: string;
+  draft_content?: string;
+  draft_status?: string;
+  draft_preview_mode?: boolean;
+  topic_id?: string;
+  episode_tags?: string[];
+}
+
+export interface SystemError {
+  id: string;
+  severity: string;
+  message: string;
+  context?: string;
+  source?: string;
+  component?: string;
+  run_id?: string;
+  created_at: string;
+}
+
+export interface SystemHealth {
+  status: string;
+  total_errors_24h: number;
+  error_counts_24h: Record<string, number>;
+}
+
+export interface PlatformSettings {
+  platform: string;
+  cross_account_gap_minutes: number;
 }
 
 /** Parse episode_tags which may arrive as a JSON string or an array. */

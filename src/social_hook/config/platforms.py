@@ -14,13 +14,6 @@ FREQUENCY_PRESETS = {"high", "moderate", "low", "minimal"}
 VALID_PRIORITIES = ("primary", "secondary")
 VALID_PLATFORM_TYPES = ("builtin", "custom")
 
-# Content filter: which episode_types pass
-FILTER_EPISODE_TYPES: dict[str, set[str] | None] = {
-    "all": None,  # All drafts pass
-    "notable": {"milestone", "launch", "synthesis", "demo_proof", "before_after", "postmortem"},
-    "significant": {"milestone", "launch", "synthesis"},
-}
-
 # Frequency preset -> scheduling params
 FREQUENCY_PARAMS: dict[str, dict[str, int]] = {
     "high": {"max_posts_per_day": 3, "min_gap_minutes": 30},
@@ -43,6 +36,14 @@ SMART_DEFAULTS: dict[str, dict[str, dict[str, str]]] = {
         "primary": {"filter": "notable", "frequency": "moderate"},
         "secondary": {"filter": "significant", "frequency": "low"},
     },
+}
+
+
+# Platform thread support — used at config validation time when adapter
+# instances are unavailable. Must stay in sync with PlatformAdapter.supports_threads().
+PLATFORM_THREAD_SUPPORT: dict[str, bool] = {
+    "x": True,
+    "linkedin": False,
 }
 
 
@@ -155,19 +156,3 @@ def resolve_platform(
         optimal_days=optimal_days,
         optimal_hours=optimal_hours,
     )
-
-
-def passes_content_filter(filter_name: str, episode_type: str | None) -> bool:
-    """Check if an episode_type passes the given content filter.
-
-    Args:
-        filter_name: One of "all", "notable", "significant"
-        episode_type: The episode type to check (e.g., "milestone", "decision")
-
-    Returns:
-        True if the episode_type passes the filter
-    """
-    allowed = FILTER_EPISODE_TYPES.get(filter_name)
-    if allowed is None:
-        return True  # "all" filter
-    return episode_type is not None and episode_type in allowed

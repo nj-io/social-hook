@@ -57,10 +57,27 @@ def safe_int(
         return default
 
 
+def enum_value(x: Any) -> Any:
+    """Extract .value from an enum, or return x unchanged.
+
+    Use at system boundaries when a value may be either an enum member
+    or a plain string (e.g., LLM tool call outputs, config values).
+
+    Args:
+        x: An enum member (returns x.value) or any other value (returned as-is).
+
+    Returns:
+        The extracted value.
+    """
+    return x.value if hasattr(x, "value") else x
+
+
 def check_unknown_keys(
     data: dict,
     known_keys: set[str],
     section: str,
+    *,
+    strict: bool = False,
 ) -> None:
     """Warn about unrecognized keys in a config dict.
 
@@ -72,9 +89,16 @@ def check_unknown_keys(
         data: The config dict to check
         known_keys: Set of recognized key names
         section: Config section name for the warning message
+        strict: If True, raise ConfigError instead of logging a warning.
+            Use strict=True in API endpoints to reject invalid input.
     """
+    from social_hook.errors import ConfigError
+
     unknown = set(data.keys()) - known_keys
     if unknown:
+        msg = f"Unknown keys in {section} (typo?): {', '.join(sorted(unknown))}"
+        if strict:
+            raise ConfigError(msg)
         logger.warning(
             "Unknown keys in %s config (typo?): %s",
             section,

@@ -2,7 +2,7 @@
 
 import typer
 
-from social_hook.models import PENDING_STATUSES
+from social_hook.models.enums import PENDING_STATUSES
 
 app = typer.Typer()
 
@@ -52,7 +52,14 @@ def draft(
         None, "--platform", help="Target platform (default: all enabled)"
     ),
 ):
-    """Manually create drafts from an existing decision."""
+    """Manually create drafts from an existing decision.
+
+    Use when a decision exists but drafts were not generated automatically
+    (e.g., after a rewind). Calls the LLM drafter to produce platform-specific
+    content for all enabled platforms, or a single platform with --platform.
+
+    Example: social-hook manual draft decision-abc123 --platform x
+    """
     from social_hook.config import load_full_config
     from social_hook.db import get_decision, get_project, init_database
     from social_hook.filesystem import get_db_path
@@ -133,7 +140,6 @@ def draft(
                 target_platform_names=target_platform_names,
                 dry_run=dry_run,
                 verbose=verbose,
-                skip_content_filter=True,
             )
 
         if not results:
@@ -152,7 +158,14 @@ def consolidate(
     ctx: typer.Context,
     decision_ids: list[str] = typer.Argument(..., help="Decision IDs to consolidate (at least 2)"),
 ):
-    """Consolidate multiple decisions into a single draft."""
+    """Consolidate multiple decisions into a single draft.
+
+    Combines two or more commit decisions into one draft when individual
+    commits are too small to post alone. All decisions must belong to the
+    same project. The most recent decision is used as the anchor.
+
+    Example: social-hook manual consolidate decision-aaa decision-bbb decision-ccc
+    """
     if len(decision_ids) < 2:
         typer.echo("At least 2 decision IDs are required for consolidation.")
         raise typer.Exit(1)
@@ -190,7 +203,7 @@ def consolidate(
             raise typer.Exit(1)
 
         # Build synthetic CommitInfo combining commit messages
-        from social_hook.models import CommitInfo
+        from social_hook.models.core import CommitInfo
 
         combined_summary = "\n".join(
             f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}" for d in decisions
@@ -242,7 +255,6 @@ def consolidate(
                 project_config=project_config,
                 dry_run=dry_run,
                 verbose=verbose,
-                skip_content_filter=True,
             )
 
         if not results:
@@ -262,7 +274,14 @@ def post(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to post"),
 ):
-    """Manually post an approved draft."""
+    """Manually post an approved draft.
+
+    Posts immediately rather than waiting for the scheduler. The draft must
+    be in a pending status (draft, approved, scheduled, or deferred) and
+    have a connected account (not in preview mode).
+
+    Example: social-hook manual post draft-abc123
+    """
     from social_hook.config import load_full_config
     from social_hook.db import get_draft, init_database
     from social_hook.db import operations as ops
@@ -278,10 +297,9 @@ def post(
             typer.echo(f"Draft not found: {draft_id}")
             raise typer.Exit(1)
 
-        if draft_obj.platform == "preview":
+        if draft_obj.preview_mode:
             typer.echo(
-                "Preview drafts cannot be posted. Use 'social-hook draft promote "
-                "<id> --platform <name>' to create a platform-specific draft."
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
             )
             raise typer.Exit(1)
 
@@ -306,8 +324,9 @@ def post(
         project = ops.get_project(conn, draft_obj.project_id)
         project_name = project.name if project else "Unknown"
 
+        db_path = get_db_path()
         with spinner(f"Posting to {draft_obj.platform}..."):
-            result = _post_draft(conn, draft_obj, config)
+            result = _post_draft(conn, draft_obj, config, db_path=db_path)
         if result.success:
             record_post_success(conn, draft_obj, result, config, project_name, dry_run=dry_run)
             typer.echo("\nPosted successfully!")

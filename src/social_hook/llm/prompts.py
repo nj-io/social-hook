@@ -15,8 +15,9 @@ from social_hook.config.project import (
     _parse_memories,
 )
 from social_hook.constants import CONFIG_DIR_NAME, PROJECT_SLUG
-from social_hook.errors import PromptNotFoundError
-from social_hook.models import CommitInfo, ProjectContext
+from social_hook.errors import ConfigError, PromptNotFoundError
+from social_hook.models.context import ProjectContext
+from social_hook.models.core import CommitInfo
 from social_hook.scheduling import ProjectSchedulingState
 
 if TYPE_CHECKING:
@@ -247,6 +248,144 @@ def _append_media_guide_section(
                 sections.append(f"  **Spec fields:** {spec_info}")
 
 
+def _resolve_post_strategy(
+    post: Any,
+    targets: dict[str, Any] | None,
+) -> str:
+    """Map a post to its strategy name via target_id -> target -> strategy.
+
+    Falls back to "default" when the chain cannot be resolved.
+    """
+    target_id = getattr(post, "target_id", None)
+    if target_id and targets:
+        target = targets.get(target_id)
+        if target:
+            strategy = getattr(target, "strategy", None)
+            if strategy:
+                return str(strategy)
+            else:
+                logger.warning("Target '%s' has no strategy field", target_id)
+        else:
+            logger.warning("Post references unknown target '%s'", target_id)
+    return "default"
+
+
+def assemble_strategy_posting_state(
+    strategies: dict[str, Any],
+    recent_posts: list[Any] | None = None,
+    pending_drafts: list[Any] | None = None,
+    held_topics: list[Any] | None = None,
+    active_arcs: list[Any] | None = None,
+    targets: dict[str, Any] | None = None,
+) -> str:
+    """Build per-strategy posting state for evaluator context.
+
+    Shows recent posts (with target attribution + URLs), pending drafts
+    (with scheduling info), held topics (with duration), and active arcs
+    (with post counts) grouped by strategy.
+
+    Args:
+        strategies: Dict of strategy name -> ContentStrategyConfig
+        recent_posts: Recent posts (Post objects with target_id, external_url)
+        pending_drafts: Pending drafts (Draft objects with target_id, suggested_time)
+        held_topics: Held topics (ContentTopic objects with strategy, commit_count)
+        active_arcs: Active arcs (Arc objects with strategy, post_count)
+        targets: Dict of target name -> TargetConfig for post-to-strategy mapping
+
+    Returns:
+        Formatted string block, or empty string if no data
+    """
+    if not strategies:
+        return ""
+
+    has_data = recent_posts or pending_drafts or held_topics or active_arcs
+    if not has_data:
+        return ""
+
+    # --- Group recent posts by strategy ---
+    posts_by_strategy: dict[str, list[str]] = {}
+    for post in (recent_posts or [])[:20]:
+        strategy_name = _resolve_post_strategy(post, targets)
+        target_id = getattr(post, "target_id", None) or ""
+        url = getattr(post, "external_url", None) or ""
+        content = getattr(post, "content", "")[:80]
+        time_ago = _relative_time(getattr(post, "posted_at", None))
+        url_part = f" {url}" if url else ""
+        target_part = f" -> {target_id}" if target_id else ""
+        posts_by_strategy.setdefault(strategy_name, []).append(
+            f'"{content}..."{target_part} ({time_ago}){url_part}'
+        )
+
+    # --- Group pending drafts by strategy ---
+    drafts_by_strategy: dict[str, list[str]] = {}
+    for draft in (pending_drafts or [])[:20]:
+        strategy_name = _resolve_post_strategy(draft, targets)
+        content = getattr(draft, "content", "")[:60]
+        suggested = getattr(draft, "suggested_time", None)
+        sched_part = f" (suggested {_relative_time(suggested)})" if suggested else ""
+        drafts_by_strategy.setdefault(strategy_name, []).append(f'"{content}..."{sched_part}')
+
+    # --- Group held topics by strategy ---
+    topics_by_strategy: dict[str, list[str]] = {}
+    for topic in held_topics or []:
+        strategy_name = getattr(topic, "strategy", "") or "default"
+        name = getattr(topic, "topic", "")
+        commit_count = getattr(topic, "commit_count", 0)
+        last_commit = getattr(topic, "last_commit_at", None)
+        since_part = f", since {_relative_time(last_commit)}" if last_commit else ""
+        reason = getattr(topic, "hold_reason", "") or ""
+        reason_part = f' — "{reason}"' if reason else ""
+        topics_by_strategy.setdefault(strategy_name, []).append(
+            f"{name} ({commit_count} commits{since_part}){reason_part}"
+        )
+
+    # --- Group active arcs by strategy ---
+    arcs_by_strategy: dict[str, list[str]] = {}
+    for arc in active_arcs or []:
+        strategy_name = getattr(arc, "strategy", "") or "default"
+        theme = getattr(arc, "theme", "")
+        post_count = getattr(arc, "post_count", 0)
+        arcs_by_strategy.setdefault(strategy_name, []).append(f'"{theme}" ({post_count} posts)')
+
+    # --- Build output per strategy ---
+    lines = ["\n---\n## Per-Strategy Posting State"]
+    for name in strategies:
+        section_parts: list[str] = []
+
+        posts = posts_by_strategy.get(name, [])
+        if posts:
+            section_parts.append("Recent posts:")
+            for p in posts[:3]:
+                section_parts.append(f"  - {p}")
+
+        drafts = drafts_by_strategy.get(name, [])
+        if drafts:
+            section_parts.append(f"Pending drafts: {len(drafts)}")
+            for d in drafts[:3]:
+                section_parts.append(f"  - {d}")
+
+        topics = topics_by_strategy.get(name, [])
+        if topics:
+            section_parts.append("Held topics:")
+            for t in topics:
+                section_parts.append(f"  - {t}")
+
+        arcs = arcs_by_strategy.get(name, [])
+        if arcs:
+            section_parts.append("Active arcs:")
+            for a in arcs:
+                section_parts.append(f"  - {a}")
+
+        if section_parts:
+            lines.append(f"\n### {name}")
+            lines.extend(section_parts)
+
+    # Only return if we actually added per-strategy content
+    if len(lines) <= 1:
+        return ""
+    return "\n".join(lines)
+
+
 def assemble_evaluator_prompt(
     prompt: str,
     project_context: ProjectContext,
@@ -258,6 +397,12 @@ def assemble_evaluator_prompt(
     strategy_config: Optional["StrategyConfig"] = None,
     summary_config: Optional["SummaryConfig"] = None,
     scheduling_state: ProjectSchedulingState | None = None,
+    strategies: dict[str, Any] | None = None,
+    held_topics: list[Any] | None = None,
+    active_arcs_all: list[Any] | None = None,
+    targets: dict[str, Any] | None = None,
+    all_topics: list[Any] | None = None,
+    analysis: Any | None = None,
 ) -> str:
     """Assemble full evaluator system prompt with context.
 
@@ -275,6 +420,12 @@ def assemble_evaluator_prompt(
         strategy_config: Strategy thresholds (portfolio window, episode prefs)
         summary_config: Summary refresh thresholds
         scheduling_state: Per-platform scheduling capacity snapshot
+        strategies: Content strategy definitions keyed by name
+        held_topics: Held topics for per-strategy posting state (ContentTopic objects)
+        active_arcs_all: Active arcs across all strategies (Arc objects)
+        targets: Target definitions for post-to-strategy mapping
+        all_topics: All topics for the topic queue section (ContentTopic objects)
+        analysis: Pre-computed CommitAnalysisResult from stage 1 analyzer
 
     Returns:
         Complete system prompt string
@@ -384,6 +535,69 @@ def assemble_evaluator_prompt(
                     f"- NOTE: {pss.pending_drafts} pending drafts for ~{pss.slots_remaining_today} "
                     f"slot(s) today. Review pending drafts for overlap — merge redundant ones."
                 )
+
+    # Content strategies
+    if targets and not strategies:
+        raise ConfigError("No strategies provided to evaluator prompt")
+    if strategies:
+        sections.append("\n---\n## Content Strategies")
+        sections.append(
+            "For each strategy, decide: skip, draft, or hold. "
+            "Consider the strategy's post_when and avoid fields."
+        )
+        for name, strat in strategies.items():
+            sections.append(f"\n### {name}")
+            if getattr(strat, "audience", None):
+                sections.append(f"- **Audience**: {strat.audience}")
+            if getattr(strat, "voice", None):
+                sections.append(f"- **Voice**: {strat.voice}")
+            if getattr(strat, "angle", None):
+                sections.append(f"- **Angle**: {strat.angle}")
+            if getattr(strat, "post_when", None):
+                sections.append(f"- **Post when**: {strat.post_when}")
+            if getattr(strat, "avoid", None):
+                sections.append(f"- **Avoid**: {strat.avoid}")
+            if getattr(strat, "format_preference", None):
+                sections.append(f"- **Format**: {strat.format_preference}")
+
+        # Per-strategy posting state (posts, pending drafts, topics, arcs)
+        posting_state = assemble_strategy_posting_state(
+            strategies,
+            recent_posts=project_context.recent_posts,
+            pending_drafts=project_context.pending_drafts,
+            held_topics=held_topics,
+            active_arcs=active_arcs_all,
+            targets=targets,
+        )
+        if posting_state:
+            sections.append(posting_state)
+
+    # Content Topic Queue (per-strategy, capped at ~500 tokens)
+    if all_topics:
+        topic_lines = ["\n---\n## Content Topic Queue"]
+        topics_by_strat: dict[str, list[str]] = {}
+        for t in all_topics:
+            strat = getattr(t, "strategy", "") or "default"
+            status = getattr(t, "status", "")
+            name = getattr(t, "topic", "")
+            commits = getattr(t, "commit_count", 0)
+            tid = getattr(t, "id", "")
+            desc = getattr(t, "description", "") or ""
+            desc_part = f" — {desc}" if desc else ""
+            reason = getattr(t, "hold_reason", "") or ""
+            reason_part = f' — "{reason}"' if reason else ""
+            topics_by_strat.setdefault(strat, []).append(
+                f"{name} [id={tid}] [{status}]{reason_part} ({commits} commits){desc_part}"
+            )
+        for strat_name, topic_items in topics_by_strat.items():
+            topic_lines.append(f"\n### {strat_name}")
+            for item in topic_items:
+                topic_lines.append(f"- {item}")
+        topic_section = "\n".join(topic_lines)
+        # Cap at ~2000 tokens (~8000 chars) — topics now include IDs + descriptions
+        if len(topic_section) > 8000:
+            topic_section = topic_section[:8000] + "\n[...topic queue truncated]"
+        sections.append(topic_section)
 
     # Memories
     if project_context.memories:
@@ -510,6 +724,29 @@ def assemble_evaluator_prompt(
         sections.append(f"- Refresh after {summary_config.refresh_after_commits} commits")
         sections.append(f"- Refresh after {summary_config.refresh_after_days} days")
 
+    # Pre-computed commit analysis from stage 1 (when available)
+    if analysis is not None:
+        ca = getattr(analysis, "commit_analysis", None)
+        if ca:
+            sections.append("\n---\n## Pre-Computed Commit Analysis")
+            sections.append(
+                "The commit has already been classified by a stage 1 analyzer. "
+                "Use this as your starting point — do NOT re-classify the commit."
+            )
+            classification = getattr(ca, "classification", None)
+            if classification:
+                cls_val = (
+                    classification.value if hasattr(classification, "value") else classification
+                )
+                sections.append(f"- **Classification**: {cls_val}")
+            else:
+                logger.warning("Pre-computed analysis has no classification")
+            if ca.episode_tags:
+                sections.append(f"- **Tags**: {', '.join(ca.episode_tags)}")
+            sections.append(f"- **Summary**: {ca.summary}")
+            if ca.technical_detail:
+                sections.append(f"- **Technical detail**: {ca.technical_detail}")
+
     # Current commit
     sections.append("\n---\n## Current Commit")
     sections.append(f"- Hash: {commit.hash}")
@@ -520,11 +757,30 @@ def assemble_evaluator_prompt(
     if commit.files_changed:
         sections.append(f"- Files: {', '.join(commit.files_changed[:20])}")
     if commit.diff:
-        diff_text = commit.diff
-        max_diff_tokens = config.max_tokens // 4  # Reserve budget for diff
-        if count_tokens(diff_text) > max_diff_tokens:
-            diff_text = diff_text[: max_diff_tokens * 4] + "\n[...truncated]"
-        sections.append(f"\n### Diff\n```\n{diff_text}\n```")
+        if analysis is not None and getattr(analysis, "commit_analysis", None):
+            # Stage 1 analysis present — skip raw diff entirely.
+            # The Pre-Computed Commit Analysis section provides classification,
+            # tags, summary, and technical_detail. Commit metadata (hash,
+            # message, files_changed) is already included above.
+            pass
+        elif analysis is not None:
+            # Analysis present but missing commit_analysis — include diff at reduced budget
+            logger.warning("Analysis present but commit_analysis missing, including diff")
+            diff_text = commit.diff
+            max_diff_tokens = config.max_tokens // 8
+            if count_tokens(diff_text) > max_diff_tokens:
+                diff_text = (
+                    diff_text[: max_diff_tokens * 4]
+                    + "\n[...truncated — see Pre-Computed Commit Analysis above]"
+                )
+            sections.append(f"\n### Diff\n```\n{diff_text}\n```")
+        else:
+            # No analysis — include full diff at standard budget
+            diff_text = commit.diff
+            max_diff_tokens = config.max_tokens // 4  # Reserve budget for diff
+            if count_tokens(diff_text) > max_diff_tokens:
+                diff_text = diff_text[: max_diff_tokens * 4] + "\n[...truncated]"
+            sections.append(f"\n### Diff\n```\n{diff_text}\n```")
 
     result = "\n".join(sections)
 
@@ -551,6 +807,7 @@ def assemble_drafter_prompt(
     target_post_count: int = 0,
     is_first_post: bool = False,
     first_post_date: str | None = None,
+    content_source_context: dict[str, str] | None = None,
 ) -> str:
     """Assemble full drafter system prompt with context.
 
@@ -725,8 +982,6 @@ def assemble_drafter_prompt(
         sections.append(f"- Reasoning: {decision.reasoning}")
         if hasattr(decision, "angle") and decision.angle:
             sections.append(f"- Angle: {decision.angle}")
-        if hasattr(decision, "episode_type") and decision.episode_type:
-            sections.append(f"- Episode type: {decision.episode_type}")
         if hasattr(decision, "post_category") and decision.post_category:
             sections.append(f"- Post category: {decision.post_category}")
         if hasattr(decision, "media_tool") and decision.media_tool:
@@ -768,6 +1023,14 @@ def assemble_drafter_prompt(
             sections.append(
                 f'- [{getattr(p, "platform", "?")}]{url_part}: "{content_preview}" ({time_ago})'
             )
+
+    # Content Source Context (resolved from content_sources registry)
+    if content_source_context:
+        sections.append("\n---\n## Content Source Context")
+        for source_type, content in content_source_context.items():
+            if content:
+                sections.append(f"\n### {source_type}")
+                sections.append(content)
 
     # Recent posts
     if recent_posts:
@@ -918,13 +1181,6 @@ def assemble_gatekeeper_prompt(
         )
         if angle:
             sections.append(f"- Angle: {angle}")
-        episode_type = (
-            linked_decision.episode_type
-            if hasattr(linked_decision, "episode_type")
-            else linked_decision.get("episode_type")
-        )
-        if episode_type:
-            sections.append(f"- Episode type: {episode_type}")
 
     sections.append("\n---\n## Current Draft")
     if hasattr(draft, "content"):

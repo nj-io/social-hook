@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from social_hook.db import operations as ops
 from social_hook.llm.schemas import LogEvaluationInput
-from social_hook.models import Decision, Project
+from social_hook.models.core import Decision, Project
 from social_hook.narrative.arcs import (
     create_arc,
     get_arc,
@@ -71,8 +71,8 @@ class TestLogEvaluationNewArcTheme:
                 },
             }
         )
-        assert result.targets["default"].new_arc_theme == "Building the auth system"
-        assert result.targets["default"].arc_id is None
+        assert result.strategies["default"].new_arc_theme == "Building the auth system"
+        assert result.strategies["default"].arc_id is None
 
     def test_arc_id_still_works(self):
         result = LogEvaluationInput.validate(
@@ -84,13 +84,12 @@ class TestLogEvaluationNewArcTheme:
                         "reason": "Continues auth arc",
                         "arc_id": "arc_abc123",
                         "post_category": "arc",
-                        "episode_type": "milestone",
                     }
                 },
             }
         )
-        assert result.targets["default"].arc_id == "arc_abc123"
-        assert result.targets["default"].new_arc_theme is None
+        assert result.strategies["default"].arc_id == "arc_abc123"
+        assert result.strategies["default"].new_arc_theme is None
 
     def test_neither_arc_field(self):
         result = LogEvaluationInput.validate(
@@ -101,13 +100,12 @@ class TestLogEvaluationNewArcTheme:
                         "action": "draft",
                         "reason": "Standalone post",
                         "post_category": "opportunistic",
-                        "episode_type": "demo_proof",
                     }
                 },
             }
         )
-        assert result.targets["default"].arc_id is None
-        assert result.targets["default"].new_arc_theme is None
+        assert result.strategies["default"].arc_id is None
+        assert result.strategies["default"].new_arc_theme is None
 
     def test_new_arc_theme_optional(self):
         result = LogEvaluationInput.validate(
@@ -116,7 +114,7 @@ class TestLogEvaluationNewArcTheme:
                 "targets": {"default": {"action": "skip", "reason": "Just a typo fix"}},
             }
         )
-        assert result.targets["default"].new_arc_theme is None
+        assert result.strategies["default"].new_arc_theme is None
 
     def test_tool_schema_includes_new_arc_theme(self):
         schema = LogEvaluationInput.to_tool_schema()
@@ -487,7 +485,8 @@ class TestDraftingArcContext:
         from social_hook.drafting import draft_for_platforms
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.schemas import CreateDraftInput
-        from social_hook.models import CommitInfo, ProjectContext
+        from social_hook.models.context import ProjectContext
+        from social_hook.models.core import CommitInfo
         from social_hook.scheduling import ScheduleResult
 
         # Set up project and arc
@@ -592,7 +591,8 @@ class TestDraftingArcContext:
         from social_hook.drafting import draft_for_platforms
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.schemas import CreateDraftInput
-        from social_hook.models import CommitInfo, ProjectContext
+        from social_hook.models.context import ProjectContext
+        from social_hook.models.core import CommitInfo
         from social_hook.scheduling import ScheduleResult
 
         project = _setup_project(temp_db)

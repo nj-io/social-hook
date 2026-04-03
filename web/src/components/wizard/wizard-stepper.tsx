@@ -9,54 +9,41 @@ interface WizardStepperProps {
 
 export function WizardStepper({ steps, currentStep, completedSteps, onStepClick }: WizardStepperProps) {
   return (
-    <>
-      {/* Desktop: horizontal stepper */}
-      <div className="hidden sm:flex items-center justify-center gap-1">
-        {steps.map((label, i) => {
+    <div className="space-y-2">
+      {/* Step badges connected by lines — full width */}
+      <div className="flex w-full items-center">
+        {steps.map((_, i) => {
           const isActive = i === currentStep;
           const isCompleted = completedSteps.has(i);
           const isClickable = isCompleted || i <= currentStep;
           return (
-            <div key={i} className="flex items-center">
+            <div key={i} className="contents">
               {i > 0 && (
-                <div className={`mx-1 h-px w-4 ${isCompleted || i <= currentStep ? "bg-accent" : "bg-border"}`} />
+                <div className={`h-px flex-1 ${isCompleted || i <= currentStep ? "bg-accent" : "bg-border"}`} />
               )}
               <button
                 onClick={() => isClickable && onStepClick(i)}
                 disabled={!isClickable}
-                className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold transition-colors ${
                   isActive
                     ? "bg-accent text-accent-foreground"
                     : isCompleted
-                      ? "text-accent hover:bg-accent/10"
-                      : "text-muted-foreground"
+                      ? "bg-accent/20 text-accent hover:bg-accent/30"
+                      : "bg-border text-muted-foreground"
                 } ${isClickable ? "cursor-pointer" : "cursor-default"}`}
+                title={steps[i]}
               >
-                <span
-                  className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ${
-                    isActive
-                      ? "bg-accent-foreground/20 text-accent-foreground"
-                      : isCompleted
-                        ? "bg-accent/20 text-accent"
-                        : "bg-border text-muted-foreground"
-                  }`}
-                >
-                  {isCompleted ? "\u2713" : i + 1}
-                </span>
-                <span className="hidden lg:inline">{label}</span>
+                {isCompleted ? "\u2713" : i + 1}
               </button>
             </div>
           );
         })}
       </div>
 
-      {/* Mobile: simple progress indicator */}
-      <div className="flex items-center justify-between sm:hidden">
-        <span className="text-sm font-medium">
-          Step {currentStep + 1} of {steps.length}
-        </span>
-        <span className="text-sm text-muted-foreground">{steps[currentStep]}</span>
-      </div>
-    </>
+      {/* Current step label */}
+      <p className="text-center text-xs text-muted-foreground">
+        {steps[currentStep]}
+      </p>
+    </div>
   );
 }

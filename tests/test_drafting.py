@@ -11,7 +11,7 @@ from social_hook.drafting import (
     draft_for_platforms,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models import CommitInfo, Decision, Draft, Post, Project
+from social_hook.models.core import CommitInfo, Decision, Draft, Post, Project
 from social_hook.scheduling import ScheduleResult
 
 # =============================================================================
@@ -145,14 +145,12 @@ class TestDraftForPlatformsTargetFilter:
     """target_platform_names filters to specified platforms only."""
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_target_filter_excludes_unspecified(
         self,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -227,19 +225,13 @@ class TestDraftForPlatformsTargetFilter:
         conn.close()
 
 
-class TestDraftForPlatformsContentFilterExcludes:
-    """Content filter excludes all platforms returns empty list."""
+class TestDraftForPlatformsNoContentFilter:
+    """Content filtering has been removed — all platforms pass through."""
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=False)
-    def test_all_filtered_returns_empty(self, mock_filter, mock_resolve, tmp_path):
-        db_path = tmp_path / "test.db"
-        conn = init_database(db_path)
-        project = _make_project(conn)
-
-        from social_hook.llm.dry_run import DryRunContext
-
-        db = DryRunContext(conn, dry_run=True)
+    def test_no_content_filter_applied(self, mock_resolve, tmp_path):
+        """Verify _resolve_and_filter_platforms returns all enabled platforms."""
+        from social_hook.drafting import _resolve_and_filter_platforms
 
         config = _make_config(
             platforms={
@@ -250,37 +242,20 @@ class TestDraftForPlatformsContentFilterExcludes:
         resolved.filter = "significant"
         mock_resolve.return_value = resolved
 
-        commit = _make_commit()
-        evaluation = _make_evaluation()
-        context = _make_context(project)
-
-        results = draft_for_platforms(
-            config,
-            conn,
-            db,
-            project,
-            decision_id="decision-001",
-            evaluation=evaluation,
-            context=context,
-            commit=commit,
-        )
-
-        assert results == []
-        conn.close()
+        result = _resolve_and_filter_platforms(config, None, False)
+        assert "x" in result
 
 
 class TestDraftForPlatformsProjectConfigNone:
     """project_config=None path doesn't crash."""
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_none_project_config(
         self,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -354,14 +329,12 @@ class TestDraftForPlatformsPerPlatformError:
     """Per-platform LLM error is caught and skipped (other platforms still draft)."""
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_error_skips_platform(
         self,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -442,14 +415,12 @@ class TestDraftResultDecisionId:
     """DraftResult contains correct decision_id from caller."""
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_decision_id_propagated(
         self,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -519,7 +490,6 @@ class TestDraftMediaSpecGuards:
     """Tests for media spec guard logic in draft_for_platforms()."""
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.drafting._generate_media")
@@ -528,7 +498,6 @@ class TestDraftMediaSpecGuards:
         mock_gen_media,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -590,7 +559,6 @@ class TestDraftMediaSpecGuards:
         conn.close()
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.drafting._generate_media")
@@ -599,7 +567,6 @@ class TestDraftMediaSpecGuards:
         mock_gen_media,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -661,7 +628,6 @@ class TestDraftMediaSpecGuards:
         conn.close()
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch(
@@ -673,7 +639,6 @@ class TestDraftMediaSpecGuards:
         mock_gen_media,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -739,7 +704,6 @@ class TestDeferredDraftCreation:
     """Deferred scheduling creates a draft with status='deferred' and skips the results list."""
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.notifications.send_notification")
@@ -748,7 +712,6 @@ class TestDeferredDraftCreation:
         mock_send_notif,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -840,7 +803,6 @@ class TestDeferredDraftCreation:
         conn.close()
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch("social_hook.notifications.send_notification")
@@ -849,7 +811,6 @@ class TestDeferredDraftCreation:
         mock_send_notif,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -919,14 +880,12 @@ class TestDraftReferencePostResolution:
     """Tests for reference post resolution and reference_post_id on Draft."""
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_reference_posts_resolved_and_set_on_draft(
         self,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -1038,14 +997,12 @@ class TestDraftReferencePostResolution:
         conn.close()
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_no_reference_posts_leaves_draft_unchanged(
         self,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -1114,14 +1071,12 @@ class TestDraftReferencePostResolution:
         conn.close()
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_cross_platform_reference_no_quote_format(
         self,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):
@@ -1302,14 +1257,12 @@ class TestDraftForPlatformsPublicApiUnchanged:
     """draft_for_platforms public API still works after the two-layer split."""
 
     @patch("social_hook.drafting.resolve_platform")
-    @patch("social_hook.drafting.passes_content_filter", return_value=True)
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_public_api_delegates_to_resolved(
         self,
         mock_schedule,
         mock_create,
-        mock_filter,
         mock_resolve,
         tmp_path,
     ):

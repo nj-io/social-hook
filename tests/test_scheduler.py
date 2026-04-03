@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from social_hook.db import (
     get_connection,
     get_draft,
@@ -14,7 +16,7 @@ from social_hook.db import (
     update_draft,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Draft, Project
+from social_hook.models.core import Decision, Draft, Project
 from social_hook.notifications import send_notification
 from social_hook.scheduler import (
     acquire_lock,
@@ -293,6 +295,11 @@ class TestSchedulerTick:
 
 class TestNotifications:
     """Tests for the shared notification helper."""
+
+    @pytest.fixture(autouse=True)
+    def _no_real_notifications(self):
+        """Override: this class tests notification paths with mocked adapters."""
+        yield
 
     def test_send_notification_web_and_telegram(self):
         """Notification sends to both web and telegram when configured."""
@@ -691,7 +698,7 @@ class TestPostDraftReferencePosting:
         )
         insert_draft(conn, ref_draft)
 
-        from social_hook.models import Post
+        from social_hook.models.core import Post
 
         ref_post = Post(
             id=generate_id("post"),
@@ -719,12 +726,13 @@ class TestPostDraftReferencePosting:
 
         return project, draft, ref_post
 
-    @patch("social_hook.adapters.platform.factory.create_adapter")
+    @patch("social_hook.adapters.platform.registry.create_adapter")
     def test_quote_uses_post_with_reference(self, mock_create_adapter, temp_dir):
         """Quote draft calls adapter.post_with_reference() with ReferenceType.QUOTE."""
         from social_hook.adapters.models import PostResult, ReferenceType
-        from social_hook.scheduler import _post_draft
+        from social_hook.scheduler import _post_draft, _registry
 
+        _registry.clear()
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
         project, draft, ref_post = self._setup_with_reference(conn, post_format="quote")
@@ -749,12 +757,13 @@ class TestPostDraftReferencePosting:
         assert reference.external_id == "ext_tweet_999"
         conn.close()
 
-    @patch("social_hook.adapters.platform.factory.create_adapter")
+    @patch("social_hook.adapters.platform.registry.create_adapter")
     def test_reply_uses_post_with_reference(self, mock_create_adapter, temp_dir):
         """Reply draft calls adapter.post_with_reference() with ReferenceType.REPLY."""
         from social_hook.adapters.models import PostResult, ReferenceType
-        from social_hook.scheduler import _post_draft
+        from social_hook.scheduler import _post_draft, _registry
 
+        _registry.clear()
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
         project, draft, ref_post = self._setup_with_reference(conn, post_format="reply")
@@ -777,12 +786,13 @@ class TestPostDraftReferencePosting:
         assert reference.reference_type == ReferenceType.REPLY
         conn.close()
 
-    @patch("social_hook.adapters.platform.factory.create_adapter")
+    @patch("social_hook.adapters.platform.registry.create_adapter")
     def test_unsupported_ref_type_falls_back_to_link(self, mock_create_adapter, temp_dir):
         """When adapter doesn't support QUOTE, falls back to LINK."""
         from social_hook.adapters.models import PostResult, ReferenceType
-        from social_hook.scheduler import _post_draft
+        from social_hook.scheduler import _post_draft, _registry
 
+        _registry.clear()
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
         project, draft, ref_post = self._setup_with_reference(conn, post_format="quote")
@@ -803,12 +813,13 @@ class TestPostDraftReferencePosting:
         assert reference.reference_type == ReferenceType.LINK
         conn.close()
 
-    @patch("social_hook.adapters.platform.factory.create_adapter")
+    @patch("social_hook.adapters.platform.registry.create_adapter")
     def test_non_reference_draft_uses_standard_post(self, mock_create_adapter, temp_dir):
         """Draft without reference_post_id uses standard adapter.post()."""
         from social_hook.adapters.models import PostResult
-        from social_hook.scheduler import _post_draft
+        from social_hook.scheduler import _post_draft, _registry
 
+        _registry.clear()
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
 

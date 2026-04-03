@@ -3,25 +3,13 @@
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from social_hook.errors import MalformedResponseError
 
 # =============================================================================
 # Schema-specific Enums (str enums for Pydantic JSON serialization)
 # =============================================================================
-
-
-class EpisodeTypeSchema(str, Enum):
-    """Post structural categories."""
-
-    decision = "decision"
-    before_after = "before_after"
-    demo_proof = "demo_proof"
-    milestone = "milestone"
-    postmortem = "postmortem"
-    launch = "launch"
-    synthesis = "synthesis"
 
 
 class PostCategorySchema(str, Enum):
@@ -68,6 +56,15 @@ class ExpertAction(str, Enum):
     save_context_note = "save_context_note"
 
 
+class CommitClassification(str, Enum):
+    """Classification of commit significance for stage 1 analysis."""
+
+    trivial = "trivial"
+    routine = "routine"
+    notable = "notable"
+    significant = "significant"
+
+
 # =============================================================================
 # Pydantic Models (LLM response validation)
 # =============================================================================
@@ -81,16 +78,36 @@ class TargetAction(str, Enum):
     hold = "hold"
 
 
+class TopicSuggestion(BaseModel):
+    """A topic suggestion from the commit analyzer."""
+
+    title: str
+    description: str | None = None
+    strategy_type: str = "code-driven"  # "code-driven" or "positioning"
+
+
 class CommitAnalysis(BaseModel):
     """Structured analysis of a commit."""
 
     summary: str
     technical_detail: str | None = None
     episode_tags: list[str] = []
+    classification: CommitClassification | None = None
+    topic_suggestions: list[TopicSuggestion] = []
 
 
-class TargetDecisionInput(BaseModel):
-    """Per-target decision from the evaluator."""
+class ContextSourceSpec(BaseModel):
+    """Specifies what context the drafter should receive."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    types: list[str]  # "brief", "commits", "topic", "operator_suggestion"
+    topic_id: str | None = None
+    suggestion_id: str | None = None
+
+
+class StrategyDecisionInput(BaseModel):
+    """Per-strategy decision from the evaluator."""
 
     action: TargetAction
     reason: str
@@ -99,10 +116,11 @@ class TargetDecisionInput(BaseModel):
     new_arc_theme: str | None = None
     reference_posts: list[str] | None = None
     angle: str | None = None
-    episode_type: EpisodeTypeSchema | None = None
     post_category: PostCategorySchema | None = None
     media_tool: MediaTool | None = None
     include_project_docs: bool | None = None
+    topic_id: str | None = None
+    context_source: ContextSourceSpec | None = None
 
 
 class QueueAction(BaseModel):
@@ -119,15 +137,22 @@ class LogEvaluationInput(BaseModel):
     """Evaluator tool call: log_evaluation (multi-target format)."""
 
     commit_analysis: CommitAnalysis
-    targets: dict[str, TargetDecisionInput]
+    strategies: dict[str, StrategyDecisionInput]
     queue_actions: dict[str, list[QueueAction]] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _remap_targets_key(cls, data: dict) -> dict:
+        if isinstance(data, dict) and "targets" in data and "strategies" not in data:
+            data["strategies"] = data.pop("targets")
+        return data
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
         """Return JSON schema dict for Claude's tools parameter."""
         return {
             "name": "log_evaluation",
-            "description": "Record the evaluation for a commit with per-target decisions and optional queue management",
+            "description": "Record the evaluation for a commit with per-strategy decisions and optional queue management",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -153,7 +178,7 @@ class LogEvaluationInput(BaseModel):
                     },
                     "targets": {
                         "type": "object",
-                        "description": "Per-target decisions. Use 'default' for the primary decision.",
+                        "description": "Per-strategy decisions. Use the exact strategy names from the Content Strategies section (e.g. 'building-public', 'brand-primary'). One entry per strategy.",
                         "additionalProperties": {
                             "type": "object",
                             "properties": {
@@ -188,10 +213,6 @@ class LogEvaluationInput(BaseModel):
                                     "type": "string",
                                     "description": "The hook/angle for the post",
                                 },
-                                "episode_type": {
-                                    "type": "string",
-                                    "enum": [e.value for e in EpisodeTypeSchema],
-                                },
                                 "post_category": {
                                     "type": "string",
                                     "enum": [e.value for e in PostCategorySchema],
@@ -203,6 +224,30 @@ class LogEvaluationInput(BaseModel):
                                 "include_project_docs": {
                                     "type": "boolean",
                                     "description": "Set true when the Drafter needs project-level documentation",
+                                },
+                                "topic_id": {
+                                    "type": "string",
+                                    "description": "ID of the content topic this relates to",
+                                },
+                                "context_source": {
+                                    "type": "object",
+                                    "description": "What context the drafter should receive",
+                                    "properties": {
+                                        "types": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "description": "Context types: brief, commits, topic, operator_suggestion",
+                                        },
+                                        "topic_id": {
+                                            "type": "string",
+                                            "description": "Topic ID for topic context",
+                                        },
+                                        "suggestion_id": {
+                                            "type": "string",
+                                            "description": "Suggestion ID for operator suggestion context",
+                                        },
+                                    },
+                                    "required": ["types"],
                                 },
                             },
                             "required": ["action", "reason"],
@@ -256,6 +301,15 @@ class LogEvaluationInput(BaseModel):
             raise MalformedResponseError(f"Invalid log_evaluation input: {e}") from e
 
 
+class PlatformVariant(BaseModel):
+    """Per-platform content variant from a multi-platform drafter call."""
+
+    platform: str
+    content: str
+    format_hint: str | None = None
+    beat_count: int | None = None
+
+
 class CreateDraftInput(BaseModel):
     """Drafter tool call: create_draft."""
 
@@ -266,6 +320,7 @@ class CreateDraftInput(BaseModel):
     media_spec: dict[str, Any] | None = None
     format_hint: str | None = None
     beat_count: int | None = None
+    variants: list[PlatformVariant] | None = None
 
     @classmethod
     def to_tool_schema(cls) -> dict[str, Any]:
@@ -310,6 +365,29 @@ class CreateDraftInput(BaseModel):
                         "type": "integer",
                         "description": "Number of distinct narrative beats/steps in this content.",
                     },
+                    "variants": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "platform": {
+                                    "type": "string",
+                                    "description": "Platform name matching the requested variant",
+                                },
+                                "content": {
+                                    "type": "string",
+                                    "description": "Platform-optimized post content",
+                                },
+                                "format_hint": {
+                                    "type": "string",
+                                    "enum": ["single", "thread"],
+                                },
+                                "beat_count": {"type": "integer"},
+                            },
+                            "required": ["platform", "content"],
+                        },
+                        "description": "Per-platform content variants. Required when multiple platforms are specified in the user message.",
+                    },
                 },
                 "required": ["content", "platform", "reasoning"],
             },
@@ -328,6 +406,19 @@ class CreateDraftInput(BaseModel):
             else:
                 joined = "\n\n".join(str(item) for item in items)
             data = {**data, "content": joined}
+        # Normalize variant content (same list-to-string pattern, copy-based)
+        if data.get("variants"):
+            normalized_variants = []
+            for variant in data["variants"]:
+                if isinstance(variant.get("content"), list):
+                    vitems = variant["content"]
+                    if vitems and isinstance(vitems[0], dict) and "content" in vitems[0]:
+                        vjoined = "\n\n".join(item["content"] for item in vitems)
+                    else:
+                        vjoined = "\n\n".join(str(item) for item in vitems)
+                    variant = {**variant, "content": vjoined}
+                normalized_variants.append(variant)
+            data = {**data, "variants": normalized_variants}
         try:
             return cls.model_validate(data)
         except ValidationError as e:
@@ -529,3 +620,139 @@ class ExpertResponseInput(BaseModel):
             return cls.model_validate(data)
         except ValidationError as e:
             raise MalformedResponseError(f"Invalid expert_response input: {e}") from e
+
+
+# =============================================================================
+# Stage 1: Commit Analysis (standalone analyzer)
+# =============================================================================
+
+
+class BriefUpdateInstructions(BaseModel):
+    """Instructions for incrementally updating brief sections after a commit."""
+
+    sections_to_update: dict[str, str] = {}
+    new_facts: list[str] = []
+
+
+class CommitAnalysisResult(BaseModel):
+    """Stage 1 analyzer output: commit classification, tags, summary, brief instructions, topic suggestions."""
+
+    commit_analysis: CommitAnalysis
+    brief_update: BriefUpdateInstructions
+    topic_suggestions: list[TopicSuggestion] = []
+
+    @classmethod
+    def to_tool_schema(cls) -> dict[str, Any]:
+        """Return JSON schema dict for the log_commit_analysis tool."""
+        return {
+            "name": "log_commit_analysis",
+            "description": "Record the stage 1 commit analysis: classification, tags, summary, and brief update instructions",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "commit_analysis": {
+                        "type": "object",
+                        "description": "Structured analysis of the commit",
+                        "properties": {
+                            "summary": {
+                                "type": "string",
+                                "description": "1-2 sentence summary of what this commit does",
+                            },
+                            "technical_detail": {
+                                "type": "string",
+                                "description": "Optional deeper technical context",
+                            },
+                            "episode_tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Freeform tags categorizing this commit (e.g. 'refactor', 'feature', 'bugfix', 'performance')",
+                            },
+                            "classification": {
+                                "type": "string",
+                                "enum": [e.value for e in CommitClassification],
+                                "description": "Significance level: trivial (whitespace/typos), routine (small fix/refactor), notable (new feature/significant fix), significant (architectural change/major feature)",
+                            },
+                        },
+                        "required": ["summary", "classification", "episode_tags"],
+                    },
+                    "topic_suggestions": {
+                        "type": "array",
+                        "description": "Content topics suggested by this commit. Only include when the commit touches a subject area worth writing about.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {
+                                    "type": "string",
+                                    "description": "Short topic title (2-5 words)",
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "1-2 sentences on what this topic covers",
+                                },
+                                "strategy_type": {
+                                    "type": "string",
+                                    "enum": ["code-driven", "positioning"],
+                                    "description": "code-driven for technical audiences, positioning for product/marketing audiences",
+                                },
+                            },
+                            "required": ["title", "strategy_type"],
+                        },
+                    },
+                    "brief_update": {
+                        "type": "object",
+                        "description": "Instructions for updating the project brief",
+                        "properties": {
+                            "sections_to_update": {
+                                "type": "object",
+                                "description": "Map of brief section name to text to add/update in that section",
+                                "additionalProperties": {"type": "string"},
+                            },
+                            "new_facts": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "New project facts learned from this commit",
+                            },
+                        },
+                    },
+                },
+                "required": ["commit_analysis", "brief_update"],
+            },
+        }
+
+    @classmethod
+    def validate(cls, data: dict[str, Any]) -> "CommitAnalysisResult":
+        """Validate tool call input data."""
+        try:
+            return cls.model_validate(data)
+        except ValidationError as e:
+            raise MalformedResponseError(f"Invalid log_commit_analysis input: {e}") from e
+
+
+# =============================================================================
+# Strategy Classification (one-time LLM classification for custom strategies)
+# =============================================================================
+
+STRATEGY_CLASSIFICATION_TOOL: dict[str, Any] = {
+    "name": "classify_strategy",
+    "description": "Classify a content strategy as code-driven or positioning-driven",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "strategy_type": {
+                "type": "string",
+                "enum": ["code-driven", "positioning"],
+                "description": (
+                    "code-driven: content sourced from commits/code — aimed at developers "
+                    "who want to see how things are built. "
+                    "positioning: content sourced from product brief — aimed at users/buyers "
+                    "who care about what the product does for them."
+                ),
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation for the classification",
+            },
+        },
+        "required": ["strategy_type"],
+    },
+}

@@ -172,7 +172,7 @@ def run(harness, runner, adapter):
     def f13():
         from social_hook.db import insert_decision, insert_draft
         from social_hook.filesystem import generate_id
-        from social_hook.models import Decision, Draft
+        from social_hook.models.core import Decision, Draft
 
         # Seed a decision with angle and episode_type populated
         decision = Decision(

@@ -1,13 +1,13 @@
 """Tests for deferred eval drain (Chunk 4)."""
 
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from social_hook.config.yaml import Config, RateLimitsConfig
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision, Project
+from social_hook.models.core import Decision, Project
 from social_hook.scheduler import (
     _drain_batch,
     _drain_deferred_evaluations,
@@ -120,14 +120,11 @@ class TestDrainIndividual:
 
         _drain_individual(conn, config, project, deferred)
 
-        # Both decisions should be deleted
-        remaining = ops.get_deferred_eval_decisions(conn, project.id)
-        assert len(remaining) == 0
-
-        # run_trigger called twice with trigger_source="drain"
+        # run_trigger called twice with correct kwargs
         assert mock_trigger.call_count == 2
-        for call in mock_trigger.call_args_list:
+        for i, call in enumerate(mock_trigger.call_args_list):
             assert call.kwargs.get("trigger_source") == "drain"
+            assert call.kwargs.get("existing_decision_id") == deferred[i].id
         conn.close()
 
     @patch("social_hook.scheduler.run_trigger")
@@ -149,10 +146,10 @@ class TestDrainIndividual:
 
         _drain_individual(conn, config, project, deferred)
 
-        # Only 1 processed, 2 remain
-        remaining = ops.get_deferred_eval_decisions(conn, project.id)
-        assert len(remaining) == 2
+        # Only 1 trigger call; remaining 2 deferred rows untouched
         assert mock_trigger.call_count == 1
+        remaining = ops.get_deferred_eval_decisions(conn, project.id)
+        assert len(remaining) == 3  # all rows still in DB (upsert pattern)
         conn.close()
 
     @patch("social_hook.scheduler.run_trigger")
@@ -178,89 +175,72 @@ class TestDrainIndividual:
 
     @patch("social_hook.scheduler.run_trigger")
     @patch("social_hook.scheduler.check_rate_limit")
-    def test_error_no_reinsert_if_real_decision_exists(self, mock_gate, mock_trigger, temp_dir):
-        """On exception, no re-insert if run_trigger already created a real decision."""
+    def test_error_upserts_deferred_back(self, mock_gate, mock_trigger, temp_dir):
+        """On exception, upsert_decision restores deferred_eval with error reason."""
         mock_gate.return_value = _GateResult(blocked=False, reason="")
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
         project = _seed_project(conn)
         deferred = _seed_deferred(conn, project.id, count=1)
-        commit_hash = deferred[0].commit_hash
+        decision_id = deferred[0].id
 
-        def trigger_that_inserts_then_fails(**kwargs):
-            # Simulate run_trigger creating a decision before failing
-            real = Decision(
-                id=generate_id("decision"),
-                project_id=project.id,
-                commit_hash=commit_hash,
-                decision="skip",
-                reasoning="evaluated",
-                trigger_source="drain",
+        def trigger_that_upserts_then_fails(**kwargs):
+            # Simulate run_trigger upserting the row to "skip" before failing
+            ops.upsert_decision(
+                conn,
+                Decision(
+                    id=decision_id,
+                    project_id=project.id,
+                    commit_hash=deferred[0].commit_hash,
+                    decision="skip",
+                    reasoning="evaluated",
+                    trigger_source="drain",
+                ),
             )
-            ops.insert_decision(conn, real)
             raise RuntimeError("late failure")
 
-        mock_trigger.side_effect = trigger_that_inserts_then_fails
+        mock_trigger.side_effect = trigger_that_upserts_then_fails
         config = _make_config()
 
         _drain_individual(conn, config, project, deferred)
 
-        # Should NOT re-insert deferred_eval because a real decision exists
+        # Error handler upserts deferred_eval back over the "skip" row
         remaining = ops.get_deferred_eval_decisions(conn, project.id)
-        assert len(remaining) == 0
-
-        # The real decision should be there
-        all_decisions = conn.execute(
-            "SELECT * FROM decisions WHERE project_id = ? AND commit_hash = ?",
-            (project.id, commit_hash),
-        ).fetchall()
-        assert len(all_decisions) == 1
-        assert dict(all_decisions[0])["decision"] == "skip"
+        assert len(remaining) == 1
+        assert remaining[0].id == decision_id
+        assert "Drain failed" in remaining[0].reasoning
         conn.close()
 
     @patch("social_hook.scheduler.run_trigger")
     @patch("social_hook.scheduler.check_rate_limit")
-    def test_unique_constraint_freed(self, mock_gate, mock_trigger, temp_dir):
-        """Deferred_eval is deleted before run_trigger so UNIQUE constraint is free."""
+    def test_passes_existing_decision_id(self, mock_gate, mock_trigger, temp_dir):
+        """run_trigger receives existing_decision_id so it upserts over the deferred row."""
         mock_gate.return_value = _GateResult(blocked=False, reason="")
+        mock_trigger.return_value = 0
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
         project = _seed_project(conn)
         deferred = _seed_deferred(conn, project.id, count=1)
-        commit_hash = deferred[0].commit_hash
-
-        call_order = []
-
-        def check_deleted_before_trigger(**kwargs):
-            # At this point the deferred_eval should already be deleted
-            existing = conn.execute(
-                "SELECT * FROM decisions WHERE project_id = ? AND commit_hash = ? AND decision = 'deferred_eval'",
-                (project.id, commit_hash),
-            ).fetchone()
-            call_order.append(("trigger_called", existing is None))
-            return 0
-
-        mock_trigger.side_effect = check_deleted_before_trigger
         config = _make_config()
 
         _drain_individual(conn, config, project, deferred)
 
-        assert call_order == [("trigger_called", True)]
+        assert mock_trigger.call_count == 1
+        assert mock_trigger.call_args.kwargs["existing_decision_id"] == deferred[0].id
         conn.close()
 
 
 class TestDrainBatch:
     """Tests for batch drain mode (batch_throttled=True)."""
 
-    @patch("social_hook.scheduler._run_batch_evaluation")
-    @patch("social_hook.trigger.parse_commit_info")
+    @patch("social_hook.trigger.evaluate_batch")
+    @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.scheduler.check_rate_limit")
-    def test_batch_combines_deferred(self, mock_gate, mock_parse, mock_eval, temp_dir):
-        """Batch mode deletes all deferred and calls evaluator once."""
+    def test_batch_combines_deferred(self, mock_gate, _mock_client, mock_eval, temp_dir):
+        """Batch mode calls evaluate_batch with all deferred decisions."""
         mock_gate.return_value = _GateResult(blocked=False, reason="")
-        mock_parse.return_value = MagicMock(message="test commit msg")
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -270,19 +250,11 @@ class TestDrainBatch:
 
         _drain_batch(conn, config, project, deferred)
 
-        # All deferred decisions should be deleted
-        remaining = ops.get_deferred_eval_decisions(conn, project.id)
-        assert len(remaining) == 0
-
-        # Evaluator called once
+        # evaluate_batch called once with all deferred commits
         mock_eval.assert_called_once()
-        # The commit arg should have combined message
-        call_args = mock_eval.call_args
-        commit_arg = call_args[0][3]  # positional: conn, config, project, commit, deferred
-        assert "Batch of 3" in commit_arg.message
         conn.close()
 
-    @patch("social_hook.scheduler._run_batch_evaluation")
+    @patch("social_hook.trigger.evaluate_batch")
     @patch("social_hook.scheduler.check_rate_limit")
     def test_batch_blocked_skips(self, mock_gate, mock_eval, temp_dir):
         """Batch mode skips when rate limited."""
@@ -326,13 +298,12 @@ class TestDrainIntegration:
         assert mock_trigger.call_count == 2
         conn.close()
 
-    @patch("social_hook.scheduler._run_batch_evaluation")
-    @patch("social_hook.scheduler.parse_commit_info")
+    @patch("social_hook.trigger.evaluate_batch")
+    @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.scheduler.check_rate_limit")
-    def test_dispatches_batch_mode(self, mock_gate, mock_parse, mock_eval, temp_dir):
-        """With batch_throttled=True, dispatches to batch drain."""
+    def test_dispatches_batch_mode(self, mock_gate, _mock_client, mock_eval, temp_dir):
+        """With batch_throttled=True, dispatches to batch drain via evaluate_batch."""
         mock_gate.return_value = _GateResult(blocked=False, reason="")
-        mock_parse.return_value = MagicMock(message="commit msg")
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)

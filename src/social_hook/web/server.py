@@ -15,9 +15,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import Body, FastAPI, Header, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -32,14 +32,42 @@ from social_hook.errors import ConfigError
 from social_hook.filesystem import get_config_path, get_db_path, get_env_path, get_narratives_path
 from social_hook.messaging.base import CallbackEvent, InboundMessage
 from social_hook.messaging.gateway import GatewayEnvelope, GatewayHub
-from social_hook.models import EDITABLE_STATUSES, PENDING_STATUSES, TERMINAL_STATUSES
-from social_hook.parsing import safe_json_loads
+from social_hook.models.enums import (
+    EDITABLE_STATUSES,
+    PENDING_STATUSES,
+    TERMINAL_STATUSES,
+    DecisionType,
+    PipelineStage,
+)
+from social_hook.parsing import check_unknown_keys, safe_json_loads
 
 logger = logging.getLogger(__name__)
 
 # Background task staleness thresholds
 _STALE_TASK_TIMEOUT_SECONDS = 600  # 10 min; longest expected task is ~5 min (LLM subprocess)
 _STALE_CHECK_INTERVAL_TICKS = 60  # every 60 bridge-loop ticks (60 × 0.5s = 30s)
+
+
+def _parse_episode_tags(decision) -> list | None:
+    """Parse episode_tags from a Decision, handling both list and JSON-string forms.
+
+    Returns a list (possibly empty), or None if the decision has no tags.
+    """
+    if decision is None:
+        return None
+    ep_tags = decision.episode_tags
+    if isinstance(ep_tags, str):
+        ep_tags = safe_json_loads(ep_tags, "decision.episode_tags", default=[])
+    return ep_tags or None
+
+
+def _parse_diagnostics_column(cycle_dict: dict) -> list[Any]:
+    """Parse the diagnostics JSON column on a cycle dict, returning a list."""
+    raw = cycle_dict.get("diagnostics")
+    parsed: list[Any] = safe_json_loads(raw, "cycle.diagnostics", default=[]) if raw else []
+    cycle_dict["diagnostics"] = parsed
+    return parsed
+
 
 # ---------------------------------------------------------------------------
 # WebSocket gateway
@@ -56,6 +84,62 @@ async def lifespan(app_instance: FastAPI):
     db_path = get_db_path()
     init_database(db_path)
     _cleanup_stale_tasks(db_path)
+
+    # Unified logging pipeline — replaces ensure_error_feed()
+    from social_hook.error_feed import error_feed
+    from social_hook.logging import setup_logging
+
+    try:
+        config = _get_config()
+        error_feed.set_db_path(str(db_path))
+        # Build notification sender
+        sender: Callable | None = None
+        try:
+            from social_hook.notifications import send_notification
+
+            # NotificationSink already formats as "[SEVERITY] (source) message"
+            def _send_notification(_sev: str, msg: str) -> None:
+                send_notification(config, msg)
+
+            sender = _send_notification
+        except Exception:
+            pass
+        setup_logging("web", error_feed=error_feed, notification_sender=sender, console=False)
+    except Exception:
+        logger.debug("Logging init failed (non-fatal)", exc_info=True)
+
+    # Wire on_persist callback for WebSocket live updates (fire-and-forget).
+    # Bounded to 10 concurrent threads to avoid storms.
+    _persist_semaphore = threading.Semaphore(10)
+
+    def _on_error_persisted(error_id, severity, component):
+        if not _persist_semaphore.acquire(blocking=False):
+            return  # drop under storm conditions
+
+        def _emit():
+            try:
+                conn = sqlite3.connect(str(db_path), timeout=2)
+                conn.row_factory = sqlite3.Row
+                try:
+                    ops.emit_data_event(
+                        conn,
+                        "system_error",
+                        "created",
+                        error_id,
+                        extra={"severity": severity, "component": component},
+                    )
+                finally:
+                    conn.close()
+            except Exception:
+                pass  # fire-and-forget: never block logging
+            finally:
+                _persist_semaphore.release()
+
+        t = threading.Thread(target=_emit, daemon=True)
+        t.start()
+
+    error_feed.set_on_persist(_on_error_persisted)
+
     task = asyncio.create_task(_event_bridge_loop())
     yield
     task.cancel()
@@ -90,6 +174,11 @@ def get_branding():
 
 _config: Config | None = None
 _adapter = None  # Lazy WebAdapter singleton
+
+# OAuth 2.0 PKCE state store — maps (platform, state) to (verifier, redirect_uri, created_at)
+# Entries older than _OAUTH_STATE_TTL_SECONDS are cleaned up on each new authorize request.
+_OAUTH_STATE_TTL_SECONDS = 600  # 10 minutes
+_oauth_pending: dict[tuple[str, str], tuple[str, str, float]] = {}
 
 
 def _get_config() -> Config:
@@ -156,6 +245,7 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
 
     After a restart, daemon threads from the previous process are dead,
     so any task still marked 'running' will never complete.
+    Also resets any decisions stuck in transient states (e.g. 'processing') back to 'imported'.
     No data events are emitted — no WebSocket clients exist at startup.
 
     Returns the number of tasks cleaned up.
@@ -173,7 +263,21 @@ def _cleanup_stale_tasks(db_path: Path) -> int:
         count = cursor.rowcount
         if count:
             logger.info("Marked %d stale background task(s) as failed on startup", count)
-        return count
+
+        # Reset decisions stuck in transient states (retrigger/batch was interrupted)
+
+        transient = (DecisionType.PROCESSING.value,)
+        eval_cursor = conn.execute(
+            f"UPDATE decisions SET decision = '{DecisionType.IMPORTED.value}', reasoning = ''"
+            f" WHERE decision IN ({','.join('?' for _ in transient)})",
+            transient,
+        )
+        conn.commit()
+        eval_count = eval_cursor.rowcount
+        if eval_count:
+            logger.info("Reset %d transient decision(s) back to 'imported' on startup", eval_count)
+
+        return count + eval_count
     finally:
         conn.close()
 
@@ -291,13 +395,26 @@ def _run_background_task(
             try:
                 import traceback
 
+                error_msg = traceback.format_exc()[-500:]
                 conn2.execute(
                     "UPDATE background_tasks SET status='failed', error=?,"
                     " updated_at=datetime('now') WHERE id=?",
-                    (traceback.format_exc()[-500:], task_id),
+                    (error_msg, task_id),
                 )
                 conn2.commit()
                 ops.emit_data_event(conn2, "task", "failed", task_id, project_id)
+                # Emit to error feed for visibility in System > Errors
+                try:
+                    from social_hook.error_feed import ErrorSeverity, error_feed
+
+                    error_feed.emit(
+                        ErrorSeverity.ERROR,
+                        f"Background task '{task_type}' failed: {error_msg[:200]}",
+                        source="background_task",
+                        context={"task_id": task_id, "ref_id": ref_id, "project_id": project_id},
+                    )
+                except Exception:
+                    pass  # error feed itself may not be initialized
             finally:
                 conn2.close()
 
@@ -431,16 +548,43 @@ async def api_command(body: CommandRequest, x_session_id: str = Header("web")):
     return {"events": events}
 
 
+_LLM_CALLBACK_ACTIONS = {"media_gen_spec"}
+
+
+def _dispatch_chat_message(msg: InboundMessage, adapter, config, chat_id: str) -> str:
+    """Dispatch a chat message to a background task. Returns task_id."""
+    from social_hook.bot.commands import get_chat_draft_context, handle_message
+    from social_hook.filesystem import generate_id
+
+    ctx = get_chat_draft_context(chat_id)
+    project_id = ctx[1] if ctx else ""
+
+    _task_holder: list[str | None] = [None]
+
+    def _blocking():
+        handle_message(msg, adapter, config, task_id=_task_holder[0])
+
+    _task_holder[0] = _run_background_task(
+        "chat_message",
+        ref_id=f"msg-{generate_id('msg')}",
+        project_id=project_id,
+        fn=_blocking,
+    )
+    return _task_holder[0]  # type: ignore[return-value]  # always set by _run_background_task
+
+
 @app.post("/api/callback")
 async def api_callback(body: CallbackRequest, x_session_id: str = Header("web")):
-    """Execute a button callback via the web adapter."""
+    """Execute a button callback via the web adapter.
+
+    LLM-triggering actions (media_gen_spec) are dispatched to background tasks.
+    Non-LLM actions (approve, reject, schedule, etc.) run synchronously.
+    """
     from social_hook.bot.buttons import handle_callback
 
     adapter = _get_adapter(scope_id=x_session_id)
     config = _get_config()
     chat_id = f"web:{x_session_id}"
-
-    before_id = _max_event_id()
 
     event = CallbackEvent(
         chat_id=chat_id,
@@ -448,38 +592,67 @@ async def api_callback(body: CallbackRequest, x_session_id: str = Header("web"))
         action=body.action,
         payload=body.payload,
     )
-    # Run in thread to avoid blocking the event loop and to allow
-    # sync libraries (e.g. Playwright) that detect a running asyncio loop.
-    await asyncio.to_thread(handle_callback, event, adapter, config)
 
-    cb_conn = _get_conn()
-    try:
-        ops.emit_data_event(cb_conn, "draft", "updated", body.payload)
-    finally:
-        cb_conn.close()
+    if body.action in _LLM_CALLBACK_ACTIONS:
+        # Background task path for LLM callbacks
+        from social_hook.filesystem import generate_id
 
-    events = _get_events_since(before_id, session_id=x_session_id)
-    return {"events": events}
+        _task_holder: list[str | None] = [None]
+
+        def _blocking_callback():
+            handle_callback(event, adapter, config, task_id=_task_holder[0])
+            # emit_data_event inside background task (after LLM completes)
+            cb_conn = _get_conn()
+            try:
+                ops.emit_data_event(cb_conn, "draft", "updated", body.payload)
+            finally:
+                cb_conn.close()
+
+        _task_holder[0] = _run_background_task(
+            "chat_callback",
+            ref_id=f"cb-{generate_id('cb')}",
+            project_id="",
+            fn=_blocking_callback,
+        )
+        return JSONResponse(
+            status_code=202,
+            content={"task_id": _task_holder[0], "status": "processing"},
+        )
+    else:
+        # Synchronous path for non-LLM callbacks (approve, reject, schedule, etc.)
+        before_id = _max_event_id()
+        await asyncio.to_thread(handle_callback, event, adapter, config)
+
+        cb_conn = _get_conn()
+        try:
+            ops.emit_data_event(cb_conn, "draft", "updated", body.payload)
+        finally:
+            cb_conn.close()
+
+        events = _get_events_since(before_id, session_id=x_session_id)
+        return {"events": events}
 
 
 @app.post("/api/message")
 async def api_message(body: MessageRequest, x_session_id: str = Header("web")):
-    """Send a free-text message via the web adapter."""
-    from social_hook.bot.commands import handle_message
+    """Send a free-text message via the web adapter.
 
+    All messages are dispatched to a background task (Gatekeeper and Expert
+    make LLM calls that take 2-60s). Returns 202 with task_id.
+    """
     adapter = _get_adapter(scope_id=x_session_id)
     config = _get_config()
     chat_id = f"web:{x_session_id}"
 
-    # Persist user event, run handler synchronously, return all events together.
-    before_id = _max_event_id()
+    # Persist user event synchronously (appears in chat immediately)
     adapter._insert_event("user", {"text": body.text})
 
     msg = InboundMessage(chat_id=chat_id, text=body.text, message_id="web_0")
-    await asyncio.to_thread(handle_message, msg, adapter, config)
-
-    events = _get_events_since(before_id, session_id=x_session_id)
-    return {"events": events}
+    task_id = _dispatch_chat_message(msg, adapter, config, chat_id)
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
 
 
 def _max_event_id() -> int:
@@ -515,13 +688,12 @@ async def api_clear_events(x_session_id: str = Header("web")):
 
 
 @app.get("/api/events")
-async def api_events(lastId: int = Query(0)):
+async def api_events(lastId: int = Query(0), max_empty: int = Query(10)):
     """Server-Sent Events stream polling web_events."""
 
     def event_stream():
         current_id = lastId
         empty_polls = 0
-        max_empty = 10  # ~10 seconds of no data -> close stream
 
         while empty_polls < max_empty:
             events = _get_events_since(current_id)
@@ -583,7 +755,11 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
         adapter = _get_adapter(scope_id=session_id)
         chat_id = f"web:{session_id}"
         adapter._insert_event("user", {"text": text})
-        await _hub.send(client_id, GatewayEnvelope(type="ack", reply_to=envelope.id, payload={}))
+        # Ack is deferred for send_message (needs task_id). Sent early for other commands.
+        if command_type != "send_message":
+            await _hub.send(
+                client_id, GatewayEnvelope(type="ack", reply_to=envelope.id, payload={})
+            )
         try:
             if command_type == "send_command":
                 from social_hook.bot.commands import handle_command
@@ -601,10 +777,17 @@ async def _handle_ws_envelope(envelope: GatewayEnvelope, client_id: str) -> None
                 )
                 await asyncio.to_thread(handle_callback, event, adapter, _get_config())
             elif command_type == "send_message":
-                from social_hook.bot.commands import handle_message
-
                 msg = InboundMessage(chat_id=chat_id, text=text, message_id="web_0")
-                await asyncio.to_thread(handle_message, msg, adapter, _get_config())
+                _ws_task_id = _dispatch_chat_message(msg, adapter, _get_config(), chat_id)
+                # Send deferred ack with task_id
+                await _hub.send(
+                    client_id,
+                    GatewayEnvelope(
+                        type="ack",
+                        reply_to=envelope.id,
+                        payload={"task_id": _ws_task_id},
+                    ),
+                )
             else:
                 logger.warning("Unknown WS command type: %s from %s", command_type, client_id)
         except Exception as e:
@@ -710,8 +893,9 @@ async def api_drafts(
     project_id: str | None = None,
     decision_id: str | None = None,
     commit: str | None = None,
+    tag: str | None = None,
 ):
-    """List drafts, optionally filtered by status, project, decision, or commit."""
+    """List drafts, optionally filtered by status, project, decision, commit, or tag."""
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -722,6 +906,7 @@ async def api_drafts(
             project_id=project_id,
             decision_id=decision_id,
             commit_hash=commit,
+            tag=tag,
         )
         drafts = [d.to_dict() for d in draft_models]
         if pending:
@@ -790,7 +975,7 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
 
         # Audit: create DraftChange record
         from social_hook.filesystem import generate_id
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         ops.insert_draft_change(
             conn,
@@ -821,7 +1006,7 @@ async def api_upload_draft_media(draft_id: str, file: UploadFile):
     Accepts multipart/form-data with a 'file' field.
     """
     from social_hook.filesystem import generate_id, get_base_path
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     # Validate extension
     ext = ""
@@ -921,7 +1106,7 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
             assemble_spec_generation_prompt,
             build_spec_generation_tool,
         )
-        from social_hook.models import DraftChange
+        from social_hook.models.core import DraftChange
 
         config = load_full_config()
         prompt = assemble_spec_generation_prompt(
@@ -995,6 +1180,75 @@ async def api_resend_draft_notification(draft_id: str):
         raise HTTPException(status_code=500, detail=str(e)) from None
 
 
+@app.post("/api/drafts/{draft_id}/connect")
+async def api_connect_draft(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Connect a preview-mode draft to an account.
+
+    Clears preview_mode and optionally persists the target-to-account link.
+
+    Body:
+        account: Account name to connect
+    """
+    from social_hook.config.yaml import load_full_config
+    from social_hook.errors import ConfigError
+    from social_hook.parsing import check_unknown_keys
+
+    try:
+        check_unknown_keys(body, {"account"}, "connect_draft", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    account_name = body.get("account")
+    if not account_name:
+        raise HTTPException(status_code=400, detail="Missing 'account' in body")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if not draft.preview_mode:
+            raise HTTPException(status_code=400, detail="Draft is not in preview mode")
+        if draft.status in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot connect draft with status '{draft.status}'",
+            )
+
+        config = load_full_config()
+        acct = config.accounts.get(account_name)
+        if not acct:
+            raise HTTPException(status_code=400, detail=f"Account '{account_name}' not found")
+        if acct.platform != draft.platform:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Account platform '{acct.platform}' does not match draft platform '{draft.platform}'",
+            )
+
+        ops.clear_draft_preview_mode(conn, draft_id)
+
+        # Persist target -> account link
+        target_name = draft.target_id
+        if target_name and target_name in config.targets:
+            from social_hook.config.yaml import save_config
+
+            save_config(
+                {"targets": {target_name: {"account": account_name}}},
+                config_path=get_config_path(),
+                deep_merge=True,
+            )
+
+        ops.emit_data_event(conn, "draft", "connected", draft_id, draft.project_id)
+        return {
+            "status": "connected",
+            "draft_id": draft_id,
+            "account": account_name,
+            "platform": draft.platform,
+        }
+    finally:
+        conn.close()
+
+
 @app.post("/api/drafts/{draft_id}/promote")
 async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
     """Promote a preview draft to a real platform.
@@ -1014,8 +1268,8 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
         draft = ops.get_draft(conn, draft_id)
         if not draft:
             raise HTTPException(status_code=404, detail="Draft not found")
-        if draft.platform != "preview":
-            raise HTTPException(status_code=400, detail="Only preview drafts can be promoted")
+        if not draft.preview_mode:
+            raise HTTPException(status_code=400, detail="Only preview-mode drafts can be promoted")
         if draft.status in TERMINAL_STATUSES:
             raise HTTPException(
                 status_code=400,
@@ -1040,7 +1294,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
 
     from social_hook.compat import evaluation_from_decision
     from social_hook.config.project import ProjectConfig, load_project_config
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     try:
         project_config = load_project_config(project.repo_path)
@@ -1079,7 +1333,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
                 commit_timestamp=getattr(commit, "timestamp", None),
                 parent_timestamp=getattr(commit, "parent_timestamp", None),
             )
-            db.emit_data_event("pipeline", "promoting", draft_id[:8], project.id)
+            db.emit_data_event("pipeline", PipelineStage.PROMOTING, draft_id[:8], project.id)
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1091,7 +1345,6 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform],
-                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
@@ -1245,47 +1498,59 @@ async def api_project_decisions(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     branch: str | None = Query(None),
+    sort_by: str = Query("created_at"),
+    sort_dir: str = Query("desc"),
+    decision: str | None = Query(None),
+    classification: str | None = Query(None),
 ):
-    """Get decision history for a project with pagination."""
+    """Get decision history for a project with pagination, sorting, and filtering."""
+    # Validate sort params to prevent SQL injection
+    allowed_sort = {"created_at", "decision", "commit_hash", "branch"}
+    if sort_by not in allowed_sort:
+        raise HTTPException(
+            status_code=400, detail=f"sort_by must be one of {sorted(allowed_sort)}"
+        )
+    allowed_dir = {"asc", "desc"}
+    if sort_dir not in allowed_dir:
+        raise HTTPException(status_code=400, detail="sort_dir must be 'asc' or 'desc'")
+
     conn = _get_conn()
     try:
         _get_project_or_404(conn, project_id)
 
+        # Build WHERE clause
+        conditions = ["d.project_id = ?"]
+        params: list[Any] = [project_id]
+
         if branch is not None:
-            rows = conn.execute(
-                """
+            conditions.append("d.branch = ?")
+            params.append(branch)
+        if decision is not None:
+            conditions.append("d.decision = ?")
+            params.append(decision)
+
+        where_clause = " AND ".join(conditions)
+        order_clause = (
+            f"CASE WHEN d.decision = 'processing' THEN 0 ELSE 1 END ASC, d.{sort_by} {sort_dir}"
+        )
+
+        rows = conn.execute(
+            f"""
                 SELECT d.*, COUNT(dr.id) as draft_count
                 FROM decisions d
                 LEFT JOIN drafts dr ON dr.decision_id = d.id
-                WHERE d.project_id = ? AND d.branch = ?
+                WHERE {where_clause}
                 GROUP BY d.id
-                ORDER BY d.created_at DESC
+                ORDER BY {order_clause}
                 LIMIT ? OFFSET ?
             """,
-                (project_id, branch, limit, offset),
-            ).fetchall()
+            (*params, limit, offset),
+        ).fetchall()
 
-            total = conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE project_id = ? AND branch = ?",
-                (project_id, branch),
-            ).fetchone()[0]
-        else:
-            rows = conn.execute(
-                """
-                SELECT d.*, COUNT(dr.id) as draft_count
-                FROM decisions d
-                LEFT JOIN drafts dr ON dr.decision_id = d.id
-                WHERE d.project_id = ?
-                GROUP BY d.id
-                ORDER BY d.created_at DESC
-                LIMIT ? OFFSET ?
-            """,
-                (project_id, limit, offset),
-            ).fetchall()
-
-            total = conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE project_id = ?", (project_id,)
-            ).fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM decisions WHERE {' AND '.join(c.replace('d.', '') for c in conditions)}",
+            params,
+        ).fetchone()[0]
 
         decisions_list = [dict(r) for r in rows]
 
@@ -1302,6 +1567,43 @@ async def api_project_decisions(
                 drafts_by_decision.setdefault(dr["decision_id"], []).append(dr["id"])
             for d in decisions_list:
                 d["draft_ids"] = drafts_by_decision.get(d["id"], [])
+
+        # Enrich with classification from stage 1 analyzer (via evaluation_cycles)
+        commit_hashes = [d["commit_hash"] for d in decisions_list if d.get("commit_hash")]
+        if commit_hashes:
+            ch_placeholders = ",".join("?" * len(commit_hashes))
+            cycle_rows = conn.execute(
+                f"""SELECT trigger_ref, commit_analysis_json
+                    FROM evaluation_cycles
+                    WHERE project_id = ? AND trigger_type = 'commit'
+                    AND trigger_ref IN ({ch_placeholders})
+                    AND commit_analysis_json IS NOT NULL""",
+                [project_id, *commit_hashes],
+            ).fetchall()
+            classification_by_hash: dict[str, str] = {}
+            for cr in cycle_rows:
+                analysis_data = safe_json_loads(
+                    cr["commit_analysis_json"],
+                    "cycle_commit_analysis_json",
+                    default={},
+                )
+                ca = analysis_data.get("commit_analysis", {})
+                cls_val = ca.get("classification")
+                if cls_val:
+                    classification_by_hash[cr["trigger_ref"]] = cls_val
+            for d in decisions_list:
+                d["classification"] = classification_by_hash.get(d.get("commit_hash", ""))
+
+        # Post-query classification filter (classification is enriched from evaluation_cycles,
+        # not a DB column on decisions). NOTE: this breaks pagination when active — the returned
+        # page may have fewer than `limit` items and `total` only reflects the current page.
+        # Acceptable for now since classification filter is a convenience, not precision tool.
+        # Proper fix: JOIN evaluation_cycles in the main query.
+        if classification is not None:
+            decisions_list = [
+                d for d in decisions_list if d.get("classification") == classification
+            ]
+            total = len(decisions_list)
 
         return {"decisions": decisions_list, "total": total}
     finally:
@@ -1321,14 +1623,37 @@ async def api_decision_branches(project_id: str):
 
 
 @app.get("/api/projects/{project_id}/import-preview")
-async def api_import_preview(project_id: str, branch: str | None = Query(None)):
+async def api_import_preview(
+    project_id: str,
+    branch: str | None = Query(None),
+    limit: int | None = Query(None, ge=1),
+):
     """Preview how many commits can be imported for a project."""
     conn = _get_conn()
     try:
         project = _get_project_or_404(conn, project_id)
         from social_hook.import_commits import get_import_preview
 
-        preview = get_import_preview(conn, project["id"], project["repo_path"], branch)
+        preview: dict[str, Any] = get_import_preview(
+            conn, project["id"], project["repo_path"], branch, limit=limit
+        )
+
+        # Include git repo branches so the import modal can show them
+        # (decisionBranches is empty on a fresh project)
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["git", "-C", project["repo_path"], "branch", "--format=%(refname:short)"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            git_branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+        except Exception:
+            git_branches = []
+
+        preview["branches"] = git_branches
         return preview
     finally:
         conn.close()
@@ -1340,8 +1665,10 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
 
     Body:
         branch: Target branch name (optional — omit to import from default branch)
+        limit: Maximum number of recent commits to import (optional — omit for all)
     """
     branch = body.get("branch")
+    limit = body.get("limit")
 
     conn = _get_conn()
     try:
@@ -1365,13 +1692,13 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
 
         conn2 = _get_conn()
         try:
-            return import_project_commits(conn2, pid, repo_path, branch)
+            return import_project_commits(conn2, pid, repo_path, branch, limit=limit)
         finally:
             conn2.close()
 
     task_id = _run_background_task(
         "import_commits",
-        ref_id=project_id,
+        ref_id="__import__",
         project_id=pid,
         fn=_blocking_import,
     )
@@ -1431,7 +1758,7 @@ async def api_summary_draft(project_id: str):
 
                 project_config = load_project_config(repo_path)
                 client = create_client(config.models.evaluator, config)
-                ops.emit_data_event(conn2, "pipeline", "discovering", pid, pid)
+                ops.emit_data_event(conn2, "pipeline", PipelineStage.DISCOVERING, pid, pid)
                 disc_summary, disc_files, disc_file_summaries, disc_prompt_docs = discover_project(
                     client=client,
                     repo_path=repo_path,
@@ -1635,7 +1962,9 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit_timestamp=commit.timestamp,
                 parent_timestamp=commit.parent_timestamp,
             )
-            db.emit_data_event("pipeline", "drafting", decision.commit_hash[:8], project.id)
+            db.emit_data_event(
+                "pipeline", PipelineStage.DRAFTING, decision.commit_hash[:8], project.id
+            )
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1647,7 +1976,6 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform] if platform else None,
-                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
@@ -1719,10 +2047,12 @@ async def api_delete_decision(decision_id: str):
 
 @app.post("/api/decisions/{decision_id}/retrigger")
 async def api_retrigger_decision(decision_id: str):
-    """Delete a decision and re-evaluate the commit from scratch.
+    """Re-evaluate a commit in-place, reusing the same decision ID.
 
-    Re-runs the full evaluator pipeline, which may produce a different
-    decision, angle, episode type, or skip the commit entirely.
+    Cleans up old drafts, marks the decision as 'processing', then re-runs
+    the full evaluator pipeline via background task. The decision row stays
+    visible in the UI throughout (no delete/re-create gap).
+    Returns 202 with task_id for frontend tracking via useBackgroundTasks.
     """
     conn = _get_conn()
     try:
@@ -1736,24 +2066,247 @@ async def api_retrigger_decision(decision_id: str):
 
         commit_hash = decision.commit_hash
         repo_path = project.repo_path
+        project_id = decision.project_id
+        decision_branch = decision.branch
 
-        ops.delete_decision(conn, decision_id)
-        ops.emit_data_event(conn, "decision", "deleted", decision_id, decision.project_id)
+        # Clean up old drafts (no-op for imported commits with no drafts)
+        ops.delete_drafts_for_decision(conn, decision_id)
+        # Mark as processing — row stays visible in the UI.
+        # The pipeline will update to the appropriate status (deferred_eval, draft, skip, etc.)
+
+        conn.execute(
+            "UPDATE decisions SET decision = ? WHERE id = ?",
+            (DecisionType.PROCESSING.value, decision_id),
+        )
+        conn.commit()
+        ops.emit_data_event(conn, "decision", "updated", decision_id, project_id)
     finally:
         conn.close()
+
+    _retrigger_task_id: list[str | None] = [None]
 
     def _blocking_retrigger():
         from social_hook.trigger import run_trigger
 
-        return run_trigger(
+        exit_code = run_trigger(
             commit_hash=commit_hash,
             repo_path=repo_path,
             trigger_source="manual",
+            existing_decision_id=decision_id,
+            current_branch=decision_branch,
+            task_id=_retrigger_task_id[0],
         )
+        return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
-    exit_code = await asyncio.to_thread(_blocking_retrigger)
+    task_id = _run_background_task(
+        "retrigger",
+        ref_id=f"retrigger-{decision_id}",
+        project_id=project_id,
+        fn=_blocking_retrigger,
+    )
+    _retrigger_task_id[0] = task_id
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
 
-    return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
+
+@app.post("/api/decisions/batch-evaluate")
+async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
+    """Batch-evaluate multiple imported/deferred_eval decisions together.
+
+    Body:
+        decision_ids: List of decision IDs to evaluate as a batch
+    """
+    check_unknown_keys(body, {"decision_ids"}, "batch_evaluate", strict=True)
+    decision_ids = body.get("decision_ids", [])
+    if not decision_ids or not isinstance(decision_ids, list):
+        raise HTTPException(status_code=400, detail="decision_ids must be a non-empty list")
+
+    conn = _get_conn()
+    try:
+        decisions = []
+        for did in decision_ids:
+            d = ops.get_decision(conn, did)
+            if not d:
+                raise HTTPException(status_code=404, detail=f"Decision not found: {did}")
+            decisions.append(d)
+
+        # All must be same project
+        project_ids = {d.project_id for d in decisions}
+        if len(project_ids) > 1:
+            raise HTTPException(
+                status_code=400, detail="All decisions must belong to the same project"
+            )
+
+        # Validate statuses
+        valid_statuses = {DecisionType.IMPORTED.value, DecisionType.DEFERRED_EVAL.value}
+        for d in decisions:
+            if d.decision == DecisionType.PROCESSING.value:
+                raise HTTPException(
+                    status_code=409, detail=f"Decision {d.id} is already processing"
+                )
+            if d.decision not in valid_statuses:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Decision {d.id} has status '{d.decision}', expected imported or deferred_eval",
+                )
+            # deferred_eval with batch_id means already part of a batch
+            if d.decision == DecisionType.DEFERRED_EVAL.value and d.batch_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Decision {d.id} already belongs to batch {d.batch_id}",
+                )
+
+        project = ops.get_project(conn, decisions[0].project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        project_id = project.id
+        repo_path = project.repo_path
+
+        # Save original statuses for error recovery
+        original_statuses = {d.id: d.decision for d in decisions}
+
+        # Clean up old drafts for each decision
+        for did in decision_ids:
+            ops.delete_drafts_for_decision(conn, did)
+
+        # Pre-mark as processing synchronously
+        for did in decision_ids:
+            conn.execute(
+                "UPDATE decisions SET decision = ? WHERE id = ?",
+                (DecisionType.PROCESSING.value, did),
+            )
+        conn.commit()
+        for did in decision_ids:
+            ops.emit_data_event(conn, "decision", "updated", did, project_id)
+    finally:
+        conn.close()
+
+    _task_id_holder: list[str | None] = [None]
+
+    def _blocking_batch_evaluate():
+        import sqlite3 as _sqlite3
+
+        from social_hook.config.project import ProjectConfig, load_project_config
+        from social_hook.config.yaml import load_full_config
+        from social_hook.errors import ConfigError
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.factory import create_client
+        from social_hook.llm.prompts import assemble_evaluator_context
+        from social_hook.trigger import TriggerContext, evaluate_batch, parse_commit_info
+
+        conn2 = _sqlite3.connect(str(get_db_path()))
+        conn2.execute("PRAGMA busy_timeout = 5000")
+        conn2.row_factory = _sqlite3.Row
+        db = DryRunContext(conn2, dry_run=False)
+
+        try:
+            config = load_full_config()
+            proj = ops.get_project(conn2, project_id)
+            if not proj:
+                raise RuntimeError(f"Project {project_id} not found")
+
+            try:
+                project_config = load_project_config(repo_path)
+            except ConfigError:
+                project_config = ProjectConfig(repo_path=repo_path)
+
+            # Use last decision as trigger (evaluate_batch convention)
+            last_decision = decisions[-1]
+            commit = parse_commit_info(last_decision.commit_hash, repo_path)
+            context = assemble_evaluator_context(db, project_id, project_config)
+
+            # Ensure project has a brief (runs discovery if missing)
+            from social_hook.trigger import ensure_project_brief
+
+            ensure_project_brief(
+                config=config,
+                project_config=project_config,
+                conn=conn2,
+                db=db,
+                project=proj,
+                context=context,
+                entity_id=last_decision.commit_hash[:8],
+            )
+
+            evaluator_client = create_client(config.models.evaluator, config)
+
+            ctx = TriggerContext(
+                config=config,
+                conn=conn2,
+                db=db,
+                project=proj,
+                commit=commit,
+                project_config=project_config,
+                current_branch=last_decision.branch,
+                dry_run=False,
+                verbose=False,
+                show_prompt=False,
+                existing_decision_id=last_decision.id,
+                task_id=_task_id_holder[0],
+            )
+
+            # Re-fetch decisions from fresh connection as Decision objects
+            batch_decisions = []
+            for did in decision_ids:
+                d = ops.get_decision(conn2, did)
+                if d:
+                    batch_decisions.append(d)
+
+            # Separate trigger (last) from deferred (the rest).
+            # evaluate_batch adds trigger_commit_hash to the hash list,
+            # so deferred_commits must NOT include the trigger to avoid duplication.
+            # The trigger decision's existing ID is passed so _run_targets_path
+            # reuses the row instead of creating a new one (UNIQUE constraint).
+            trigger_decision = batch_decisions[-1]
+            deferred_decisions = batch_decisions[:-1]
+            trigger_hash = trigger_decision.commit_hash
+
+            # Update TriggerContext with the trigger commit's info
+            commit = parse_commit_info(trigger_hash, repo_path)
+            ctx.commit = commit
+            ctx.existing_decision_id = trigger_decision.id
+            ctx.current_branch = trigger_decision.branch
+
+            result = evaluate_batch(
+                ctx=ctx,
+                deferred_commits=deferred_decisions,
+                trigger_commit_hash=trigger_hash,
+                context=context,
+                evaluator_client=evaluator_client,
+            )
+
+            if result != 0:
+                raise RuntimeError(f"evaluate_batch returned {result}")
+
+            return {"status": "evaluated", "count": len(decision_ids)}
+        except Exception:
+            # Error recovery: restore original statuses with TOCTOU guard
+            for did, orig_status in original_statuses.items():
+                conn2.execute(
+                    "UPDATE decisions SET decision = ? WHERE id = ? AND decision = ?",
+                    (orig_status, did, DecisionType.PROCESSING.value),
+                )
+            conn2.commit()
+            for did in decision_ids:
+                ops.emit_data_event(conn2, "decision", "updated", did, project_id)
+            raise
+        finally:
+            conn2.close()
+
+    task_id = _run_background_task(
+        "batch_evaluate",
+        ref_id="batch-evaluate",
+        project_id=project_id,
+        fn=_blocking_batch_evaluate,
+    )
+    _task_id_holder[0] = task_id
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
 
 
 @app.post("/api/decisions/{decision_id}/rewind")
@@ -1813,7 +2366,7 @@ async def api_enabled_platforms():
     for name, pcfg in config.platforms.items():
         if pcfg.enabled:
             enabled[name] = {"priority": pcfg.priority, "type": pcfg.type}
-    real_count = sum(1 for n in enabled if n != "preview")
+    real_count = len(enabled)
     return {"platforms": enabled, "count": len(enabled), "real_count": real_count}
 
 
@@ -1858,7 +2411,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
     except ConfigError:
         project_config = ProjectConfig(repo_path=project.repo_path)
 
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     combined_summary = "\n".join(f"- {d.commit_message or d.commit_hash[:8]}" for d in decisions)
     commit = CommitInfo(
@@ -1890,7 +2443,9 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 project.id,
                 project_config,
             )
-            db.emit_data_event("pipeline", "drafting", anchor.commit_hash[:8], project.id)
+            db.emit_data_event(
+                "pipeline", PipelineStage.DRAFTING, anchor.commit_hash[:8], project.id
+            )
             results = draft_for_platforms(
                 config,
                 conn2,
@@ -1901,7 +2456,6 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 context=context,
                 commit=commit,
                 project_config=project_config,
-                skip_content_filter=True,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
@@ -2082,8 +2636,12 @@ async def api_tasks(
                     if r["result"]
                     else None,
                     "error": r["error"],
-                    "created_at": r["created_at"],
-                    "updated_at": r["updated_at"],
+                    "created_at": (r["created_at"] + "Z")
+                    if r["created_at"] and not r["created_at"].endswith("Z")
+                    else r["created_at"],
+                    "updated_at": (r["updated_at"] + "Z")
+                    if r["updated_at"] and not r["updated_at"].endswith("Z")
+                    else r["updated_at"],
                 }
                 for r in rows
             ]
@@ -2153,7 +2711,7 @@ async def api_create_arc(project_id: str, body: ArcCreate):
 async def api_update_arc(project_id: str, arc_id: str, body: ArcUpdate):
     """Update a narrative arc (status, notes)."""
     from social_hook.errors import MaxArcsError
-    from social_hook.models import ArcStatus
+    from social_hook.models.enums import ArcStatus
     from social_hook.narrative.arcs import resume_arc, update_arc
 
     conn = _get_conn()
@@ -2310,6 +2868,197 @@ async def api_update_env(body: EnvUpdate):
 
     _invalidate_config()
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# OAuth 2.0 PKCE endpoints — multi-platform
+# ---------------------------------------------------------------------------
+# NOTE: The callback URL (http://localhost:<port>/api/oauth/{platform}/callback)
+# must be registered in the platform's developer portal as a Redirect URI.
+
+
+def _cleanup_expired_oauth_states() -> None:
+    """Remove PKCE state entries older than _OAUTH_STATE_TTL_SECONDS."""
+    now = time.time()
+    expired = [k for k, (_, _, t) in _oauth_pending.items() if now - t > _OAUTH_STATE_TTL_SECONDS]
+    for k in expired:
+        del _oauth_pending[k]
+
+
+def _get_oauth_credentials(platform: str) -> tuple[str, str]:
+    """Read {PLATFORM}_CLIENT_ID and {PLATFORM}_CLIENT_SECRET from .env / environment.
+
+    Returns:
+        (client_id, client_secret)
+
+    Raises:
+        HTTPException 400 if client_id is missing.
+    """
+    from social_hook.config.env import load_env
+
+    env = load_env()
+    prefix = platform.upper()
+    client_id = env.get(f"{prefix}_CLIENT_ID", "")
+    client_secret = env.get(f"{prefix}_CLIENT_SECRET", "")
+    if not client_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{prefix}_CLIENT_ID is not configured. Set it in Settings > API Keys first.",
+        )
+    return client_id, client_secret
+
+
+def _validate_oauth_platform(platform: str) -> None:
+    """Raise HTTPException 400 if platform is not in OAUTH_PLATFORMS."""
+    from social_hook.setup.oauth import OAUTH_PLATFORMS
+
+    if platform not in OAUTH_PLATFORMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown OAuth platform: '{platform}'. Supported: {', '.join(sorted(OAUTH_PLATFORMS))}",
+        )
+
+
+@app.get("/api/oauth/{platform}/authorize")
+async def api_oauth_authorize(platform: str, request: Request):
+    """Initiate OAuth 2.0 PKCE flow for any supported platform.
+
+    Generates a PKCE verifier/challenge and state, stores them server-side,
+    builds the authorization URL, and returns it as JSON.
+    """
+    import secrets as _secrets
+
+    from social_hook.oauth_pkce import generate_pkce
+    from social_hook.setup.oauth import _build_auth_url
+
+    _validate_oauth_platform(platform)
+    _cleanup_expired_oauth_states()
+
+    client_id, _client_secret = _get_oauth_credentials(platform)
+    code_verifier, code_challenge = generate_pkce()
+    state = _secrets.token_urlsafe(32)
+
+    # Determine redirect_uri from the current request so the port is correct.
+    # Normalize 127.0.0.1 to localhost — OAuth providers treat them as different
+    # redirect URIs, and developers typically register localhost.
+    base_url = str(request.base_url).rstrip("/").replace("://127.0.0.1", "://localhost")
+    redirect_uri = f"{base_url}/api/oauth/{platform}/callback"
+
+    _oauth_pending[(platform, state)] = (code_verifier, redirect_uri, time.time())
+
+    auth_url = _build_auth_url(client_id, state, code_challenge, redirect_uri, platform=platform)
+
+    return {
+        "auth_url": auth_url,
+        "state": state,
+        "callback_url": redirect_uri,
+        "note": f"Ensure {redirect_uri} is registered as a Redirect URI in your {platform} developer portal.",
+    }
+
+
+@app.get("/api/oauth/{platform}/callback")
+async def api_oauth_callback(platform: str, code: str = Query(...), state: str = Query(...)):
+    """Handle the OAuth 2.0 callback after user authorizes.
+
+    Exchanges the authorization code for tokens, saves them to the DB,
+    validates with the platform's user-info endpoint, and returns a success HTML page.
+    """
+    from social_hook.setup.oauth import _exchange_code, _save_tokens, validate_token
+
+    _validate_oauth_platform(platform)
+
+    # Look up PKCE verifier from stored state (keyed by platform + state)
+    pending = _oauth_pending.pop((platform, state), None)
+    if pending is None:
+        return HTMLResponse(
+            "<h1>Authorization failed</h1>"
+            "<p>Invalid or expired state parameter. Please try again.</p>",
+            status_code=400,
+        )
+
+    code_verifier, redirect_uri, _ = pending
+
+    client_id, client_secret = _get_oauth_credentials(platform)
+
+    # Exchange authorization code for tokens
+    resp = _exchange_code(
+        code,
+        code_verifier,
+        client_id,
+        client_secret,
+        redirect_uri,
+        platform=platform,
+    )
+    if resp.status_code != 200:
+        return HTMLResponse(
+            f"<h1>Token exchange failed</h1><p>HTTP {resp.status_code}: {resp.text[:300]}</p>",
+            status_code=502,
+        )
+
+    tokens = resp.json()
+    access_token = tokens.get("access_token", "")
+    refresh_token = tokens.get("refresh_token")
+    expires_in = tokens.get("expires_in", 7200)
+
+    # Save tokens to DB
+    _save_tokens(access_token, refresh_token, expires_in, platform=platform)
+
+    # Validate token
+    username = validate_token(platform, access_token)
+    greeting = f" as <strong>@{username}</strong>" if username else ""
+
+    return HTMLResponse(
+        f"<html><body style='font-family:system-ui,sans-serif;text-align:center;padding:60px 20px'>"
+        f"<h1>Authorization successful{greeting}!</h1>"
+        f"<p>You can close this tab and return to the dashboard.</p>"
+        f"<script>window.opener && window.opener.postMessage('oauth_complete','*');</script>"
+        f"</body></html>"
+    )
+
+
+@app.get("/api/oauth/{platform}/status")
+async def api_oauth_status(platform: str, request: Request):
+    """Check if OAuth tokens exist in the DB for this platform.
+
+    Returns:
+        JSON with connected (bool), username (str), and callback_url (str).
+    """
+    from social_hook.adapters.auth import get_tokens
+    from social_hook.setup.oauth import validate_token
+
+    _validate_oauth_platform(platform)
+
+    # Always include the correct callback URL (derived from server, not frontend)
+    base_url = str(request.base_url).rstrip("/").replace("://127.0.0.1", "://localhost")
+    callback_url = f"{base_url}/api/oauth/{platform}/callback"
+
+    db_path = str(get_db_path())
+    tokens = get_tokens(db_path, platform)
+    if not tokens or not tokens.get("access_token"):
+        return {"connected": False, "username": "", "callback_url": callback_url}
+
+    # Validate and get username
+    username = validate_token(platform, tokens["access_token"])
+
+    return {"connected": True, "username": username, "callback_url": callback_url}
+
+
+@app.delete("/api/oauth/{platform}/disconnect")
+async def api_oauth_disconnect(platform: str):
+    """Remove OAuth tokens from the DB for this platform."""
+    from social_hook.adapters.auth import delete_tokens
+
+    _validate_oauth_platform(platform)
+
+    db_path = str(get_db_path())
+    deleted = delete_tokens(db_path, platform)
+    if deleted:
+        # Clear cached adapter so next creation picks up the missing token
+        from social_hook.scheduler import _registry
+
+        _registry.invalidate(platform)
+        return {"disconnected": True}
+    return {"disconnected": False, "error": "No tokens found"}
 
 
 @app.get("/api/settings/social-context")
@@ -2549,6 +3298,38 @@ async def api_get_branches(project_id: str):
         branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
     except (subprocess.CalledProcessError, OSError):
         return {"branches": [], "current": None, "error": "Repository not accessible"}
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        current: str | None = result.stdout.strip()
+        if current == "HEAD":
+            current = None
+    except (subprocess.CalledProcessError, OSError):
+        current = None
+
+    return {"branches": branches, "current": current}
+
+
+@app.get("/api/git/branches")
+async def api_git_branches_by_path(repo_path: str = Query(...)):
+    """List git branches for any repo path (used by wizard before project registration)."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "branch", "--format=%(refname:short)"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        branches = [b.strip() for b in result.stdout.strip().split("\n") if b.strip()]
+    except (subprocess.CalledProcessError, OSError):
+        return {"branches": [], "current": None}
 
     try:
         result = subprocess.run(
@@ -3106,3 +3887,1844 @@ async def api_project_introduced_set(project_id: str, body: IntroducedSetBody):
         return {"platform": body.platform, "introduced": body.value}
     finally:
         conn.close()
+
+
+# =============================================================================
+# Platform Credentials
+# =============================================================================
+
+
+@app.get("/api/platform-credentials")
+async def api_list_platform_credentials():
+    """List platform credential entries from config."""
+    config = _get_config()
+    entries = {}
+    for name, cred in config.platform_credentials.items():
+        entries[name] = {
+            "platform": cred.platform,
+            "client_id_set": bool(cred.client_id),
+            "client_secret_set": bool(cred.client_secret),
+        }
+    return {"platform_credentials": entries}
+
+
+@app.post("/api/platform-credentials")
+async def api_add_platform_credential(body: dict[str, Any] = Body(...)):
+    """Add a platform credential entry to config."""
+    from social_hook.config.yaml import save_config
+
+    try:
+        check_unknown_keys(
+            body,
+            {"name", "platform", "client_id", "client_secret"},
+            "platform-credentials",
+            strict=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    name = body.get("name")
+    platform = body.get("platform")
+    if not name or not platform:
+        raise HTTPException(status_code=400, detail="'name' and 'platform' are required")
+
+    cred_data = {"platform": platform}
+    if body.get("client_id"):
+        cred_data["client_id"] = body["client_id"]
+    if body.get("client_secret"):
+        cred_data["client_secret"] = body["client_secret"]
+
+    try:
+        save_config(
+            {"platform_credentials": {name: cred_data}},
+            config_path=get_config_path(),
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
+    return {"status": "created", "name": name}
+
+
+@app.put("/api/platform-credentials/{name}")
+async def api_update_platform_credential(name: str, body: dict[str, Any] = Body(...)):
+    """Update a platform credential entry."""
+    from social_hook.config.yaml import save_config
+
+    config = _get_config()
+    if name not in config.platform_credentials:
+        raise HTTPException(status_code=404, detail=f"Credential '{name}' not found")
+
+    try:
+        check_unknown_keys(
+            body,
+            {"platform", "client_id", "client_secret"},
+            "platform-credentials",
+            strict=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    try:
+        save_config(
+            {"platform_credentials": {name: body}},
+            config_path=get_config_path(),
+            deep_merge=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
+    return {"status": "updated", "name": name}
+
+
+@app.delete("/api/platform-credentials/{name}")
+async def api_delete_platform_credential(name: str):
+    """Remove a platform credential entry. 409 if accounts reference it."""
+    config = _get_config()
+    if name not in config.platform_credentials:
+        raise HTTPException(status_code=404, detail=f"Credential '{name}' not found")
+
+    # Check if any accounts reference this credential
+    for acct_name, acct in config.accounts.items():
+        if acct.app == name:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Account '{acct_name}' references credential '{name}'",
+            )
+
+    # Remove from config by loading raw YAML
+    yaml_path = get_config_path()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
+    pc = raw.get("platform_credentials", {})
+    pc.pop(name, None)
+    raw["platform_credentials"] = pc
+    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "platform_credentials")
+    finally:
+        conn.close()
+    return {"status": "deleted", "name": name}
+
+
+@app.post("/api/platform-credentials/{name}/validate")
+async def api_validate_platform_credential(name: str):
+    """Validate a platform credential entry."""
+    config = _get_config()
+    if name not in config.platform_credentials:
+        raise HTTPException(status_code=404, detail=f"Credential '{name}' not found")
+
+    cred = config.platform_credentials[name]
+    issues = []
+    if not cred.client_id:
+        issues.append("client_id is empty")
+    if not cred.client_secret:
+        issues.append("client_secret is empty")
+
+    if issues:
+        return {"valid": False, "issues": issues}
+    return {"valid": True, "issues": []}
+
+
+# =============================================================================
+# Accounts
+# =============================================================================
+
+
+@app.get("/api/accounts")
+async def api_list_accounts():
+    """List accounts from config."""
+    config = _get_config()
+    accounts = {}
+    for name, acct in config.accounts.items():
+        accounts[name] = {
+            "platform": acct.platform,
+            "app": acct.app,
+            "tier": acct.tier,
+            "identity": acct.identity,
+            "entity": acct.entity,
+        }
+    return {"accounts": accounts}
+
+
+@app.post("/api/accounts")
+async def api_add_account(body: dict[str, Any] = Body(...)):
+    """Initiate account add. Returns auth_url for PKCE redirect."""
+    from social_hook.config.yaml import save_config
+
+    try:
+        check_unknown_keys(
+            body,
+            {"name", "platform", "app", "tier", "identity", "entity"},
+            "accounts",
+            strict=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    name = body.get("name")
+    platform = body.get("platform")
+    if not name or not platform:
+        raise HTTPException(status_code=400, detail="'name' and 'platform' are required")
+
+    acct_data: dict[str, Any] = {"platform": platform}
+    for field in ("app", "tier", "identity", "entity"):
+        if body.get(field) is not None:
+            acct_data[field] = body[field]
+
+    try:
+        save_config(
+            {"accounts": {name: acct_data}},
+            config_path=get_config_path(),
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+
+    # Return auth URL if PKCE auth module is available
+    # Note: PKCE auth flow (build_auth_url) is not yet implemented in adapters/auth.py
+    auth_url = None
+
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "accounts")
+    finally:
+        conn.close()
+    result: dict[str, Any] = {"status": "created", "name": name}
+    if auth_url:
+        result["auth_url"] = auth_url
+    return result
+
+
+@app.delete("/api/accounts/{name}")
+async def api_delete_account(name: str):
+    """Remove an account. 409 if targets reference it."""
+    config = _get_config()
+    if name not in config.accounts:
+        raise HTTPException(status_code=404, detail=f"Account '{name}' not found")
+
+    # Check if any targets reference this account
+    for tgt_name, tgt in config.targets.items():
+        if tgt.account == name:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Target '{tgt_name}' references account '{name}'",
+            )
+
+    # Remove from config
+    yaml_path = get_config_path()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
+    accts = raw.get("accounts", {})
+    accts.pop(name, None)
+    raw["accounts"] = accts
+    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    _invalidate_config()
+
+    # Also delete OAuth token if present
+    conn = _get_conn()
+    try:
+        ops.delete_oauth_token(conn, name)
+        ops.emit_data_event(conn, "config", "updated", "accounts")
+    finally:
+        conn.close()
+
+    return {"status": "deleted", "name": name}
+
+
+@app.post("/api/accounts/validate")
+async def api_validate_accounts():
+    """Validate all account credentials."""
+    config = _get_config()
+    results: dict[str, dict] = {}
+    conn = _get_conn()
+    try:
+        for name, _acct in config.accounts.items():
+            token = ops.get_oauth_token(conn, name)
+            if token:
+                results[name] = {"valid": True, "has_token": True}
+            else:
+                results[name] = {"valid": False, "has_token": False, "issue": "No OAuth token"}
+    finally:
+        conn.close()
+    return {"accounts": results}
+
+
+# =============================================================================
+# Targets (per-project)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/targets")
+async def api_list_targets(project_id: str):
+    """List targets for a project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    config = _get_config()
+    targets_list = []
+    for name, tgt in config.targets.items():
+        account = config.accounts.get(tgt.account)
+        targets_list.append(
+            {
+                "id": name,
+                "project_id": project_id,
+                "account_name": tgt.account,
+                "destination": tgt.destination,
+                "strategy": tgt.strategy,
+                "primary": tgt.primary,
+                "source": tgt.source,
+                "community_id": tgt.community_id,
+                "share_with_followers": tgt.share_with_followers,
+                "frequency": tgt.frequency,
+                "enabled": tgt.status != "disabled",
+                "platform": account.platform if account else "unknown",
+                "created_at": None,
+            }
+        )
+    return {"targets": targets_list, "project_id": project_id}
+
+
+@app.post("/api/projects/{project_id}/targets")
+async def api_add_target(project_id: str, body: dict[str, Any] = Body(...)):
+    """Add a target."""
+    from social_hook.config.yaml import save_config
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    try:
+        check_unknown_keys(
+            body,
+            {
+                "name",
+                "account",
+                "destination",
+                "strategy",
+                "primary",
+                "source",
+                "community_id",
+                "share_with_followers",
+                "frequency",
+                "scheduling",
+            },
+            "targets",
+            strict=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    account = body.get("account")
+    if not account:
+        raise HTTPException(status_code=400, detail="'account' is required")
+    name = body.get("name")
+    if not name:
+        # Auto-generate name from account + strategy + destination
+        strategy = body.get("strategy", "default")
+        destination = body.get("destination", "timeline")
+        name = f"{account}-{strategy}-{destination}"
+
+    tgt_data: dict[str, Any] = {"account": account}
+    for field in (
+        "destination",
+        "strategy",
+        "primary",
+        "source",
+        "community_id",
+        "share_with_followers",
+        "frequency",
+        "scheduling",
+    ):
+        if body.get(field) is not None:
+            tgt_data[field] = body[field]
+
+    try:
+        save_config(
+            {"targets": {name: tgt_data}},
+            config_path=get_config_path(),
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "targets", project_id)
+    finally:
+        conn.close()
+    return {"status": "created", "name": name}
+
+
+@app.put("/api/projects/{project_id}/targets/{name}")
+async def api_update_target(project_id: str, name: str, body: dict[str, Any] = Body(...)):
+    """Update a target."""
+    from social_hook.config.yaml import save_config
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    config = _get_config()
+    if name not in config.targets:
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    try:
+        check_unknown_keys(
+            body,
+            {
+                "account",
+                "destination",
+                "strategy",
+                "primary",
+                "source",
+                "community_id",
+                "share_with_followers",
+                "frequency",
+                "scheduling",
+            },
+            "targets",
+            strict=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    try:
+        save_config(
+            {"targets": {name: body}},
+            config_path=get_config_path(),
+            deep_merge=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "targets", project_id)
+    finally:
+        conn.close()
+    return {"status": "updated", "name": name}
+
+
+@app.put("/api/projects/{project_id}/targets/{name}/disable")
+async def api_disable_target(project_id: str, name: str):
+    """Disable a target and archive pending drafts."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Write full target data with disabled status to config YAML.
+    # Must persist the full target (account, platform, strategy, etc.) because
+    # auto-migrated targets only exist in memory — the YAML may not have them.
+    tgt = config.targets[name]
+    target_data: dict[str, Any] = {
+        "status": "disabled",
+        "destination": tgt.destination,
+        "strategy": tgt.strategy,
+    }
+    if tgt.account:
+        target_data["account"] = tgt.account
+    if tgt.platform:
+        target_data["platform"] = tgt.platform
+    if tgt.primary:
+        target_data["primary"] = True
+    if tgt.source:
+        target_data["source"] = tgt.source
+    if tgt.frequency:
+        target_data["frequency"] = tgt.frequency
+
+    from social_hook.config.yaml import save_config
+
+    save_config(
+        {"targets": {name: target_data}},
+        config_path=get_config_path(),
+    )
+    _invalidate_config()
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        # Cancel pending drafts for this target
+        _placeholders = ",".join("?" for _ in PENDING_STATUSES)
+        pending = conn.execute(
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({_placeholders})",
+            (project_id, name, *PENDING_STATUSES),
+        ).fetchall()
+        for row in pending:
+            ops.update_draft(conn, row["id"], status="cancelled")
+            ops.emit_data_event(conn, "draft", "updated", row["id"], project_id)
+
+        ops.emit_data_event(conn, "config", "updated", "targets", project_id)
+    finally:
+        conn.close()
+
+    return {"status": "disabled", "name": name, "cancelled_drafts": len(pending)}
+
+
+@app.put("/api/projects/{project_id}/targets/{name}/enable")
+async def api_enable_target(project_id: str, name: str):
+    """Re-enable a target."""
+    config = _get_config()
+    if name not in (config.targets or {}):
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Write full target data without disabled status to config YAML.
+    # Same pattern as disable — persist from Config object, not raw YAML.
+    tgt = config.targets[name]
+    target_data: dict[str, Any] = {
+        "destination": tgt.destination,
+        "strategy": tgt.strategy,
+    }
+    if tgt.account:
+        target_data["account"] = tgt.account
+    if tgt.platform:
+        target_data["platform"] = tgt.platform
+    if tgt.primary:
+        target_data["primary"] = True
+    if tgt.source:
+        target_data["source"] = tgt.source
+    if tgt.frequency:
+        target_data["frequency"] = tgt.frequency
+
+    from social_hook.config.yaml import save_config
+
+    save_config(
+        {"targets": {name: target_data}},
+        config_path=get_config_path(),
+    )
+    _invalidate_config()
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        ops.emit_data_event(conn, "config", "updated", "targets", project_id)
+    finally:
+        conn.close()
+    return {"status": "enabled", "name": name}
+
+
+@app.delete("/api/projects/{project_id}/targets/{name}")
+async def api_delete_target(project_id: str, name: str):
+    """Remove a target from config and cancel its pending drafts."""
+    cancelled_count = 0
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        config = _get_config()
+        if name not in config.targets:
+            raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+        # Cancel pending drafts for this target
+        _placeholders = ",".join("?" for _ in PENDING_STATUSES)
+        pending = conn.execute(
+            f"SELECT id FROM drafts WHERE project_id = ? AND target_id = ? AND status IN ({_placeholders})",
+            (project_id, name, *PENDING_STATUSES),
+        ).fetchall()
+        for row in pending:
+            ops.update_draft(conn, row["id"], status="cancelled")
+            ops.emit_data_event(conn, "draft", "updated", row["id"], project_id)
+        cancelled_count = len(pending)
+
+        ops.emit_data_event(conn, "config", "updated", "targets", project_id)
+    finally:
+        conn.close()
+
+    # Remove from config.yaml
+    from social_hook.config.yaml import delete_config_key
+
+    delete_config_key(get_config_path(), "targets", name)
+    _invalidate_config()
+
+    return {"status": "deleted", "name": name, "cancelled_drafts": cancelled_count}
+
+
+# =============================================================================
+# Strategies (per-project)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/strategies")
+async def api_list_strategies(project_id: str):
+    """List strategies: built-in templates merged with config overrides."""
+    from social_hook.setup.templates import STRATEGY_TEMPLATES
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    config = _get_config()
+    strategies: dict[str, dict[str, Any]] = {}
+
+    # Start with built-in templates (skip "custom" placeholder)
+    for t in STRATEGY_TEMPLATES:
+        if t.id == "custom":
+            continue
+        strategies[t.id] = {
+            "audience": t.defaults.audience,
+            "voice": t.defaults.voice_tone,
+            "angle": "",
+            "post_when": t.defaults.post_when,
+            "avoid": t.defaults.avoid,
+            "format_preference": "",
+            "media_preference": "",
+            "min_length": None,
+            "requires": None,
+            "template": True,
+        }
+
+    # Merge/override with config strategies
+    for name, strat in config.content_strategies.items():
+        is_template = name in strategies
+        strategies[name] = {
+            "audience": strat.audience,
+            "voice": strat.voice,
+            "angle": strat.angle,
+            "post_when": strat.post_when,
+            "avoid": strat.avoid,
+            "format_preference": strat.format_preference,
+            "media_preference": strat.media_preference,
+            "min_length": strat.min_length,
+            "requires": strat.requires,
+            "template": is_template,
+        }
+
+    return {"strategies": strategies, "project_id": project_id}
+
+
+@app.get("/api/projects/{project_id}/strategies/{name}")
+async def api_get_strategy(project_id: str, name: str):
+    """Get strategy definition (merged view)."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    config = _get_config()
+    if name not in config.content_strategies:
+        raise HTTPException(status_code=404, detail=f"Strategy '{name}' not found")
+
+    strat = config.content_strategies[name]
+    return {
+        "name": name,
+        "audience": strat.audience,
+        "voice": strat.voice,
+        "angle": strat.angle,
+        "post_when": strat.post_when,
+        "avoid": strat.avoid,
+        "format_preference": strat.format_preference,
+        "media_preference": strat.media_preference,
+        "min_length": strat.min_length,
+        "requires": strat.requires,
+    }
+
+
+@app.put("/api/projects/{project_id}/strategies/{name}")
+async def api_update_strategy(project_id: str, name: str, body: dict[str, Any] = Body(...)):
+    """Update strategy fields in config."""
+    from social_hook.config.yaml import save_config
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    try:
+        check_unknown_keys(
+            body,
+            {
+                "audience",
+                "voice",
+                "angle",
+                "post_when",
+                "avoid",
+                "format_preference",
+                "media_preference",
+                "min_length",
+                "requires",
+            },
+            "strategies",
+            strict=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    try:
+        save_config(
+            {"content_strategies": {name: body}},
+            config_path=get_config_path(),
+            deep_merge=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
+    finally:
+        conn.close()
+    return {"status": "updated", "name": name}
+
+
+@app.post("/api/projects/{project_id}/strategies/{name}/reset")
+async def api_reset_strategy(project_id: str, name: str):
+    """Reset strategy to built-in template defaults."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    # Remove the strategy override from config
+    yaml_path = get_config_path()
+    try:
+        raw = yaml.safe_load(yaml_path.read_text()) or {}
+    except yaml.YAMLError:
+        raw = {}
+    strategies = raw.get("content_strategies", {})
+    strategies.pop(name, None)
+    raw["content_strategies"] = strategies
+    yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
+    finally:
+        conn.close()
+    return {"status": "reset", "name": name}
+
+
+@app.post("/api/projects/{project_id}/strategies")
+async def api_create_strategy(project_id: str, body: dict[str, Any] = Body(...)):
+    """Create a new custom strategy."""
+    from social_hook.config.yaml import save_config
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    known_keys = {
+        "name",
+        "audience",
+        "voice",
+        "angle",
+        "post_when",
+        "avoid",
+        "format_preference",
+        "media_preference",
+        "min_length",
+        "requires",
+    }
+    try:
+        check_unknown_keys(body, known_keys, "create_strategy", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    name = body.get("name")
+    if not name:
+        raise HTTPException(status_code=400, detail="'name' is required")
+
+    config = _get_config()
+    if name in config.content_strategies:
+        raise HTTPException(status_code=409, detail=f"Strategy '{name}' already exists")
+
+    fields = {k: v for k, v in body.items() if k != "name" and v is not None}
+
+    try:
+        save_config(
+            {"content_strategies": {name: fields}},
+            config_path=get_config_path(),
+            deep_merge=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
+    finally:
+        conn.close()
+    return JSONResponse(status_code=201, content={"status": "created", "name": name})
+
+
+@app.delete("/api/projects/{project_id}/strategies/{name}")
+async def api_delete_strategy(project_id: str, name: str):
+    """Delete a strategy. Returns 409 if any targets reference it."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+    finally:
+        conn.close()
+
+    config = _get_config()
+    if name not in config.content_strategies:
+        raise HTTPException(status_code=404, detail=f"Strategy '{name}' not found")
+
+    # Check if any targets reference this strategy
+    referencing = [tgt_name for tgt_name, tgt in config.targets.items() if tgt.strategy == name]
+    if referencing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete strategy '{name}': referenced by targets {referencing}",
+        )
+
+    # Remove from config.yaml
+    from social_hook.config.yaml import delete_config_key
+
+    delete_config_key(get_config_path(), "content_strategies", name)
+    _invalidate_config()
+    conn = _get_conn()
+    try:
+        # Dismiss orphaned topics for the deleted strategy
+        dismissed_count = conn.execute(
+            "UPDATE content_topics SET status = 'dismissed' WHERE project_id = ? AND strategy = ? AND status != 'dismissed'",
+            (project_id, name),
+        ).rowcount
+        if dismissed_count:
+            conn.commit()
+            logger.info(
+                "Dismissed %d orphaned topics for deleted strategy '%s'", dismissed_count, name
+            )
+        ops.emit_data_event(conn, "config", "updated", "strategies", project_id)
+    finally:
+        conn.close()
+    return {"status": "deleted", "name": name, "topics_dismissed": dismissed_count}
+
+
+# =============================================================================
+# Topics (per-project)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/topics")
+async def api_list_topics(project_id: str, strategy: str | None = Query(None)):
+    """List topics, optionally filtered by strategy."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        if strategy:
+            topics = ops.get_topics_by_strategy(conn, project_id, strategy)
+        else:
+            from social_hook.models.content import ContentTopic
+
+            rows = conn.execute(
+                "SELECT * FROM content_topics WHERE project_id = ? ORDER BY strategy, priority_rank DESC, created_at ASC",
+                (project_id,),
+            ).fetchall()
+            topics = [ContentTopic.from_dict(dict(row)) for row in rows]
+        return {"topics": [t.to_dict() for t in topics]}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/topics")
+async def api_add_topic(project_id: str, body: dict[str, Any] = Body(...)):
+    """Add a topic."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        try:
+            check_unknown_keys(
+                body,
+                {"strategy", "topic", "description", "priority_rank"},
+                "topics",
+                strict=True,
+            )
+        except ConfigError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+
+        strategy = body.get("strategy")
+        topic_name = body.get("topic")
+        if not strategy or not topic_name:
+            raise HTTPException(status_code=400, detail="'strategy' and 'topic' are required")
+
+        from social_hook.filesystem import generate_id
+        from social_hook.models.content import ContentTopic
+        from social_hook.parsing import safe_int
+
+        topic = ContentTopic(
+            id=generate_id("topic"),
+            project_id=project_id,
+            strategy=strategy,
+            topic=topic_name,
+            description=body.get("description"),
+            priority_rank=safe_int(body.get("priority_rank", 0), 0, "topic.priority_rank"),
+            created_by="operator",
+        )
+        ops.insert_content_topic(conn, topic)
+        ops.emit_data_event(conn, "topic", "created", topic.id, project_id)
+        return {"status": "created", "topic": topic.to_dict()}
+    finally:
+        conn.close()
+
+
+# NOTE: reorder must be declared before {topic_id} to avoid path conflict
+@app.put("/api/projects/{project_id}/topics/reorder")
+async def api_reorder_topics(project_id: str, body: dict[str, Any] = Body(...)):
+    """Batch reorder topics. Accepts {"topic_ids": [...]} in display order."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        topic_ids = body.get("topic_ids", [])
+        if not isinstance(topic_ids, list):
+            raise HTTPException(status_code=400, detail="'topic_ids' must be a list")
+
+        # Assign descending priority (first in list = highest rank)
+        for i, tid in enumerate(topic_ids):
+            rank = len(topic_ids) - i
+            ops.update_topic_priority(conn, tid, rank)
+
+        ops.emit_data_event(conn, "topic", "reordered", project_id, project_id)
+        return {"status": "reordered", "count": len(topic_ids)}
+    finally:
+        conn.close()
+
+
+@app.put("/api/projects/{project_id}/topics/{topic_id}")
+async def api_update_topic(project_id: str, topic_id: str, body: dict[str, Any] = Body(...)):
+    """Update topic (priority, description)."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        try:
+            check_unknown_keys(
+                body,
+                {"priority_rank", "description"},
+                "topics",
+                strict=True,
+            )
+        except ConfigError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+
+        topic = ops.get_topic(conn, topic_id)
+        if not topic:
+            raise HTTPException(status_code=404, detail="Topic not found")
+        if topic.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Topic not found in this project")
+
+        from social_hook.parsing import safe_int
+
+        if "priority_rank" in body:
+            rank = safe_int(body["priority_rank"], 0, "topic.priority_rank")
+            ops.update_topic_priority(conn, topic_id, rank)
+        if "description" in body:
+            conn.execute(
+                "UPDATE content_topics SET description = ? WHERE id = ?",
+                (body["description"], topic_id),
+            )
+            conn.commit()
+
+        ops.emit_data_event(conn, "topic", "updated", topic_id, project_id)
+        updated = ops.get_topic(conn, topic_id)
+        return {"status": "updated", "topic": updated.to_dict() if updated else None}
+    finally:
+        conn.close()
+
+
+@app.put("/api/projects/{project_id}/topics/{topic_id}/status")
+async def api_set_topic_status(project_id: str, topic_id: str, body: dict[str, Any] = Body(...)):
+    """Set topic status."""
+    from social_hook.models.enums import TOPIC_STATUSES
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        status = body.get("status")
+        if not status or status not in TOPIC_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status. Must be one of: {sorted(TOPIC_STATUSES)}",
+            )
+        topic = ops.get_topic(conn, topic_id)
+        if not topic:
+            raise HTTPException(status_code=404, detail="Topic not found")
+        if topic.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Topic not found in this project")
+
+        ops.update_topic_status(conn, topic_id, status)
+        ops.emit_data_event(conn, "topic", "updated", topic_id, project_id)
+        return {"status": "updated", "topic_id": topic_id, "new_status": status}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/topics/{topic_id}/draft-now")
+async def api_draft_now_topic(project_id: str, topic_id: str):
+    """Force draft on a topic. 202 — LLM call."""
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+        topic = ops.get_topic(conn, topic_id)
+        if not topic:
+            raise HTTPException(status_code=404, detail="Topic not found")
+        if topic.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Topic not found in this project")
+
+        # Check for already-running task
+        existing = conn.execute(
+            "SELECT id FROM background_tasks WHERE type='draft_topic' AND ref_id=? AND status='running'",
+            (topic_id,),
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="Draft already in progress for this topic")
+
+        pid = project["id"]
+    finally:
+        conn.close()
+
+    strategy = topic.strategy
+    t_id = topic_id
+
+    def _blocking_draft_topic():
+        from social_hook.config.yaml import load_full_config
+        from social_hook.topics import force_draft_topic
+
+        config = load_full_config()
+        c = _get_conn()
+        try:
+            cycle_id = force_draft_topic(c, config, pid, t_id, strategy)
+            return {"topic_id": t_id, "cycle_id": cycle_id, "status": "completed"}
+        finally:
+            c.close()
+
+    task_id = _run_background_task(
+        "draft_topic",
+        ref_id=topic_id,
+        project_id=pid,
+        fn=_blocking_draft_topic,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
+
+
+# =============================================================================
+# Brief (per-project)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/brief")
+async def api_get_brief(project_id: str):
+    """Get structured brief for a project."""
+    from social_hook.llm.brief import get_brief_sections
+
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+        summary = project["summary"] or ""
+        sections = get_brief_sections(summary)
+        return {
+            "brief": summary,
+            "sections": sections,
+            "project_id": project_id,
+        }
+    finally:
+        conn.close()
+
+
+@app.put("/api/projects/{project_id}/brief")
+async def api_update_brief(project_id: str, body: dict[str, Any] = Body(...)):
+    """Update brief sections."""
+    from social_hook.llm.brief import BRIEF_SECTIONS, _sections_to_markdown
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        try:
+            check_unknown_keys(
+                body,
+                set(BRIEF_SECTIONS.keys()) | {"brief"},
+                "brief",
+                strict=True,
+            )
+        except ConfigError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+
+        # If raw "brief" string is provided, use it directly
+        if "brief" in body:
+            new_brief = body["brief"]
+        else:
+            # Build from individual sections
+            sections = {key: body.get(key, "") for key in BRIEF_SECTIONS}
+            new_brief = _sections_to_markdown(sections)
+
+        ops.update_project_summary(conn, project_id, new_brief)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"status": "updated", "project_id": project_id}
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Content Suggestions (per-project)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/suggestions")
+async def api_list_suggestions(project_id: str):
+    """List content suggestions for a project, enriched with cycle IDs."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        suggestions = ops.get_suggestions_by_project(conn, project_id)
+
+        # Look up evaluation_cycle_id for suggestions that have been evaluated
+        sug_ids = [s.id for s in suggestions]
+        cycle_map: dict[str, str] = {}
+        if sug_ids:
+            placeholders = ",".join("?" for _ in sug_ids)
+            rows = conn.execute(
+                f"SELECT suggestion_id, evaluation_cycle_id FROM drafts WHERE suggestion_id IN ({placeholders}) AND evaluation_cycle_id IS NOT NULL",
+                sug_ids,
+            ).fetchall()
+            for row in rows:
+                cycle_map[row["suggestion_id"]] = row["evaluation_cycle_id"]
+
+        result = []
+        for s in suggestions:
+            d = s.to_dict()
+            d["evaluation_cycle_id"] = cycle_map.get(s.id)
+            result.append(d)
+
+        return {"suggestions": result}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/suggestions")
+async def api_create_suggestion(project_id: str, body: dict[str, Any] = Body(...)):
+    """Create a content suggestion. Returns 202 if auto-evaluate."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        try:
+            check_unknown_keys(
+                body,
+                {"idea", "strategy", "media_refs"},
+                "suggestions",
+                strict=True,
+            )
+        except ConfigError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+
+        idea = body.get("idea")
+        if not idea:
+            raise HTTPException(status_code=400, detail="'idea' is required")
+
+        from social_hook.filesystem import generate_id
+        from social_hook.models.content import ContentSuggestion
+
+        suggestion = ContentSuggestion(
+            id=generate_id("suggestion"),
+            project_id=project_id,
+            idea=idea,
+            strategy=body.get("strategy"),
+            media_refs=body.get("media_refs"),
+            source="operator",
+        )
+        ops.insert_content_suggestion(conn, suggestion)
+        ops.emit_data_event(conn, "suggestion", "created", suggestion.id, project_id)
+
+        # If strategy is not specified, auto-evaluate (LLM picks the strategy)
+        if not suggestion.strategy:
+            pid = project_id
+            sid = suggestion.id
+
+            def _blocking_evaluate():
+                from social_hook.trigger import run_suggestion_trigger
+
+                return {"exit_code": run_suggestion_trigger(sid, pid)}
+
+            task_id = _run_background_task(
+                "evaluate_suggestion",
+                ref_id=sid,
+                project_id=pid,
+                fn=_blocking_evaluate,
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "task_id": task_id,
+                    "status": "processing",
+                    "suggestion": suggestion.to_dict(),
+                },
+            )
+
+        return {"status": "created", "suggestion": suggestion.to_dict()}
+    finally:
+        conn.close()
+
+
+@app.put("/api/projects/{project_id}/suggestions/{suggestion_id}/dismiss")
+async def api_dismiss_suggestion(project_id: str, suggestion_id: str):
+    """Dismiss a suggestion."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        suggestions = ops.get_suggestions_by_project(conn, project_id)
+        found = any(s.id == suggestion_id for s in suggestions)
+        if not found:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+
+        ops.update_suggestion_status(conn, suggestion_id, "dismissed")
+        ops.emit_data_event(conn, "suggestion", "updated", suggestion_id, project_id)
+        return {"status": "dismissed", "suggestion_id": suggestion_id}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/suggestions/{suggestion_id}/accept")
+async def api_accept_suggestion(project_id: str, suggestion_id: str):
+    """Accept a pending suggestion and trigger evaluation. 202 — LLM call."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        suggestion = ops.get_suggestion(conn, suggestion_id)
+        if not suggestion:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+        if suggestion.status != "pending":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Suggestion has status '{suggestion.status}', only 'pending' can be accepted",
+            )
+
+        # Check for already-running task
+        existing = conn.execute(
+            "SELECT id FROM background_tasks WHERE type='evaluate_suggestion' AND ref_id=? AND status='running'",
+            (suggestion_id,),
+        ).fetchone()
+        if existing:
+            raise HTTPException(
+                status_code=409, detail="Evaluation already in progress for this suggestion"
+            )
+
+        ops.update_suggestion_status(conn, suggestion_id, "evaluated")
+        ops.emit_data_event(conn, "suggestion", "updated", suggestion_id, project_id)
+        pid = project_id
+    finally:
+        conn.close()
+
+    sid = suggestion_id
+
+    def _blocking_evaluate():
+        from social_hook.trigger import run_suggestion_trigger
+
+        return {"exit_code": run_suggestion_trigger(sid, pid)}
+
+    task_id = _run_background_task(
+        "evaluate_suggestion",
+        ref_id=sid,
+        project_id=pid,
+        fn=_blocking_evaluate,
+    )
+    return JSONResponse(
+        status_code=202, content={"task_id": task_id, "status": DecisionType.PROCESSING.value}
+    )
+
+
+@app.post("/api/projects/{project_id}/content/combine")
+async def api_combine_topics(project_id: str, body: dict[str, Any] = Body(...)):
+    """Combine 2+ held topics into one draft. 202 — LLM call."""
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+        topic_ids = body.get("topic_ids", [])
+        if not isinstance(topic_ids, list) or len(topic_ids) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 topic_ids required")
+
+        # Validate all topics exist and belong to this project
+        for tid in topic_ids:
+            topic = ops.get_topic(conn, tid)
+            if not topic:
+                raise HTTPException(status_code=404, detail=f"Topic not found: {tid}")
+            if topic.project_id != project_id:
+                raise HTTPException(status_code=404, detail=f"Topic {tid} not in this project")
+
+        pid = project["id"]
+    finally:
+        conn.close()
+
+    t_ids = topic_ids
+
+    def _blocking_combine():
+        from social_hook.config.yaml import load_full_config
+        from social_hook.content.operations import combine_candidates
+
+        config = load_full_config()
+        c = _get_conn()
+        try:
+            draft_id = combine_candidates(c, config, t_ids, pid)
+            return {"topic_ids": t_ids, "draft_id": draft_id, "status": "completed"}
+        finally:
+            c.close()
+
+    task_id = _run_background_task(
+        "combine_topics",
+        ref_id=f"combine:{topic_ids[0]}",
+        project_id=pid,
+        fn=_blocking_combine,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
+
+
+@app.post("/api/projects/{project_id}/content/hero-launch")
+async def api_hero_launch(project_id: str):
+    """Trigger hero launch draft. 202 — LLM call."""
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+
+        # Check for already-running task
+        existing = conn.execute(
+            "SELECT id FROM background_tasks WHERE type='hero_launch' AND ref_id=? AND status='running'",
+            (project_id,),
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="Hero launch already in progress")
+
+        pid = project["id"]
+        project_path = project["repo_path"]
+    finally:
+        conn.close()
+
+    def _blocking_hero_launch():
+        from social_hook.config.yaml import load_full_config
+        from social_hook.content.operations import trigger_hero_launch
+
+        config = load_full_config()
+        c = _get_conn()
+        try:
+            draft_id = trigger_hero_launch(c, config, pid, project_path)
+            return {"project_id": pid, "draft_id": draft_id, "status": "completed"}
+        finally:
+            c.close()
+
+    task_id = _run_background_task(
+        "hero_launch",
+        ref_id=project_id,
+        project_id=pid,
+        fn=_blocking_hero_launch,
+    )
+    return JSONResponse(status_code=202, content={"task_id": task_id, "status": "processing"})
+
+
+# =============================================================================
+# Evaluation Cycles (per-project)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/cycles")
+async def api_list_cycles(project_id: str, limit: int = Query(20, ge=1, le=100)):
+    """List recent evaluation cycles with enriched trigger, strategies, and status."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        cycles = ops.get_recent_cycles(conn, project_id, limit=limit)
+        enriched = []
+        for c in cycles:
+            cd = c.to_dict()
+            _parse_diagnostics_column(cd)
+
+            # Get drafts for this cycle to derive strategies and status
+            drafts = ops.get_drafts_by_cycle(conn, c.id)
+
+            # Get the decision for strategy info
+            # Try via drafts first, then fall back to cycle's trigger_ref (commit hash)
+            decision = None
+            if drafts:
+                decision_id = drafts[0].decision_id
+                decision = ops.get_decision(conn, decision_id)
+            if not decision and c.trigger_ref:
+                # No drafts — look up decision by commit hash directly
+                from social_hook.models.core import Decision
+
+                # For batch cycles, trigger_ref is "hash1,hash2,...,trigger_hash"
+                # The last hash is the trigger commit with the full decision.
+                lookup_hash = c.trigger_ref
+                if c.trigger_type == "batch" and "," in (c.trigger_ref or ""):
+                    lookup_hash = c.trigger_ref.rsplit(",", 1)[-1].strip()
+
+                row = conn.execute(
+                    "SELECT * FROM decisions WHERE project_id = ? AND commit_hash = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (project_id, lookup_hash),
+                ).fetchone()
+                if row:
+                    decision = Decision.from_dict(dict(row))
+
+            # --- 2.3: Richer trigger descriptions ---
+            cd["trigger"] = _enrich_cycle_trigger(conn, c, decision)
+
+            # --- Strategy outcomes ---
+            strategies: dict[str, dict] = {}
+            if decision and decision.targets:
+                # targets is a dict of {strategy_name: {action, reason, ...}}
+                targets_data = decision.targets
+                if isinstance(targets_data, str):
+                    targets_data = safe_json_loads(targets_data, "cycle.targets", default={})
+
+                # Build strategy_to_draft map: draft.target_id → config target → strategy name
+                config = _get_config()
+                strategy_to_draft: dict[str, Any] = {}
+                for d in drafts:
+                    if d.target_id and config.targets.get(d.target_id):
+                        target_strategy = config.targets[d.target_id].strategy
+                        if target_strategy and target_strategy not in strategy_to_draft:
+                            strategy_to_draft[target_strategy] = d
+                    else:
+                        # Legacy drafts without target_id → assign to "default"
+                        if "default" not in strategy_to_draft:
+                            strategy_to_draft["default"] = d
+
+                ep_tags = _parse_episode_tags(decision)
+
+                # Batch-resolve topic names (N+1 prevention)
+                all_topic_ids = [
+                    sd.get("topic_id")
+                    for sd in (targets_data or {}).values()
+                    if isinstance(sd, dict) and sd.get("topic_id")
+                ]
+                topic_name_map: dict[str, str] = {}
+                if all_topic_ids:
+                    placeholders = ",".join("?" * len(all_topic_ids))
+                    topic_rows = conn.execute(
+                        f"SELECT id, topic FROM content_topics WHERE id IN ({placeholders})",
+                        all_topic_ids,
+                    ).fetchall()
+                    topic_name_map = {r[0]: r[1] for r in topic_rows}
+
+                for strat_name, strat_data in (targets_data or {}).items():
+                    action = (
+                        strat_data.get("action", "skip") if isinstance(strat_data, dict) else "skip"
+                    )
+                    if hasattr(action, "value"):
+                        action = action.value
+                    reasoning = strat_data.get("reason", "") if isinstance(strat_data, dict) else ""
+                    topic_id = strat_data.get("topic_id") if isinstance(strat_data, dict) else None
+                    context_source = (
+                        strat_data.get("context_source") if isinstance(strat_data, dict) else None
+                    )
+                    # Find a draft matching this strategy via target_id → config target → strategy
+                    strat_draft = strategy_to_draft.get(strat_name)
+                    strategies[strat_name] = {
+                        "decision": action,
+                        "reasoning": reasoning,
+                        "draft_id": strat_draft.id if strat_draft else None,
+                        "draft_status": strat_draft.status if strat_draft else None,
+                        "draft_content": strat_draft.content[:200] if strat_draft else None,
+                        "draft_preview_mode": strat_draft.preview_mode if strat_draft else None,
+                        "topic_id": topic_id,
+                        "topic_matched": topic_name_map.get(topic_id) if topic_id else None,
+                        "content_source": context_source,
+                        "episode_tags": ep_tags,
+                    }
+            elif decision:
+                ep_tags = _parse_episode_tags(decision)
+                # Legacy decisions without per-strategy targets data
+                label = "legacy" if decision.decision != "deferred_eval" else "deferred"
+                strategies[label] = {
+                    "decision": decision.decision,
+                    "reasoning": decision.reasoning[:200] if decision.reasoning else "",
+                    "draft_id": drafts[0].id if drafts else None,
+                    "draft_status": drafts[0].status if drafts else None,
+                    "draft_content": drafts[0].content[:200] if drafts else None,
+                    "draft_preview_mode": drafts[0].preview_mode if drafts else None,
+                    "topic_id": None,
+                    "episode_tags": ep_tags,
+                }
+
+            cd["strategies"] = strategies
+
+            # --- 2.6: Status with counts ---
+            if not drafts:
+                cd["status"] = "no drafts"
+                cd["draft_count"] = 0
+                cd["pending_count"] = 0
+                cd["approved_count"] = 0
+                cd["posted_count"] = 0
+            else:
+                statuses = {d.status for d in drafts}
+                if "posted" in statuses:
+                    cd["status"] = "posted"
+                elif "approved" in statuses or "scheduled" in statuses:
+                    cd["status"] = "pending"
+                elif "draft" in statuses:
+                    cd["status"] = "review"
+                else:
+                    cd["status"] = drafts[0].status
+                cd["draft_count"] = len(drafts)
+                cd["pending_count"] = sum(1 for d in drafts if d.status in ("draft", "deferred"))
+                cd["approved_count"] = sum(
+                    1 for d in drafts if d.status in ("approved", "scheduled")
+                )
+                cd["posted_count"] = sum(1 for d in drafts if d.status == "posted")
+
+            enriched.append(cd)
+        return {"cycles": enriched}
+    finally:
+        conn.close()
+
+
+def _enrich_cycle_trigger(conn, cycle, decision) -> str:
+    """Build a human-readable trigger description for a cycle."""
+    trigger_type = cycle.trigger_type or "unknown"
+    trigger_ref = cycle.trigger_ref
+
+    if trigger_type == "commit":
+        short_hash = trigger_ref[:7] if trigger_ref else "unknown"
+        parts = [f"Commit {short_hash}"]
+        if decision:
+            ep_tags = _parse_episode_tags(decision)
+            if ep_tags:
+                parts.append(f"({', '.join(ep_tags)})")
+            if decision.commit_message:
+                msg = decision.commit_message[:80]
+                parts.append(f"\u2014 {msg}")
+        return " ".join(parts)
+    elif trigger_type == "topic_maturity":
+        if trigger_ref:
+            topic = ops.get_topic(conn, trigger_ref)
+            if topic:
+                return f"Topic matured: {topic.topic}"
+        return "Topic matured"
+    elif trigger_type == "operator_suggestion":
+        if trigger_ref:
+            s = ops.get_suggestion(conn, trigger_ref)
+            if s:
+                idea_preview = s.idea[:60] + ("..." if len(s.idea) > 60 else "")
+                return f"Suggestion: {idea_preview}"
+        return "Operator suggestion"
+    elif trigger_type == "batch":
+        # trigger_ref is comma-separated commit hashes
+        hashes = [h.strip() for h in (trigger_ref or "").split(",") if h.strip()]
+        if not hashes:
+            return "Batch evaluation"
+        parts = [f"Batch of {len(hashes)} commits"]
+        if decision:
+            ep_tags = _parse_episode_tags(decision)
+            if ep_tags:
+                parts.append(f"({', '.join(ep_tags)})")
+        # Get commit hash + first line of message for each
+        commit_lines = []
+        for h in hashes[:5]:  # Cap at 5 to avoid huge descriptions
+            short = h[:7]
+            d = conn.execute(
+                "SELECT commit_message FROM decisions WHERE project_id = ? AND commit_hash = ? LIMIT 1",
+                (cycle.project_id, h),
+            ).fetchone()
+            msg = d["commit_message"].splitlines()[0][:50] if d and d["commit_message"] else ""
+            commit_lines.append(f"{short} {msg}".strip())
+        parts.append("\u2014 " + "; ".join(commit_lines))
+        if len(hashes) > 5:
+            parts.append(f"(+{len(hashes) - 5} more)")
+        return " ".join(parts)
+    elif trigger_type == "hero_launch":
+        return "Hero launch"
+    elif trigger_type == "draft_now":
+        return "Manual draft"
+    else:
+        logger.warning("Unknown trigger_type in cycle: %s", trigger_type)
+        parts = [trigger_type]
+        if trigger_ref:
+            parts.append(trigger_ref[:8])
+        return " ".join(parts)
+
+
+@app.get("/api/projects/{project_id}/cycles/{cycle_id}")
+async def api_get_cycle_detail(project_id: str, cycle_id: str):
+    """Cycle detail with associated drafts."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        # Look up the cycle
+        row = conn.execute(
+            "SELECT * FROM evaluation_cycles WHERE id = ? AND project_id = ?",
+            (cycle_id, project_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Cycle not found")
+
+        from social_hook.models.content import EvaluationCycle
+
+        cycle = EvaluationCycle.from_dict(dict(row))
+        cycle_dict = cycle.to_dict()
+        _parse_diagnostics_column(cycle_dict)
+
+        # Get associated drafts
+        drafts = ops.get_drafts_by_cycle(conn, cycle_id)
+        cycle_dict["drafts"] = [d.to_dict() for d in drafts]
+
+        return cycle_dict
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/cycles/{cycle_id}/approve-all")
+async def api_approve_all_cycle_drafts(project_id: str, cycle_id: str):
+    """Batch-approve all drafts in an evaluation cycle."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        # Verify cycle exists
+        row = conn.execute(
+            "SELECT id FROM evaluation_cycles WHERE id = ? AND project_id = ?",
+            (cycle_id, project_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Cycle not found")
+
+        # Get all drafts in this cycle that are in "draft" status
+        drafts = ops.get_drafts_by_cycle(conn, cycle_id)
+        approvable = [d for d in drafts if d.status == "draft"]
+
+        if not approvable:
+            return {"status": "no_drafts", "approved_count": 0}
+
+        approved_ids = []
+        for draft in approvable:
+            ops.update_draft(conn, draft.id, status="approved")
+            ops.emit_data_event(conn, "draft", "updated", draft.id, project_id)
+            approved_ids.append(draft.id)
+
+        return {
+            "status": "approved",
+            "approved_count": len(approved_ids),
+            "draft_ids": approved_ids,
+        }
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# System (errors + health)
+# =============================================================================
+
+
+@app.get("/api/system/errors")
+async def api_system_errors(
+    limit: int = Query(50, ge=1, le=500),
+    severity: str | None = Query(None),
+    component: str | None = Query(None),
+    source: str | None = Query(None),
+):
+    """Recent system errors with optional filters."""
+    conn = _get_conn()
+    try:
+        errors = ops.get_recent_system_errors(
+            conn, limit=limit, severity=severity, component=component, source=source
+        )
+        result = []
+        for e in errors:
+            d = e.to_dict()
+            # Ensure timestamps have Z suffix for JS Date parsing
+            if d.get("created_at") and not d["created_at"].endswith("Z"):
+                d["created_at"] = d["created_at"] + "Z"
+            result.append(d)
+        return {"errors": result}
+    finally:
+        conn.close()
+
+
+@app.post("/api/system/errors", status_code=201)
+async def api_create_system_error(request: Request):
+    """Capture a system error (e.g. from frontend)."""
+    from social_hook.filesystem import generate_id
+    from social_hook.models.infra import SystemErrorRecord
+
+    body = await request.json()
+    check_unknown_keys(
+        body, {"severity", "message", "source", "context"}, "system_error", strict=True
+    )
+
+    severity = body.get("severity", "error")
+    if severity not in ("info", "warning", "error", "critical"):
+        raise HTTPException(status_code=400, detail=f"Invalid severity: {severity}")
+
+    message = body.get("message", "")
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    source = body.get("source", "")
+    context_raw = body.get("context", "{}")
+    if isinstance(context_raw, str):
+        context = safe_json_loads(context_raw, "system_error.context", default={})
+    else:
+        context = context_raw
+
+    error = SystemErrorRecord(
+        id=generate_id("err"),
+        severity=severity,
+        message=message,
+        context=json.dumps(context) if isinstance(context, dict) else str(context),
+        source=source,
+    )
+    conn = _get_conn()
+    try:
+        error_id = ops.insert_system_error(conn, error)
+        ops.emit_data_event(
+            conn,
+            "system_error",
+            "created",
+            error_id,
+            extra={"severity": severity, "component": source},
+        )
+        return {"id": error_id, "status": "created"}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/system/errors")
+async def api_clear_system_errors(
+    older_than_days: int | None = None,
+):
+    """Clear system errors. Optional: ?older_than_days=30 to prune old entries only.
+
+    Without the parameter, deletes all errors.
+    """
+    conn = _get_conn()
+    try:
+        count = ops.clear_system_errors(conn, older_than_days=older_than_days)
+        ops.emit_data_event(conn, "system_error", "cleared", "")
+        return {"deleted": count}
+    finally:
+        conn.close()
+
+
+@app.get("/api/system/health")
+async def api_system_health():
+    """Health status summary."""
+    conn = _get_conn()
+    try:
+        error_counts = ops.get_error_health_status(conn)
+        total_errors = sum(error_counts.values())
+        status = ops.compute_health_status(error_counts)
+
+        return {
+            "status": status,
+            "error_counts_24h": error_counts,
+            "total_errors_24h": total_errors,
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/api/system/events")
+async def api_system_events(
+    entity: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Recent pipeline/system events from web_events.
+
+    Useful for debugging pipeline flow. Filters to pipeline, decision, task,
+    and draft entities by default. Pass ?entity=pipeline to filter further.
+    """
+    conn = _get_conn()
+    try:
+        allowed_entities = {"pipeline", "decision", "task", "draft", "topic", "cycle"}
+        clauses = ["1=1"]
+        params: list = []
+
+        if entity:
+            clauses.append("json_extract(data, '$.entity') = ?")
+            params.append(entity)
+        else:
+            placeholders = ",".join("?" * len(allowed_entities))
+            clauses.append(f"json_extract(data, '$.entity') IN ({placeholders})")
+            params.extend(sorted(allowed_entities))
+
+        where = " AND ".join(clauses)
+        rows = conn.execute(
+            f"SELECT id, data, created_at FROM web_events WHERE {where} "
+            f"ORDER BY created_at DESC LIMIT ?",
+            [*params, limit],
+        ).fetchall()
+
+        events = []
+        for r in rows:
+            parsed = safe_json_loads(r["data"], "web_events.data", default={})
+            events.append(
+                {
+                    "id": r["id"],
+                    "entity": parsed.get("entity"),
+                    "action": parsed.get("action"),
+                    "entity_id": parsed.get("entity_id"),
+                    "project_id": parsed.get("project_id"),
+                    "created_at": r["created_at"],
+                }
+            )
+        return {"events": events}
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Platform Settings
+# =============================================================================
+
+
+@app.get("/api/platform-settings")
+async def api_get_platform_settings():
+    """Get per-platform settings."""
+    config = _get_config()
+    settings = {}
+    for name, ps in config.platform_settings.items():
+        settings[name] = {"cross_account_gap_minutes": ps.cross_account_gap_minutes}
+    return {"platform_settings": settings}
+
+
+@app.put("/api/platform-settings/{platform}")
+async def api_update_platform_settings(platform: str, body: dict[str, Any] = Body(...)):
+    """Update per-platform settings."""
+    from social_hook.config.yaml import save_config
+
+    try:
+        check_unknown_keys(
+            body,
+            {"cross_account_gap_minutes"},
+            "platform_settings",
+            strict=True,
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    try:
+        save_config(
+            {"platform_settings": {platform: body}},
+            config_path=get_config_path(),
+        )
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    _invalidate_config()
+    return {"status": "updated", "platform": platform}

@@ -20,7 +20,6 @@ Each target has:
 
 For `draft` actions, also provide:
 - **angle**: The hook/angle for the post
-- **episode_type**: The structural type (decision, before_after, demo_proof, milestone, postmortem, launch, synthesis)
 - **post_category**: How this relates to the narrative (arc, opportunistic, experiment)
 - **arc_id**: If this advances an active arc
 - **new_arc_theme**: If this starts a new arc (mutually exclusive with arc_id)
@@ -56,6 +55,17 @@ Actions to take on pending drafts, keyed by target name. Each pending draft is s
 **When to supersede:** When the new commit makes a pending draft obsolete or factually wrong.
 
 **When to drop:** When a pending draft is stale, low-quality, or no longer relevant.
+
+## Pre-Computed Commit Analysis
+
+When a "Pre-Computed Commit Analysis" section is provided in the context, a stage 1 analyzer has already classified the commit and produced tags and a summary. Use this as your starting point:
+
+- Do NOT re-classify the commit — the classification (trivial/routine/notable/significant) is authoritative
+- Use the provided tags as the basis for your `episode_tags` (you may add more if relevant)
+- Use the provided summary to inform your `commit_analysis.summary` (refine if needed for social media framing)
+- Focus your evaluation on **strategy decisions** — which strategies should draft, hold, or skip
+
+If no pre-computed analysis is provided, classify the commit yourself as before.
 
 ## Decision Criteria
 
@@ -97,15 +107,9 @@ When held commits are shown in context, you have three options for each:
 
 When consolidating, your draft should cohesively cover both the current commit and the absorbed held commits.
 
-## Episode Types
+## Episode Tags
 
-- **decision**: Why we chose X over Y — trade-offs, reasoning
-- **before_after**: Measurable change with proof (metrics, screenshots)
-- **demo_proof**: Show the working thing
-- **milestone**: Checkpoint — what changed, what's next
-- **postmortem**: Issue -> fix -> learnings
-- **launch**: Value prop + who it's for + CTA
-- **synthesis**: Frames overall story, pays narrative debt
+Produce freeform descriptive tags in `episode_tags` to categorize the commit (e.g. "refactor", "feature", "bugfix", "performance", "security", "architecture", "testing", "docs"). Use whatever tags best describe the nature of the work — there is no fixed list.
 
 ## Post Categories
 
@@ -142,6 +146,32 @@ Consider the current project state:
 - Vary episode types to keep the feed interesting
 - Don't post about the same topic repeatedly
 - **Always check Post History and Active Arcs for referencing opportunities.** If the current commit extends, deepens, or follows up on a previously published post, include that post's `id` in `reference_posts`. Common patterns: intro post → feature deep-dive, feature announcement → technical breakdown, bug report → postmortem. For arc posts, the previous arc posts are listed under Active Arcs with their IDs — reference the most relevant one.
+
+## Strategy-Aware Decisions
+
+When content strategies are provided (in the "Content Strategies" section below), produce a decision for each strategy rather than a single "default" decision. For each strategy:
+
+- Consider the strategy's `post_when` field to decide if this commit is worth posting
+- Respect the strategy's `avoid` field to filter out inappropriate content
+- Match the strategy's `audience` and `voice` when choosing an angle
+- Different strategies may reach different decisions for the same commit
+
+If no strategies are provided, use `"default"` as the single target key.
+
+## Content Source
+
+For each `draft` decision, specify what context the drafter needs via `context_source`:
+- `types`: List of context types — `"brief"` (project brief), `"commits"` (recent commits), `"topic"` (content topic context), `"operator_suggestion"` (operator-provided content direction)
+- `topic_id`: When including `"topic"`, which content topic to pull context for
+- `suggestion_id`: When including `"operator_suggestion"`, which suggestion to use
+
+This tells the routing layer what to assemble for the drafter. Omit `context_source` to use defaults (brief + commits).
+
+When your decision relates to a content topic from the Topic Queue, you MUST:
+1. Set `topic_id` to the topic's exact ID as shown in `[id=...]` in the Topic Queue — do not invent IDs
+2. Set `context_source` with `types` including `"topic"` and `topic_id` matching your chosen topic
+
+If you reference a topic in your reasoning but don't set its ID, the draft won't be linked to the topic.
 
 ## Deferred Evaluations
 

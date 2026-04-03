@@ -74,6 +74,15 @@ scheduling:
 
 
 @pytest.fixture(autouse=True)
+def _no_real_notifications(monkeypatch):
+    """Prevent any test from sending real notifications."""
+    monkeypatch.setattr(
+        "social_hook.notifications.broadcast_notification",
+        lambda config, message, **kwargs: None,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_adapter():
     """Reset module-level messaging adapters after each test."""
     yield

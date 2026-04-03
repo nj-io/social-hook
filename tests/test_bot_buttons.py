@@ -267,11 +267,12 @@ class TestBtnPostNow:
     @patch("social_hook.bot.buttons._answer_callback")
     @patch("social_hook.bot.buttons._send")
     def test_post_now_preview_blocked(self, mock_send, mock_answer, mock_conn):
-        """Post Now should reject preview drafts."""
+        """Post Now should reject preview-mode drafts."""
         draft = MagicMock()
         draft.id = "draft_123"
         draft.status = "draft"
-        draft.platform = "preview"
+        draft.platform = "x"
+        draft.preview_mode = True
         draft.project_id = "proj_1"
 
         conn = MagicMock()
@@ -284,7 +285,7 @@ class TestBtnPostNow:
             btn_post_now(MagicMock(), "chat1", "cb1", "draft_123", None)
 
         mock_send.assert_called_once()
-        assert "preview" in mock_send.call_args[0][2].lower()
+        assert "account" in mock_send.call_args[0][2].lower()
 
     @patch("social_hook.bot.buttons._get_conn")
     @patch("social_hook.bot.buttons._answer_callback")

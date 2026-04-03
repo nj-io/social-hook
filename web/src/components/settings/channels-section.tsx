@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ChannelConfig, ChannelsStatusResponse } from "@/lib/types";
 import { fetchChannelsStatus, testChannel, startBotDaemon, stopBotDaemon, updateEnv } from "@/lib/api";
+import { Note } from "@/components/ui/note";
 
 interface ChannelsSectionProps {
   channels: Record<string, ChannelConfig>;
@@ -209,7 +210,7 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
           )}
 
           {telegramConfig.enabled && !status?.daemon_running && (
-            <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-400">
+            <Note>
               <p>
                 The bot daemon must be running to receive button presses and messages from this channel.
                 Notifications will be sent without interactive buttons until the daemon is started.
@@ -221,7 +222,7 @@ export function ChannelsSection({ channels, onChange, env, onEnvRefresh }: Chann
               >
                 {daemonAction ? "Starting..." : "Start Daemon"}
               </button>
-            </div>
+            </Note>
           )}
 
           <div className="flex items-center gap-2">

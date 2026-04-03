@@ -1,0 +1,627 @@
+interactions:
+- request:
+    body: !!binary |
+      LS1iZjA5MGZmNmExYTZlMjZhM2RjNGM0ODNhMjBlMWRlOQ0KQ29udGVudC1EaXNwb3NpdGlvbjog
+      Zm9ybS1kYXRhOyBuYW1lPSJtZWRpYV9jYXRlZ29yeSINCg0KdHdlZXRfaW1hZ2UNCi0tYmYwOTBm
+      ZjZhMWE2ZTI2YTNkYzRjNDgzYTIwZTFkZTkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0
+      YTsgbmFtZT0ibWVkaWEiOyBmaWxlbmFtZT0idGVzdC5wbmciDQoNColQTkcNChoKAAAADUlIRFIA
+      AABkAAAAZAgGAAAAcOKVVAAAAP1JREFUeJzt0aENADAQxLDbf+nvGA0wMI+U3XZ07HcAhqQZEmNI
+      jCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCEx
+      hsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQY
+      EmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNI
+      jCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEvMASm/WZJfrI3sAAAAA
+      SUVORK5CYIINCi0tYmYwOTBmZjZhMWE2ZTI2YTNkYzRjNDgzYTIwZTFkZTktLQ0K
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '561'
+      Content-Type:
+      - multipart/form-data; boundary=bf090ff6a1a6e26a3dc4c483a20e1de9
+      User-Agent:
+      - python-requests/2.32.3
+    method: POST
+    uri: https://api.x.com/2/media/upload
+  response:
+    body:
+      string: '{"data":{"id":"2036104588915560448","media_key":"3_2036104588915560448","size":105,"expires_after_secs":86400,"image":{"image_type":"image\/png","w":100,"h":100}}}'
+    headers:
+      CF-RAY:
+      - 9e0e81cb987ed01e-BKK
+      Cache-Control:
+      - no-cache, no-store, max-age=0
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Length:
+      - '143'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Mon, 23 Mar 2026 15:35:37 GMT
+      Server:
+      - cloudflare envoy
+      Set-Cookie:
+      - guest_id_marketing=v1%3A177428013763499540; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:35:37 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177428013763499540; Max-Age=63072000; Expires=Wed, 22 Mar
+        2028 15:35:37 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_7QxY9OkdNzj2fFZJ7/zW/Q=="; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:35:37 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177428013763499540; Max-Age=63072000; Expires=Wed, 22 Mar 2028
+        15:35:37 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - __cf_bm=AtmIQbQyHruqP61AzaSdhH.3kofMGj2Qsl_k4VoHusY-1774280137.531697-1.0.1.1-WVf2lDp2pUBVx6Caaf_VPQJkl8TNbwfpoZFhZ2FXRjsczmWiRfYyN.8mb4YPOu0YYccPtnnUl4XHSlLqUNIZYhh1P8lcU_3y9.ZXta.E_LG1ZOJLQmWlqWfdQoBTVJCG;
+        HttpOnly; Secure; Path=/; Domain=x.com; Expires=Mon, 23 Mar 2026 16:05:37
+        GMT
+      cf-cache-status:
+      - DYNAMIC
+      content-disposition:
+      - attachment; filename=json.json
+      origin-cf-ray:
+      - 9e0e81cb987ed01e-SEA
+      perf:
+      - '7402827104'
+      strict-transport-security:
+      - max-age=631138519; includeSubdomains
+      vary:
+      - accept-encoding
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '500'
+      x-rate-limit-remaining:
+      - '498'
+      x-rate-limit-reset:
+      - '1774280509'
+      x-response-time:
+      - '257'
+      x-served-by:
+      - t4_p
+      x-transaction-id:
+      - 7e74361b1baee369
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: !!binary |
+      LS1kYjU3YzBhNTQyMGJkMjZjNTU2Y2JiOGQ5M2ZiMjkwZQ0KQ29udGVudC1EaXNwb3NpdGlvbjog
+      Zm9ybS1kYXRhOyBuYW1lPSJtZWRpYV9jYXRlZ29yeSINCg0KdHdlZXRfaW1hZ2UNCi0tZGI1N2Mw
+      YTU0MjBiZDI2YzU1NmNiYjhkOTNmYjI5MGUNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0
+      YTsgbmFtZT0ibWVkaWEiOyBmaWxlbmFtZT0idGVzdC5wbmciDQoNColQTkcNChoKAAAADUlIRFIA
+      AABkAAAAZAgGAAAAcOKVVAAAAP1JREFUeJzt0aENADAQxLDbf+nvGA0wMI+U3XZ07HcAhqQZEmNI
+      jCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCEx
+      hsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQY
+      EmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNI
+      jCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEvMASm/WZJfrI3sAAAAA
+      SUVORK5CYIINCi0tZGI1N2MwYTU0MjBiZDI2YzU1NmNiYjhkOTNmYjI5MGUtLQ0K
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '561'
+      Content-Type:
+      - multipart/form-data; boundary=db57c0a5420bd26c556cbb8d93fb290e
+      User-Agent:
+      - python-requests/2.32.3
+    method: POST
+    uri: https://api.x.com/2/media/upload
+  response:
+    body:
+      string: '{"data":{"id":"2036104665688100865","media_key":"3_2036104665688100865","size":105,"expires_after_secs":86400,"image":{"image_type":"image\/png","w":100,"h":100}}}'
+    headers:
+      CF-RAY:
+      - 9e0e823ddd25d020-BKK
+      Cache-Control:
+      - no-cache, no-store, max-age=0
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Length:
+      - '142'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Mon, 23 Mar 2026 15:35:56 GMT
+      Server:
+      - cloudflare envoy
+      Set-Cookie:
+      - guest_id_marketing=v1%3A177428015591830785; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:35:56 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177428015591830785; Max-Age=63072000; Expires=Wed, 22 Mar
+        2028 15:35:56 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_rD40f+0wLcDA8A6ohQO6Dw=="; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:35:56 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177428015591830785; Max-Age=63072000; Expires=Wed, 22 Mar 2028
+        15:35:56 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - __cf_bm=uEsGn_VzEo0fbzTREAy7GflnMli2K0ahJxIDS.ruLVc-1774280155.8135703-1.0.1.1-LrMlF4dCVq3MTEFVIYj8Fjf7y4k_juLHiVFACD.tVEL7t5QpqyZ0XjYyKxmcFY7T4dw1B48PU7283seROXTgwNjD_jsoCUu8EjlpQunMsh2tReAD.DvvKhshAOJwYQyX;
+        HttpOnly; Secure; Path=/; Domain=x.com; Expires=Mon, 23 Mar 2026 16:05:56
+        GMT
+      cf-cache-status:
+      - DYNAMIC
+      content-disposition:
+      - attachment; filename=json.json
+      origin-cf-ray:
+      - 9e0e823ddd25d020-SEA
+      perf:
+      - '7402827104'
+      strict-transport-security:
+      - max-age=631138519; includeSubdomains
+      vary:
+      - accept-encoding
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '500'
+      x-rate-limit-remaining:
+      - '497'
+      x-rate-limit-reset:
+      - '1774280509'
+      x-response-time:
+      - '240'
+      x-served-by:
+      - t4_p
+      x-transaction-id:
+      - a93eff68381c1631
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"text": "E2E media test from social-hook (x). Safe to delete. #xtest",
+      "media": {"media_ids": ["2036104665688100865"]}}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '120'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - python-requests/2.32.3
+    method: POST
+    uri: https://api.x.com/2/tweets
+  response:
+    body:
+      string: '{"data":{"id":"2036104667705602279","text":"E2E media test from social-hook
+        (x). Safe to delete. #xtest https://t.co/sazn6KSo8G","edit_history_tweet_ids":["2036104667705602279"]}}'
+    headers:
+      CF-RAY:
+      - 9e0e8240dac226d9-BKK
+      Cache-Control:
+      - no-cache, no-store, max-age=0
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Length:
+      - '168'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Mon, 23 Mar 2026 15:35:56 GMT
+      Server:
+      - cloudflare envoy
+      Set-Cookie:
+      - guest_id_marketing=v1%3A177428015640058614; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:35:56 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177428015640058614; Max-Age=63072000; Expires=Wed, 22 Mar
+        2028 15:35:56 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_TFgbwdnyxsNE2SAgjGSPzg=="; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:35:56 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177428015640058614; Max-Age=63072000; Expires=Wed, 22 Mar 2028
+        15:35:56 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - __cf_bm=lLycWU1lKdwsMK.qwrFXUfknfTv4hsGylinq_XeKya4-1774280156.292032-1.0.1.1-2dkXVV.HyzKNyAl_ipezKkAGn3lsxLi1qcje1J3KO59_acSAEsJ0D62cedZErnjj4Jywg_3wXxctKSRb3oATzOdBKRwQe0KRK7sH1hEuSJjcOfrHG4R3gf4qVFVryUI_;
+        HttpOnly; Secure; Path=/; Domain=x.com; Expires=Mon, 23 Mar 2026 16:05:56
+        GMT
+      api-version:
+      - '2.160'
+      cf-cache-status:
+      - DYNAMIC
+      content-disposition:
+      - attachment; filename=json.json
+      location:
+      - https://api.x.com/2/tweets/2036104667705602279
+      origin-cf-ray:
+      - 9e0e8240dac226d9-SEA
+      perf:
+      - '7402827104'
+      strict-transport-security:
+      - max-age=631138519; includeSubdomains
+      vary:
+      - accept-encoding
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '100'
+      x-rate-limit-remaining:
+      - '92'
+      x-rate-limit-reset:
+      - '1774280444'
+      x-response-time:
+      - '190'
+      x-served-by:
+      - t4_p
+      x-transaction-id:
+      - 09373e7307743951
+      x-xss-protection:
+      - '0'
+    status:
+      code: 201
+      message: Created
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '0'
+      User-Agent:
+      - python-requests/2.32.3
+    method: DELETE
+    uri: https://api.x.com/2/tweets/2036104667705602279
+  response:
+    body:
+      string: '{"data":{"deleted":true}}'
+    headers:
+      CF-RAY:
+      - 9e0e82779bd52705-BKK
+      Cache-Control:
+      - no-cache, no-store, max-age=0
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Length:
+      - '51'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Mon, 23 Mar 2026 15:36:05 GMT
+      Server:
+      - cloudflare envoy
+      Set-Cookie:
+      - guest_id_marketing=v1%3A177428016516141245; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:36:05 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177428016516141245; Max-Age=63072000; Expires=Wed, 22 Mar
+        2028 15:36:05 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_E0MjcpxO3fVEKrvfXSbbzA=="; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:36:05 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177428016516141245; Max-Age=63072000; Expires=Wed, 22 Mar 2028
+        15:36:05 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - __cf_bm=uvLcFQr5VOmYqBJlHhe7joOw2VjOyMNZXpzXQ1eyLwM-1774280165.0551713-1.0.1.1-L1jZWSeZMzuoyG3IT5FumtCZi1n9ETHnQoCZkrnWEu4x3R12WJtQdlQD5mB8JskNrBFoYqyUShsv.lBiOitrtLsKVo2jBnx9rZG3AQBa4B.Ez3qhZBD.TEDG03rrmRF3;
+        HttpOnly; Secure; Path=/; Domain=x.com; Expires=Mon, 23 Mar 2026 16:06:05
+        GMT
+      api-version:
+      - '2.160'
+      cf-cache-status:
+      - DYNAMIC
+      content-disposition:
+      - attachment; filename=json.json
+      origin-cf-ray:
+      - 9e0e82779bd52705-SEA
+      perf:
+      - '7402827104'
+      strict-transport-security:
+      - max-age=631138519; includeSubdomains
+      vary:
+      - accept-encoding
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '50'
+      x-rate-limit-remaining:
+      - '45'
+      x-rate-limit-reset:
+      - '1774280508'
+      x-response-time:
+      - '36'
+      x-served-by:
+      - t4_p
+      x-transaction-id:
+      - a1c31492cadf1e77
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: !!binary |
+      LS01YmQ0OTNlMGM5ZDgzOWRiNDhlM2Y2NTkxMjQ4MGM0OQ0KQ29udGVudC1EaXNwb3NpdGlvbjog
+      Zm9ybS1kYXRhOyBuYW1lPSJtZWRpYV9jYXRlZ29yeSINCg0KdHdlZXRfaW1hZ2UNCi0tNWJkNDkz
+      ZTBjOWQ4MzlkYjQ4ZTNmNjU5MTI0ODBjNDkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0
+      YTsgbmFtZT0ibWVkaWEiOyBmaWxlbmFtZT0idGVzdC5wbmciDQoNColQTkcNChoKAAAADUlIRFIA
+      AABkAAAAZAgGAAAAcOKVVAAAAP1JREFUeJzt0aENADAQxLDbf+nvGA0wMI+U3XZ07HcAhqQZEmNI
+      jCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCEx
+      hsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQY
+      EmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNI
+      jCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEmNIjCExhsQYEvMASm/WZJfrI3sAAAAA
+      SUVORK5CYIINCi0tNWJkNDkzZTBjOWQ4MzlkYjQ4ZTNmNjU5MTI0ODBjNDktLQ0K
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '561'
+      Content-Type:
+      - multipart/form-data; boundary=5bd493e0c9d839db48e3f65912480c49
+      User-Agent:
+      - python-requests/2.32.3
+    method: POST
+    uri: https://api.x.com/2/media/upload
+  response:
+    body:
+      string: '{"data":{"id":"2036105450408800256","media_key":"3_2036105450408800256","size":105,"expires_after_secs":86400,"image":{"image_type":"image\/png","w":100,"h":100}}}'
+    headers:
+      Accept-Ranges:
+      - bytes
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '142'
+      Date:
+      - Mon, 23 Mar 2026 15:39:03 GMT
+      Strict-Transport-Security:
+      - max-age=300
+      Vary:
+      - Accept-Encoding
+      Via:
+      - 1.1 varnish
+      X-Cache:
+      - MISS
+      X-Cache-Hits:
+      - '0'
+      X-Served-By:
+      - t4_p, cache-qpg120110-QPG
+      cache-control:
+      - no-cache, no-store, max-age=0
+      content-disposition:
+      - attachment; filename=json.json
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json; charset=utf-8
+      perf:
+      - '7402827104'
+      server:
+      - envoy
+      set-cookie:
+      - guest_id_marketing=v1%3A177428034301786733; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:39:03 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177428034301786733; Max-Age=63072000; Expires=Wed, 22 Mar
+        2028 15:39:03 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_rfASufgEX3bEAbO5DfrzBg=="; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:39:03 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177428034301786733; Max-Age=63072000; Expires=Wed, 22 Mar 2028
+        15:39:03 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '500'
+      x-rate-limit-remaining:
+      - '496'
+      x-rate-limit-reset:
+      - '1774280509'
+      x-response-time:
+      - '281'
+      x-transaction-id:
+      - 59db97fb2ae5050e
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"text": "E2E media test from social-hook (x) 1774280342. Safe to delete.
+      #xtest", "media": {"media_ids": ["2036105450408800256"]}}'
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '131'
+      Content-Type:
+      - application/json
+      User-Agent:
+      - python-requests/2.32.3
+    method: POST
+    uri: https://api.x.com/2/tweets
+  response:
+    body:
+      string: '{"data":{"id":"2036105452900298788","text":"E2E media test from social-hook
+        (x) 1774280342. Safe to delete. #xtest https://t.co/nCypNTGTkS","edit_history_tweet_ids":["2036105452900298788"]}}'
+    headers:
+      Accept-Ranges:
+      - bytes
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '179'
+      Date:
+      - Mon, 23 Mar 2026 15:39:03 GMT
+      Strict-Transport-Security:
+      - max-age=300
+      Via:
+      - 1.1 varnish
+      X-Cache:
+      - MISS
+      X-Cache-Hits:
+      - '0'
+      X-Served-By:
+      - t4_p, cache-qpg1241-QPG
+      api-version:
+      - '2.160'
+      cache-control:
+      - no-cache, no-store, max-age=0
+      content-disposition:
+      - attachment; filename=json.json
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json; charset=utf-8
+      location:
+      - https://api.x.com/2/tweets/2036105452900298788
+      perf:
+      - '7402827104'
+      server:
+      - envoy
+      set-cookie:
+      - guest_id_marketing=v1%3A177428034360748334; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:39:03 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177428034360748334; Max-Age=63072000; Expires=Wed, 22 Mar
+        2028 15:39:03 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_tKF1yzIL3Q8p64A8pj/kNQ=="; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:39:03 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177428034360748334; Max-Age=63072000; Expires=Wed, 22 Mar 2028
+        15:39:03 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '100'
+      x-rate-limit-remaining:
+      - '87'
+      x-rate-limit-reset:
+      - '1774280444'
+      x-response-time:
+      - '169'
+      x-transaction-id:
+      - 7146a608ef95b0b4
+      x-xss-protection:
+      - '0'
+    status:
+      code: 201
+      message: Created
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate, br, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '0'
+      User-Agent:
+      - python-requests/2.32.3
+    method: DELETE
+    uri: https://api.x.com/2/tweets/2036105452900298788
+  response:
+    body:
+      string: '{"data":{"deleted":true}}'
+    headers:
+      Accept-Ranges:
+      - bytes
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '51'
+      Date:
+      - Mon, 23 Mar 2026 15:39:11 GMT
+      Strict-Transport-Security:
+      - max-age=300
+      Vary:
+      - Accept-Encoding
+      Via:
+      - 1.1 varnish
+      X-Cache:
+      - MISS
+      X-Cache-Hits:
+      - '0'
+      X-Served-By:
+      - t4_p, cache-qpg120094-QPG
+      api-version:
+      - '2.160'
+      cache-control:
+      - no-cache, no-store, max-age=0
+      content-disposition:
+      - attachment; filename=json.json
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json; charset=utf-8
+      perf:
+      - '7402827104'
+      server:
+      - envoy
+      set-cookie:
+      - guest_id_marketing=v1%3A177428035099725409; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:39:11 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id_ads=v1%3A177428035099725409; Max-Age=63072000; Expires=Wed, 22 Mar
+        2028 15:39:11 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - personalization_id="v1_J+mbOT40lKU5BtMXdFwMVA=="; Max-Age=63072000; Expires=Wed,
+        22 Mar 2028 15:39:11 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      - guest_id=v1%3A177428035099725409; Max-Age=63072000; Expires=Wed, 22 Mar 2028
+        15:39:11 GMT; Path=/; Domain=.x.com; Secure; SameSite=None
+      x-access-level:
+      - read-write
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-rate-limit-limit:
+      - '50'
+      x-rate-limit-remaining:
+      - '42'
+      x-rate-limit-reset:
+      - '1774280508'
+      x-response-time:
+      - '45'
+      x-transaction-id:
+      - d15b8a07856f709f
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

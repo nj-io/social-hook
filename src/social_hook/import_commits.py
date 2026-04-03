@@ -6,15 +6,24 @@ import subprocess
 
 from social_hook.db import operations as ops
 from social_hook.filesystem import generate_id
-from social_hook.models import Decision
+from social_hook.models.core import Decision
 
 logger = logging.getLogger(__name__)
 
 
-def _git_log_commits(repo_path: str, branch: str | None = None) -> list[dict[str, str]]:
-    """Get all commits from a repo/branch via git log.
+def _git_log_commits(
+    repo_path: str, branch: str | None = None, limit: int | None = None
+) -> list[dict[str, str]]:
+    """Get commits from a repo/branch via git log.
 
-    Returns list of dicts with keys: hash, message, date, branch.
+    Args:
+        repo_path: Path to git repository
+        branch: Branch filter (None = all branches)
+        limit: Maximum number of commits to return (None = no limit).
+            Returns the most recent N commits (git log runs newest-first,
+            reversed to chronological order, then truncated).
+
+    Returns list of dicts with keys: hash, message, date.
     """
     cmd = [
         "git",
@@ -22,8 +31,12 @@ def _git_log_commits(repo_path: str, branch: str | None = None) -> list[dict[str
         repo_path,
         "log",
         "--format=%H%x00%s%x00%aI",  # hash, subject, author date ISO
-        "--reverse",
     ]
+    if limit:
+        # git log is newest-first; -n gives most recent N; we reverse in Python below
+        cmd.extend(["-n", str(limit)])
+    else:
+        cmd.append("--reverse")
     if branch:
         cmd.append(branch)
     else:
@@ -54,6 +67,9 @@ def _git_log_commits(repo_path: str, branch: str | None = None) -> list[dict[str
                 "date": date,
             }
         )
+    # When limit is set, git log returns newest-first; reverse to chronological
+    if limit:
+        commits.reverse()
     return commits
 
 
@@ -93,12 +109,13 @@ def get_import_preview(
     project_id: str,
     repo_path: str,
     branch: str | None = None,
+    limit: int | None = None,
 ) -> dict[str, int]:
     """Preview how many commits would be imported.
 
     Returns dict with total_commits, already_tracked, importable.
     """
-    commits = _git_log_commits(repo_path, branch)
+    commits = _git_log_commits(repo_path, branch, limit=limit)
     total = len(commits)
 
     if total == 0:
@@ -123,19 +140,31 @@ def import_project_commits(
     project_id: str,
     repo_path: str,
     branch: str | None = None,
+    limit: int | None = None,
 ) -> dict[str, int]:
     """Import historical git commits as 'imported' decisions.
+
+    When no branch is specified, defaults to the project's trigger_branch
+    (if configured). This ensures imports match the branch the system follows.
+    Falls back to all branches if no trigger_branch is set.
 
     Args:
         conn: Database connection
         project_id: Project to import into
         repo_path: Path to git repository
-        branch: Optional branch filter (None = all branches)
+        branch: Optional branch filter (None = use trigger_branch or all)
+        limit: Maximum number of recent commits to import (None = all)
 
     Returns:
         Dict with imported, skipped, total counts.
     """
-    commits = _git_log_commits(repo_path, branch)
+    if branch is None:
+        project = ops.get_project(conn, project_id)
+        if project and project.trigger_branch:
+            branch = project.trigger_branch
+            logger.info("Import defaulting to trigger branch: %s", branch)
+
+    commits = _git_log_commits(repo_path, branch, limit=limit)
     total = len(commits)
 
     if total == 0:
@@ -149,7 +178,7 @@ def import_project_commits(
             project_id=project_id,
             commit_hash=c["hash"],
             decision="imported",
-            reasoning="Historical commit",
+            reasoning="",
             commit_message=c["message"],
             branch=commit_branch,
         )

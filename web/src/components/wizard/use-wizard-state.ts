@@ -20,8 +20,8 @@ export interface PlatformEntry {
 }
 
 export interface WizardData {
-  // Step 0: Strategy
-  strategyId: string;
+  // Step 0: Strategy (multiple allowed)
+  strategyIds: string[];
   // Step 1: Identity
   identities: IdentityEntry[];
   defaultIdentity: string;
@@ -46,6 +46,7 @@ export interface WizardData {
   repoPath: string;
   projectName: string;
   installGitHook: boolean;
+  triggerBranch: string;
   // Strategy fields
   postWhen: string;
   avoid: string;
@@ -56,12 +57,11 @@ const STORAGE_KEY = "social-hook-wizard";
 const DEFAULT_PLATFORMS: PlatformEntry[] = [
   { name: "x", enabled: false, priority: "primary", accountTier: "free", introduce: true, identity: "" },
   { name: "linkedin", enabled: false, priority: "primary", accountTier: "", introduce: true, identity: "" },
-  { name: "preview", enabled: false, priority: "secondary", accountTier: "", introduce: false, identity: "" },
 ];
 
 export function createDefaultWizardData(): WizardData {
   return {
-    strategyId: "",
+    strategyIds: [],
     identities: [{ name: "", type: "myself", label: "", description: "", introHook: "" }],
     defaultIdentity: "",
     platforms: DEFAULT_PLATFORMS.map((p) => ({ ...p })),
@@ -79,6 +79,7 @@ export function createDefaultWizardData(): WizardData {
     repoPath: "",
     projectName: "",
     installGitHook: true,
+    triggerBranch: "",
     postWhen: "",
     avoid: "",
   };
@@ -135,7 +136,7 @@ export function useWizardState() {
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
-  const hasProgress = data.strategyId !== "" || data.identities.some((i) => i.label !== "");
+  const hasProgress = data.strategyIds.length > 0 || data.identities.some((i) => i.label !== "");
 
   return {
     data,

@@ -1,155 +1,39 @@
 """One-shot trigger: commit evaluation and draft creation pipeline."""
 
+from __future__ import annotations
+
 import logging
-import subprocess
 import sys
 
 from social_hook.config.yaml import load_full_config
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
+from social_hook.error_feed import ErrorSeverity, error_feed
 from social_hook.errors import ConfigError, DatabaseError
 from social_hook.filesystem import generate_id, get_db_path
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.llm.prompts import assemble_evaluator_context
-from social_hook.models import CommitInfo, Decision, Draft, is_draftable
-from social_hook.parsing import safe_int
+from social_hook.models.core import Decision
+from social_hook.models.enums import PipelineStage, is_draftable
+from social_hook.parsing import enum_value
 from social_hook.rate_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
 
 
-def parse_commit_info(commit_hash: str, repo_path: str) -> CommitInfo:
-    """Parse commit info from git.
-
-    Args:
-        commit_hash: Git commit hash
-        repo_path: Path to the git repository
-
-    Returns:
-        CommitInfo with parsed data
-    """
-    try:
-        # Get full commit message (subject + body)
-        message = subprocess.run(
-            ["git", "-C", repo_path, "log", "-1", "--format=%B", commit_hash],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-
-        # Get author date (ISO 8601 with timezone)
-        timestamp = subprocess.run(
-            ["git", "-C", repo_path, "log", "-1", "--format=%aI", commit_hash],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-
-        # Get parent commit's author date (fails with exit 128 on first commit)
-        parent_result = subprocess.run(
-            ["git", "-C", repo_path, "log", "-1", "--format=%aI", f"{commit_hash}~1"],
-            capture_output=True,
-            text=True,
-        )
-        parent_timestamp = parent_result.stdout.strip() if parent_result.returncode == 0 else None
-
-        # Get stat summary
-        stat_output = subprocess.run(
-            ["git", "-C", repo_path, "show", "--stat", "--format=", commit_hash],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-
-        # Parse files changed from stat
-        files_changed = []
-        insertions = 0
-        deletions = 0
-        for line in stat_output.split("\n"):
-            line = line.strip()
-            if "|" in line and not line.startswith(" "):
-                # "filename | N +++--"
-                parts = line.split("|")
-                if parts:
-                    files_changed.append(parts[0].strip())
-            elif "changed" in line:
-                # Summary line: "N files changed, N insertions(+), N deletions(-)"
-                if "insertion" in line:
-                    for part in line.split(","):
-                        part = part.strip()
-                        if "insertion" in part:
-                            insertions = safe_int(part.split()[0], 0, "git stat insertions")
-                        elif "deletion" in part:
-                            deletions = safe_int(part.split()[0], 0, "git stat deletions")
-
-        # Get diff
-        diff = subprocess.run(
-            ["git", "-C", repo_path, "diff", f"{commit_hash}~1..{commit_hash}"],
-            capture_output=True,
-            text=True,
-        ).stdout
-
-        # Fallback for first commit (no parent)
-        if not diff:
-            diff = subprocess.run(
-                ["git", "-C", repo_path, "show", "--format=", commit_hash],
-                capture_output=True,
-                text=True,
-            ).stdout
-
-        return CommitInfo(
-            hash=commit_hash,
-            message=message,
-            diff=diff,
-            files_changed=files_changed,
-            insertions=insertions,
-            deletions=deletions,
-            timestamp=timestamp,
-            parent_timestamp=parent_timestamp,
-        )
-    except subprocess.CalledProcessError:
-        # Return minimal info if git commands fail
-        return CommitInfo(
-            hash=commit_hash,
-            message="(unable to parse)",
-            diff="",
-        )
-
-
-def git_remote_origin(repo_path: str) -> str | None:
-    """Get the git remote origin URL for worktree detection.
-
-    Args:
-        repo_path: Path to the git repository
-
-    Returns:
-        Remote origin URL, or None if not available
-    """
-    try:
-        result = subprocess.run(
-            ["git", "-C", repo_path, "remote", "get-url", "origin"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout.strip() or None
-    except subprocess.CalledProcessError:
-        return None
-
-
-def _get_current_branch(repo_path: str) -> str | None:
-    """Get the current git branch name. Returns None for detached HEAD."""
-    try:
-        result = subprocess.run(
-            ["git", "-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        branch = result.stdout.strip()
-        return None if branch == "HEAD" else branch
-    except (subprocess.CalledProcessError, OSError):
-        return None
+from social_hook.trigger_context import (  # noqa: E402, F401
+    AnalyzerOutcome,
+    TargetsPathResult,
+    TriggerContext,
+    build_platform_summaries,
+    ensure_project_brief,
+    fetch_evaluator_extras,
+)
+from social_hook.trigger_git import (  # noqa: E402, F401
+    _get_current_branch,
+    git_remote_origin,
+    parse_commit_info,
+)
 
 
 def run_trigger(
@@ -160,6 +44,9 @@ def run_trigger(
     verbose: bool = False,
     show_prompt: bool = False,
     trigger_source: str = "commit",
+    existing_decision_id: str | None = None,
+    current_branch: str | None = None,
+    task_id: str | None = None,
 ) -> int:
     """Run the commit-to-draft trigger pipeline.
 
@@ -176,6 +63,11 @@ def run_trigger(
         dry_run: If True, skip DB writes and real API calls
         config_path: Optional override for config location
         verbose: If True, print detailed output
+        existing_decision_id: If provided, reuse this ID instead of generating
+            a new one. Used by retrigger to update in-place (upsert).
+        current_branch: Branch the commit belongs to. When provided, skips
+            HEAD detection (important for retrigger/drain where HEAD is
+            irrelevant). Falls back to reading HEAD if not supplied.
 
     Returns:
         Exit code (0-4)
@@ -187,6 +79,12 @@ def run_trigger(
         )
     except ConfigError as e:
         logger.error(f"Config error: {e}")
+        error_feed.emit(
+            ErrorSeverity.ERROR,
+            f"Config error in trigger: {e}",
+            context={"commit_hash": commit_hash, "repo_path": repo_path},
+            source="config",
+        )
         if verbose:
             print(f"Config error: {e}", file=sys.stderr)
         return 1
@@ -197,6 +95,12 @@ def run_trigger(
         conn = init_database(db_path)
     except DatabaseError as e:
         logger.error(f"Database error: {e}")
+        error_feed.emit(
+            ErrorSeverity.ERROR,
+            f"Database error in trigger: {e}",
+            context={"commit_hash": commit_hash},
+            source="database",
+        )
         if verbose:
             print(f"Database error: {e}", file=sys.stderr)
         return 2
@@ -227,9 +131,19 @@ def run_trigger(
         conn.close()
         return 0
 
-    current_branch = _get_current_branch(repo_path)
+    # Resolve branch: callers that know the branch (retrigger, drain) pass it
+    # directly via current_branch. Git hooks read HEAD (correct — developer
+    # just committed). Fall back to HEAD when no branch is supplied.
+    if not current_branch:
+        current_branch = _get_current_branch(repo_path)
 
-    if project.trigger_branch and current_branch != project.trigger_branch:
+    # Branch filter: skip commits from non-target branches.
+    # Manual retriggers and drain bypass this — the user explicitly chose the commit.
+    if (
+        project.trigger_branch
+        and current_branch != project.trigger_branch
+        and trigger_source not in ("manual", "drain")
+    ):
         branch_desc = current_branch or "(detached HEAD)"
         if verbose:
             print(
@@ -244,7 +158,7 @@ def run_trigger(
         gate_result = check_rate_limit(conn, config.rate_limits)
         if gate_result.blocked:
             decision = Decision(
-                id=generate_id("decision"),
+                id=existing_decision_id or generate_id("decision"),
                 project_id=project.id,
                 commit_hash=commit_hash,
                 decision="deferred_eval",
@@ -253,7 +167,10 @@ def run_trigger(
                 trigger_source=trigger_source,
                 branch=current_branch,
             )
-            db.insert_decision(decision)
+            if existing_decision_id:
+                ops.upsert_decision(conn, decision)
+            else:
+                db.insert_decision(decision)
             db.emit_data_event("decision", "created", decision.id, project.id)
             if verbose:
                 print(f"Evaluation deferred: {gate_result.reason}")
@@ -265,10 +182,51 @@ def run_trigger(
 
     project_config = load_project_config(repo_path)
 
+    # 5b. Interval gating — BEFORE expensive context assembly, discovery, LLM setup.
+    # Deferred commits only need config + project + commit message, not full context.
+    has_targets = (
+        getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets
+    )
+
+    # Bypass switch: manual retrigger respects interval by default (set True to skip queue)
+    MANUAL_BYPASSES_INTERVAL = False  # noqa: N806
+    skip_interval = (
+        (trigger_source == "manual" and MANUAL_BYPASSES_INTERVAL)
+        or trigger_source == "drain"  # rate-limit-drained commits skip interval (already counted)
+    )
+
+    if has_targets and not skip_interval:
+        # Cheap gating check — only needs counter + interval setting
+        outcome = _run_commit_analyzer_gate(conn, project, project_config, verbose)
+        if not outcome.should_evaluate:
+            # Fast path: parse commit for message, create deferred decision, return
+            commit = parse_commit_info(commit_hash, repo_path)
+            decision = Decision(
+                id=existing_decision_id or generate_id("decision"),
+                project_id=project.id,
+                commit_hash=commit_hash,
+                decision="deferred_eval",
+                reasoning="Deferred: commit awaiting batch threshold",
+                commit_message=commit.message,
+                processed=True,  # NOT drained by scheduler
+                trigger_source=trigger_source,
+                branch=current_branch,
+            )
+            if existing_decision_id:
+                ops.upsert_decision(conn, decision)
+            else:
+                db.insert_decision(decision)
+            db.emit_data_event("decision", "created", decision.id, project.id)
+            db.emit_data_event("pipeline", PipelineStage.QUEUED, commit_hash[:8], project.id)
+            if verbose:
+                print("Evaluation deferred: interval not met")
+            conn.close()
+            return 0
+
     # 6. Parse commit (needed for timestamp-filtered context)
     commit = parse_commit_info(commit_hash, repo_path)
 
-    # 6. Assemble context (with commit timestamps for narrative filtering)
+    # 6b. Assemble context (with commit timestamps for narrative filtering)
     context = assemble_evaluator_context(
         db,
         project.id,
@@ -277,100 +235,23 @@ def run_trigger(
         parent_timestamp=commit.parent_timestamp,
     )
 
-    # 6b. Auto-discovery: seed project summary if missing
-    if getattr(context, "project_summary", None) is None:
-        try:
-            from social_hook.llm.discovery import discover_project
-            from social_hook.llm.factory import create_client as _create_client
-
-            discovery_client = _create_client(config.models.evaluator, config, verbose=verbose)
-            summary, selected_files, file_summaries, prompt_docs = discover_project(
-                client=discovery_client,
-                repo_path=repo_path,
-                project_docs=project_config.context.project_docs if project_config else [],
-                max_discovery_tokens=project_config.context.max_discovery_tokens
-                if project_config
-                else 60000,
-                max_file_size=project_config.context.max_file_size if project_config else 256000,
-                db=db,
-                project_id=project.id,
-                on_progress=lambda stage: db.emit_data_event(
-                    "pipeline", stage, commit_hash[:8], project.id
-                ),
-            )
-            if summary:
-                db.update_project_summary(project.id, summary)
-                db.update_discovery_files(project.id, selected_files)
-                if file_summaries:
-                    db.upsert_file_summaries(project.id, file_summaries)
-                if prompt_docs:
-                    db.update_prompt_docs(project.id, prompt_docs)
-                db.emit_data_event("project", "updated", project.id, project.id)
-                context.project_summary = summary
-                context.file_summaries = file_summaries if file_summaries else []
-                if verbose:
-                    print(f"Project discovery complete: {len(selected_files)} files analyzed")
-        except Exception as e:
-            logger.warning(f"Project discovery failed (non-fatal): {e}")
-            if verbose:
-                print(f"Project discovery skipped: {e}", file=sys.stderr)
-    elif project_config and project_config.summary:
-        try:
-            freshness = db.get_summary_freshness(project.id)
-            cfg = project_config.summary
-            needs_refresh = freshness["commits_since_summary"] >= cfg.refresh_after_commits or (
-                freshness["days_since_summary"] is not None
-                and freshness["days_since_summary"] >= cfg.refresh_after_days
-            )
-        except Exception:
-            logger.warning("Summary freshness check failed, skipping refresh", exc_info=True)
-            needs_refresh = False
-        if needs_refresh:
-            try:
-                from social_hook.llm.discovery import discover_project
-                from social_hook.llm.factory import create_client as _create_client
-
-                discovery_client = _create_client(config.models.evaluator, config, verbose=verbose)
-                summary, selected_files, file_summaries, prompt_docs = discover_project(
-                    client=discovery_client,
-                    repo_path=repo_path,
-                    project_docs=project_config.context.project_docs if project_config else [],
-                    max_discovery_tokens=project_config.context.max_discovery_tokens
-                    if project_config
-                    else 60000,
-                    max_file_size=project_config.context.max_file_size
-                    if project_config
-                    else 256000,
-                    db=db,
-                    project_id=project.id,
-                    on_progress=lambda stage: db.emit_data_event(
-                        "pipeline", stage, commit_hash[:8], project.id
-                    ),
-                )
-                if summary:
-                    db.update_project_summary(project.id, summary)
-                    db.update_discovery_files(project.id, selected_files)
-                    if file_summaries:
-                        db.upsert_file_summaries(project.id, file_summaries)
-                    if prompt_docs:
-                        db.update_prompt_docs(project.id, prompt_docs)
-                    db.emit_data_event("project", "updated", project.id, project.id)
-                    context.project_summary = summary
-                    context.file_summaries = file_summaries if file_summaries else []
-                    if verbose:
-                        print(f"Project summary refreshed: {len(selected_files)} files analyzed")
-            except Exception as e:
-                logger.warning(f"Project summary refresh failed (non-fatal): {e}")
-                if verbose:
-                    print(f"Summary refresh skipped: {e}", file=sys.stderr)
+    # 6b. Auto-discovery: seed project summary if missing, refresh if stale
+    ensure_project_brief(
+        config=config,
+        project_config=project_config,
+        conn=conn,
+        db=db,
+        project=project,
+        context=context,
+        entity_id=commit_hash[:8],
+        verbose=verbose,
+    )
 
     if verbose and context.project_summary:
         print(f"Using project summary ({len(context.project_summary)} chars)")
 
     if verbose:
-        print(f"Evaluating commit {commit.hash[:8]}: {commit.message}")
-
-    db.emit_data_event("pipeline", "evaluating", commit_hash[:8], project.id)
+        print(f"Processing commit {commit.hash[:8]}: {commit.message}")
 
     # 7. Evaluate
     from social_hook.llm.evaluator import Evaluator
@@ -380,28 +261,160 @@ def run_trigger(
         evaluator_client = create_client(config.models.evaluator, config, verbose=verbose)
     except ConfigError as e:
         logger.error(f"Config error: {e}")
+        error_feed.emit(
+            ErrorSeverity.ERROR,
+            f"Evaluator client config error: {e}",
+            context={"commit_hash": commit_hash, "project_id": project.id},
+            source="config",
+        )
         if verbose:
             print(f"Config error: {e}", file=sys.stderr)
         conn.close()
         return 1
 
-    # Build platform summaries for evaluator context
-    platform_summaries = []
-    for pname, pcfg in config.platforms.items():
-        if pcfg.enabled:
-            summary = f"{pname} ({pcfg.priority})"
-            if pcfg.type == "custom" and pcfg.description:
-                summary += f" — {pcfg.description}"
-            platform_summaries.append(summary)
+    # Stage 1: Commit Analyzer (targets path only, with interval gating)
+    analyzer_result = None
+    if has_targets:
+        ctx = TriggerContext(
+            config=config,
+            conn=conn,
+            db=db,
+            project=project,
+            commit=commit,
+            project_config=project_config,
+            current_branch=current_branch,
+            dry_run=dry_run,
+            verbose=verbose,
+            show_prompt=show_prompt,
+            existing_decision_id=existing_decision_id,
+            task_id=task_id,
+        )
 
-    # Gather scheduling state for evaluator awareness
-    from social_hook.scheduling import get_scheduling_state
+        # Reset counter (was incremented by early gate)
+        _reset_interval_counter(ctx=ctx, context=context, evaluator_client=evaluator_client)
 
-    try:
-        scheduling_state = get_scheduling_state(conn, project.id, config)
-    except Exception as e:
-        logger.warning(f"Failed to get scheduling state (non-fatal): {e}")
-        scheduling_state = None
+        # Check for deferred commits to batch
+        deferred = ops.get_interval_deferred_decisions(conn, project.id)
+        if deferred:
+            result = evaluate_batch(
+                ctx=ctx,
+                deferred_commits=deferred,
+                trigger_commit_hash=commit_hash,
+                context=context,
+                evaluator_client=evaluator_client,
+            )
+            conn.close()
+            return 0
+        else:
+            # Threshold met — check for deferred commits to batch
+            deferred = ops.get_interval_deferred_decisions(conn, project.id)
+            if deferred:
+                result = evaluate_batch(
+                    ctx=ctx,
+                    deferred_commits=deferred,
+                    trigger_commit_hash=commit_hash,
+                    context=context,
+                    evaluator_client=evaluator_client,
+                )
+                conn.close()
+                return result
+
+    # Build evaluator context helpers (only for single-commit path;
+    # evaluate_batch builds its own via fetch_evaluator_extras)
+    platform_summaries = build_platform_summaries(config)
+    extras = fetch_evaluator_extras(conn, project.id, config)
+    scheduling_state = extras.scheduling_state
+    all_topics = extras.all_topics
+    held_topics = extras.held_topics
+    active_arcs_all = extras.active_arcs
+
+    if has_targets:
+        # Single-commit path: run stage 1 inline
+        db.emit_data_event("pipeline", PipelineStage.ANALYZING, commit_hash[:8], project.id)
+        try:
+            from social_hook.llm.analyzer import CommitAnalyzer
+
+            stage1 = CommitAnalyzer(evaluator_client)
+            analyzer_result = stage1.analyze(
+                commit=commit, context=context, db=db, show_prompt=show_prompt
+            )
+            if verbose:
+                cls = (
+                    enum_value(analyzer_result.commit_analysis.classification)
+                    if analyzer_result.commit_analysis.classification
+                    else "unknown"
+                )
+                print(f"Stage 1 complete (classification: {cls})")
+        except Exception as e:
+            logger.warning("Commit analyzer failed (non-fatal): %s", e, exc_info=True)
+            analyzer_result = None
+
+        # Trivial check on fresh analysis
+        if analyzer_result is not None and _is_trivial_classification(analyzer_result):
+            logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
+            result = _run_trivial_skip(
+                ctx=ctx, analyzer_result=analyzer_result, commit_hash=commit_hash
+            )
+            conn.close()
+            return result
+
+        # Single-commit path: run stage 1 inline
+        db.emit_data_event("pipeline", PipelineStage.ANALYZING, commit_hash[:8], project.id)
+        if ctx.task_id:
+            ctx.db.emit_task_stage(ctx.task_id, "analyzing", "Analyzing commit", project.id)
+        try:
+            from social_hook.llm.analyzer import CommitAnalyzer
+
+            stage1 = CommitAnalyzer(evaluator_client)
+            analyzer_result = stage1.analyze(
+                commit=commit, context=context, db=db, show_prompt=show_prompt
+            )
+            if verbose:
+                cls = (
+                    analyzer_result.commit_analysis.classification.value
+                    if analyzer_result.commit_analysis.classification
+                    else "unknown"
+                )
+                print(f"Stage 1 complete (classification: {cls})")
+        except Exception as e:
+            logger.warning("Commit analyzer failed (non-fatal): %s", e, exc_info=True)
+            analyzer_result = None
+
+        # Trivial check on fresh analysis
+        if analyzer_result is not None and _is_trivial_classification(analyzer_result):
+            logger.info("Trivial commit %s, skipping strategy evaluation", commit_hash[:8])
+            result = _run_trivial_skip(
+                ctx=ctx, analyzer_result=analyzer_result, commit_hash=commit_hash
+            )
+            conn.close()
+            return result
+
+        db.emit_data_event("pipeline", PipelineStage.EVALUATING, commit_hash[:8], project.id)
+        if ctx.task_id:
+            ctx.db.emit_task_stage(ctx.task_id, "evaluating", "Evaluating strategies", project.id)
+
+    # Guard: targets configured but no content strategies defined
+    if has_targets and not config.content_strategies:
+        logger.warning("Targets configured but no content strategies defined — skipping evaluation")
+        decision = Decision(
+            id=existing_decision_id or generate_id("decision"),
+            project_id=project.id,
+            commit_hash=commit_hash,
+            decision="skip",
+            reasoning="Targets configured but no content strategies defined",
+            commit_message=commit.message,
+            trigger_source=trigger_source,
+            branch=current_branch,
+        )
+        if existing_decision_id:
+            ops.upsert_decision(conn, decision)
+        else:
+            db.insert_decision(decision)
+        db.emit_data_event("decision", "created", decision.id, project.id)
+        if verbose:
+            print("Skipped: no content strategies defined for targets")
+        conn.close()
+        return 0
 
     try:
         evaluator = Evaluator(evaluator_client)
@@ -416,6 +429,12 @@ def run_trigger(
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
             scheduling_state=scheduling_state,
+            strategies=config.content_strategies or None,
+            held_topics=held_topics or None,
+            active_arcs_all=active_arcs_all or None,
+            targets=config.targets or None,
+            all_topics=all_topics or None,
+            analysis=analyzer_result,
         )
     except Exception as e:
         logger.error(f"LLM API error during evaluation: {e}")
@@ -426,7 +445,24 @@ def run_trigger(
 
     # 8. Map evaluation output to Decision
     analysis = evaluation.commit_analysis
-    target = evaluation.targets.get("default")
+
+    # --- New targets path: when config.targets has real target entries ---
+    if has_targets:
+        path_result = _run_targets_path(
+            ctx=ctx,
+            evaluation=evaluation,
+            analysis=analysis,
+            commit_hash=commit_hash,
+            context=context,
+            evaluator_client=evaluator_client,
+            analyzer_result=analyzer_result,
+        )
+        conn.close()
+        return path_result.exit_code
+
+    # --- Legacy path: single "default" target ---
+    logger.warning("No targets configured. Using legacy platform-based drafting.")
+    target = evaluation.strategies.get("default")
     if target is None:
         logger.error("Evaluation missing 'default' target")
         if verbose:
@@ -434,24 +470,21 @@ def run_trigger(
         conn.close()
         return 3
 
-    def _val(x):
-        return x.value if hasattr(x, "value") else x
-
-    decision_type = _val(target.action)  # "draft", "hold", or "skip"
+    decision_type = enum_value(target.action)  # "draft", "hold", or "skip"
 
     decision = Decision(
-        id=generate_id("decision"),
+        id=existing_decision_id or generate_id("decision"),
         project_id=project.id,
         commit_hash=commit_hash,
         decision=decision_type,
         reasoning=target.reason,
         commit_message=commit.message,
         angle=target.angle,
-        episode_type=_val(target.episode_type),
+        episode_type=None,
         episode_tags=analysis.episode_tags,
-        post_category=_val(target.post_category),
+        post_category=enum_value(target.post_category),
         arc_id=target.arc_id,
-        media_tool=_val(target.media_tool),
+        media_tool=enum_value(target.media_tool),
         targets={"default": target.model_dump()},
         commit_summary=analysis.summary,
         consolidate_with=target.consolidate_with,
@@ -468,7 +501,10 @@ def run_trigger(
             decision.decision = "skip"
             decision_type = "skip"
 
-    db.insert_decision(decision)
+    if existing_decision_id:
+        ops.upsert_decision(conn, decision)
+    else:
+        db.insert_decision(decision)
     db.emit_data_event("decision", "created", decision.id, project.id)
 
     # 8b. Arc activation: create new arc or link to existing
@@ -547,7 +583,7 @@ def run_trigger(
         from social_hook.compat import make_eval_compat
         from social_hook.drafting import draft_for_platforms
 
-        db.emit_data_event("pipeline", "drafting", commit_hash[:8], project.id)
+        db.emit_data_event("pipeline", PipelineStage.DRAFTING, commit_hash[:8], project.id)
         eval_compat = make_eval_compat(evaluation, decision.decision)
 
         draft_results = draft_for_platforms(
@@ -595,323 +631,465 @@ def run_trigger(
     return 0
 
 
-def _send_decision_notification(config, project, commit, decision):
-    """Send a decision notification to all configured channels."""
-    from social_hook.messaging.base import OutboundMessage
-    from social_hook.notifications import broadcast_notification
+from social_hook.trigger_decisions import (  # noqa: E402, F401
+    _combine_strategy_reasoning,
+    _determine_overall_decision,
+    _is_trivial_classification,
+)
 
-    reasoning_preview = (
-        (decision.reasoning[:200] + "...") if len(decision.reasoning) > 200 else decision.reasoning
+
+def _run_trivial_skip(
+    ctx: TriggerContext,
+    analyzer_result,
+    commit_hash: str,
+) -> int:
+    """Handle trivial commits: create cycle, do tag matching, skip stage 2."""
+    import json
+
+    from social_hook.models.content import EvaluationCycle
+
+    analysis = analyzer_result.commit_analysis
+
+    # Create evaluation cycle record
+    cycle = EvaluationCycle(
+        id=generate_id("cycle"),
+        project_id=ctx.project.id,
+        trigger_type="commit",
+        trigger_ref=commit_hash,
     )
-    msg_text = (
-        f"Commit evaluated\n\n"
-        f"Project: {project.name}\n"
-        f"Commit: {commit.hash[:8]} - {commit.message}\n"
-        f"Decision: {decision.decision}\n"
-        f"Reasoning: {reasoning_preview}"
+    ctx.db.insert_evaluation_cycle(cycle)
+
+    # Store analysis JSON on the cycle for caching
+    try:
+        analysis_json = json.dumps(analyzer_result.model_dump(), default=str)
+        ops.update_cycle_analysis_json(ctx.conn, cycle.id, analysis_json)
+    except Exception as e:
+        logger.warning(f"Failed to cache analysis JSON (non-fatal): {e}")
+
+    # Tag-to-topic matching (even trivial commits may match topics)
+    # Deduplicate: a topic matching multiple tags should only be incremented once
+    incremented_topic_ids: set[str] = set()
+    for tag in analysis.episode_tags:
+        matching_topics = ops.get_topics_matching_tag(ctx.conn, ctx.project.id, tag)
+        for topic in matching_topics:
+            if topic.id not in incremented_topic_ids:
+                ops.increment_topic_commit_count(ctx.conn, topic.id)
+                incremented_topic_ids.add(topic.id)
+            ops.insert_topic_commit(ctx.conn, topic.id, commit_hash, matched_tag=tag)
+
+    # Create skip decision
+    decision = Decision(
+        id=ctx.existing_decision_id or generate_id("decision"),
+        project_id=ctx.project.id,
+        commit_hash=commit_hash,
+        decision="skip",
+        reasoning="Trivial commit — skipped strategy evaluation",
+        commit_message=ctx.commit.message,
+        episode_tags=analysis.episode_tags,
+        commit_summary=analysis.summary,
+        branch=ctx.current_branch,
     )
-    broadcast_notification(config, OutboundMessage(text=msg_text))
 
-
-def _build_merge_evaluation(
-    drafts: list[Draft],
-    decisions: list[Decision],
-    merge_instruction: str | None,
-):
-    """Build a synthetic evaluation for a merge group.
-
-    Returns a SimpleNamespace matching the shape produced by make_eval_compat()
-    in compat.py — the same interface the drafter pipeline expects.
-    """
-    from types import SimpleNamespace
-
-    latest = decisions[-1]
-
-    if merge_instruction:
-        angle = merge_instruction
+    if ctx.existing_decision_id:
+        ops.upsert_decision(ctx.conn, decision)
     else:
-        combined = " + ".join(d.angle for d in decisions if d.angle)
-        angle = combined or "Consolidate these drafts"
+        ctx.db.insert_decision(decision)
+    ctx.db.emit_data_event("decision", "created", decision.id, ctx.project.id)
 
-    combined_summary = "\n".join(
-        f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}" for d in decisions
-    )
+    if ctx.verbose:
+        print("Decision: skip (trivial commit)")
+        print(f"Summary: {analysis.summary}")
 
-    return SimpleNamespace(
-        decision="draft",
-        reasoning=f"Merged from {len(drafts)} drafts",
-        angle=angle,
-        episode_type=None,
-        post_category=latest.post_category,
-        arc_id=latest.arc_id,
-        new_arc_theme=None,
-        media_tool=latest.media_tool,
-        reference_posts=None,
-        commit_summary=combined_summary,
-        include_project_docs=None,
-    )
+    return 0
 
 
-def _build_merge_commit(
-    decisions: list[Decision],
-    drafts: list[Draft],
-) -> CommitInfo:
-    """Build a synthetic CommitInfo for a merge group.
+from social_hook.trigger_batch import (  # noqa: E402, F401
+    _reset_interval_counter,
+    _run_commit_analyzer_gate,
+    evaluate_batch,
+)
+from social_hook.trigger_side_effects import (  # noqa: E402, F401
+    _run_diagnostics,
+    _send_decision_notification,
+    _trigger_brief_update,
+)
 
-    Injects original draft contents into the diff field so the drafter
-    sees them in the "### Diff" section of the system prompt.
-    """
-    summaries = "\n".join(
-        f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}" for d in decisions
-    )
-    diff_section = "Original drafts to consolidate:\n" + "\n---\n".join(
-        f"Draft {i + 1}:\n{d.content}" for i, d in enumerate(drafts)
-    )
-    return CommitInfo(
-        hash=f"merge-{decisions[-1].commit_hash[:8]}",
-        message=f"Merge of {len(drafts)} drafts:\n{summaries}",
-        diff=diff_section,
-        files_changed=[],
-    )
+# Backward-compat alias
+_run_commit_analyzer = _run_commit_analyzer_gate  # noqa: F841
 
 
-def _execute_merge_groups(
-    queue_actions: dict[str, list],
-    config,
-    conn,
-    db,
-    project,
+def _run_targets_path(
+    ctx: TriggerContext,
+    evaluation,
+    analysis,
+    commit_hash: str,
     context,
-    project_config,
-    dry_run: bool,
-    verbose: bool,
-) -> None:
-    """Execute merge queue actions grouped by merge_group.
+    evaluator_client,
+    analyzer_result=None,
+    trigger_type: str = "commit",
+    batch_commit_hashes: list[str] | None = None,
+    batch_deferred_ids: list[str] | None = None,
+) -> TargetsPathResult:
+    """New targets pipeline path: multi-strategy -> multi-target routing."""
+    from social_hook.models.content import EvaluationCycle
 
-    For each merge group: load drafts, sub-group by platform, call drafter
-    to create a replacement draft, supersede originals.
-    """
-    from collections import defaultdict
+    # Create evaluation cycle record
+    cycle = EvaluationCycle(
+        id=generate_id("cycle"),
+        project_id=ctx.project.id,
+        trigger_type=trigger_type,
+        trigger_ref=",".join(batch_commit_hashes) if batch_commit_hashes else commit_hash,
+    )
+    ctx.db.insert_evaluation_cycle(cycle)
 
-    from social_hook.drafting import draft_for_platforms
+    # -- Phase A: Associate deferred batch decisions with this cycle immediately --
+    if batch_deferred_ids:
+        try:
+            ops.mark_deferred_decisions_batched(ctx.conn, batch_deferred_ids, cycle.id)
+            for did in batch_deferred_ids:
+                ctx.db.emit_data_event("decision", "updated", did, ctx.project.id)
+        except Exception:
+            logger.warning("Batch membership marking failed (non-fatal)", exc_info=True)
 
-    for _target_name, actions in queue_actions.items():
-        merge_actions = [a for a in actions if a.action == "merge"]
-        if not merge_actions:
-            continue
+    # If stage 1 analyzer produced a result, use it for enrichment
+    if analyzer_result is not None:
+        import json
 
-        # Group by merge_group label
-        groups: dict[str, list] = defaultdict(list)
-        for ma in merge_actions:
-            group_key = ma.merge_group or "default"
-            groups[group_key].append(ma)
+        # Store analysis JSON on the cycle for caching
+        try:
+            analysis_json = json.dumps(analyzer_result.model_dump(), default=str)
+            ops.update_cycle_analysis_json(ctx.conn, cycle.id, analysis_json)
+        except Exception as e:
+            logger.warning(f"Failed to cache analysis JSON (non-fatal): {e}")
 
-        for group_key, group_actions in groups.items():
-            # Extract merge_instruction (first non-null in the group)
-            merge_instruction = next(
-                (a.merge_instruction for a in group_actions if a.merge_instruction),
-                None,
+        # Enrich the evaluator's analysis with stage 1 classification
+        if analyzer_result.commit_analysis.classification:
+            analysis.classification = analyzer_result.commit_analysis.classification
+
+        # Use stage 1 tags if evaluator produced none
+        if not analysis.episode_tags and analyzer_result.commit_analysis.episode_tags:
+            analysis.episode_tags = analyzer_result.commit_analysis.episode_tags
+
+        if ctx.verbose:
+            classification = (
+                enum_value(analyzer_result.commit_analysis.classification)
+                if analyzer_result.commit_analysis.classification
+                else "unknown"
+            )
+            print(f"Stage 1 classification: {classification}")
+
+    # Brief update: if commit is non-trivial, update the brief
+    _trigger_brief_update(
+        evaluation=evaluation,
+        analysis=analysis,
+        conn=ctx.conn,
+        db=ctx.db,
+        project=ctx.project,
+        evaluator_client=evaluator_client,
+        dry_run=ctx.dry_run,
+        verbose=ctx.verbose,
+    )
+
+    # Tag-to-topic matching: increment commit counts and record junction
+    incremented_topic_ids: set[str] = set()
+    for tag in analysis.episode_tags:
+        matching_topics = ops.get_topics_matching_tag(ctx.conn, ctx.project.id, tag)
+        for topic in matching_topics:
+            if topic.id not in incremented_topic_ids:
+                ops.increment_topic_commit_count(ctx.conn, topic.id)
+                incremented_topic_ids.add(topic.id)
+            ops.insert_topic_commit(ctx.conn, topic.id, commit_hash, matched_tag=tag)
+
+    # Process topic suggestions from stage 1 analyzer
+    if analyzer_result and getattr(analyzer_result, "topic_suggestions", None):
+        try:
+            from social_hook.topics import process_topic_suggestions
+
+            strategy_names = (
+                list(ctx.config.content_strategies.keys()) if ctx.config.content_strategies else []
+            )
+            process_topic_suggestions(
+                conn=ctx.conn,
+                project_id=ctx.project.id,
+                suggestions=analyzer_result.topic_suggestions,
+                strategies=strategy_names,
+                strategy_configs=ctx.config.content_strategies,
+                llm_client=evaluator_client,
+            )
+        except Exception:
+            logger.warning("Topic creation from analyzer suggestions failed", exc_info=True)
+
+    # -- Phase E: Decision creation --
+    ctx.db.emit_data_event("pipeline", PipelineStage.DECIDING, commit_hash[:8], ctx.project.id)
+    if ctx.task_id:
+        ctx.db.emit_task_stage(ctx.task_id, "deciding", "Processing decision", ctx.project.id)
+
+    # Validate topic_id references belong to correct strategy (LLM Output Validation)
+    for strategy_name, strat_decision in evaluation.strategies.items():
+        if strat_decision.topic_id:
+            referenced_topic = ops.get_topic(ctx.conn, strat_decision.topic_id)
+            if referenced_topic is None:
+                logger.warning(
+                    "Evaluator referenced nonexistent topic %s for strategy %s, stripping",
+                    strat_decision.topic_id,
+                    strategy_name,
+                )
+                strat_decision.topic_id = None
+            elif referenced_topic.strategy != strategy_name:
+                logger.warning(
+                    "Evaluator referenced topic %s (strategy=%s) from strategy %s, stripping",
+                    strat_decision.topic_id,
+                    referenced_topic.strategy,
+                    strategy_name,
+                )
+                strat_decision.topic_id = None
+
+    # Update content topic statuses for held topics
+    for _strategy_name, strat_decision in evaluation.strategies.items():
+        action = enum_value(strat_decision.action)
+        if action == "hold" and strat_decision.topic_id:
+            ops.update_topic_hold(ctx.conn, strat_decision.topic_id, strat_decision.reason)
+            ops.emit_data_event(
+                ctx.conn, "topic", "updated", strat_decision.topic_id, ctx.project.id
             )
 
-            # Load and validate drafts + their parent decisions
-            valid_drafts: list[Draft] = []
-            valid_decisions: list[Decision] = []
-            for ga in group_actions:
-                draft = ops.get_draft(conn, ga.draft_id)
-                # Intentionally excludes deferred — queue actions target active drafts only
-                if (
-                    not draft
-                    or draft.status not in ("draft", "approved", "scheduled")
-                    or draft.project_id != project.id
-                ):
-                    if verbose:
-                        print(f"Merge skipped: draft {ga.draft_id} not actionable")
-                    continue
-                valid_drafts.append(draft)
-                if draft.decision_id:
-                    dec = ops.get_decision(conn, draft.decision_id)
-                    if dec:
-                        valid_decisions.append(dec)
+    # Derive overall decision from per-strategy decisions
+    decision_type = _determine_overall_decision(evaluation.strategies)
 
-            if len(valid_drafts) < 2 or not valid_decisions:
-                if verbose:
-                    print(
-                        f"Merge group {group_key}: {len(valid_drafts)} valid draft(s), "
-                        f"{len(valid_decisions)} decision(s) — skipping"
-                    )
-                continue
+    # Get the first "draft" strategy for arc/angle/category or fall back to first strategy
+    first_draft_strategy = None
+    for _sn, sd in evaluation.strategies.items():
+        if enum_value(sd.action) == "draft":
+            first_draft_strategy = sd
+            break
+    representative = first_draft_strategy or next(iter(evaluation.strategies.values()))
 
-            # Sub-group by platform
-            by_platform: dict[str, list[Draft]] = defaultdict(list)
-            for d in valid_drafts:
-                by_platform[d.platform].append(d)
-
-            for platform, platform_drafts in by_platform.items():
-                if len(platform_drafts) < 2:
-                    if verbose:
-                        logger.info(
-                            "Merge group %s: only 1 draft on %s, skipping",
-                            group_key,
-                            platform,
-                        )
-                    continue
-
-                pcfg = config.platforms.get(platform)
-                if not pcfg or not pcfg.enabled:
-                    continue
-
-                try:
-                    # Collect decisions for this platform's drafts
-                    platform_decision_ids = {d.decision_id for d in platform_drafts}
-                    platform_decisions = [
-                        dec for dec in valid_decisions if dec.id in platform_decision_ids
-                    ] or valid_decisions[-1:]  # fallback to latest
-
-                    merged_eval = _build_merge_evaluation(
-                        platform_drafts, platform_decisions, merge_instruction
-                    )
-                    merged_commit = _build_merge_commit(platform_decisions, platform_drafts)
-
-                    draft_results = draft_for_platforms(
-                        config,
-                        conn,
-                        db,
-                        project,
-                        decision_id=platform_decisions[-1].id,
-                        evaluation=merged_eval,
-                        context=context,
-                        commit=merged_commit,
-                        project_config=project_config,
-                        target_platform_names=[platform],
-                        dry_run=dry_run,
-                        verbose=verbose,
-                        skip_content_filter=True,
-                    )
-
-                    if draft_results and not dry_run:
-                        replacement_id = draft_results[0].draft.id
-                        for d in platform_drafts:
-                            ops.supersede_draft(conn, d.id, replacement_id)
-                            db.emit_data_event("draft", "updated", d.id, project.id)
-
-                    if verbose and draft_results:
-                        print(
-                            f"Merged {len(platform_drafts)} {platform} drafts "
-                            f"→ {len(draft_results)} replacement(s)"
-                        )
-
-                except Exception as e:
-                    logger.error("Merge group %s/%s failed: %s", group_key, platform, e)
-                    if verbose:
-                        print(f"Merge group {group_key}/{platform} failed: {e}")
-
-
-def run_summary_trigger(
-    config,
-    conn,
-    db,
-    project,
-    summary: str,
-    repo_path: str,
-    verbose: bool = False,
-) -> dict | None:
-    """Generate an introductory first draft from project summary.
-
-    Creates a Decision with trigger_source="manual" and decision="draft",
-    then calls the drafter directly. No evaluator call needed.
-
-    Returns draft info dict or None on failure.
-    """
-    from social_hook.compat import make_eval_compat
-    from social_hook.config.project import load_project_config
-    from social_hook.drafting import draft_for_platforms
-
-    project_config = load_project_config(repo_path)
-
-    # Create a manual decision (no commit)
     decision = Decision(
-        id=generate_id("decision"),
-        project_id=project.id,
-        commit_hash="summary",
-        decision="draft",
-        reasoning="Summary-based introductory draft",
-        commit_message="Project introduction",
-        angle="Introduce the project and what it does",
-        trigger_source="manual",
-    )
-    db.insert_decision(decision)
-    db.emit_data_event("decision", "created", decision.id, project.id)
-
-    # Assemble context (no commit timestamps)
-    context = assemble_evaluator_context(db, project.id, project_config)
-
-    # Build a minimal evaluation-compatible object for the drafter
-    from social_hook.llm.schemas import (
-        CommitAnalysis,
-        EpisodeTypeSchema,
-        LogEvaluationInput,
-        PostCategorySchema,
-        TargetAction,
-        TargetDecisionInput,
+        id=ctx.existing_decision_id or generate_id("decision"),
+        project_id=ctx.project.id,
+        commit_hash=commit_hash,
+        decision=decision_type,
+        reasoning=_combine_strategy_reasoning(evaluation.strategies),
+        commit_message=ctx.commit.message,
+        angle=representative.angle,
+        episode_type=None,
+        episode_tags=analysis.episode_tags,
+        post_category=enum_value(representative.post_category),
+        arc_id=representative.arc_id,
+        media_tool=enum_value(representative.media_tool),
+        targets={k: v.model_dump() for k, v in evaluation.strategies.items()},
+        commit_summary=analysis.summary,
+        consolidate_with=representative.consolidate_with,
+        reference_posts=representative.reference_posts,
+        branch=ctx.current_branch,
     )
 
-    evaluation = LogEvaluationInput(
-        commit_analysis=CommitAnalysis(
-            summary=summary[:500],
-            episode_tags=["introduction"],
-        ),
-        targets={
-            "default": TargetDecisionInput(
-                action=TargetAction.draft,
-                reason="Summary-based introduction",
-                angle="Introduce the project and what it does",
-                episode_type=EpisodeTypeSchema.synthesis,
-                post_category=PostCategorySchema.opportunistic,
-            ),
-        },
-    )
-    eval_compat = make_eval_compat(evaluation, "draft")
+    # Hold count enforcement
+    hold_limit_forced = False
+    if decision_type == "hold":
+        max_hold = ctx.project_config.context.max_hold_count if ctx.project_config else 5
+        current_held = ops.get_held_decisions(ctx.conn, ctx.project.id)
+        if len(current_held) >= max_hold:
+            logger.warning(f"Hold limit reached ({max_hold}), forcing skip for {commit_hash[:8]}")
+            decision.decision = "skip"
+            decision_type = "skip"
+            hold_limit_forced = True
 
-    # Draft
-    db.emit_data_event("pipeline", "drafting", "summary", project.id)
+    if ctx.existing_decision_id:
+        ops.upsert_decision(ctx.conn, decision)
+    else:
+        ctx.db.insert_decision(decision)
+    ctx.db.emit_data_event("decision", "created", decision.id, ctx.project.id)
 
-    commit = CommitInfo(
-        hash="summary",
-        message="Project introduction",
-        diff=summary[:1000],
-        files_changed=[],
-    )
-
-    try:
-        draft_results = draft_for_platforms(
-            config=config,
-            conn=conn,
-            db=db,
-            project=project,
-            decision_id=decision.id,
-            evaluation=eval_compat,
-            context=context,
-            commit=commit,
-            project_config=project_config,
-            verbose=verbose,
+    # Set batch_id on trigger decision (after it's been created/upserted)
+    if batch_deferred_ids:
+        ctx.conn.execute(
+            "UPDATE decisions SET batch_id = ? WHERE id = ?",
+            (cycle.id, decision.id),
         )
-    except Exception as e:
-        logger.error("Summary draft failed: %s", e)
-        if verbose:
-            print(f"Summary draft failed: {e}", file=sys.stderr)
-        return None
+        ctx.conn.commit()
 
-    if not draft_results:
-        return None
+    # Arc activation for draftable strategies
+    if is_draftable(decision.decision):
+        for _sn, sd in evaluation.strategies.items():
+            if enum_value(sd.action) != "draft":
+                continue
+            if sd.new_arc_theme and not sd.arc_id:
+                try:
+                    from social_hook.narrative.arcs import create_arc as _create_arc
 
-    # Return first draft info
-    first = draft_results[0]
-    return {
-        "decision_id": decision.id,
-        "draft_id": first.draft.id,
-        "platform": first.draft.platform,
-        "content": first.draft.content,
-    }
+                    new_arc_id = _create_arc(ctx.db.conn, ctx.project.id, sd.new_arc_theme)
+                    ctx.db.update_decision(decision.id, arc_id=new_arc_id)
+                    decision.arc_id = new_arc_id
+                    if ctx.verbose:
+                        print(f"Created new arc: {new_arc_id} ({sd.new_arc_theme})")
+                except Exception as e:
+                    logger.warning(f"Arc creation failed (non-fatal): {e}")
+                break  # Only one arc per decision
+
+    # Held decision absorption
+    if is_draftable(decision.decision) and representative.consolidate_with:
+        valid_ids = [d.id for d in context.held_decisions]
+        absorbed = [cid for cid in representative.consolidate_with if cid in valid_ids]
+        if absorbed and not ctx.dry_run:
+            batch_id = generate_id("batch")
+            ops.mark_decisions_processed(ctx.conn, absorbed, batch_id)
+
+    # Queue actions (same as legacy path)
+    executed_queue_actions: list[dict[str, str]] = []
+    if evaluation.queue_actions:
+        for _target_name, actions in evaluation.queue_actions.items():
+            for qa in actions:
+                action_type = qa.action
+                if action_type == "merge":
+                    continue
+                if not ctx.dry_run:
+                    draft_ref = ops.get_draft(ctx.conn, qa.draft_id)
+                    if not draft_ref or draft_ref.status not in ("draft", "approved", "scheduled"):
+                        if ctx.verbose:
+                            print(f"Queue action skipped: draft {qa.draft_id} not actionable")
+                        continue
+                    ops.execute_queue_action(ctx.conn, action_type, qa.draft_id, qa.reason)
+                    executed_queue_actions.append(
+                        {
+                            "type": action_type,
+                            "draft_id": qa.draft_id,
+                            "reason": qa.reason or "",
+                        }
+                    )
+                if ctx.verbose:
+                    print(f"Queue action: {action_type} draft {qa.draft_id}")
+
+        if not ctx.dry_run:
+            _execute_merge_groups(
+                evaluation.queue_actions,
+                ctx.config,
+                ctx.conn,
+                ctx.db,
+                ctx.project,
+                context,
+                ctx.project_config,
+                ctx.dry_run,
+                ctx.verbose,
+            )
+
+    # Run pipeline diagnostics before notification fork
+    diagnostics_list = _run_diagnostics(
+        ctx,
+        cycle.id,
+        evaluation,
+        decision_type,
+        hold_limit_forced=hold_limit_forced,
+    )
+
+    # Send decision notification for non-draftable decisions
+    if (
+        not ctx.dry_run
+        and ctx.config.notification_level == "all_decisions"
+        and not is_draftable(decision.decision)
+    ):
+        _send_decision_notification(
+            ctx.config,
+            ctx.project,
+            ctx.commit,
+            decision,
+            diagnostics=diagnostics_list,
+        )
+
+    if ctx.verbose:
+        print(f"Decision: {decision_type}")
+        print(f"Reasoning: {decision.reasoning}")
+
+    # Route per-strategy decisions to per-target actions and draft
+    if is_draftable(decision.decision):
+        from social_hook.content_sources import content_sources
+        from social_hook.drafting import draft_for_targets
+        from social_hook.routing import route_to_targets
+
+        ctx.db.emit_data_event("pipeline", PipelineStage.DRAFTING, commit_hash[:8], ctx.project.id)
+        if ctx.task_id:
+            ctx.db.emit_task_stage(ctx.task_id, "drafting", "Drafting content", ctx.project.id)
+
+        target_actions = route_to_targets(evaluation.strategies, ctx.config, ctx.conn)
+        draftable_actions = [a for a in target_actions if a.action == "draft"]
+
+        if draftable_actions:
+            draft_results = draft_for_targets(
+                draftable_actions,
+                ctx.config,
+                ctx.conn,
+                ctx.db,
+                ctx.project,
+                decision_id=decision.id,
+                evaluation=evaluation,
+                context=context,
+                commit=ctx.commit,
+                content_source_registry=content_sources,
+                project_config=ctx.project_config,
+                dry_run=ctx.dry_run,
+                verbose=ctx.verbose,
+                cycle_id=cycle.id,
+            )
+
+            # Increment arc post count if drafts were created for an arc
+            if draft_results and decision.arc_id:
+                try:
+                    from social_hook.narrative.arcs import increment_arc_post_count
+
+                    increment_arc_post_count(ctx.db.conn, decision.arc_id)
+                    if ctx.verbose:
+                        print(f"Incremented post count for arc: {decision.arc_id}")
+                except Exception as e:
+                    logger.warning(f"Arc post count increment failed (non-fatal): {e}")
+
+            # Update topic status for strategies that drafted with a topic_id
+            if draft_results and not ctx.dry_run:
+                for _sn, sd in evaluation.strategies.items():
+                    if enum_value(sd.action) == "draft" and sd.topic_id:
+                        new_status = "partial" if sd.arc_id else "covered"
+                        ops.update_topic_status(ctx.conn, sd.topic_id, new_status)
+                        if ctx.verbose:
+                            print(f"Topic {sd.topic_id} status -> {new_status}")
+
+            draft_results_for_notification = draft_results
+        else:
+            draft_results_for_notification = None
+
+        # Cycle notification (both draftable and non-draftable paths)
+        cycle_drafts = (
+            [r.draft for r in draft_results_for_notification]
+            if draft_results_for_notification
+            else []
+        )
+        should_notify = not ctx.dry_run and (
+            cycle_drafts or ctx.config.notification_level != "drafts_only"
+        )
+        if should_notify:
+            from social_hook.notifications import notify_evaluation_cycle
+
+            strategy_outcomes = {
+                sn: {
+                    "action": enum_value(sd.action),
+                    "reason": sd.reason,
+                    "arc_id": sd.arc_id,
+                    "topic_id": sd.topic_id,
+                }
+                for sn, sd in evaluation.strategies.items()
+            }
+            notify_evaluation_cycle(
+                ctx.config,
+                project_name=ctx.project.name,
+                project_id=ctx.project.id,
+                cycle_id=cycle.id,
+                trigger_description=f"Commit {ctx.commit.hash[:8]} — {ctx.commit.message}",
+                strategy_outcomes=strategy_outcomes,
+                drafts=cycle_drafts,
+                queue_actions=executed_queue_actions or None,
+                diagnostics=diagnostics_list,
+                dry_run=ctx.dry_run,
+            )
+
+    return TargetsPathResult(exit_code=0, cycle_id=cycle.id, decision_id=decision.id)
 
 
 # Backward-compatible re-exports — tests import these from trigger.py
@@ -919,4 +1097,13 @@ from social_hook.drafting import (  # noqa: E402, F401
     _generate_media,
     _needs_thread,
     _parse_thread_tweets,
+)
+from social_hook.trigger_secondary import (  # noqa: E402, F401
+    run_suggestion_trigger,
+    run_summary_trigger,
+)
+from social_hook.trigger_side_effects import (  # noqa: E402, F401
+    _build_merge_commit,
+    _build_merge_evaluation,
+    _execute_merge_groups,
 )

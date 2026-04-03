@@ -26,17 +26,9 @@ from social_hook.llm.prompts import (
     count_tokens,
     load_prompt,
 )
-from social_hook.models import (
-    Arc,
-    CommitInfo,
-    Decision,
-    Draft,
-    Lifecycle,
-    NarrativeDebt,
-    Post,
-    Project,
-    ProjectContext,
-)
+from social_hook.models.context import ProjectContext
+from social_hook.models.core import CommitInfo, Decision, Draft, Post, Project
+from social_hook.models.narrative import Arc, Lifecycle, NarrativeDebt
 
 # =============================================================================
 # Fixtures
@@ -372,7 +364,6 @@ class TestAssembleDrafterPrompt:
             commit_hash="abc123",
             decision="draft",
             reasoning="Important feature",
-            episode_type="milestone",
         )
         result = assemble_drafter_prompt(
             "# Drafter",
@@ -383,7 +374,6 @@ class TestAssembleDrafterPrompt:
         )
         assert "draft" in result
         assert "Important feature" in result
-        assert "milestone" in result
 
     def test_includes_arc_context(self, sample_project_context, sample_commit):
         decision = Decision(

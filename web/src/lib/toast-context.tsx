@@ -29,6 +29,20 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         ...prev,
         { id, message, detail: opts?.detail, variant: opts?.variant ?? "info", ts: Date.now() },
       ]);
+
+      // Persist error toasts to the system error feed so they appear in System > Errors
+      if (opts?.variant === "error") {
+        import("@/lib/api").then(({ reportFrontendError }) =>
+          reportFrontendError({
+            severity: "warning",
+            message,
+            source: "web-ui",
+            context: opts?.detail ? { detail: opts.detail } : undefined,
+          }).catch(() => {
+            // Fire-and-forget — don't create error toasts about error logging
+          })
+        ).catch(() => {});
+      }
     },
     [],
   );

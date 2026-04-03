@@ -82,18 +82,15 @@ class TestValidateXApi:
             status_code=200,
             json=lambda: {"data": {"username": "testuser"}},
         )
-        # Mock OAuth1 import
-        with patch("social_hook.setup.validation.OAuth1", create=True):
-            success, msg = validate_x_api("key", "secret", "token", "tsecret")
-            assert success is True
-            assert "testuser" in msg
+        success, msg = validate_x_api("test-access-token")
+        assert success is True
+        assert "testuser" in msg
 
     @patch("social_hook.setup.validation.requests.get")
     def test_invalid_credentials(self, mock_get):
         mock_get.return_value = MagicMock(status_code=401)
-        with patch("social_hook.setup.validation.OAuth1", create=True):
-            success, msg = validate_x_api("key", "secret", "token", "tsecret")
-            assert success is False
+        success, msg = validate_x_api("bad-token")
+        assert success is False
 
 
 class TestLinkedInAuth:

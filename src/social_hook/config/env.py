@@ -19,10 +19,8 @@ KNOWN_KEYS = [
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_ALLOWED_CHAT_IDS",
     # X/Twitter (optional)
-    "X_API_KEY",
-    "X_API_SECRET",
-    "X_ACCESS_TOKEN",
-    "X_ACCESS_TOKEN_SECRET",
+    "X_CLIENT_ID",
+    "X_CLIENT_SECRET",
     # LinkedIn (optional)
     "LINKEDIN_CLIENT_ID",
     "LINKEDIN_CLIENT_SECRET",

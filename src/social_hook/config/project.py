@@ -9,7 +9,7 @@ import yaml
 
 from social_hook.constants import CONFIG_DIR_NAME
 from social_hook.errors import ConfigError
-from social_hook.parsing import check_unknown_keys
+from social_hook.parsing import check_unknown_keys, safe_int
 
 if TYPE_CHECKING:
     from social_hook.config.yaml import IdentityConfig
@@ -32,6 +32,8 @@ class ContextConfig:
     arc_context_chars: int = 500
     pending_drafts_cap: int = 10
     max_hold_count: int = 5
+    commit_analysis_interval: int = 1
+    topic_granularity: str = "low"
 
 
 @dataclass
@@ -76,6 +78,7 @@ class StrategyConfig:
     arc_stagnation_days: int = 14
     strategy_moment_max_gap_days: int = 7
     portfolio_window: int = 10
+    max_arcs_per_strategy: int = 3
     episode_preferences: EpisodePreferences = field(default_factory=EpisodePreferences)
 
 
@@ -216,9 +219,18 @@ def _parse_context_config(data: dict) -> ContextConfig:
             "max_hold_count",
             "include_readme",
             "include_claude_md",
+            "commit_analysis_interval",
+            "topic_granularity",
         },
         "context",
     )
+
+    granularity = data.get("topic_granularity", "low")
+    if granularity not in {"low", "medium", "high"}:
+        raise ConfigError(
+            f"Invalid topic_granularity: {granularity!r}. Must be low, medium, or high."
+        )
+
     return ContextConfig(
         recent_decisions=data.get("recent_decisions", 30),
         recent_posts=data.get("recent_posts", 15),
@@ -233,6 +245,10 @@ def _parse_context_config(data: dict) -> ContextConfig:
         arc_context_chars=data.get("arc_context_chars", 500),
         pending_drafts_cap=data.get("pending_drafts_cap", 10),
         max_hold_count=data.get("max_hold_count", 5),
+        commit_analysis_interval=safe_int(
+            data.get("commit_analysis_interval", 1), 1, "context.commit_analysis_interval"
+        ),
+        topic_granularity=granularity,
     )
 
 
@@ -247,6 +263,7 @@ def _parse_strategy_config(data: dict) -> StrategyConfig:
             "arc_stagnation_days",
             "strategy_moment_max_gap_days",
             "portfolio_window",
+            "max_arcs_per_strategy",
             "episode_preferences",
         },
         "strategy",
@@ -265,6 +282,9 @@ def _parse_strategy_config(data: dict) -> StrategyConfig:
         arc_stagnation_days=data.get("arc_stagnation_days", 14),
         strategy_moment_max_gap_days=data.get("strategy_moment_max_gap_days", 7),
         portfolio_window=data.get("portfolio_window", 10),
+        max_arcs_per_strategy=safe_int(
+            data.get("max_arcs_per_strategy", 3), 3, "strategy.max_arcs_per_strategy"
+        ),
         episode_preferences=episode_preferences,
     )
 

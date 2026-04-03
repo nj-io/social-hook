@@ -11,6 +11,7 @@ interface StepAudienceProps {
   onTechnicalLevelChange: (v: string) => void;
   onAudienceCaresChange: (v: string) => void;
   templatePreFilled: boolean;
+  primaryStrategyName?: string;
 }
 
 const TECHNICAL_LEVELS = [
@@ -28,6 +29,7 @@ export function StepAudience({
   onTechnicalLevelChange,
   onAudienceCaresChange,
   templatePreFilled,
+  primaryStrategyName,
 }: StepAudienceProps) {
   const [expanded, setExpanded] = useState(!templatePreFilled);
 
@@ -35,8 +37,8 @@ export function StepAudience({
     return (
       <div className="animate-wizard-dissolve space-y-4">
         <div>
-          <h3 className="text-lg font-semibold">Audience</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Pre-filled from your strategy template.</p>
+          <h3 className="text-lg font-semibold">Audience{primaryStrategyName ? ` (${primaryStrategyName})` : ""}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Pre-filled from your {primaryStrategyName || "strategy"} template. Other strategies use their template defaults.</p>
         </div>
         <div className="rounded-md border border-border bg-muted/50 p-4 text-sm space-y-1">
           <p><strong>Who:</strong> {audience}</p>
@@ -57,9 +59,9 @@ export function StepAudience({
   return (
     <div className="animate-wizard-dissolve space-y-4">
       <div>
-        <h3 className="text-lg font-semibold">Audience</h3>
+        <h3 className="text-lg font-semibold">Audience{primaryStrategyName ? ` (${primaryStrategyName})` : ""}</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Who are you writing for? This shapes the tone and depth of generated content.
+          Who are you writing for with your {primaryStrategyName || "primary"} strategy?
         </p>
       </div>
 

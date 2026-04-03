@@ -58,6 +58,7 @@ class E2EHarness:
         self.fake_home: Path | None = None
         self.base: Path | None = None  # = fake_home / ".social-hook"
         self.repo_path: Path | None = None
+        self.db_path: Path | None = None
         self.conn = None
         self.project_id: str | None = None
         self._orig_home: str | None = None
@@ -106,6 +107,7 @@ class E2EHarness:
         from social_hook.filesystem import get_db_path
 
         db_path = get_db_path()
+        self.db_path = db_path
 
         if snapshot:
             # Load snapshot instead of fresh DB
@@ -358,7 +360,8 @@ class E2EHarness:
             insert_project,
         )
         from social_hook.filesystem import generate_id
-        from social_hook.models import Lifecycle, NarrativeDebt, Project
+        from social_hook.models.core import Project
+        from social_hook.models.narrative import Lifecycle, NarrativeDebt
 
         origin = subprocess.run(
             ["git", "-C", str(self.repo_path), "remote", "get-url", "origin"],
@@ -397,7 +400,7 @@ class E2EHarness:
         """Insert a draft with supporting decision row."""
         from social_hook.db import insert_decision, insert_draft
         from social_hook.filesystem import generate_id
-        from social_hook.models import Decision, Draft
+        from social_hook.models.core import Decision, Draft
 
         decision = Decision(
             id=generate_id("decision"),

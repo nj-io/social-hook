@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 import typer
 
-from social_hook.models import PENDING_STATUSES, TERMINAL_STATUSES
+from social_hook.models.enums import PENDING_STATUSES, TERMINAL_STATUSES
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -46,7 +46,7 @@ def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
     from social_hook.db import operations as ops
     from social_hook.drafting import _parse_thread_tweets
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftTweet
+    from social_hook.models.core import DraftTweet
 
     existing = ops.get_draft_tweets(conn, draft_id)
     if not existing:
@@ -70,16 +70,21 @@ def approve(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to approve"),
 ):
-    """Approve a draft for posting."""
+    """Mark a draft as approved for posting.
+
+    The scheduler will post it when its scheduled time arrives.
+    Preview drafts must be promoted to a platform first.
+
+    Example: social-hook draft approve draft_abc123
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.platform == "preview":
+        if draft.preview_mode:
             typer.echo(
-                "Preview drafts cannot be posted. Use 'social-hook draft promote "
-                "<id> --platform <name>' to create a platform-specific draft."
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
             )
             raise typer.Exit(1)
         if draft.status in TERMINAL_STATUSES:
@@ -98,7 +103,11 @@ def reject(
     draft_id: str = typer.Argument(..., help="Draft ID to reject"),
     reason: str | None = typer.Option(None, "--reason", "-r", help="Rejection reason"),
 ):
-    """Reject a draft (saves reason as voice memory when --reason provided).
+    """Reject a draft and optionally record feedback as voice memory.
+
+    When --reason is provided, the feedback is saved to voice memory so the
+    drafter learns from it in future runs. If the draft is an intro draft,
+    rejection cascades to re-draft the introduction for that platform.
 
     Example: social-hook draft reject draft-abc123 --reason "too technical for the audience"
     """
@@ -150,16 +159,23 @@ def schedule(
     draft_id: str = typer.Argument(..., help="Draft ID to schedule"),
     time: str | None = typer.Option(None, "--time", "-t", help="Schedule time (ISO format)"),
 ):
-    """Schedule a draft for posting."""
+    """Schedule a draft for posting at a specific or optimal time.
+
+    With --time, posts at that exact ISO datetime. Without --time,
+    automatically picks the next optimal slot based on your configured
+    posting limits, time windows, and minimum gap between posts.
+
+    Example: social-hook draft schedule draft_abc123
+    Example: social-hook draft schedule draft_abc123 --time 2026-03-25T10:00:00
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.platform == "preview":
+        if draft.preview_mode:
             typer.echo(
-                "Preview drafts cannot be posted. Use 'social-hook draft promote "
-                "<id> --platform <name>' to create a platform-specific draft."
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
             )
             raise typer.Exit(1)
         if draft.status not in PENDING_STATUSES:
@@ -204,7 +220,10 @@ def cancel(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to cancel"),
 ):
-    """Cancel a draft."""
+    """Cancel a pending draft, removing it from the posting queue.
+
+    Example: social-hook draft cancel draft_abc123
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -225,7 +244,10 @@ def reopen(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to reopen"),
 ):
-    """Reopen a cancelled or rejected draft.
+    """Reopen a cancelled or rejected draft, returning it to 'draft' status.
+
+    Intro drafts cannot be reopened -- create a new draft instead.
+    Clears any previous error message on the draft.
 
     Example: social-hook draft reopen draft-abc123
     """
@@ -254,7 +276,10 @@ def unapprove(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to unapprove"),
 ):
-    """Revert approval on a draft.
+    """Revert approval on a draft, returning it to 'draft' status.
+
+    Use when you approved a draft prematurely and want to make further
+    edits before scheduling or posting.
 
     Example: social-hook draft unapprove draft-abc123
     """
@@ -278,7 +303,10 @@ def unschedule(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to unschedule"),
 ):
-    """Revert scheduling on a draft.
+    """Revert scheduling on a draft, returning it to 'draft' status.
+
+    Clears the scheduled time. Use when you need to edit or reschedule
+    a draft that was already queued for posting.
 
     Example: social-hook draft unschedule draft-abc123
     """
@@ -302,7 +330,13 @@ def retry(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to retry"),
 ):
-    """Retry a failed draft."""
+    """Re-queue a failed draft for another posting attempt.
+
+    Resets the retry counter and sets status back to scheduled so
+    the scheduler will try posting it again.
+
+    Example: social-hook draft retry draft_abc123
+    """
     from social_hook.db import operations as ops
 
     conn = _get_conn()
@@ -326,11 +360,14 @@ def edit(
 ):
     """Edit draft content.
 
+    Records the change in the draft's change history (visible in draft show).
+    If the draft is a thread, tweet boundaries are automatically re-split.
+
     Example: social-hook draft edit draft-abc123 --content "Updated post text here"
     """
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -366,6 +403,10 @@ def redraft(
 ):
     """Redraft content using the Expert agent with a new angle.
 
+    Calls the Expert LLM agent to rewrite the draft with a different
+    direction. May also update the media spec. Changes are recorded
+    in the draft's change history.
+
     Example: social-hook draft redraft draft-abc123 --angle "focus on the performance gains"
     """
     from social_hook.config.yaml import load_full_config
@@ -374,7 +415,7 @@ def redraft(
     from social_hook.filesystem import generate_id
     from social_hook.llm.expert import Expert
     from social_hook.llm.factory import create_client
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -486,6 +527,7 @@ def post_now(
     Requires platform credentials in ~/.social-hook/.env.
 
     Example: social-hook draft post-now draft_abc123
+    Example: social-hook draft post-now draft_abc123 --yes  (skip confirmation)
     """
     from social_hook.db import operations as ops
 
@@ -505,8 +547,10 @@ def post_now(
                 typer.echo(msg)
             raise typer.Exit(1)
 
-        if draft.platform == "preview":
-            msg = "Cannot post preview drafts"
+        if draft.preview_mode:
+            msg = (
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
+            )
             if json_output:
                 typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
             else:
@@ -547,7 +591,7 @@ def post_now(
         draft_after = ops.get_draft(conn, draft_id)
         if draft_after and draft_after.status == "posted":
             post = conn.execute(
-                "SELECT external_id, external_url FROM posts WHERE draft_id = ? ORDER BY created_at DESC LIMIT 1",
+                "SELECT external_id, external_url FROM posts WHERE draft_id = ? ORDER BY posted_at DESC LIMIT 1",
                 (draft_id,),
             ).fetchone()
 
@@ -587,7 +631,13 @@ def quick_approve(
     ctx: typer.Context,
     draft_id: str = typer.Argument(..., help="Draft ID to approve and schedule"),
 ):
-    """Approve and schedule at optimal time in one step."""
+    """Approve and schedule a draft for the next optimal posting time in one step.
+
+    Combines approve + schedule. Considers your configured posting limits,
+    preferred time windows, and minimum gap between posts to pick the best slot.
+
+    Example: social-hook draft quick-approve draft_abc123
+    """
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
     from social_hook.scheduling import calculate_optimal_time
@@ -595,10 +645,9 @@ def quick_approve(
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.platform == "preview":
+        if draft.preview_mode:
             typer.echo(
-                "Preview drafts cannot be posted. Use 'social-hook draft promote "
-                "<id> --platform <name>' to create a platform-specific draft."
+                "No account connected. Run 'social-hook account add' to connect and enable posting."
             )
             raise typer.Exit(1)
         # Scheduled drafts go through the scheduler; use unschedule first
@@ -633,13 +682,17 @@ def media_regen(
 ):
     """Regenerate media for a draft using its stored media spec.
 
+    The media spec is a JSON object describing what to generate (e.g., code
+    snippet image, diagram). Edit the spec first with media-edit, then run
+    this command to produce a new file from the updated spec.
+
     Example: social-hook draft media-regen draft-abc123
     """
     from social_hook.adapters.registry import get_media_adapter
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id, get_base_path
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -708,7 +761,7 @@ def media_remove(
     """
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -740,11 +793,15 @@ def media_edit(
 ):
     """Edit the media spec for a draft.
 
+    The media spec is a JSON object that controls media generation (e.g.,
+    code snippet, language, theme). After editing, run media-regen to
+    produce a new media file from the updated spec.
+
     Example: social-hook draft media-edit draft-abc123 --spec '{"code": "print(42)", "language": "python"}'
     """
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -782,6 +839,9 @@ def list_cmd(
     project: str | None = typer.Option(None, "--project", "-i", help="Filter by project ID"),
     decision: str | None = typer.Option(None, "--decision", "-d", help="Filter by decision ID"),
     commit: str | None = typer.Option(None, "--commit", "-c", help="Filter by commit hash"),
+    tag: str | None = typer.Option(
+        None, "--tag", "-t", help="Filter by episode tag (matches decision episode_tags)"
+    ),
     pending: bool = typer.Option(
         False, "--pending", help="Show only actionable drafts (draft/approved/scheduled)"
     ),
@@ -792,6 +852,7 @@ def list_cmd(
     Example: social-hook draft list --pending --json
     Example: social-hook draft list --decision decision-abc123
     Example: social-hook draft list --commit 47a5191
+    Example: social-hook draft list --tag auth
     """
     from social_hook.db import operations as ops
 
@@ -803,6 +864,7 @@ def list_cmd(
             project_id=project,
             decision_id=decision,
             commit_hash=commit,
+            tag=tag,
         )
         if pending:
             drafts = [d for d in drafts if d.status in PENDING_STATUSES]
@@ -833,8 +895,6 @@ def list_cmd(
             try:
                 dec = ops.get_decision(conn, d.decision_id)
                 if dec:
-                    if dec.episode_type:
-                        tags.append(f"[{dec.episode_type}]")
                     if dec.post_category:
                         tags.append(f"[{dec.post_category}]")
                     if dec.episode_tags:
@@ -949,15 +1009,15 @@ def promote(
     from social_hook.errors import ConfigError
     from social_hook.llm.dry_run import DryRunContext
     from social_hook.llm.prompts import assemble_evaluator_context
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     use_json = json or (ctx.obj.get("json", False) if ctx.obj else False)
 
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.platform != "preview":
-            typer.echo(f"Draft is not a preview draft (platform: {draft.platform}).")
+        if not draft.preview_mode:
+            typer.echo(f"Draft is not in preview mode (platform: {draft.platform}).")
             raise typer.Exit(1)
         if draft.status in TERMINAL_STATUSES:
             typer.echo(f"Cannot promote: draft status is '{draft.status}'")
@@ -1025,7 +1085,6 @@ def promote(
                 commit=commit,
                 project_config=project_config,
                 target_platform_names=[platform],
-                skip_content_filter=True,
             )
 
         if not results:
@@ -1052,5 +1111,111 @@ def promote(
             typer.echo(f"Preview draft {draft_id} promoted to {platform}.")
             typer.echo(f"New draft: {new_draft.id}")
             typer.echo(f"Content: {new_draft.content}")
+    finally:
+        conn.close()
+
+
+@app.command()
+def connect(
+    ctx: typer.Context,
+    draft_id: str = typer.Argument(..., help="Preview-mode draft ID to connect"),
+    account: str = typer.Option(
+        ..., "--account", "-a", help="Account name to connect (must match draft platform)"
+    ),
+    json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+):
+    """Connect a preview-mode draft to an account.
+
+    Links the draft's target to an existing OAuth account, clearing preview mode.
+    The account's platform must match the draft's platform.
+
+    Example: social-hook draft connect draft-abc123 --account my-x-account
+    Example: social-hook draft connect draft-abc123 --account my-x-account --yes  (skip confirmation)
+    """
+    from social_hook.config.yaml import load_full_config, save_config
+    from social_hook.db import operations as ops
+
+    use_json = json or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        if not draft.preview_mode:
+            msg = f"Draft is not in preview mode (platform: {draft.platform})."
+            if use_json:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+        if draft.status in TERMINAL_STATUSES:
+            msg = f"Cannot connect: draft status is '{draft.status}'"
+            if use_json:
+                typer.echo(json_mod.dumps({"error": msg, "draft_id": draft_id}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        config_path = ctx.obj.get("config") if ctx.obj else None
+        config = load_full_config(str(config_path) if config_path else None)
+
+        acct = config.accounts.get(account)
+        if not acct:
+            msg = f"Account '{account}' not found."
+            if use_json:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if acct.platform != draft.platform:
+            msg = (
+                f"Account platform '{acct.platform}' does not match "
+                f"draft platform '{draft.platform}'."
+            )
+            if use_json:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg)
+            raise typer.Exit(1)
+
+        if not yes:
+            typer.confirm(
+                f"Connect draft {draft_id[:12]} to account '{account}' ({acct.platform})?",
+                abort=True,
+            )
+
+        # Clear preview_mode on the draft
+        ops.clear_draft_preview_mode(conn, draft_id)
+
+        # Persist target -> account link in config
+        target_name = draft.target_id
+        if target_name and target_name in config.targets:
+            from social_hook.filesystem import get_config_path
+
+            effective_path = str(config_path) if config_path else str(get_config_path())
+            save_config(
+                {"targets": {target_name: {"account": account}}},
+                effective_path,
+                deep_merge=True,
+            )
+
+        ops.emit_data_event(conn, "draft", "connected", draft_id, draft.project_id)
+
+        if use_json:
+            typer.echo(
+                json_mod.dumps(
+                    {
+                        "draft_id": draft_id,
+                        "account": account,
+                        "platform": draft.platform,
+                        "status": "connected",
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(f"Draft {draft_id[:12]} connected to account '{account}'.")
+            typer.echo("Preview mode cleared. Draft is now eligible for posting.")
     finally:
         conn.close()

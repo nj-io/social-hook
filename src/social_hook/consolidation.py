@@ -134,7 +134,7 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
     from social_hook.config.project import load_project_config
     from social_hook.llm.factory import create_client
     from social_hook.llm.prompts import assemble_evaluator_context
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     # Load project config
     project_config = load_project_config(project.repo_path)
@@ -188,55 +188,111 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
             media_guidance=project_config.media_guidance if project_config else None,
             strategy_config=project_config.strategy if project_config else None,
             summary_config=project_config.summary if project_config else None,
+            strategies=config.content_strategies or None,
         )
     except Exception as e:
         logger.error(f"LLM API error during consolidation re-evaluation: {e}")
         return
 
-    target = evaluation.targets.get("default")
-    if not target:
-        logger.info(f"Consolidation re-evaluation for {project.name}: no default target")
-        return
+    from social_hook.parsing import enum_value
 
-    def _val(x):
-        return x.value if hasattr(x, "value") else x
-
-    if _val(target.action) != "draft":
-        logger.info(f"Consolidation re-evaluation for {project.name}: {_val(target.action)}")
-        return
-
-    # Draftable: update the most recent decision in the batch
     most_recent = decisions[-1]
-    if not dry_run:
-        ops.update_decision(
-            conn,
-            most_recent.id,
-            decision="draft",
-            reasoning=target.reason,
-            angle=target.angle,
-            episode_type=_val(target.episode_type),
-            post_category=_val(target.post_category),
-            media_tool=_val(target.media_tool),
+
+    # --- New targets path ---
+    if getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets:
+        from social_hook.trigger import _combine_strategy_reasoning, _determine_overall_decision
+
+        decision_type = _determine_overall_decision(evaluation.strategies)
+        if decision_type != "draft":
+            logger.info("Consolidation re-evaluation for %s: %s", project.name, decision_type)
+            return
+
+        # Get representative strategy for decision fields
+        representative = next(
+            (sd for sd in evaluation.strategies.values() if enum_value(sd.action) == "draft"),
+            next(iter(evaluation.strategies.values())),
         )
-        ops.emit_data_event(conn, "decision", "updated", most_recent.id, project.id)
 
-    # Create drafts per platform via shared pipeline
-    from social_hook.compat import make_eval_compat
-    from social_hook.drafting import draft_for_platforms
+        if not dry_run:
+            ops.update_decision(
+                conn,
+                most_recent.id,
+                decision="draft",
+                reasoning=_combine_strategy_reasoning(evaluation.strategies),
+                angle=representative.angle,
+                episode_type=None,
+                post_category=enum_value(representative.post_category),
+                media_tool=enum_value(representative.media_tool),
+            )
+            ops.emit_data_event(conn, "decision", "updated", most_recent.id, project.id)
 
-    eval_compat = make_eval_compat(evaluation, "draft")
-    draft_results = draft_for_platforms(
-        config,
-        conn,
-        db,
-        project,
-        decision_id=most_recent.id,
-        evaluation=eval_compat,
-        context=context,
-        commit=commit,
-        project_config=project_config,
-        dry_run=dry_run,
-    )
+        from social_hook.content_sources import content_sources
+        from social_hook.drafting import draft_for_targets
+        from social_hook.routing import route_to_targets
+
+        target_actions = route_to_targets(evaluation.strategies, config, conn)
+        draftable_actions = [a for a in target_actions if a.action == "draft"]
+
+        draft_results = []
+        if draftable_actions:
+            draft_results = draft_for_targets(
+                draftable_actions,
+                config,
+                conn,
+                db,
+                project,
+                decision_id=most_recent.id,
+                evaluation=evaluation,
+                context=context,
+                commit=commit,
+                content_source_registry=content_sources,
+                project_config=project_config,
+                dry_run=dry_run,
+            )
+    else:
+        # --- Legacy path ---
+        target = evaluation.strategies.get("default")
+        if not target:
+            logger.info("Consolidation re-evaluation for %s: no default target", project.name)
+            return
+
+        if enum_value(target.action) != "draft":
+            logger.info(
+                "Consolidation re-evaluation for %s: %s",
+                project.name,
+                enum_value(target.action),
+            )
+            return
+
+        if not dry_run:
+            ops.update_decision(
+                conn,
+                most_recent.id,
+                decision="draft",
+                reasoning=target.reason,
+                angle=target.angle,
+                episode_type=None,
+                post_category=enum_value(target.post_category),
+                media_tool=enum_value(target.media_tool),
+            )
+            ops.emit_data_event(conn, "decision", "updated", most_recent.id, project.id)
+
+        from social_hook.compat import make_eval_compat
+        from social_hook.drafting import draft_for_platforms
+
+        eval_compat = make_eval_compat(evaluation, "draft")
+        draft_results = draft_for_platforms(
+            config,
+            conn,
+            db,
+            project,
+            decision_id=most_recent.id,
+            evaluation=eval_compat,
+            context=context,
+            commit=commit,
+            project_config=project_config,
+            dry_run=dry_run,
+        )
 
     if draft_results:
         from social_hook.notifications import send_notification

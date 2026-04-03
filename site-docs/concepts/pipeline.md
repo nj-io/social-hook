@@ -8,16 +8,18 @@ Every time you commit code, Social Hook decides whether it's worth sharing, writ
 git commit
     │
     ▼
-┌─────────┐     ┌───────────┐     ┌─────────┐     ┌──────────┐     ┌──────────┐
-│ Trigger  │────▶│ Evaluator │────▶│ Drafter  │────▶│ Schedule  │────▶│  Review  │
-│ (hook)   │     │ (LLM)     │     │ (LLM)    │     │ (algo)    │     │  (you)   │
-└─────────┘     └───────────┘     └─────────┘     └──────────┘     └──────────┘
-                     │                                                    │
-                     ▼                                                    ▼
-               skip / hold                                             Post
+┌─────────┐     ┌──────────┐     ┌───────────┐     ┌─────────┐     ┌──────────┐     ┌──────────┐
+│ Trigger  │────▶│ Analyzer │────▶│ Evaluator │────▶│ Drafter  │────▶│ Schedule  │────▶│  Review  │
+│ (hook)   │     │ (LLM)    │     │ (LLM)     │     │ (LLM)    │     │ (algo)    │     │  (you)   │
+└─────────┘     └──────────┘     └───────────┘     └─────────┘     └──────────┘     └──────────┘
+                     │                  │                                                   │
+                     ▼                  ▼                                                   ▼
+               trivial → skip    skip / hold                                             Post
 ```
 
-A commit flows left to right. At the evaluator, most commits are filtered out (skipped). The ones that make it through are drafted, scheduled, and presented for your review before anything is posted.
+A commit flows left to right through two LLM stages. The **Analyzer** (stage 1) classifies the commit and produces tags and a summary. Trivial commits are filtered out here without reaching the evaluator. The **Evaluator** (stage 2) makes per-strategy draft/skip/hold decisions. Commits that make it through are drafted, scheduled, and presented for your review before anything is posted.
+
+> **Targets vs legacy path:** When targets are configured (accounts + destinations + strategies), the pipeline uses the full two-stage flow described below. Without targets, a simplified single-evaluator path is used — the evaluator makes a single "default" decision and drafts are created per enabled platform. The targets path is recommended for all new projects.
 
 ---
 
@@ -31,15 +33,47 @@ A commit flows left to right. At the evaluator, most commits are filtered out (s
 
 2. **Guard checks** — Is the project paused? Is there a branch filter, and are we on the right branch? If either fails, the commit is ignored.
 
-3. **Commit parsing** — Extracts the full commit message, author date, stat summary (files changed, insertions, deletions), and the complete diff. For merge commits or initial commits, uses appropriate git commands to get a meaningful diff.
+3. **Rate limiting** — If too many evaluations have fired recently (`max_evaluations_per_day`, `min_evaluation_gap_minutes`), the commit is deferred (`deferred_eval`) for later processing rather than hammering the LLM API.
 
-4. **Rate limiting** — If too many evaluations have fired recently, the commit is deferred for later processing rather than hammering the LLM API.
+4. **Interval gating** (targets path only) — If `commit_analysis_interval` > 1, commits are counted and deferred until the threshold is met. This batches multiple small commits into a single evaluation. The interval gate runs *before* any expensive context assembly or LLM calls — deferred commits need only a database counter increment.
+
+5. **Commit parsing** — Extracts the full commit message, author date, stat summary (files changed, insertions, deletions), and the complete diff. For merge commits or initial commits, uses appropriate git commands to get a meaningful diff.
 
 The trigger is designed to be fast and non-blocking. It runs in the post-commit hook, so if anything fails (network down, API error), it exits gracefully without disrupting your git workflow.
 
+### Batch evaluation
+
+When the interval threshold is met and deferred commits exist, the trigger collects all deferred commits and runs them through the pipeline together. The analyzer and evaluator see the full batch context (all commit messages, combined diffs) and can make decisions that account for the batch as a whole — for example, producing a synthesis draft that covers multiple small changes.
+
 ---
 
-## Stage 2: Context Assembly
+## Stage 2: Commit Analyzer (targets path)
+
+The Commit Analyzer is a lightweight LLM stage that classifies the commit before the full evaluator runs. It receives the commit message and a truncated diff (~4,000 chars) along with the project brief.
+
+### What it produces
+
+The analyzer returns a `CommitAnalysisResult` with:
+
+| Field | Purpose |
+|-------|---------|
+| `classification` | `trivial`, `minor`, `notable`, or `significant` |
+| `summary` | Concise summary of what changed |
+| `episode_tags` | Content tags (e.g., `performance`, `api`, `ux`) |
+| `brief_update` | Instructions for updating the project brief |
+| `topic_suggestions` | New content topics to add to the queue |
+
+### Trivial commit fast path
+
+If the analyzer classifies a commit as `trivial` (typo fix, whitespace, version bump), the pipeline skips stage 3 entirely. A `skip` decision is recorded immediately, but the commit's tags still feed into topic matching — even trivial commits can contribute to content topics.
+
+### Topic suggestion pipeline
+
+The analyzer may suggest new content topics based on what the commit reveals. These are added to the topic queue for the relevant strategies. Topics accumulate commits via tag matching and are worked through by priority during future evaluations.
+
+---
+
+## Stage 3: Context Assembly
 
 Before the evaluator LLM sees anything, Social Hook assembles a comprehensive context window. This is the single most important part of the system — the quality of the evaluation depends entirely on what context the LLM receives.
 
@@ -49,13 +83,15 @@ The evaluator's system prompt is assembled from these sections, in order:
 
 | Section | What it contains | Why it matters |
 |---------|-----------------|----------------|
-| **Base instructions** | Decision criteria, episode types, tool schemas | Tells the LLM what it can do |
+| **Base instructions** | Decision criteria, episode tags, tool schemas | Tells the LLM what it can do |
 | **Social context** | Your voice, persona, audience (from `social-context.md`) | Grounds decisions in your brand |
 | **Current state** | Lifecycle phase, narrative debt, audience introduction status | Awareness of where things stand |
-| **Active arcs** | Up to 3 narrative arcs with their recent posts | Enables storyline continuity |
+| **Active arcs** | Up to 3 arcs per strategy with their recent posts | Enables storyline continuity |
 | **Pending drafts** | Drafts awaiting review (up to 10) | Prevents duplicate topics |
 | **Held commits** | Previously deferred commits (up to 20) | Can be absorbed into new decisions |
-| **Platform config** | Which platforms, priority, content filters | Knows what it's writing for |
+| **Content topics** | Topic queue with status and commit counts | Guides content priorities |
+| **Content strategies** | Strategy definitions (audience, voice, angle goals) | Per-strategy decision-making |
+| **Platform config / Targets** | Account-destination mappings with strategies | Knows what it's writing for |
 | **Scheduling state** | Posts today, slots remaining, weekly limit | Makes capacity-aware decisions |
 | **Voice memories** | Last 10 rejection reasons from your feedback | Learns from your corrections |
 | **Context notes** | Expert-generated notes from escalations | Accumulated editorial wisdom |
@@ -64,7 +100,7 @@ The evaluator's system prompt is assembled from these sections, in order:
 | **Project summary** | 500-800 token project description | Big-picture understanding |
 | **README / CLAUDE.md** | Project docs (if enabled) | Technical understanding |
 | **Media tools** | Available tools with usage guidance | Knows what visuals are possible |
-| **Strategy preferences** | Favored/avoided episode types, portfolio window | Respects your editorial preferences |
+| **Strategy preferences** | Favored/avoided episode tags, portfolio window | Respects your editorial preferences |
 | **The commit** | Hash, message, file list, and full diff | The actual thing being evaluated |
 
 The full diff is truncated to roughly 37,500 tokens (1/4 of the context budget) to leave room for everything else. If the total prompt exceeds the configured `max_tokens` (default 150,000), older history is progressively removed.
@@ -80,30 +116,39 @@ This summary is cached and refreshed periodically (configurable via `summary.ref
 
 ---
 
-## Stage 3: Evaluation
+## Stage 4: Evaluation
 
 The evaluator LLM receives the assembled prompt and must respond via a structured tool call (`log_evaluation`). It cannot respond with free text — the output is always structured.
 
-### Decisions
+### Per-strategy decisions
 
-The evaluator returns one of three actions:
+When targets are configured, the evaluator makes a **separate decision per content strategy**. Each strategy has its own audience, voice, and content goals, so the same commit might be worth drafting for one strategy and skippable for another.
 
-| Action | Meaning | What happens next |
-|--------|---------|-------------------|
-| **draft** | This commit is worth sharing | Proceeds to drafting |
-| **skip** | Not interesting enough | Recorded and forgotten |
-| **hold** | Interesting, but wait for more context | Queued for later; may be absorbed by a future commit |
+The evaluator returns a `LogEvaluationInput` containing:
 
-Each decision includes structured metadata:
+- **commit_analysis** — Summary, episode tags, and classification (may be pre-populated from stage 2)
+- **strategies** — A dict of `strategy_name → StrategyDecisionInput`, each with:
 
-- **reason** — Why this action was chosen (logged, visible in `social-hook inspect log`)
-- **angle** — The specific angle for the post (if drafting)
-- **episode_type** — Classification: `milestone`, `demo_proof`, `before_after`, `synthesis`, `launch`, `postmortem`, `incremental`, `decision`, `opportunistic`
-- **post_category** — `standalone`, `arc` (part of a narrative), or `reactive`
-- **arc_id** / **new_arc_theme** — Narrative arc assignment or creation
-- **media_tool** — Which media tool the drafter should use (or `none`)
-- **consolidate_with** — IDs of held commits to absorb into this decision
-- **reference_posts** — Past posts the drafter should build on
+| Field | Purpose |
+|-------|---------|
+| `action` | `draft`, `skip`, or `hold` |
+| `reason` | Why this action was chosen |
+| `angle` | The specific angle for the post (if drafting) |
+| `post_category` | `standalone`, `arc`, or `reactive` |
+| `arc_id` / `new_arc_theme` | Narrative arc assignment or creation |
+| `media_tool` | Which media tool the drafter should use (or `none`) |
+| `topic_id` | Content topic this decision addresses |
+| `consolidate_with` | IDs of held commits to absorb |
+| `reference_posts` | Past posts the drafter should build on |
+| `context_source` | What context the drafter needs (`brief`, `commits`, `topic`) |
+
+- **queue_actions** — Optional actions on existing pending drafts (supersede, merge, drop)
+
+The overall decision for the commit is derived from the per-strategy decisions: if any strategy says "draft", the decision is "draft"; if all say "hold", it's "hold"; otherwise "skip".
+
+### Evaluation cycles
+
+Each evaluation (whether single-commit or batch) creates an `EvaluationCycle` record that groups the trigger, analysis, per-strategy outcomes, and resulting drafts. Cycles are visible via `social-hook cycles list` and the web dashboard.
 
 ### Hold mechanics
 
@@ -121,13 +166,19 @@ This gives the evaluator editorial control over the draft queue, not just the cu
 
 ---
 
-## Stage 4: Drafting
+## Stage 5: Drafting
 
-If the evaluator chose "draft", the system creates platform-specific content for each enabled platform.
+If the evaluator chose "draft" for one or more strategies, the system routes decisions to targets and creates platform-specific content.
 
-### Per-platform loop
+### Target routing (targets path)
 
-For each enabled platform that passes the content filter:
+Per-strategy decisions are routed to targets via `route_to_targets()`. Each target maps a strategy to an account + destination (e.g., the "building-public" strategy → X account @myproject / timeline). The router produces a list of `TargetAction` objects, each specifying the target, strategy decision, and platform details.
+
+Strategies with no connected targets produce **preview drafts** (`preview_mode=True`) — the full pipeline runs but the draft isn't eligible for posting until you promote it (`draft promote`) or connect it to an account (`draft connect`).
+
+### Per-target drafting loop
+
+For each target action that has `action=draft`:
 
 1. **Content filter** — Each platform has a filter (`all`, `notable`, or `significant`) that determines which episode types are allowed. A `decision` episode on a `significant`-only platform is filtered out. This is how you tune posting volume per platform.
 
@@ -147,7 +198,9 @@ For each enabled platform that passes the content filter:
 
 ### Preview mode
 
-If no platforms are configured, the system auto-injects a synthetic "preview" platform (2,000 char limit, filter=all). This lets you run the full pipeline and see what it would generate without setting up real platform credentials.
+When a strategy has no connected targets (no account + destination), the pipeline still drafts content but marks each draft as `preview_mode=True`. Preview drafts let you run the full pipeline and review what it would generate without configuring real platform credentials.
+
+To publish a preview draft, either promote it to a specific platform (`draft promote`) or connect it to an existing account (`draft connect`). Both operations clear preview mode and make the draft eligible for scheduling.
 
 ### Audience introduction
 
@@ -162,7 +215,7 @@ After the first draft is created, the project is marked `audience_introduced=Tru
 
 ---
 
-## Stage 5: Scheduling
+## Stage 6: Scheduling
 
 Each draft gets a suggested posting time calculated by an algorithm (not the LLM).
 
@@ -187,9 +240,9 @@ When a draft is deferred (weekly limit hit), it gets status "deferred" with no s
 
 ---
 
-## Stage 6: Notification
+## Stage 7: Notification
 
-After a draft is created (or a decision is made), notifications go out to all enabled channels:
+After an evaluation cycle completes, notifications go out to all enabled channels. In the targets path, notifications are per-cycle and include per-strategy outcomes (which strategies drafted, skipped, or held):
 
 | Channel | How it works |
 |---------|-------------|
@@ -203,7 +256,7 @@ For skip/hold decisions, a simpler notification is sent (if `notification_level`
 
 ---
 
-## Stage 7: Review
+## Stage 8: Review
 
 This is where you come in. Every draft waits for your action before posting.
 
@@ -234,7 +287,7 @@ When you reject a draft with a reason (`--reason "too technical for this audienc
 
 ---
 
-## Stage 8: Posting
+## Stage 9: Posting
 
 The scheduler tick (`social-hook scheduler-tick`) runs periodically and posts all approved drafts whose scheduled time has arrived.
 

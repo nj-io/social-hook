@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260313070000
+SCHEMA_VERSION = 20260330135609
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS projects (
     discovery_files       TEXT DEFAULT NULL,
     prompt_docs           TEXT DEFAULT NULL,
     trigger_branch        TEXT DEFAULT NULL,
+    brief_section_metadata TEXT DEFAULT '{}',
+    analysis_commit_count INTEGER NOT NULL DEFAULT 0,
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -46,7 +48,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     project_id    TEXT NOT NULL REFERENCES projects(id),
     commit_hash   TEXT NOT NULL,
     commit_message TEXT,
-    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval')),
+    decision      TEXT NOT NULL CHECK (decision IN ('draft', 'hold', 'skip', 'imported', 'deferred_eval', 'processing')),
     reasoning     TEXT NOT NULL,
     angle         TEXT,
     episode_type  TEXT CHECK (episode_type IN ('decision', 'before_after', 'demo_proof', 'milestone', 'postmortem', 'launch', 'synthesis')),
@@ -100,6 +102,13 @@ CREATE TABLE IF NOT EXISTS drafts (
     is_intro        INTEGER NOT NULL DEFAULT 0,
     post_format     TEXT DEFAULT NULL CHECK (post_format IN ('single', 'thread', 'quote', 'reply')),
     reference_post_id TEXT DEFAULT NULL REFERENCES posts(id),
+    target_id       TEXT,
+    evaluation_cycle_id TEXT,
+    topic_id        TEXT,
+    suggestion_id   TEXT,
+    pattern_id      TEXT,
+    preview_mode    INTEGER NOT NULL DEFAULT 0,
+    arc_id          TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -108,6 +117,8 @@ CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_drafts_scheduled ON drafts(status, scheduled_time) WHERE status = 'scheduled';
 CREATE INDEX IF NOT EXISTS idx_drafts_intro ON drafts(project_id) WHERE is_intro = 1;
 CREATE INDEX IF NOT EXISTS idx_drafts_reference_post ON drafts(reference_post_id) WHERE reference_post_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_drafts_target ON drafts(target_id) WHERE target_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_drafts_topic_id ON drafts(topic_id) WHERE topic_id IS NOT NULL;
 
 -- Draft Tweets (Thread Support)
 CREATE TABLE IF NOT EXISTS draft_tweets (
@@ -148,10 +159,15 @@ CREATE TABLE IF NOT EXISTS posts (
     external_id  TEXT,
     external_url TEXT,
     content      TEXT NOT NULL,
+    target_id    TEXT,
+    topic_tags   TEXT DEFAULT '[]',
+    feature_tags TEXT DEFAULT '[]',
+    is_thread_head INTEGER DEFAULT 0,
     posted_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_posts_project_time ON posts(project_id, posted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_target ON posts(target_id) WHERE target_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_posts_draft_id ON posts(draft_id);
 
 -- Lifecycles
@@ -169,7 +185,9 @@ CREATE TABLE IF NOT EXISTS arcs (
     id           TEXT PRIMARY KEY,
     project_id   TEXT NOT NULL REFERENCES projects(id),
     theme        TEXT NOT NULL,
-    status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'abandoned')),
+    strategy     TEXT NOT NULL DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('proposed', 'active', 'completed', 'abandoned')),
+    reasoning    TEXT,
     post_count   INTEGER NOT NULL DEFAULT 0,
     last_post_at TEXT,
     notes        TEXT,
@@ -271,6 +289,96 @@ CREATE TABLE IF NOT EXISTS background_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_background_tasks_ref ON background_tasks(type, ref_id, status);
+
+-- OAuth 2.0 token storage (per-account user tokens)
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    account_name TEXT PRIMARY KEY,
+    platform     TEXT NOT NULL,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+
+-- Content topic queue
+CREATE TABLE IF NOT EXISTS content_topics (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    strategy TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    description TEXT,
+    priority_rank INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'uncovered'
+        CHECK (status IN ('uncovered', 'holding', 'partial', 'covered', 'dismissed')),
+    hold_reason TEXT,
+    commit_count INTEGER NOT NULL DEFAULT 0,
+    last_commit_at TEXT,
+    last_posted_at TEXT,
+    created_by TEXT NOT NULL DEFAULT 'user',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Operator content suggestions
+CREATE TABLE IF NOT EXISTS content_suggestions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    strategy TEXT,
+    idea TEXT NOT NULL,
+    media_refs TEXT DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'evaluated', 'drafted', 'dismissed')),
+    source TEXT NOT NULL DEFAULT 'operator',
+    created_at TEXT DEFAULT (datetime('now')),
+    evaluated_at TEXT
+);
+
+-- Evaluation cycle grouping
+CREATE TABLE IF NOT EXISTS evaluation_cycles (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    trigger_type TEXT NOT NULL,
+    trigger_ref TEXT,
+    commit_analysis_id TEXT,
+    commit_analysis_json TEXT DEFAULT NULL,
+    diagnostics TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Observational content format patterns
+CREATE TABLE IF NOT EXISTS draft_patterns (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    pattern_name TEXT NOT NULL,
+    description TEXT,
+    example_draft_id TEXT,
+    created_by TEXT NOT NULL DEFAULT 'operator',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Topic-commit junction (which commits contributed to each topic)
+CREATE TABLE IF NOT EXISTS topic_commits (
+    topic_id TEXT NOT NULL,
+    commit_hash TEXT NOT NULL,
+    matched_tag TEXT,
+    matched_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (topic_id, commit_hash)
+);
+
+-- System error persistence
+CREATE TABLE IF NOT EXISTS system_errors (
+    id TEXT PRIMARY KEY,
+    severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'error', 'critical')),
+    message TEXT NOT NULL,
+    context TEXT DEFAULT '{}',
+    source TEXT DEFAULT '',
+    component TEXT DEFAULT '',
+    run_id TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_errors_severity ON system_errors(severity, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_errors_component ON system_errors(component, created_at DESC);
 """
 
 
@@ -291,41 +399,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
             (SCHEMA_VERSION, "initial_schema"),
         )
         conn.commit()
-
-
-def _apply_pragma_migration(conn: sqlite3.Connection, sql: str) -> None:
-    """Apply a migration containing PRAGMA statements.
-
-    PRAGMA statements must execute outside transactions. This splits them
-    from DDL/DML statements and handles each appropriately.
-    """
-    pragmas_before: list[str] = []
-    pragmas_after: list[str] = []
-    other_lines: list[str] = []
-
-    for line in sql.split("\n"):
-        stripped = line.strip()
-        if stripped.upper().startswith("PRAGMA"):
-            # PRAGMAs before DDL go first, PRAGMAs after go last
-            if other_lines:
-                pragmas_after.append(stripped)
-            else:
-                pragmas_before.append(stripped)
-        else:
-            other_lines.append(line)
-
-    # Execute pre-DDL PRAGMAs outside transaction
-    for pragma in pragmas_before:
-        conn.execute(pragma)
-
-    # Execute DDL/DML as a script
-    ddl_sql = "\n".join(other_lines).strip()
-    if ddl_sql:
-        conn.executescript(ddl_sql)
-
-    # Execute post-DDL PRAGMAs outside transaction
-    for pragma in pragmas_after:
-        conn.execute(pragma)
 
 
 # Mapping from old sequential versions to their timestamp equivalents.
@@ -385,50 +458,26 @@ def _bridge_to_timestamp_versions(conn: sqlite3.Connection, current_seq: int) ->
 def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path) -> None:
     """Apply pending migrations from the migrations directory.
 
+    Delegates to the generic migration runner in ``social_hook.migrations``,
+    with a one-time bridge from sequential to timestamp version numbering
+    for databases created before the timestamp migration scheme.
+
     Args:
         conn: Database connection
         migrations_dir: Directory containing .sql migration files
     """
+    from social_hook.migrations import apply_sql_migrations, get_current_version
+
     migrations_dir = Path(migrations_dir)
 
     if not migrations_dir.exists():
         return
 
-    # Fresh DB: schema_version table doesn't exist yet — nothing to migrate.
-    tables = {
-        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    }
-    if "schema_version" not in tables:
-        return
-
-    # Get current version
-    current = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
-
     # Bridge: migrate from sequential (3-19) to timestamp versioning.
-    # If max version is sequential (<1000), map old versions to their
-    # timestamp equivalents so renamed migrations aren't re-applied.
+    # get_current_version returns 0 if schema_version table doesn't exist,
+    # so the bridge is a no-op for fresh databases.
+    current = get_current_version(conn)
     if 0 < current < 1000:
         _bridge_to_timestamp_versions(conn, current)
-        current = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
 
-    # Apply pending migrations
-    for migration_file in sorted(migrations_dir.glob("*.sql")):
-        try:
-            version = int(migration_file.stem.split("_")[0])
-        except (ValueError, IndexError):
-            continue
-
-        if version > current:
-            sql = migration_file.read_text()
-
-            # Check if migration contains PRAGMA statements (table rebuild)
-            if "PRAGMA" in sql:
-                _apply_pragma_migration(conn, sql)
-            else:
-                conn.executescript(sql)
-
-            conn.execute(
-                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
-                (version, migration_file.stem),
-            )
-            conn.commit()
+    apply_sql_migrations(conn, migrations_dir)

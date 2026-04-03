@@ -61,18 +61,9 @@ from social_hook.db import (
     update_project_summary,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models import (
-    Arc,
-    Decision,
-    Draft,
-    DraftChange,
-    DraftTweet,
-    Lifecycle,
-    NarrativeDebt,
-    Post,
-    Project,
-    UsageLog,
-)
+from social_hook.models.core import Decision, Draft, DraftChange, DraftTweet, Post, Project
+from social_hook.models.infra import UsageLog
+from social_hook.models.narrative import Arc, Lifecycle, NarrativeDebt
 
 # =============================================================================
 # T1: Database Initialization
@@ -100,7 +91,7 @@ class TestDatabaseInitialization:
         assert result[0] == 1
 
     def test_all_tables_exist(self, temp_db):
-        """Verify all 15 tables exist."""
+        """Verify all 23 tables exist."""
         tables = temp_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
@@ -124,6 +115,13 @@ class TestDatabaseInitialization:
             "background_tasks",
             "file_summaries",
             "platform_introduced",
+            "oauth_tokens",
+            "content_topics",
+            "content_suggestions",
+            "evaluation_cycles",
+            "draft_patterns",
+            "system_errors",
+            "topic_commits",
         }
 
         assert table_names == expected_tables
@@ -1307,9 +1305,9 @@ class TestDraftMediaFields:
             media_spec={"prompt": "test prompt", "width": 1024},
         )
 
-        # Verify to_row returns exactly 19 elements
+        # Verify to_row returns exactly 26 elements
         row = draft.to_row()
-        assert len(row) == 19
+        assert len(row) == 26
 
         # Verify round-trip via to_dict/from_dict
         d = draft.to_dict()

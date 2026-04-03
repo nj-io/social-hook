@@ -223,15 +223,9 @@ def verify(live: bool = False) -> bool:
 
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import (
-        Arc,
-        Decision,
-        Draft,
-        Lifecycle,
-        NarrativeDebt,
-        Project,
-        UsageLog,
-    )
+    from social_hook.models.core import Decision, Draft, Project
+    from social_hook.models.infra import UsageLog
+    from social_hook.models.narrative import Arc, Lifecycle, NarrativeDebt
 
     project = Project(
         id="proj_verify1",
@@ -371,7 +365,7 @@ def verify(live: bool = False) -> bool:
 
     from social_hook.config.project import load_project_config
     from social_hook.llm.prompts import assemble_evaluator_context
-    from social_hook.models import CommitInfo
+    from social_hook.models.core import CommitInfo
 
     project_config = load_project_config(repo_path, global_base=tmp_path / "no-global")
     check(

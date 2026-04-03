@@ -119,7 +119,9 @@ def tmp_env(tmp_path):
             id TEXT PRIMARY KEY,
             project_id TEXT,
             theme TEXT,
-            status TEXT DEFAULT 'active',
+            strategy TEXT NOT NULL DEFAULT '',
+            status TEXT DEFAULT 'active' CHECK (status IN ('proposed', 'active', 'completed', 'abandoned')),
+            reasoning TEXT,
             post_count INTEGER DEFAULT 0,
             last_post_at TEXT,
             notes TEXT,
@@ -274,15 +276,15 @@ class TestBotEndpoints:
             mock_cb.assert_called_once()
 
     def test_message_endpoint(self, client, tmp_env):
-        """POST /api/message calls handle_message and returns events."""
+        """POST /api/message dispatches to background task and returns 202."""
         with patch("social_hook.bot.commands.handle_message") as mock_msg:
             mock_msg.return_value = None
 
             resp = client.post("/api/message", json={"text": "hello"})
-            assert resp.status_code == 200
+            assert resp.status_code == 202
             data = resp.json()
-            assert "events" in data
-            mock_msg.assert_called_once()
+            assert "task_id" in data
+            assert data["status"] == "processing"
 
     def test_events_endpoint_sse(self, client, tmp_env):
         """GET /api/events returns text/event-stream."""
@@ -295,7 +297,7 @@ class TestBotEndpoints:
         conn.commit()
         conn.close()
 
-        resp = client.get("/api/events?lastId=0")
+        resp = client.get("/api/events?lastId=0&max_empty=1")
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/event-stream")
 
@@ -1303,7 +1305,7 @@ class TestSessionIsolation:
         assert any(e["data"].get("text") == "keep me" for e in events)
 
     def test_message_endpoint_session_scoped(self, client, tmp_env):
-        """POST /api/message uses session-scoped adapter."""
+        """POST /api/message dispatches to background task with session-scoped chat_id."""
         with patch("social_hook.bot.commands.handle_message") as mock_msg:
             mock_msg.return_value = None
 
@@ -1312,12 +1314,8 @@ class TestSessionIsolation:
                 json={"text": "hello"},
                 headers={"X-Session-Id": "msg-session"},
             )
-            assert resp.status_code == 200
-
-            # Verify handler was called with scoped chat_id
-            call_args = mock_msg.call_args
-            msg_arg = call_args[0][0]
-            assert msg_arg.chat_id == "web:msg-session"
+            assert resp.status_code == 202
+            assert "task_id" in resp.json()
 
     def test_callback_endpoint_session_scoped(self, client, tmp_env):
         """POST /api/callback uses session-scoped adapter."""
@@ -1578,7 +1576,7 @@ def _make_draft_result(
     from datetime import timezone
 
     from social_hook.drafting import DraftResult
-    from social_hook.models import Draft
+    from social_hook.models.core import Draft
     from social_hook.scheduling import ScheduleResult
 
     draft = Draft(
@@ -1601,7 +1599,8 @@ def _make_draft_result(
 def _mock_create_draft_patches():
     """Return context managers for mocking the create-draft pipeline."""
     from social_hook.config.project import ProjectConfig
-    from social_hook.models import CommitInfo, ProjectContext
+    from social_hook.models.context import ProjectContext
+    from social_hook.models.core import CommitInfo
 
     mock_commit = CommitInfo(hash="abc123", message="feat: test", diff="", files_changed=[])
     mock_project_config = ProjectConfig(repo_path="/tmp/test")

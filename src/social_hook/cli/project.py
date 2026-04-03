@@ -275,18 +275,22 @@ def set_branch(
 def import_commits(
     ctx: typer.Context,
     branch: str | None = typer.Option(None, "--branch", "-b", help="Import only this branch"),
+    limit: int | None = typer.Option(
+        None, "--limit", "-n", help="Import only the N most recent commits"
+    ),
     project_id: str | None = typer.Option(None, "--id", "-i", help="Project ID"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Import historical git commits as imported decisions.
 
-    Imports all past commits so the dashboard shows the full project timeline.
+    Imports past commits so the dashboard shows the project timeline.
     Imported commits are NOT evaluated — use retrigger to evaluate them later.
 
     Examples:
         social-hook project import-commits
         social-hook project import-commits --branch main
-        social-hook project import-commits --id project_abc123
+        social-hook project import-commits --limit 50
+        social-hook project import-commits --branch main --limit 100
     """
     import json
     import subprocess as sp
@@ -336,8 +340,11 @@ def import_commits(
         from social_hook.cli._spinner import spinner
 
         branch_desc = f" (branch: {branch})" if branch else " (all branches)"
-        with spinner(f"Importing commits for '{project.name}'{branch_desc}..."):
-            result = import_project_commits(conn, project.id, project.repo_path, branch)
+        limit_desc = f", limit: {limit}" if limit else ""
+        with spinner(f"Importing commits for '{project.name}'{branch_desc}{limit_desc}..."):
+            result = import_project_commits(
+                conn, project.id, project.repo_path, branch, limit=limit
+            )
         emit_data_event(conn, "decision", "created", project.id, project.id)
 
         if json_output:

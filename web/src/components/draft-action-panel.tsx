@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { sendCallback, sendMessage, promoteDraft } from "@/lib/api";
+import type { BackgroundTask } from "@/lib/api";
 import type { Draft } from "@/lib/types";
 import { platformLabel } from "@/lib/platform";
+import { useBackgroundTasks } from "@/lib/use-background-tasks";
 
 interface DraftActionPanelProps {
   draft: Draft;
@@ -20,6 +22,20 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
   const [submenu, setSubmenu] = useState<Submenu>(null);
   const [textPrompt, setTextPrompt] = useState<TextPrompt>(null);
   const [textInput, setTextInput] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Track background tasks for LLM actions (edit_angle, etc.)
+  const onTaskCompleted = useCallback((task: BackgroundTask) => {
+    if (task.status === "failed") {
+      setActionError(task.error || "Action failed");
+    }
+    onUpdate();
+    setActionPending("");
+    setTextPrompt(null);
+    setTextInput("");
+    setSubmenu(null);
+  }, [onUpdate]);
+  const { trackTask } = useBackgroundTasks(draft.project_id, onTaskCompleted);
 
   // Actions that stay in the edit submenu (no navigation away from current view)
   const keepSubmenuActions = new Set<string>();
@@ -42,11 +58,17 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
   async function handlePromote(platform: string) {
     setActionPending("promote");
     try {
-      await promoteDraft(draft.id, platform);
-      onUpdate();
+      const res = await promoteDraft(draft.id, platform);
+      if (res.task_id) {
+        trackTask(res.task_id, `promote-${draft.id}-${Date.now()}`, "promote");
+        // Keep loading state — onTaskCompleted handles cleanup
+      } else {
+        onUpdate();
+        setActionPending("");
+        setSubmenu(null);
+      }
     } catch {
       onUpdate();
-    } finally {
       setActionPending("");
       setSubmenu(null);
     }
@@ -56,15 +78,26 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
     if (!textPrompt || !textInput.trim()) return;
 
     setActionPending(textPrompt);
+    setActionError(null);
     try {
       // First trigger the callback to set up pending state on the server
       await sendCallback(textPrompt, draft.id);
-      // Then send the text as a message
-      await sendMessage(textInput.trim());
-      onUpdate();
+      // Then send the text as a message (returns 202 with task_id)
+      const res = await sendMessage(textInput.trim());
+      if (res.task_id) {
+        // Track background task — onTaskCompleted clears UI state when done
+        trackTask(res.task_id, `action-${draft.id}-${Date.now()}`, "chat_message");
+        // Keep text prompt visible in loading state — cleared by onTaskCompleted
+      } else {
+        // Synchronous completion — clear immediately
+        onUpdate();
+        setActionPending("");
+        setTextPrompt(null);
+        setTextInput("");
+        setSubmenu(null);
+      }
     } catch {
       onUpdate();
-    } finally {
       setActionPending("");
       setTextPrompt(null);
       setTextInput("");
@@ -146,9 +179,9 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
   const status = draft.status;
 
   if (status === "draft" || status === "deferred") {
-    const isPreview = draft.platform === "preview";
+    const isPreview = !!draft.preview_mode;
     const realPlatforms = enabledPlatforms
-      ? Object.keys(enabledPlatforms).filter((n) => n !== "preview")
+      ? Object.keys(enabledPlatforms)
       : [];
 
     return (
@@ -156,7 +189,7 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
         {/* Preview info banner */}
         {isPreview && (
           <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
-            Preview drafts cannot be published directly. Use Promote to create a platform-specific draft.
+            No account connected. Connect an account to enable posting, or use Promote to redraft for another platform.
           </div>
         )}
 

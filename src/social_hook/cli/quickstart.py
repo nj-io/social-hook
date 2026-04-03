@@ -29,6 +29,7 @@ app = typer.Typer()
         "Makes LLM calls for project discovery and drafting. "
         "Writes decisions and drafts to the database.\n\n"
         "Example: social-hook quickstart /path/to/repo\n"
+        "Example: social-hook quickstart -s building-public -s product-news --branch main /path/to/repo\n"
         "Example: social-hook quickstart --evaluate-last 3 --yes"
     ),
 )
@@ -36,6 +37,18 @@ def quickstart(
     ctx: typer.Context,
     path: str = typer.Argument(None, help="Repository path (default: current directory)"),
     key: str = typer.Option(None, "--key", help="Anthropic API key (skips prompt)"),
+    strategy: list[str] | None = typer.Option(
+        None,
+        "--strategy",
+        "-s",
+        help="Content strategy template ID (repeatable). Default: building-public.",
+    ),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        "-b",
+        help="Set a trigger branch filter on the project after registration.",
+    ),
     evaluate_last: int = typer.Option(
         0,
         "--evaluate-last",
@@ -44,7 +57,12 @@ def quickstart(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip all confirmation prompts"),
     json_output: bool = typer.Option(False, "--json", help="JSON output"),
 ) -> None:
-    """Run the quickstart flow."""
+    """Run the quickstart flow.
+
+    Zero-to-first-draft onboarding. Auto-detects your LLM provider,
+    registers your repo, imports commit history, runs AI project discovery,
+    and generates an introductory draft — all in one command.
+    """
     # Resolve JSON output from global or local flag
     is_json = json_output or (ctx.obj or {}).get("json", False)
     dry_run = (ctx.obj or {}).get("dry_run", False)
@@ -72,7 +90,17 @@ def quickstart(
         if not typer.confirm("Continue?", default=True):
             raise typer.Exit(0)
 
-    # 3. Check for existing config
+    # 3. Resolve and validate strategies
+    from social_hook.setup.templates import STRATEGY_TEMPLATES
+
+    strategies: list[str] = list(strategy) if strategy else ["building-public"]
+    known_ids = {t.id for t in STRATEGY_TEMPLATES if t.id != "custom"}
+    for sid in strategies:
+        if sid not in known_ids:
+            valid = ", ".join(sorted(known_ids))
+            _error_exit(f"Unknown strategy '{sid}'. Valid options: {valid}", is_json)
+
+    # 4. Check for existing config
     from social_hook.filesystem import init_filesystem
 
     base = init_filesystem()
@@ -80,8 +108,8 @@ def quickstart(
     has_config = config_path.exists()
 
     if not has_config:
-        # 4. Auto-detect providers and configure
-        _auto_configure(base, key, is_json, verbose)
+        # 5. Auto-detect providers and configure
+        _auto_configure(base, key, strategies, is_json, verbose)
 
     # 5. Load config
     from social_hook.config.yaml import load_full_config
@@ -133,6 +161,14 @@ def quickstart(
     elif not is_json:
         typer.echo(f"Project already registered: {project.name} ({project.id[:8]})")
 
+    # 7b. Set trigger branch if specified
+    if branch and project:
+        from social_hook.db.operations import set_project_trigger_branch
+
+        set_project_trigger_branch(conn, project.id, branch)
+        if not is_json:
+            typer.echo(f"  Trigger branch set to: {branch}")
+
     # 8. Import commits
     from social_hook.import_commits import import_project_commits
 
@@ -165,9 +201,12 @@ def quickstart(
             "project_id": project.id,
             "project_name": project.name,
             "repo_path": repo_path,
+            "strategies": strategies,
             "commits_imported": import_result["imported"],
             "summary_generated": summary is not None,
         }
+        if branch:
+            output["trigger_branch"] = branch
         if draft_info:
             output["first_draft"] = draft_info
         if batch_results:
@@ -199,7 +238,9 @@ def _error_exit(msg: str, is_json: bool) -> NoReturn:
     raise typer.Exit(1)
 
 
-def _auto_configure(base: Path, api_key: str | None, is_json: bool, verbose: bool) -> None:
+def _auto_configure(
+    base: Path, api_key: str | None, strategies: list[str], is_json: bool, verbose: bool
+) -> None:
     """Auto-detect providers and write minimal config."""
     import yaml
 
@@ -257,8 +298,20 @@ def _auto_configure(base: Path, api_key: str | None, is_json: bool, verbose: boo
     # Write minimal config
     config_data: dict[str, Any] = {"models": models}
 
-    # Preview platform (explicit)
-    config_data["platforms"] = {"preview": {"enabled": True}}
+    # Write strategies from template defaults
+    from social_hook.setup.templates import get_template
+
+    content_strategies: dict[str, dict[str, str]] = {}
+    for sid in strategies:
+        tmpl = get_template(sid)
+        if tmpl and tmpl.id != "custom":
+            content_strategies[sid] = {
+                "audience": tmpl.defaults.audience,
+                "post_when": tmpl.defaults.post_when,
+            }
+    if content_strategies:
+        config_data["content_strategies"] = content_strategies
+        config_data["content_strategy"] = strategies[0]
 
     config_path = base / "config.yaml"
     config_path.write_text(yaml.dump(config_data, default_flow_style=False))

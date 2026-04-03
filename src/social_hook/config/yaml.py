@@ -7,9 +7,15 @@ from typing import Any
 import yaml
 
 from social_hook.config.platforms import OutputPlatformConfig
-from social_hook.constants import CONFIG_DIR_NAME
+from social_hook.config.targets import (
+    AccountConfig,
+    PlatformCredentialConfig,
+    PlatformSettingsConfig,
+    TargetConfig,
+    validate_targets_config,
+)
 from social_hook.errors import ConfigError
-from social_hook.parsing import check_unknown_keys
+from social_hook.parsing import check_unknown_keys, safe_int
 
 # Valid X account tiers and their character limits
 VALID_TIERS = ("free", "basic", "premium", "premium_plus")
@@ -185,8 +191,55 @@ class ContentStrategyConfig:
 
     audience: str | None = None
     voice: str | None = None
+    angle: str | None = None
     post_when: str | None = None
     avoid: str | None = None
+    strategy_type: str | None = (
+        None  # "code-driven" or "positioning" — auto-classified on first use
+    )
+    format_preference: str | None = None  # "single", "thread", "long-form"
+    media_preference: str | None = None  # "screenshot", "diagram", "video", "code"
+    min_length: int | None = None
+    requires: list[str] | None = None  # tool dependencies
+
+
+def resolve_strategy_with_defaults(
+    strategy: ContentStrategyConfig,
+    defaults: ContentStrategyConfig | None = None,
+) -> ContentStrategyConfig:
+    """Resolve a strategy's optional fields by falling back to defaults.
+
+    Required fields (audience, voice, angle, post_when, avoid) are set per-strategy
+    and never inherited. Optional fields (format_preference, media_preference,
+    min_length, requires) fall back to defaults when unset (None) on the strategy.
+
+    Args:
+        strategy: Per-strategy config (may have None optional fields)
+        defaults: Default values to inherit from (e.g. global content-config)
+
+    Returns:
+        New ContentStrategyConfig with optional fields resolved
+    """
+    if defaults is None:
+        return strategy
+
+    return ContentStrategyConfig(
+        # Required fields — always from strategy
+        audience=strategy.audience,
+        voice=strategy.voice,
+        angle=strategy.angle,
+        post_when=strategy.post_when,
+        avoid=strategy.avoid,
+        # Optional fields — fall back to defaults when unset
+        format_preference=strategy.format_preference
+        if strategy.format_preference is not None
+        else defaults.format_preference,
+        media_preference=strategy.media_preference
+        if strategy.media_preference is not None
+        else defaults.media_preference,
+        min_length=strategy.min_length if strategy.min_length is not None else defaults.min_length,
+        requires=strategy.requires if strategy.requires is not None else defaults.requires,
+    )
 
 
 @dataclass
@@ -212,6 +265,11 @@ class Config:
     default_identity: str | None = None
     content_strategies: dict[str, ContentStrategyConfig] = field(default_factory=dict)
     content_strategy: str | None = None  # Reference to active strategy name
+    platform_credentials: dict[str, PlatformCredentialConfig] = field(default_factory=dict)
+    accounts: dict[str, AccountConfig] = field(default_factory=dict)
+    targets: dict[str, TargetConfig] = field(default_factory=dict)
+    platform_settings: dict[str, PlatformSettingsConfig] = field(default_factory=dict)
+    max_targets: int = 3  # Global limit on active targets
 
     # Environment variables (populated by load_full_config)
     env: dict[str, str] = field(default_factory=dict)
@@ -301,6 +359,40 @@ def save_config(
     return (current, hook_warning)
 
 
+def delete_config_key(
+    config_path: str | Path,
+    section: str,
+    key: str,
+) -> bool:
+    """Delete a key from a YAML config section and write back.
+
+    Args:
+        config_path: Path to the YAML config file
+        section: Top-level section name (e.g., "targets", "content_strategies")
+        key: Key to delete within the section
+
+    Returns:
+        True if the key existed and was deleted, False otherwise
+    """
+    config_path = Path(config_path)
+    if config_path.exists():
+        try:
+            raw = yaml.safe_load(config_path.read_text()) or {}
+        except yaml.YAMLError:
+            raw = {}
+    else:
+        raw = {}
+
+    section_data = raw.get(section, {})
+    if not isinstance(section_data, dict) or key not in section_data:
+        return False
+
+    del section_data[key]
+    raw[section] = section_data
+    config_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    return True
+
+
 def load_config(config_path: str | Path | None = None) -> Config:
     """Load configuration from YAML file.
 
@@ -348,6 +440,12 @@ def _parse_config(data: dict[str, Any]) -> Config:
             "default_identity",
             "content_strategies",
             "content_strategy",
+            "platform_credentials",
+            "accounts",
+            "targets",
+            "platform_settings",
+            "max_targets",
+            "web",
         },
         "content-config",
     )
@@ -560,13 +658,54 @@ def _parse_config(data: dict[str, Any]) -> Config:
     for cs_name, cs_data in data.get("content_strategies", {}).items():
         if not isinstance(cs_data, dict):
             raise ConfigError(f"Content strategy '{cs_name}' config must be a dict")
+        check_unknown_keys(
+            cs_data,
+            {
+                "audience",
+                "voice",
+                "angle",
+                "post_when",
+                "avoid",
+                "format_preference",
+                "media_preference",
+                "min_length",
+                "requires",
+            },
+            f"content_strategies.{cs_name}",
+        )
+        cs_min_length = cs_data.get("min_length")
+        if cs_min_length is not None:
+            cs_min_length = safe_int(cs_min_length, 0, f"content_strategies.{cs_name}.min_length")
+        cs_requires = cs_data.get("requires")
+        if cs_requires is not None and not isinstance(cs_requires, list):
+            raise ConfigError(f"Content strategy '{cs_name}' requires must be a list")
         content_strategies[cs_name] = ContentStrategyConfig(
             audience=cs_data.get("audience"),
             voice=cs_data.get("voice"),
+            angle=cs_data.get("angle"),
             post_when=cs_data.get("post_when"),
             avoid=cs_data.get("avoid"),
+            format_preference=cs_data.get("format_preference"),
+            media_preference=cs_data.get("media_preference"),
+            min_length=cs_min_length,
+            requires=cs_requires,
         )
     content_strategy = data.get("content_strategy")
+
+    # Platform credentials
+    platform_credentials = _parse_platform_credentials(data.get("platform_credentials", {}))
+
+    # Accounts
+    accounts = _parse_accounts(data.get("accounts", {}))
+
+    # Targets
+    targets = _parse_targets(data.get("targets", {}))
+
+    # Platform settings
+    platform_settings = _parse_platform_settings(data.get("platform_settings", {}))
+
+    # Max targets
+    max_targets = safe_int(data.get("max_targets", 3), 3, "max_targets")
 
     # Cross-reference validation
     if default_identity and default_identity not in identities:
@@ -577,7 +716,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
         if pcfg.identity and pcfg.identity not in identities:
             raise ConfigError(f"Platform '{pname}' references unknown identity '{pcfg.identity}'")
 
-    return Config(
+    config = Config(
         models=models,
         platforms=platforms,
         media_generation=media_generation,
@@ -591,7 +730,144 @@ def _parse_config(data: dict[str, Any]) -> Config:
         default_identity=default_identity,
         content_strategies=content_strategies,
         content_strategy=content_strategy,
+        platform_credentials=platform_credentials,
+        accounts=accounts,
+        targets=targets,
+        platform_settings=platform_settings,
+        max_targets=max_targets,
     )
+
+    # Validate targets config when any targets-related sections exist
+    if config.targets or config.accounts or config.platform_credentials:
+        validate_targets_config(config)
+
+    return config
+
+
+def _parse_platform_credentials(
+    data: dict[str, Any],
+) -> dict[str, PlatformCredentialConfig]:
+    """Parse platform_credentials section."""
+    result: dict[str, PlatformCredentialConfig] = {}
+    for name, pc_data in data.items():
+        if not isinstance(pc_data, dict):
+            raise ConfigError(f"Platform credential '{name}' config must be a dict")
+        check_unknown_keys(
+            pc_data,
+            {"platform", "client_id", "client_secret"},
+            f"platform_credentials.{name}",
+        )
+        platform = pc_data.get("platform")
+        if not platform:
+            raise ConfigError(f"Platform credential '{name}' missing required field 'platform'")
+        if not isinstance(platform, str):
+            raise ConfigError(f"Platform credential '{name}' platform must be a string")
+        result[name] = PlatformCredentialConfig(
+            platform=platform,
+            client_id=str(pc_data.get("client_id", "")),
+            client_secret=str(pc_data.get("client_secret", "")),
+        )
+    return result
+
+
+def _parse_accounts(data: dict[str, Any]) -> dict[str, AccountConfig]:
+    """Parse accounts section."""
+    result: dict[str, AccountConfig] = {}
+    for name, acct_data in data.items():
+        if not isinstance(acct_data, dict):
+            raise ConfigError(f"Account '{name}' config must be a dict")
+        check_unknown_keys(
+            acct_data,
+            {"platform", "app", "tier", "identity", "entity"},
+            f"accounts.{name}",
+        )
+        platform = acct_data.get("platform")
+        if not platform:
+            raise ConfigError(f"Account '{name}' missing required field 'platform'")
+        if not isinstance(platform, str):
+            raise ConfigError(f"Account '{name}' platform must be a string")
+        tier = acct_data.get("tier")
+        if tier is not None and tier not in VALID_TIERS:
+            raise ConfigError(
+                f"Account '{name}' has invalid tier '{tier}': must be one of {VALID_TIERS}"
+            )
+        result[name] = AccountConfig(
+            platform=platform,
+            app=acct_data.get("app"),
+            tier=tier,
+            identity=acct_data.get("identity"),
+            entity=acct_data.get("entity"),
+        )
+    return result
+
+
+def _parse_targets(data: dict[str, Any]) -> dict[str, TargetConfig]:
+    """Parse targets section."""
+    result: dict[str, TargetConfig] = {}
+    for name, tgt_data in data.items():
+        if not isinstance(tgt_data, dict):
+            raise ConfigError(f"Target '{name}' config must be a dict")
+        check_unknown_keys(
+            tgt_data,
+            {
+                "account",
+                "platform",
+                "destination",
+                "strategy",
+                "primary",
+                "source",
+                "community_id",
+                "share_with_followers",
+                "status",
+                "frequency",
+                "scheduling",
+            },
+            f"targets.{name}",
+        )
+        account = tgt_data.get("account", "")
+        platform = tgt_data.get("platform", "")
+        if not account and not platform:
+            raise ConfigError(f"Target '{name}' must have either 'account' or 'platform' specified")
+        if account and not isinstance(account, str):
+            raise ConfigError(f"Target '{name}' account must be a string")
+        if platform and not isinstance(platform, str):
+            raise ConfigError(f"Target '{name}' platform must be a string")
+        result[name] = TargetConfig(
+            account=str(account) if account else "",
+            platform=str(platform) if platform else "",
+            destination=tgt_data.get("destination", "timeline"),
+            strategy=tgt_data.get("strategy", ""),
+            primary=bool(tgt_data.get("primary", False)),
+            source=tgt_data.get("source"),
+            community_id=tgt_data.get("community_id"),
+            share_with_followers=bool(tgt_data.get("share_with_followers", False)),
+            status=tgt_data.get("status"),
+            frequency=tgt_data.get("frequency"),
+            scheduling=tgt_data.get("scheduling"),
+        )
+    return result
+
+
+def _parse_platform_settings(
+    data: dict[str, Any],
+) -> dict[str, PlatformSettingsConfig]:
+    """Parse platform_settings section."""
+    result: dict[str, PlatformSettingsConfig] = {}
+    for name, ps_data in data.items():
+        if not isinstance(ps_data, dict):
+            raise ConfigError(f"Platform settings '{name}' config must be a dict")
+        check_unknown_keys(
+            ps_data,
+            {"cross_account_gap_minutes"},
+            f"platform_settings.{name}",
+        )
+        gap = safe_int(
+            ps_data.get("cross_account_gap_minutes", 0),
+            0,
+            f"platform_settings.{name}.cross_account_gap_minutes",
+        )
+        result[name] = PlatformSettingsConfig(cross_account_gap_minutes=gap)
+    return result
 
 
 def validate_config(data: dict[str, Any]) -> Config:
@@ -617,11 +893,15 @@ def load_full_config(
     """
     from social_hook.config.env import load_env
 
-    # Set default paths
+    # Set default paths via filesystem helpers (patchable in tests)
     if env_path is None:
-        env_path = Path.home() / CONFIG_DIR_NAME / ".env"
+        from social_hook.filesystem import get_env_path
+
+        env_path = get_env_path()
     if yaml_path is None:
-        yaml_path = Path.home() / CONFIG_DIR_NAME / "config.yaml"
+        from social_hook.filesystem import get_config_path
+
+        yaml_path = get_config_path()
 
     # Load environment variables
     env_vars = load_env(env_path)

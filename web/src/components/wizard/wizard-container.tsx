@@ -122,8 +122,10 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
       });
   }, []);
 
-  const selectedTemplate = templates.find((t) => t.id === data.strategyId);
-  const isTemplateSelected = !!selectedTemplate && selectedTemplate.id !== "custom";
+  const primaryStrategyId = data.strategyIds[0] ?? "";
+  const selectedTemplate = templates.find((t) => t.id === primaryStrategyId);
+  const isTemplateSelected = data.strategyIds.length > 0 && data.strategyIds.every((id) => id !== "custom");
+  const primaryStrategyName = selectedTemplate?.name ?? "";
 
   const activeStep = STEP_LABELS[currentStep];
 
@@ -137,48 +139,38 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
         return namedIdentities.length <= 1;
       }
       if (label === "Voice" || label === "Audience") return true;
-      if (label === "Credentials") return hasClaudeCli && !data.platforms.some((p) => p.enabled && p.name !== "preview");
+      if (label === "Credentials") return hasClaudeCli && !data.platforms.some((p) => p.enabled);
       return false;
     },
     [isTemplateSelected, data.identities, data.platforms, hasClaudeCli, STEP_LABELS],
   );
 
-  function applyTemplateDefaults(templateId: string) {
-    const template = templates.find((t) => t.id === templateId);
-    if (!template || template.id === "custom") {
-      updateData({ strategyId: templateId });
+  function applyTemplateDefaults(ids: string[]) {
+    const primaryId = ids[0] ?? "";
+    const primary = templates.find((t) => t.id === primaryId);
+    if (!primary || primary.id === "custom") {
+      updateData({ strategyIds: ids });
       return;
     }
     updateData({
-      strategyId: templateId,
-      voiceTone: template.defaults.voiceTone,
-      audience: template.defaults.audience,
-      technicalLevel: template.defaults.technicalLevel,
-      platformFilter: template.defaults.platformFilter,
-      platformFrequency: template.defaults.platformFrequency,
-      postWhen: template.defaults.postWhen,
-      avoid: template.defaults.avoid,
+      strategyIds: ids,
+      voiceTone: primary.defaults.voiceTone,
+      audience: primary.defaults.audience,
+      technicalLevel: primary.defaults.technicalLevel,
+      platformFilter: primary.defaults.platformFilter,
+      platformFrequency: primary.defaults.platformFrequency,
+      postWhen: primary.defaults.postWhen,
+      avoid: primary.defaults.avoid,
       identities: data.identities.map((i, idx) =>
-        idx === 0 ? { ...i, type: template.defaults.identity as "myself" | "company" | "project" | "character" } : i,
+        idx === 0 ? { ...i, type: primary.defaults.identity as "myself" | "company" | "project" | "character" } : i,
       ),
     });
   }
 
   function handleNext() {
-    // Default to preview if no platforms selected
+    // Require at least one platform
     if (activeStep === "Platforms" && !data.platforms.some((p) => p.enabled)) {
-      const next = data.platforms.map((p) => ({ ...p }));
-      const preview = next.find((p) => p.name === "preview");
-      if (preview) {
-        preview.enabled = true;
-      } else {
-        next.push({ name: "preview", enabled: true, priority: "secondary", accountTier: "", introduce: false, identity: "" });
-      }
-      // Disable all real platforms
-      for (const p of next) {
-        if (p.name !== "preview") p.enabled = false;
-      }
-      updateData({ platforms: next });
+      return; // validation error shown in StepPlatforms
     }
 
     markStepComplete(currentStep);
@@ -220,28 +212,44 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
         platforms[p.name] = {
           enabled: true,
           priority: p.priority,
-          type: p.name === "x" || p.name === "linkedin" || p.name === "preview" ? "builtin" : "custom",
+          type: p.name === "x" || p.name === "linkedin" ? "builtin" : "custom",
           ...(p.identity ? { identity: p.identity } : {}),
           ...(p.accountTier ? { account_tier: p.accountTier } : {}),
         };
       }
 
       const contentStrategies: Record<string, { audience: string; voice: string; post_when?: string; avoid?: string }> = {};
-      if (data.strategyId && data.strategyId !== "custom") {
-        contentStrategies[data.strategyId] = {
-          audience: data.audience,
-          voice: data.voiceTone,
-          ...(data.postWhen ? { post_when: data.postWhen } : {}),
-          ...(data.avoid ? { avoid: data.avoid } : {}),
-        };
+      for (const sid of data.strategyIds) {
+        if (sid === "custom") continue;
+        if (sid === primaryStrategyId) {
+          // Primary strategy gets user-customized values
+          contentStrategies[sid] = {
+            audience: data.audience,
+            voice: data.voiceTone,
+            ...(data.postWhen ? { post_when: data.postWhen } : {}),
+            ...(data.avoid ? { avoid: data.avoid } : {}),
+          };
+        } else {
+          // Secondary strategies get template defaults
+          const tmpl = templates.find((t) => t.id === sid);
+          if (tmpl) {
+            contentStrategies[sid] = {
+              audience: tmpl.defaults.audience,
+              voice: tmpl.defaults.voiceTone,
+              ...(tmpl.defaults.postWhen ? { post_when: tmpl.defaults.postWhen } : {}),
+              ...(tmpl.defaults.avoid ? { avoid: tmpl.defaults.avoid } : {}),
+            };
+          }
+        }
       }
+      const primaryForConfig = data.strategyIds.find((id) => id !== "custom");
 
       await updateConfig({
         platforms,
         identities,
         default_identity: data.defaultIdentity || data.identities[0]?.name || undefined,
         content_strategies: Object.keys(contentStrategies).length > 0 ? contentStrategies : undefined,
-        content_strategy: data.strategyId !== "custom" ? data.strategyId : undefined,
+        content_strategy: primaryForConfig || undefined,
       } as Record<string, unknown>);
 
       // 2. Save social context
@@ -269,6 +277,16 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
           data.installGitHook,
         );
         projectId = projectRes.project?.id;
+      }
+
+      // 4b. Set trigger branch if selected
+      if (projectId && data.triggerBranch) {
+        try {
+          const { updateProjectTriggerBranch } = await import("@/lib/api");
+          await updateProjectTriggerBranch(projectId, data.triggerBranch);
+        } catch {
+          // Non-fatal — branch filter can be set later in Settings
+        }
       }
 
       // 5. Import commits + generate summary draft
@@ -318,8 +336,8 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
         {activeStep === "Strategy" && (
           <StepStrategy
             templates={templates}
-            value={data.strategyId}
-            onChange={(id) => applyTemplateDefaults(id)}
+            value={data.strategyIds}
+            onChange={(ids) => applyTemplateDefaults(ids)}
           />
         )}
         {activeStep === "Identity" && (
@@ -355,6 +373,7 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
             onPetPeevesChange={(petPeeves) => updateData({ petPeeves })}
             onGrammarPrefsChange={(grammarPrefs) => updateData({ grammarPrefs })}
             templatePreFilled={isTemplateSelected}
+            primaryStrategyName={primaryStrategyName}
           />
         )}
         {activeStep === "Audience" && (
@@ -366,6 +385,7 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
             onTechnicalLevelChange={(technicalLevel) => updateData({ technicalLevel })}
             onAudienceCaresChange={(audienceCares) => updateData({ audienceCares })}
             templatePreFilled={isTemplateSelected}
+            primaryStrategyName={primaryStrategyName}
           />
         )}
         {activeStep === "Credentials" && (
@@ -384,9 +404,11 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
             repoPath={data.repoPath}
             projectName={data.projectName}
             installGitHook={data.installGitHook}
+            triggerBranch={data.triggerBranch}
             onRepoPathChange={(repoPath) => updateData({ repoPath })}
             onProjectNameChange={(projectName) => updateData({ projectName })}
             onInstallGitHookChange={(installGitHook) => updateData({ installGitHook })}
+            onTriggerBranchChange={(triggerBranch) => updateData({ triggerBranch })}
           />
         )}
         {activeStep === "Summary" && (
@@ -441,8 +463,9 @@ export function WizardContainer({ onComplete, onClose, prefilledProject }: Wizar
             <button
               onClick={handleNext}
               disabled={
-                (activeStep === "Strategy" && !data.strategyId) ||
+                (activeStep === "Strategy" && data.strategyIds.length === 0) ||
                 (activeStep === "Identity" && data.identities.some((i) => !i.name)) ||
+                (activeStep === "Platforms" && !data.platforms.some((p) => p.enabled)) ||
                 (activeStep === "Project" && !data.repoPath)
               }
               className="rounded-md bg-accent px-6 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"

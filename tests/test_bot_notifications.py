@@ -111,17 +111,6 @@ class TestFormatDraftReviewExtended:
 class TestFormatDraftReviewEvaluatorContext:
     """Tests for format_draft_review with evaluator context params."""
 
-    def test_with_episode_type(self):
-        msg = format_draft_review(
-            project_name="test",
-            commit_hash="abc",
-            commit_message="msg",
-            platform="x",
-            content="hello",
-            episode_type="feature_launch",
-        )
-        assert "Episode: feature_launch" in msg
-
     def test_with_angle(self):
         msg = format_draft_review(
             project_name="test",
@@ -141,12 +130,10 @@ class TestFormatDraftReviewEvaluatorContext:
             commit_message="msg",
             platform="x",
             content="hello",
-            episode_type="bug_fix",
             post_category="technical",
             angle="Reliability matters",
             evaluator_reasoning="Strong commit that shows commitment to quality",
         )
-        assert "Episode: bug_fix" in msg
         assert "Category: technical" in msg
         assert "Angle:" in msg
         assert "Reliability matters" in msg
@@ -228,7 +215,7 @@ class TestGetReviewButtonsNormalized:
         assert b1[0].buttons[0].payload != b2[0].buttons[0].payload
 
     def test_preview_buttons(self):
-        buttons = get_review_buttons_normalized("draft_abc", platform="preview")
+        buttons = get_review_buttons_normalized("draft_abc", platform="x", preview_mode=True)
         labels = [btn.label for row in buttons for btn in row.buttons]
         assert labels == ["Edit", "Reject", "Promote"]
         actions = [btn.action for row in buttons for btn in row.buttons]

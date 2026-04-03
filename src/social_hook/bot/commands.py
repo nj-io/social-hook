@@ -13,7 +13,7 @@ from social_hook.messaging.base import (
     MessagingAdapter,
     OutboundMessage,
 )
-from social_hook.models import TERMINAL_STATUSES
+from social_hook.models.enums import TERMINAL_STATUSES
 from social_hook.parsing import safe_int
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
     from social_hook.db import operations as ops
     from social_hook.drafting import _parse_thread_tweets
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftTweet
+    from social_hook.models.core import DraftTweet
 
     existing = ops.get_draft_tweets(conn, draft_id)
     if not existing:
@@ -289,6 +289,8 @@ def handle_command(
         "retry": cmd_retry,
         "pause": cmd_pause,
         "resume": cmd_resume,
+        "errors": cmd_errors,
+        "health": cmd_health,
     }
 
     handler = handlers.get(cmd)
@@ -299,7 +301,10 @@ def handle_command(
 
 
 def handle_message(
-    msg: InboundMessage, adapter: MessagingAdapter, config: Any | None = None
+    msg: InboundMessage,
+    adapter: MessagingAdapter,
+    config: Any | None = None,
+    task_id: str | None = None,
 ) -> None:
     """Handle a free-text message by routing through Gatekeeper.
 
@@ -323,7 +328,7 @@ def handle_message(
     pending = get_pending_reply(chat_id)
     if pending:
         clear_pending_reply(chat_id)
-        _handle_pending_reply(adapter, chat_id, pending, text, config)
+        _handle_pending_reply(adapter, chat_id, pending, text, config, task_id=task_id)
         return
 
     try:
@@ -448,6 +453,13 @@ def handle_message(
             except Exception:
                 logger.debug("Failed to store inbound chat message", exc_info=True)
 
+            if task_id:
+                from social_hook.db import operations as ops
+
+                ops.emit_task_stage(
+                    _context_conn, task_id, "routing", "Understanding message", project_id or ""
+                )
+
             gatekeeper = Gatekeeper(client)
             route = gatekeeper.route(
                 user_message=text,
@@ -481,6 +493,7 @@ def handle_message(
                     draft=draft_obj,
                     project_id=project_id,
                     db=db,
+                    task_id=task_id,
                 )
 
             # Store outbound response
@@ -508,14 +521,14 @@ def handle_message(
         _send(adapter, chat_id, f"Error processing message: {e}")
 
 
-def _handle_pending_reply(adapter, chat_id, pending, text, config):
+def _handle_pending_reply(adapter, chat_id, pending, text, config, task_id=None):
     """Dispatch a pending reply to the appropriate handler."""
     if pending.type == "edit_text":
         _save_edit(adapter, chat_id, pending.draft_id, text)
     elif pending.type == "schedule_custom":
         _save_custom_schedule(adapter, chat_id, pending.draft_id, text, config)
     elif pending.type == "edit_angle":
-        _save_angle(adapter, chat_id, pending.draft_id, text)
+        _save_angle(adapter, chat_id, pending.draft_id, text, task_id=task_id)
     elif pending.type == "reject_note":
         _save_rejection_note(adapter, chat_id, pending.draft_id, text, config)
     elif pending.type == "edit_media_spec":
@@ -540,12 +553,11 @@ def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
-        if draft.platform == "preview":
+        if draft.preview_mode:
             _send(
                 adapter,
                 chat_id,
-                "Preview drafts cannot be scheduled. "
-                "Use the Promote button to redraft for a real platform.",
+                "No account connected. Run 'social-hook account add' to connect and enable posting.",
             )
             return
 
@@ -697,7 +709,7 @@ def _save_media_upload(adapter, chat_id, draft_id, text):
     from social_hook.db import operations as ops
     from social_hook.db.operations import insert_draft_change
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -752,7 +764,7 @@ def _apply_expert_result(
     from social_hook.db import insert_draft_change, update_draft
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     if not result.refined_content and not result.refined_media_spec:
         return False
@@ -814,7 +826,7 @@ def _apply_expert_result(
     return True
 
 
-def _save_angle(adapter, chat_id, draft_id, text):
+def _save_angle(adapter, chat_id, draft_id, text, task_id=None):
     """Use Expert agent to redraft content with a new angle."""
     from social_hook.config.yaml import load_full_config
     from social_hook.db import get_draft
@@ -842,6 +854,11 @@ def _save_angle(adapter, chat_id, draft_id, text):
 
         summary = ops.get_project_summary(conn, draft.project_id)
 
+        if task_id:
+            ops.emit_task_stage(
+                conn, task_id, "redrafting", "Redrafting with new angle", draft.project_id
+            )
+
         expert = Expert(client)
         result = expert.handle(
             draft=draft,
@@ -866,7 +883,9 @@ def _save_angle(adapter, chat_id, draft_id, text):
             if result.refined_media_spec:
                 parts.append("Media spec updated. Run `media-regen` to regenerate media.")
             msg = "\n".join(parts)
-            buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
+            buttons = get_review_buttons_normalized(
+                draft.id, platform=draft.platform, preview_mode=draft.preview_mode
+            )
             adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
         else:
             _send(
@@ -906,7 +925,7 @@ def _save_edit(
     from social_hook.db import get_draft, insert_draft_change, update_draft
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
-    from social_hook.models import DraftChange
+    from social_hook.models.core import DraftChange
 
     conn = _get_conn()
     try:
@@ -936,7 +955,7 @@ def _save_edit(
             adapter,
             chat_id,
             f"Draft `{draft_id[:12]}` updated.\n\n```\n{new_content}\n```",
-            buttons=get_review_buttons_normalized(draft_id),
+            buttons=get_review_buttons_normalized(draft_id, preview_mode=draft.preview_mode),
         )
     finally:
         conn.close()
@@ -1013,6 +1032,7 @@ def _handle_expert_escalation(
     draft: Any = None,
     project_id: str | None = None,
     db: Any = None,
+    task_id: str | None = None,
 ) -> str | None:
     """Handle an Expert escalation. Returns response text for chat history.
 
@@ -1063,6 +1083,13 @@ def _handle_expert_escalation(
                     expert_identity = resolve_identity(full_config, draft.platform)
             except Exception:
                 logger.debug("Failed to resolve expert context", exc_info=True)
+
+        if task_id and db:
+            from social_hook.db import operations as _stage_ops
+
+            _stage_ops.emit_task_stage(
+                db.conn, task_id, "thinking", "Drafting response", project_id or ""
+            )
 
         result = expert.handle(
             draft=draft,
@@ -1122,7 +1149,9 @@ def _handle_expert_escalation(
                         f"Media spec updated: {json_mod.dumps(result.refined_media_spec)[:200]}"
                     )
                 msg = f"Draft `{draft.id[:12]}` updated by Expert.\n\n" + "\n".join(parts)
-                buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
+                buttons = get_review_buttons_normalized(
+                    draft.id, platform=draft.platform, preview_mode=draft.preview_mode
+                )
                 adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
                 return msg
             finally:
@@ -1141,7 +1170,9 @@ def _handle_expert_escalation(
             adapter,
             chat_id,
             msg,
-            buttons=get_review_buttons_normalized(draft.id) if draft else None,
+            buttons=get_review_buttons_normalized(draft.id, preview_mode=draft.preview_mode)
+            if draft
+            else None,
         )
         return msg
 
@@ -1166,6 +1197,8 @@ HELP_DETAILS = {
     "retry": "Retry a failed draft. Usage: /retry <draft\\_id>",
     "pause": "Pause a project (stops evaluating commits). Usage: /pause <project\\_id>",
     "resume": "Resume a paused project. Usage: /resume <project\\_id>",
+    "errors": "Show recent system errors (ERROR/CRITICAL, last 24h). Usage: /errors [limit|severity]",
+    "health": "Show system health status with error counts from last 24h.",
     "help": "Show help. For details on a command: /help <command>",
 }
 
@@ -1197,6 +1230,8 @@ def cmd_help(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) ->
         "/retry <draft\\_id> - Retry a failed draft\n"
         "/pause <project\\_id> - Pause a project\n"
         "/resume <project\\_id> - Resume a project\n"
+        "/errors [limit|severity] - Recent system errors\n"
+        "/health - System health status\n"
         "/help [command] - Show this message"
     )
     _send(adapter, chat_id, text)
@@ -1410,12 +1445,13 @@ def cmd_review(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
             char_count=len(draft.content),
             is_thread=is_thread,
             tweet_count=tweet_count,
-            episode_type=decision.episode_type if decision else None,
             post_category=decision.post_category if decision else None,
             angle=decision.angle if decision else None,
             evaluator_reasoning=decision.reasoning if decision else None,
         )
-        buttons = get_review_buttons_normalized(draft.id, platform=draft.platform)
+        buttons = get_review_buttons_normalized(
+            draft.id, platform=draft.platform, preview_mode=draft.preview_mode
+        )
         adapter.send_message(chat_id, OutboundMessage(text=msg, buttons=buttons))
     finally:
         conn.close()
@@ -1652,5 +1688,77 @@ def cmd_resume(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
         conn.execute("UPDATE projects SET paused = 0 WHERE id = ?", (project_id,))
         conn.commit()
         _send(adapter, chat_id, f"Project `{project.name}` resumed.")
+    finally:
+        conn.close()
+
+
+def cmd_errors(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
+    """Show recent system errors. Optional: /errors <limit> or /errors <severity>."""
+    from social_hook.db import operations as ops
+
+    # Parse args: could be a number (limit) or a severity string
+    limit = 10
+    severity = None
+    arg = args.strip().lower()
+    if arg:
+        if arg.isdigit():
+            limit = min(int(arg), 50)
+        elif arg in ("info", "warning", "error", "critical"):
+            severity = arg
+        else:
+            _send(
+                adapter,
+                chat_id,
+                "Usage: /errors [limit|severity]\nSeverity: info, warning, error, critical",
+            )
+            return
+
+    # Default to ERROR/CRITICAL when no severity specified
+    conn = _get_conn()
+    try:
+        errors = ops.get_recent_system_errors(
+            conn, limit=limit, severity=severity or ["error", "critical"]
+        )
+
+        if not errors:
+            _send(adapter, chat_id, "No recent errors found.")
+            return
+
+        lines = [f"*Recent Errors* ({len(errors)})"]
+        for e in errors:
+            ts = ""
+            if e.created_at:
+                ts = e.created_at.replace("T", " ")[:16]
+            source = f" [{e.source}]" if e.source else ""
+            msg = e.message[:80] + ("..." if len(e.message) > 80 else "")
+            lines.append(f"- {e.severity.upper()}{source} {ts}\n  {msg}")
+
+        _send(adapter, chat_id, "\n".join(lines))
+    finally:
+        conn.close()
+
+
+def cmd_health(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
+    """Show system health status and error counts."""
+    from social_hook.db import operations as ops
+
+    conn = _get_conn()
+    try:
+        error_counts = ops.get_error_health_status(conn)
+        total = sum(error_counts.values())
+        status = ops.compute_health_status(error_counts).upper()
+
+        lines = [
+            f"*System Health: {status}*",
+            "",
+            f"Errors in last 24h: {total}",
+        ]
+        if total > 0:
+            for sev in ("critical", "error", "warning", "info"):
+                count = error_counts.get(sev, 0)
+                if count > 0:
+                    lines.append(f"  {sev}: {count}")
+
+        _send(adapter, chat_id, "\n".join(lines))
     finally:
         conn.close()

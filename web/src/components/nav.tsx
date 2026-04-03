@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ActivityIndicator } from "@/components/activity-indicator";
 
 const links = [
   { href: "/", label: "Dashboard" },
   { href: "/drafts", label: "Drafts" },
   { href: "/chat", label: "Chat" },
+  { href: "/system", label: "System" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -14,7 +16,8 @@ export function Nav() {
   const pathname = usePathname();
 
   return (
-    <nav className="border-b border-border bg-background sticky top-0 z-50">
+    <nav className="relative border-b border-border bg-background sticky top-0 z-50">
+      <ActivityIndicator />
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-14 items-center justify-between">
           <div className="flex items-center gap-2">

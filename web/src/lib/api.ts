@@ -1,4 +1,4 @@
-import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent } from "./types";
+import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent, PlatformCredential, Account, Target, Strategy, Topic, Brief, ContentSuggestion, EvaluationCycle, SystemError, SystemHealth, PlatformSettings } from "./types";
 import { getSessionId } from "./session";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -44,12 +44,14 @@ export async function fetchDrafts(filters?: {
   project_id?: string;
   decision_id?: string;
   commit?: string;
+  tag?: string;
 }): Promise<{ drafts: Draft[] }> {
   const params = new URLSearchParams();
   if (filters?.status) params.set("status", filters.status);
   if (filters?.project_id) params.set("project_id", filters.project_id);
   if (filters?.decision_id) params.set("decision_id", filters.decision_id);
   if (filters?.commit) params.set("commit", filters.commit);
+  if (filters?.tag) params.set("tag", filters.tag);
   const qs = params.toString();
   return apiFetch(`/api/drafts${qs ? `?${qs}` : ""}`);
 }
@@ -73,11 +75,19 @@ export async function fetchProjectDecisions(
   limit?: number,
   offset?: number,
   branch?: string | null,
+  sortBy?: string,
+  sortDir?: string,
+  decision?: string | null,
+  classification?: string | null,
 ): Promise<{ decisions: Decision[]; total: number }> {
   const params = new URLSearchParams();
   if (limit != null) params.set("limit", String(limit));
   if (offset != null) params.set("offset", String(offset));
   if (branch) params.set("branch", branch);
+  if (sortBy) params.set("sort_by", sortBy);
+  if (sortDir) params.set("sort_dir", sortDir);
+  if (decision) params.set("decision", decision);
+  if (classification) params.set("classification", classification);
   const qs = params.toString();
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/decisions${qs ? `?${qs}` : ""}`);
 }
@@ -89,19 +99,27 @@ export async function fetchDecisionBranches(id: string): Promise<{ branches: str
 export async function fetchImportPreview(
   id: string,
   branch?: string | null,
+  limit?: number | null,
 ): Promise<{ total_commits: number; already_tracked: number; importable: number }> {
-  const params = branch ? `?branch=${encodeURIComponent(branch)}` : "";
-  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-preview${params}`);
+  const params = new URLSearchParams();
+  if (branch) params.set("branch", branch);
+  if (limit) params.set("limit", String(limit));
+  const qs = params.toString();
+  return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-preview${qs ? `?${qs}` : ""}`);
 }
 
 export async function importCommits(
   id: string,
   branch?: string | null,
+  limit?: number | null,
 ): Promise<{ task_id: string; status: string }> {
+  const body: Record<string, unknown> = {};
+  if (branch) body.branch = branch;
+  if (limit) body.limit = limit;
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/import-commits`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(branch ? { branch } : {}),
+    body: JSON.stringify(body),
   });
 }
 
@@ -180,7 +198,7 @@ export async function sendCommand(text: string): Promise<{ events: WebEvent[] }>
   });
 }
 
-export async function sendCallback(action: string, payload: string): Promise<{ events: WebEvent[] }> {
+export async function sendCallback(action: string, payload: string): Promise<{ events: WebEvent[]; task_id?: string }> {
   return apiFetch("/api/callback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -200,7 +218,7 @@ export async function sendCallbackExtended(
   });
 }
 
-export async function sendMessage(text: string): Promise<{ events: WebEvent[] }> {
+export async function sendMessage(text: string): Promise<{ events: WebEvent[]; task_id?: string }> {
   return apiFetch("/api/message", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -272,6 +290,10 @@ export async function toggleProjectPause(projectId: string): Promise<{ status: s
 // Project branches
 export async function fetchProjectBranches(id: string): Promise<{ branches: string[]; current: string | null; error?: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(id)}/branches`);
+}
+
+export async function fetchGitBranches(repoPath: string): Promise<{ branches: string[]; current: string | null }> {
+  return apiFetch(`/api/git/branches?repo_path=${encodeURIComponent(repoPath)}`);
 }
 
 export async function updateProjectTriggerBranch(id: string, branch: string | null): Promise<{ status: string; trigger_branch: string | null }> {
@@ -402,9 +424,19 @@ export async function deleteDecision(
 
 export async function retriggerDecision(
   decisionId: string,
-): Promise<{ status: string; exit_code: number }> {
+): Promise<{ task_id: string; status: string }> {
   return apiFetch(`/api/decisions/${encodeURIComponent(decisionId)}/retrigger`, {
     method: "POST",
+  });
+}
+
+export async function batchEvaluateDecisions(
+  decisionIds: string[],
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch("/api/decisions/batch-evaluate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision_ids: decisionIds }),
   });
 }
 
@@ -447,6 +479,10 @@ export interface BackgroundTask {
   error: string | null;
   created_at: string;
   updated_at: string | null;
+  // Client-side stage tracking (in-memory, set from SSE events)
+  current_stage?: string;
+  stage_label?: string;
+  stage_started_at?: string;
 }
 
 export async function fetchTasks(params: {
@@ -554,4 +590,320 @@ export async function createSummaryDraft(
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/summary-draft`, {
     method: "POST",
   });
+}
+
+// --- Targets API ---
+
+// Platform Credentials
+export async function fetchPlatformCredentials(): Promise<{ platform_credentials: Record<string, Record<string, unknown>> }> {
+  return apiFetch("/api/platform-credentials");
+}
+
+export async function addPlatformCredential(data: { platform: string; name: string; credentials?: Record<string, string> }): Promise<{ status: string }> {
+  return apiFetch("/api/platform-credentials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePlatformCredential(name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/platform-credentials/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function validatePlatformCredential(name: string): Promise<{ valid: boolean; error?: string }> {
+  return apiFetch(`/api/platform-credentials/${encodeURIComponent(name)}/validate`, { method: "POST" });
+}
+
+// Accounts
+export async function fetchAccounts(): Promise<{ accounts: Record<string, Record<string, unknown>> }> {
+  return apiFetch("/api/accounts");
+}
+
+export async function addAccount(data: { platform: string; name: string }): Promise<{ auth_url?: string; status: string }> {
+  return apiFetch("/api/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAccount(name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/accounts/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function validateAccounts(): Promise<{ results: Record<string, { valid: boolean; error?: string }> }> {
+  return apiFetch("/api/accounts/validate", { method: "POST" });
+}
+
+// Targets
+export async function fetchTargets(projectId: string): Promise<{ targets: Target[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets`);
+}
+
+export async function addTarget(projectId: string, data: { account: string; destination: string; strategy: string; frequency?: string }): Promise<{ status: string; name: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function disableTarget(projectId: string, name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets/${encodeURIComponent(name)}/disable`, { method: "PUT" });
+}
+
+export async function enableTarget(projectId: string, name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets/${encodeURIComponent(name)}/enable`, { method: "PUT" });
+}
+
+// Strategies
+export async function fetchStrategies(projectId: string): Promise<{ strategies: Record<string, Record<string, unknown>> }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies`);
+}
+
+export async function fetchStrategy(projectId: string, name: string): Promise<Strategy> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`);
+}
+
+export async function updateStrategy(projectId: string, name: string, data: Partial<Strategy>): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function resetStrategy(projectId: string, name: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}/reset`, { method: "POST" });
+}
+
+// Topics
+export async function fetchTopics(projectId: string, strategy?: string, includeDismissed?: boolean): Promise<{ topics: Topic[] }> {
+  const parts: string[] = [];
+  if (strategy) parts.push(`strategy=${encodeURIComponent(strategy)}`);
+  if (includeDismissed) parts.push("include_dismissed=true");
+  const params = parts.length > 0 ? `?${parts.join("&")}` : "";
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics${params}`);
+}
+
+export async function addTopic(projectId: string, data: { strategy: string; topic: string; description?: string }): Promise<{ status: string; topic: Topic }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateTopic(projectId: string, topicId: string, data: { description?: string; priority_rank?: number }): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function setTopicStatus(projectId: string, topicId: string, status: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function reorderTopics(projectId: string, topicIds: string[]): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/reorder`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topic_ids: topicIds }),
+  });
+}
+
+export async function draftNowTopic(projectId: string, topicId: string): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topicId)}/draft-now`, { method: "POST" });
+}
+
+// Brief
+export async function fetchBrief(projectId: string): Promise<Brief> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/brief`);
+}
+
+export async function updateBrief(projectId: string, sections: Record<string, string>): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/brief`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sections }),
+  });
+}
+
+// Content Suggestions
+export async function fetchSuggestions(projectId: string): Promise<{ suggestions: ContentSuggestion[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions`);
+}
+
+export async function createSuggestion(projectId: string, data: { idea: string; strategy?: string }): Promise<{ status: string; task_id?: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function dismissSuggestion(projectId: string, suggestionId: string): Promise<{ status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(suggestionId)}/dismiss`, { method: "PUT" });
+}
+
+export async function combineTopics(projectId: string, topicIds: string[]): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/content/combine`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topic_ids: topicIds }),
+  });
+}
+
+export async function heroLaunch(projectId: string): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/content/hero-launch`, { method: "POST" });
+}
+
+// Evaluation Cycles
+export async function fetchCycles(projectId: string): Promise<{ cycles: EvaluationCycle[] }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/cycles`);
+}
+
+export async function fetchCycleDetail(projectId: string, cycleId: string): Promise<EvaluationCycle> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/cycles/${encodeURIComponent(cycleId)}`);
+}
+
+export async function approveAllCycleDrafts(
+  projectId: string,
+  cycleId: string,
+): Promise<{ status: string; approved_count: number; draft_ids?: string[] }> {
+  return apiFetch(
+    `/api/projects/${encodeURIComponent(projectId)}/cycles/${encodeURIComponent(cycleId)}/approve-all`,
+    { method: "POST" },
+  );
+}
+
+// System
+export async function fetchSystemErrors(params?: {
+  severity?: string;
+  component?: string;
+  source?: string;
+  limit?: number;
+}): Promise<{ errors: SystemError[] }> {
+  const qs = new URLSearchParams();
+  if (params?.severity) qs.set("severity", params.severity);
+  if (params?.component) qs.set("component", params.component);
+  if (params?.source) qs.set("source", params.source);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const query = qs.toString();
+  return apiFetch(`/api/system/errors${query ? `?${query}` : ""}`);
+}
+
+export async function fetchSystemHealth(): Promise<SystemHealth> {
+  return apiFetch("/api/system/health");
+}
+
+export interface SystemEvent {
+  id: number;
+  entity: string;
+  action: string;
+  entity_id: string | null;
+  project_id: string | null;
+  created_at: string;
+}
+
+export async function fetchSystemEvents(params?: {
+  entity?: string;
+  limit?: number;
+}): Promise<{ events: SystemEvent[] }> {
+  const qs = new URLSearchParams();
+  if (params?.entity) qs.set("entity", params.entity);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const query = qs.toString();
+  return apiFetch(`/api/system/events${query ? `?${query}` : ""}`);
+}
+
+export async function clearSystemErrors(
+  olderThanDays?: number
+): Promise<{ deleted: number }> {
+  const qs = olderThanDays != null ? `?older_than_days=${olderThanDays}` : "";
+  return apiFetch(`/api/system/errors${qs}`, { method: "DELETE" });
+}
+
+export async function reportFrontendError(error: {
+  severity: string;
+  message: string;
+  source: string;
+  context?: Record<string, unknown>;
+}): Promise<{ id: string; status: string }> {
+  return apiFetch("/api/system/errors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(error),
+  });
+}
+
+// Platform Settings
+export async function fetchPlatformSettings(): Promise<{ platform_settings: Record<string, Record<string, unknown>> }> {
+  return apiFetch("/api/platform-settings");
+}
+
+export async function updatePlatformSettings(platform: string, data: { cross_account_gap_minutes: number }): Promise<{ status: string }> {
+  return apiFetch(`/api/platform-settings/${encodeURIComponent(platform)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+// OAuth 2.0 — multi-platform
+export async function fetchOAuthAuthorize(platform: string): Promise<{ auth_url: string; state: string; callback_url: string; note: string }> {
+  return apiFetch(`/api/oauth/${encodeURIComponent(platform)}/authorize`);
+}
+
+export async function fetchOAuthStatus(platform: string): Promise<{ connected: boolean; username: string; callback_url: string }> {
+  return apiFetch(`/api/oauth/${encodeURIComponent(platform)}/status`);
+}
+
+export async function fetchOAuthDisconnect(platform: string): Promise<{ disconnected: boolean; error?: string }> {
+  return apiFetch(`/api/oauth/${encodeURIComponent(platform)}/disconnect`, { method: "DELETE" });
+}
+
+// Backward-compat aliases
+export const fetchXOAuthAuthorize = () => fetchOAuthAuthorize("x");
+export const fetchXOAuthStatus = () => fetchOAuthStatus("x");
+
+// Connect a preview-mode draft to an account
+export async function connectDraft(draftId: string, accountName: string): Promise<{ status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ account: accountName }),
+  });
+}
+
+// --- Phase 3: Missing CRUD ---
+
+export async function deleteTarget(projectId: string, name: string): Promise<{ status: string; name: string; cancelled_drafts: number }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/targets/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function createStrategy(
+  projectId: string,
+  data: { name: string; audience?: string; voice?: string; angle?: string; post_when?: string; avoid?: string },
+): Promise<{ status: string; name: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteStrategy(projectId: string, name: string): Promise<{ status: string; name: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/strategies/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export async function acceptSuggestion(projectId: string, suggestionId: string): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(suggestionId)}/accept`, { method: "POST" });
 }

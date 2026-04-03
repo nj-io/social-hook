@@ -7,6 +7,97 @@ import typer
 from social_hook import __version__
 from social_hook.constants import PROJECT_DESCRIPTION, PROJECT_NAME, PROJECT_SLUG
 
+
+def _init_logging(
+    component: str, *, console: bool = True, notify: bool = False, run_id: bool = False
+) -> None:
+    """Initialize unified logging pipeline for a CLI entry point.
+
+    Args:
+        component: Component name (e.g., "trigger", "scheduler", "bot")
+        console: Whether to show ERROR+ on stderr
+        notify: Whether to send ERROR/CRITICAL to notification channels
+        run_id: Whether to generate and set a correlation run_id
+    """
+    import sys
+
+    from social_hook.error_feed import error_feed
+    from social_hook.filesystem import get_db_path
+    from social_hook.logging import setup_logging
+
+    try:
+        from social_hook.config import load_full_config
+
+        config = load_full_config()
+        error_feed.set_db_path(str(get_db_path()))
+    except Exception as e:
+        print(
+            f"Logging init: config not available ({e}), DB/notification sinks disabled",
+            file=sys.stderr,
+        )
+        config = None
+
+    sender = None
+    if notify and config:
+        from social_hook.notifications import send_notification
+
+        # NotificationSink already formats as "[SEVERITY] (source) message"
+        # so the sender just passes through — no extra wrapping needed.
+        def sender(_sev, msg):
+            send_notification(config, msg)
+
+    setup_logging(
+        component,
+        error_feed=error_feed if config else None,
+        notification_sender=sender,
+        console=console,
+    )
+
+    # Wire on_persist so errors from this process trigger WebSocket updates
+    # in the web dashboard (cross-process via web_events table).
+    if config:
+        import sqlite3
+        import threading
+
+        _persist_sem = threading.Semaphore(10)
+        db_path_str = str(get_db_path())
+
+        def _on_error_persisted(error_id, severity, comp):
+            if not _persist_sem.acquire(blocking=False):
+                return
+
+            def _emit():
+                try:
+                    from social_hook.db import operations as ops
+
+                    conn = sqlite3.connect(db_path_str, timeout=2)
+                    conn.row_factory = sqlite3.Row
+                    try:
+                        ops.emit_data_event(
+                            conn,
+                            "system_error",
+                            "created",
+                            error_id,
+                            extra={"severity": severity, "component": comp},
+                        )
+                    finally:
+                        conn.close()
+                except Exception:
+                    pass
+                finally:
+                    _persist_sem.release()
+
+            threading.Thread(target=_emit, daemon=True).start()
+
+        error_feed.set_on_persist(_on_error_persisted)
+
+    if run_id:
+        from social_hook.filesystem import generate_id
+        from social_hook.logging import set_run_id
+
+        set_run_id(generate_id("run"))
+
+
 # Create main Typer app
 app = typer.Typer(
     name=PROJECT_SLUG,
@@ -242,8 +333,16 @@ def trigger(
     commit: str = typer.Option(..., "--commit", help="Commit hash to evaluate"),
     repo: str = typer.Option(..., "--repo", help="Repository path"),
 ):
-    """Evaluate a commit and create draft if post-worthy (called by hook)."""
+    """Run the full evaluation-to-draft pipeline for a single commit.
+
+    Evaluates the commit with the LLM, records a decision, and creates
+    drafts for each enabled platform if the commit is post-worthy.
+    This is the same pipeline the git post-commit hook runs automatically.
+    Use 'social-hook test' for dry-run evaluation without database writes.
+    """
     from social_hook.trigger import run_trigger
+
+    _init_logging("trigger", notify=True, run_id=True)
 
     dry_run = ctx.obj.get("dry_run", False)
     verbose = ctx.obj.get("verbose", False)
@@ -266,8 +365,20 @@ def trigger(
 def scheduler_tick(
     ctx: typer.Context,
 ):
-    """Run one scheduler tick: post all due drafts."""
+    """Post scheduled drafts whose time has arrived and promote deferred drafts.
+
+    Checks for drafts with status 'scheduled' past their scheduled time and
+    posts them to their platform. Also promotes deferred drafts when scheduling
+    slots open up, and drains rate-limited evaluations.
+
+    Typically run on a cron (e.g. every minute) or by the bot daemon.
+
+    Example: social-hook scheduler-tick
+    Example: social-hook --dry-run scheduler-tick
+    """
     from social_hook.scheduler import scheduler_tick as do_tick
+
+    _init_logging("scheduler", notify=True, run_id=True)
 
     dry_run = ctx.obj.get("dry_run", False)
     config_path = ctx.obj.get("config")
@@ -284,8 +395,20 @@ def scheduler_tick(
 def consolidation_tick_cmd(
     ctx: typer.Context,
 ):
-    """Run one consolidation tick: process batched decisions."""
+    """Process held decisions — commits not post-worthy alone but interesting together.
+
+    When the evaluator marks a commit as 'hold', it means the commit isn't worth
+    a standalone post but could be combined with others. This command batches
+    those held decisions and either sends a summary notification (notify_only mode)
+    or re-evaluates the batch as a group (re_evaluate mode).
+
+    Typically run on a cron (e.g. every few hours) or by the bot daemon.
+
+    Example: social-hook consolidation-tick
+    """
     from social_hook.consolidation import consolidation_tick as do_tick
+
+    _init_logging("consolidation", notify=True, run_id=True)
 
     dry_run = ctx.obj.get("dry_run", False)
     config_path = ctx.obj.get("config")
@@ -306,7 +429,17 @@ def web(
     host: str = typer.Option("127.0.0.1", "--host", help="Host to bind to"),
     install: bool = typer.Option(False, "--install", help="Run npm install before starting"),
 ):
-    """Start the web dashboard (Next.js + FastAPI)."""
+    """Start the web dashboard for managing your social-hook workflow visually.
+
+    Launches a Next.js frontend and FastAPI backend. From the dashboard you can
+    review and edit drafts, approve or reject posts, manage projects, configure
+    settings, monitor the pipeline in real time, and more.
+
+    Requires Node.js. Use --install to run npm install on first launch.
+
+    Example: social-hook web
+    Example: social-hook web --port 8080 --install
+    """
     import shutil
     import subprocess as sp
 
@@ -321,7 +454,7 @@ def web(
         typer.echo("The web dashboard may not be installed.")
         raise typer.Exit(1)
 
-    if install:
+    if install or not (web_dir / "node_modules").exists():
         typer.echo("Running npm install...")
         result = sp.run(["npm", "install"], cwd=str(web_dir))
         if result.returncode != 0:
@@ -463,12 +596,7 @@ def bot_start(
         typer.echo(f"Bot started (PID {proc.pid})")
         return
     else:
-        import logging
-
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
+        _init_logging("bot", notify=True)
         typer.echo("Bot starting (foreground mode, Ctrl+C to stop)...")
         bot.run(pid_file=get_pid_file())
 
@@ -506,11 +634,24 @@ def discover(
     ctx: typer.Context,
     project_id: str = typer.Argument(..., help="Project ID to discover"),
 ):
-    """Run two-pass project discovery and print results."""
+    """Analyse your repo with LLM-powered two-pass discovery.
+
+    Pass 1: the AI selects the most important files from your repo listing.
+    Pass 2: reads those files and generates a project summary, per-file
+    summaries, and identifies key documentation. This context is used by
+    the evaluator and drafter in all future pipeline runs.
+
+    Usually run automatically by quickstart, but can be re-run to refresh
+    the project summary after significant changes.
+
+    Example: social-hook discover my-project-id
+    """
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
     from social_hook.db.connection import init_database
     from social_hook.filesystem import get_db_path
+
+    _init_logging("cli")
 
     verbose = ctx.obj.get("verbose", False)
     config_path = ctx.obj.get("config")
@@ -591,6 +732,8 @@ def commit_hook():
     import re
     import sys
 
+    _init_logging("trigger", console=False, notify=True)
+
     try:
         data = json.loads(sys.stdin.read())
     except (json.JSONDecodeError, EOFError):
@@ -630,15 +773,7 @@ def git_hook():
     import logging
     import subprocess
 
-    from social_hook.filesystem import get_base_path
-
-    log_dir = get_base_path() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=str(log_dir / "git-hook.log"),
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    _init_logging("trigger", console=False, notify=True)
     logger = logging.getLogger("social_hook.git_hook")
 
     try:
@@ -681,16 +816,7 @@ def narrative_capture():
     import os
     import sys
 
-    from social_hook.filesystem import get_base_path
-
-    # Set up file logging for this subprocess
-    log_dir = get_base_path() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_dir / "narrative.log")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logging.getLogger().addHandler(file_handler)
-
+    _init_logging("narrative", console=False)
     logger = logging.getLogger("social_hook.narrative_capture")
 
     try:
@@ -881,6 +1007,75 @@ from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
 app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+
+from social_hook.cli.account import app as account_app
+from social_hook.cli.brief import app as brief_app
+from social_hook.cli.content import app as content_app
+from social_hook.cli.credentials import app as credentials_app
+from social_hook.cli.cycles import app as cycles_app
+from social_hook.cli.logs import app as logs_app
+from social_hook.cli.strategy import app as strategy_app
+from social_hook.cli.target import app as target_app
+from social_hook.cli.topics import app as topics_app
+
+# Platform credentials: list, add, validate, remove
+app.add_typer(
+    credentials_app,
+    name="credentials",
+    help="Manage API keys and secrets in ~/.social-hook/.env.",
+)
+
+# Account management: list, add, validate, remove
+app.add_typer(
+    account_app,
+    name="account",
+    help="Manage OAuth-authenticated platform accounts (X, LinkedIn).",
+)
+
+# Target management: list, add, disable, enable
+app.add_typer(
+    target_app,
+    name="target",
+    help="Configure where content is distributed (account + destination + strategy).",
+)
+
+# Strategy management: list, show, edit, reset
+app.add_typer(
+    strategy_app,
+    name="strategy",
+    help="View and customize content strategies (voice, audience, editorial rules).",
+)
+
+# Topic queue: list, add, reorder, status, draft-now
+app.add_typer(
+    topics_app,
+    name="topics",
+    help="Manage the prioritised content topic queue per strategy.",
+)
+
+# Brief management: show, edit
+app.add_typer(
+    brief_app,
+    name="brief",
+    help="View and edit the project brief used by the evaluator and drafter.",
+)
+
+# Content suggestions: suggest, list, dismiss, combine, hero-launch
+app.add_typer(
+    content_app,
+    name="content",
+    help="Submit content ideas, combine topics, and trigger hero launch drafts.",
+)
+
+# Evaluation cycles: list, show
+app.add_typer(
+    cycles_app,
+    name="cycles",
+    help="Inspect evaluation cycle history and per-strategy outcomes.",
+)
+
+# Log queries, tailing, and health
+app.add_typer(logs_app, name="logs", help="Log queries, tailing, and health.")
 
 from social_hook.cli.events import events as events_cmd
 from social_hook.cli.quickstart import quickstart as quickstart_cmd
