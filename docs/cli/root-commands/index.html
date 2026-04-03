@@ -16,7 +16,7 @@
         <link rel="prev" href="../">
       
       
-        <link rel="next" href="../arc/">
+        <link rel="next" href="../account/">
       
       
         
@@ -708,6 +708,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    account
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../arc/" class="md-nav__link">
         
   
@@ -764,6 +792,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../brief/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../config/" class="md-nav__link">
         
   
@@ -772,6 +828,90 @@
     
   
     config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    content
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../credentials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    credentials
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cycles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cycles
   
 
     
@@ -1024,6 +1164,118 @@
     
   
     snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    strategy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    logs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../target/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    target
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    topics
   
 
     
@@ -1587,10 +1839,23 @@
 <h1 id="social-hook-commands">social-hook commands<a class="headerlink" href="#social-hook-commands" title="Permanent link">&para;</a></h1>
 <p>Top-level commands that are not part of a command group.</p>
 <h3 id="social-hook-consolidation-tick"><code>social-hook consolidation-tick</code><a class="headerlink" href="#social-hook-consolidation-tick" title="Permanent link">&para;</a></h3>
-<p>Run one consolidation tick: process batched decisions.</p>
+<p>Process held decisions — commits not post-worthy alone but interesting together.</p>
+<p>When the evaluator marks a commit as 'hold', it means the commit isn't worth
+a standalone post but could be combined with others. This command batches
+those held decisions and either sends a summary notification (notify_only mode)
+or re-evaluates the batch as a group (re_evaluate mode).</p>
+<p>Typically run on a cron (e.g. every few hours) or by the bot daemon.</p>
+<p>Example: social-hook consolidation-tick</p>
 <hr />
 <h3 id="social-hook-discover"><code>social-hook discover</code><a class="headerlink" href="#social-hook-discover" title="Permanent link">&para;</a></h3>
-<p>Run two-pass project discovery and print results.</p>
+<p>Analyse your repo with LLM-powered two-pass discovery.</p>
+<p>Pass 1: the AI selects the most important files from your repo listing.
+Pass 2: reads those files and generates a project summary, per-file
+summaries, and identifies key documentation. This context is used by
+the evaluator and drafter in all future pipeline runs.</p>
+<p>Usually run automatically by quickstart, but can be re-run to refresh
+the project summary after significant changes.</p>
+<p>Example: social-hook discover my-project-id</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1680,6 +1945,9 @@ For guided setup with platform credentials, use 'social-hook setup' instead.</p>
 <hr />
 <h3 id="social-hook-quickstart"><code>social-hook quickstart</code><a class="headerlink" href="#social-hook-quickstart" title="Permanent link">&para;</a></h3>
 <p>Run the quickstart flow.</p>
+<p>Zero-to-first-draft onboarding. Auto-detects your LLM provider,
+registers your repo, imports commit history, runs AI project discovery,
+and generates an introductory draft — all in one command.</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1713,6 +1981,18 @@ For guided setup with platform credentials, use 'social-hook setup' instead.</p>
 <td>string</td>
 <td></td>
 <td>Anthropic API key (skips prompt)</td>
+</tr>
+<tr>
+<td><code>--strategy</code>, <code>-s</code></td>
+<td>string</td>
+<td></td>
+<td>Content strategy template ID (repeatable). Default: building-public.</td>
+</tr>
+<tr>
+<td><code>--branch</code>, <code>-b</code></td>
+<td>string</td>
+<td></td>
+<td>Set a trigger branch filter on the project after registration.</td>
 </tr>
 <tr>
 <td><code>--evaluate-last</code></td>
@@ -1760,7 +2040,13 @@ Example: social-hook --json rate-limits</p>
 </table>
 <hr />
 <h3 id="social-hook-scheduler-tick"><code>social-hook scheduler-tick</code><a class="headerlink" href="#social-hook-scheduler-tick" title="Permanent link">&para;</a></h3>
-<p>Run one scheduler tick: post all due drafts.</p>
+<p>Post scheduled drafts whose time has arrived and promote deferred drafts.</p>
+<p>Checks for drafts with status 'scheduled' past their scheduled time and
+posts them to their platform. Also promotes deferred drafts when scheduling
+slots open up, and drains rate-limited evaluations.</p>
+<p>Typically run on a cron (e.g. every minute) or by the bot daemon.</p>
+<p>Example: social-hook scheduler-tick
+Example: social-hook --dry-run scheduler-tick</p>
 <hr />
 <h3 id="social-hook-setup"><code>social-hook setup</code><a class="headerlink" href="#social-hook-setup" title="Permanent link">&para;</a></h3>
 <p>Configure social-hook.</p>
@@ -1861,7 +2147,11 @@ Example: social-hook --json rate-limits</p>
 </table>
 <hr />
 <h3 id="social-hook-trigger"><code>social-hook trigger</code><a class="headerlink" href="#social-hook-trigger" title="Permanent link">&para;</a></h3>
-<p>Evaluate a commit and create draft if post-worthy (called by hook).</p>
+<p>Run the full evaluation-to-draft pipeline for a single commit.</p>
+<p>Evaluates the commit with the LLM, records a decision, and creates
+drafts for each enabled platform if the commit is post-worthy.
+This is the same pipeline the git post-commit hook runs automatically.
+Use 'social-hook test' for dry-run evaluation without database writes.</p>
 <p><strong>Options:</strong></p>
 <table>
 <thead>
@@ -1892,7 +2182,13 @@ Example: social-hook --json rate-limits</p>
 <p>Show version information.</p>
 <hr />
 <h3 id="social-hook-web"><code>social-hook web</code><a class="headerlink" href="#social-hook-web" title="Permanent link">&para;</a></h3>
-<p>Start the web dashboard (Next.js + FastAPI).</p>
+<p>Start the web dashboard for managing your social-hook workflow visually.</p>
+<p>Launches a Next.js frontend and FastAPI backend. From the dashboard you can
+review and edit drafts, approve or reject posts, manage projects, configure
+settings, monitor the pipeline in real time, and more.</p>
+<p>Requires Node.js. Use --install to run npm install on first launch.</p>
+<p>Example: social-hook web
+Example: social-hook web --port 8080 --install</p>
 <p><strong>Options:</strong></p>
 <table>
 <thead>
@@ -1986,7 +2282,7 @@ Example: social-hook --json rate-limits</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.10.0"}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.11.0"}</script>
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>

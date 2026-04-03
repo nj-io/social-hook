@@ -518,6 +518,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    account
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../arc/" class="md-nav__link">
         
   
@@ -574,6 +602,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../brief/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../config/" class="md-nav__link">
         
   
@@ -582,6 +638,90 @@
     
   
     config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    content
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../credentials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    credentials
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cycles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cycles
   
 
     
@@ -722,17 +862,6 @@
     <span class="md-ellipsis">
       
         social-hook inspect log
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#social-hook-inspect-logs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        social-hook inspect logs
       
     </span>
   </a>
@@ -936,6 +1065,118 @@
     
   
     snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    strategy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    logs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../target/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    target
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    topics
   
 
     
@@ -1340,17 +1581,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#social-hook-inspect-logs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        social-hook inspect logs
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#social-hook-inspect-pending" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1412,7 +1642,12 @@
 <p>Inspect system state.</p>
 <hr />
 <h3 id="social-hook-inspect-log"><code>social-hook inspect log</code><a class="headerlink" href="#social-hook-inspect-log" title="Permanent link">&para;</a></h3>
-<p>View decision log.</p>
+<p>View the decision log showing evaluation outcomes for commits.</p>
+<p>Each entry shows the decision ID, type (draft/skip/defer), commit hash,
+and reasoning. Filter by project or view across all projects.</p>
+<p>Examples:
+    social-hook inspect log
+    social-hook inspect log my-project --limit 5 --json</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1456,28 +1691,13 @@
 </tbody>
 </table>
 <hr />
-<h3 id="social-hook-inspect-logs"><code>social-hook inspect logs</code><a class="headerlink" href="#social-hook-inspect-logs" title="Permanent link">&para;</a></h3>
-<p>Tail log files. Optionally filter by component.</p>
-<p><strong>Arguments:</strong></p>
-<table>
-<thead>
-<tr>
-<th>Name</th>
-<th>Required</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>component</code></td>
-<td>no</td>
-<td>Component to tail (trigger, scheduler, bot, or omit for all)</td>
-</tr>
-</tbody>
-</table>
-<hr />
 <h3 id="social-hook-inspect-pending"><code>social-hook inspect pending</code><a class="headerlink" href="#social-hook-inspect-pending" title="Permanent link">&para;</a></h3>
-<p>View pending drafts.</p>
+<p>View drafts awaiting action (draft, approved, scheduled, or deferred).</p>
+<p>Pending drafts are those not yet posted or in a terminal state. Use this
+to see what content is queued and needs review or approval.</p>
+<p>Examples:
+    social-hook inspect pending
+    social-hook inspect pending my-project --json</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1517,6 +1737,11 @@
 <hr />
 <h3 id="social-hook-inspect-platforms"><code>social-hook inspect platforms</code><a class="headerlink" href="#social-hook-inspect-platforms" title="Permanent link">&para;</a></h3>
 <p>List configured platforms with enabled/disabled status.</p>
+<p>Shows each platform's name, priority, type, and account tier from the
+global config.</p>
+<p>Examples:
+    social-hook inspect platforms
+    social-hook inspect platforms --json</p>
 <p><strong>Options:</strong></p>
 <table>
 <thead>
@@ -1539,6 +1764,11 @@
 <hr />
 <h3 id="social-hook-inspect-usage"><code>social-hook inspect usage</code><a class="headerlink" href="#social-hook-inspect-usage" title="Permanent link">&para;</a></h3>
 <p>View token usage and costs.</p>
+<p>Shows aggregated LLM token consumption and costs by model. Use --recent
+to see individual operations with timestamps and commit hashes.</p>
+<p>Examples:
+    social-hook inspect usage --days 7
+    social-hook inspect usage --recent 10</p>
 <p><strong>Options:</strong></p>
 <table>
 <thead>
@@ -1626,7 +1856,7 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.10.0"}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.11.0"}</script>
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>

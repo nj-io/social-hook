@@ -518,6 +518,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../cli/account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    account
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../cli/arc/" class="md-nav__link">
         
   
@@ -574,6 +602,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../cli/brief/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../cli/config/" class="md-nav__link">
         
   
@@ -582,6 +638,90 @@
     
   
     config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    content
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/credentials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    credentials
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/cycles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cycles
   
 
     
@@ -834,6 +974,118 @@
     
   
     snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    strategy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    logs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/target/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    target
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    topics
   
 
     
@@ -1547,7 +1799,7 @@
 <li><strong>Evaluator-initiated</strong> — When the evaluator sees a commit that starts a new storyline, it sets <code>new_arc_theme</code> in its response. Social Hook creates the arc automatically.</li>
 <li><strong>Manual</strong> — <code>social-hook arc create "Auth migration"</code> creates an arc that the evaluator can assign commits to.</li>
 </ol>
-<p>There's a hard limit of <strong>3 active arcs per project</strong>. This prevents narrative sprawl — if you're telling too many stories at once, none of them land. When the limit is hit, the evaluator must complete or abandon an existing arc before starting a new one.</p>
+<p>Arcs are scoped to a <strong>strategy</strong> (via the <code>strategy</code> field on the <code>Arc</code> dataclass). A project can have multiple strategies, and each strategy has its own set of arcs. There's a hard limit of <strong>3 active arcs per strategy</strong> (<code>max_arcs_per_strategy</code> in config). This prevents narrative sprawl — if you're telling too many stories at once, none of them land. When the limit is hit, the evaluator must complete or abandon an existing arc before starting a new one.</p>
 <h3 id="assignment">Assignment<a class="headerlink" href="#assignment" title="Permanent link">&para;</a></h3>
 <p>When the evaluator returns a "draft" decision, it can set <code>arc_id</code> to assign the commit to an existing arc. The drafter then sees:</p>
 <ul>
@@ -1605,8 +1857,8 @@
 <h2 id="strategy-awareness">Strategy awareness<a class="headerlink" href="#strategy-awareness" title="Permanent link">&para;</a></h2>
 <p>The evaluator also sees:</p>
 <ul>
-<li><strong>Portfolio window</strong> — The last N posts (default 10) for variety analysis. It avoids repeating the same episode type too often.</li>
-<li><strong>Episode preferences</strong> — Your configured favored and avoided episode types.</li>
+<li><strong>Portfolio window</strong> — The last N posts (default 10) for variety analysis. It avoids repeating the same episode tags too often.</li>
+<li><strong>Episode preferences</strong> — Your configured favored and avoided episode tags (via <code>EpisodePreferences</code> with <code>favor</code> and <code>avoid</code> lists).</li>
 </ul>
 <p>Together with arcs and narrative debt, these mechanisms produce a posting pattern that feels intentional rather than automated.</p>
 <h2 id="cli-commands">CLI commands<a class="headerlink" href="#cli-commands" title="Permanent link">&para;</a></h2>
@@ -1673,7 +1925,7 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.10.0"}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.11.0"}</script>
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>

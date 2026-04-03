@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://nj-io.github.io/social-hook/docs/cli/decision/">
       
       
-        <link rel="prev" href="../config/">
+        <link rel="prev" href="../cycles/">
       
       
         <link rel="next" href="../draft/">
@@ -518,6 +518,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    account
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../arc/" class="md-nav__link">
         
   
@@ -574,6 +602,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../brief/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../config/" class="md-nav__link">
         
   
@@ -582,6 +638,90 @@
     
   
     config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    content
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../credentials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    credentials
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cycles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cycles
   
 
     
@@ -660,6 +800,17 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#social-hook-decision-batch-evaluate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        social-hook decision batch-evaluate
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#social-hook-decision-delete" class="md-nav__link">
@@ -925,6 +1076,118 @@
     
   
     snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    strategy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    logs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../target/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    target
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    topics
   
 
     
@@ -1318,6 +1581,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#social-hook-decision-batch-evaluate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        social-hook decision batch-evaluate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#social-hook-decision-delete" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1389,9 +1663,69 @@
 <h1 id="social-hook-decision">social-hook decision<a class="headerlink" href="#social-hook-decision" title="Permanent link">&para;</a></h1>
 <p>Decision management.</p>
 <hr />
+<h3 id="social-hook-decision-batch-evaluate"><code>social-hook decision batch-evaluate</code><a class="headerlink" href="#social-hook-decision-batch-evaluate" title="Permanent link">&para;</a></h3>
+<p>Evaluate multiple imported/deferred decisions as a single batch.</p>
+<p>Groups the decisions and runs a combined evaluation through the full
+pipeline (commit analysis, evaluation, drafting, notifications).
+All decisions must belong to the same project and have status
+'imported' or 'deferred_eval' (without an existing batch_id).</p>
+<p>Example: social-hook decision batch-evaluate dec_abc123 dec_def456</p>
+<p><strong>Arguments:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>decision_ids</code></td>
+<td>yes</td>
+<td>Decision IDs to evaluate as a batch</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Options:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--project</code>, <code>-p</code></td>
+<td>string</td>
+<td></td>
+<td>Project path (default: cwd)</td>
+</tr>
+<tr>
+<td><code>--yes</code>, <code>-y</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Skip confirmation</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Output as JSON</td>
+</tr>
+</tbody>
+</table>
+<hr />
 <h3 id="social-hook-decision-delete"><code>social-hook decision delete</code><a class="headerlink" href="#social-hook-decision-delete" title="Permanent link">&para;</a></h3>
 <p>Delete a decision and its associated drafts.</p>
-<p>Example: social-hook decision delete decision-abc123</p>
+<p>A decision is the evaluator's verdict on a commit (draft, skip, or defer).
+This permanently removes the decision and all linked drafts from the
+database. This action cannot be undone.</p>
+<p>Example: social-hook decision delete decision-abc123
+Example: social-hook decision delete decision-abc123 --yes  (skip confirmation)</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1437,7 +1771,12 @@
 <hr />
 <h3 id="social-hook-decision-list"><code>social-hook decision list</code><a class="headerlink" href="#social-hook-decision-list" title="Permanent link">&para;</a></h3>
 <p>List decisions for a project.</p>
-<p>Example: social-hook decision list --project .</p>
+<p>Decisions are evaluator outcomes for commits (draft, skip, or defer).
+Each row shows the decision ID, commit hash, type, media tool, content
+angle, and date.</p>
+<p>Examples:
+    social-hook decision list --project .
+    social-hook decision list --limit 50 --json</p>
 <p><strong>Options:</strong></p>
 <table>
 <thead>
@@ -1474,7 +1813,8 @@
 <p>Delete a decision and re-evaluate the commit from scratch.</p>
 <p>This re-runs the evaluator LLM, which may produce a different angle,
 episode type, or even skip the commit entirely.</p>
-<p>Example: social-hook decision retrigger decision-abc123</p>
+<p>Example: social-hook decision retrigger decision-abc123
+Example: social-hook decision retrigger decision-abc123 --yes  (skip confirmation)</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1526,7 +1866,8 @@ Resets the decision to unprocessed so it can be re-drafted.</p>
 When non-commit trigger sources exist (plugins, external events), use
 the decision ID directly.</p>
 <p>Example: social-hook decision rewind abc1234
-Example: social-hook decision rewind decision_abc123</p>
+Example: social-hook decision rewind decision_abc123
+Example: social-hook decision rewind abc1234 --yes  (skip confirmation)</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1637,7 +1978,7 @@ Example: social-hook decision rewind decision_abc123</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.10.0"}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.11.0"}</script>
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>

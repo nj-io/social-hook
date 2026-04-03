@@ -518,6 +518,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    account
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../arc/" class="md-nav__link">
         
   
@@ -574,6 +602,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../brief/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../config/" class="md-nav__link">
         
   
@@ -582,6 +638,90 @@
     
   
     config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    content
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../credentials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    credentials
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cycles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cycles
   
 
     
@@ -705,6 +845,17 @@
     <span class="md-ellipsis">
       
         social-hook draft cancel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#social-hook-draft-connect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        social-hook draft connect
       
     </span>
   </a>
@@ -1079,6 +1230,118 @@
     
   
     snapshot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    strategy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    logs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../target/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    target
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    topics
   
 
     
@@ -1494,6 +1757,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#social-hook-draft-connect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        social-hook draft connect
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#social-hook-draft-edit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1698,7 +1972,10 @@
 <p>Draft lifecycle management.</p>
 <hr />
 <h3 id="social-hook-draft-approve"><code>social-hook draft approve</code><a class="headerlink" href="#social-hook-draft-approve" title="Permanent link">&para;</a></h3>
-<p>Approve a draft for posting.</p>
+<p>Mark a draft as approved for posting.</p>
+<p>The scheduler will post it when its scheduled time arrives.
+Preview drafts must be promoted to a platform first.</p>
+<p>Example: social-hook draft approve draft_abc123</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1718,7 +1995,8 @@
 </table>
 <hr />
 <h3 id="social-hook-draft-cancel"><code>social-hook draft cancel</code><a class="headerlink" href="#social-hook-draft-cancel" title="Permanent link">&para;</a></h3>
-<p>Cancel a draft.</p>
+<p>Cancel a pending draft, removing it from the posting queue.</p>
+<p>Example: social-hook draft cancel draft_abc123</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1737,8 +2015,65 @@
 </tbody>
 </table>
 <hr />
+<h3 id="social-hook-draft-connect"><code>social-hook draft connect</code><a class="headerlink" href="#social-hook-draft-connect" title="Permanent link">&para;</a></h3>
+<p>Connect a preview-mode draft to an account.</p>
+<p>Links the draft's target to an existing OAuth account, clearing preview mode.
+The account's platform must match the draft's platform.</p>
+<p>Example: social-hook draft connect draft-abc123 --account my-x-account
+Example: social-hook draft connect draft-abc123 --account my-x-account --yes  (skip confirmation)</p>
+<p><strong>Arguments:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>draft_id</code></td>
+<td>yes</td>
+<td>Preview-mode draft ID to connect</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Options:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--account</code>, <code>-a</code></td>
+<td>string</td>
+<td></td>
+<td>Account name to connect (must match draft platform)</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Output as JSON</td>
+</tr>
+<tr>
+<td><code>--yes</code>, <code>-y</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Skip confirmation</td>
+</tr>
+</tbody>
+</table>
+<hr />
 <h3 id="social-hook-draft-edit"><code>social-hook draft edit</code><a class="headerlink" href="#social-hook-draft-edit" title="Permanent link">&para;</a></h3>
 <p>Edit draft content.</p>
+<p>Records the change in the draft's change history (visible in draft show).
+If the draft is a thread, tweet boundaries are automatically re-split.</p>
 <p>Example: social-hook draft edit draft-abc123 --content "Updated post text here"</p>
 <p><strong>Arguments:</strong></p>
 <table>
@@ -1781,7 +2116,8 @@
 <p>List drafts with optional filters.</p>
 <p>Example: social-hook draft list --pending --json
 Example: social-hook draft list --decision decision-abc123
-Example: social-hook draft list --commit 47a5191</p>
+Example: social-hook draft list --commit 47a5191
+Example: social-hook draft list --tag auth</p>
 <p><strong>Options:</strong></p>
 <table>
 <thead>
@@ -1818,6 +2154,12 @@ Example: social-hook draft list --commit 47a5191</p>
 <td>Filter by commit hash</td>
 </tr>
 <tr>
+<td><code>--tag</code>, <code>-t</code></td>
+<td>string</td>
+<td></td>
+<td>Filter by episode tag (matches decision episode_tags)</td>
+</tr>
+<tr>
 <td><code>--pending</code></td>
 <td>boolean</td>
 <td>false</td>
@@ -1834,6 +2176,9 @@ Example: social-hook draft list --commit 47a5191</p>
 <hr />
 <h3 id="social-hook-draft-media-edit"><code>social-hook draft media-edit</code><a class="headerlink" href="#social-hook-draft-media-edit" title="Permanent link">&para;</a></h3>
 <p>Edit the media spec for a draft.</p>
+<p>The media spec is a JSON object that controls media generation (e.g.,
+code snippet, language, theme). After editing, run media-regen to
+produce a new media file from the updated spec.</p>
 <p>Example: social-hook draft media-edit draft-abc123 --spec '{"code": "print(42)", "language": "python"}'</p>
 <p><strong>Arguments:</strong></p>
 <table>
@@ -1874,6 +2219,9 @@ Example: social-hook draft list --commit 47a5191</p>
 <hr />
 <h3 id="social-hook-draft-media-regen"><code>social-hook draft media-regen</code><a class="headerlink" href="#social-hook-draft-media-regen" title="Permanent link">&para;</a></h3>
 <p>Regenerate media for a draft using its stored media spec.</p>
+<p>The media spec is a JSON object describing what to generate (e.g., code
+snippet image, diagram). Edit the spec first with media-edit, then run
+this command to produce a new file from the updated spec.</p>
 <p>Example: social-hook draft media-regen draft-abc123</p>
 <p><strong>Arguments:</strong></p>
 <table>
@@ -1917,7 +2265,8 @@ Example: social-hook draft list --commit 47a5191</p>
 <h3 id="social-hook-draft-post-now"><code>social-hook draft post-now</code><a class="headerlink" href="#social-hook-draft-post-now" title="Permanent link">&para;</a></h3>
 <p>Post a draft immediately to its platform.</p>
 <p>Requires platform credentials in ~/.social-hook/.env.</p>
-<p>Example: social-hook draft post-now draft_abc123</p>
+<p>Example: social-hook draft post-now draft_abc123
+Example: social-hook draft post-now draft_abc123 --yes  (skip confirmation)</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -2010,7 +2359,10 @@ then marks the preview draft as superseded.</p>
 </table>
 <hr />
 <h3 id="social-hook-draft-quick-approve"><code>social-hook draft quick-approve</code><a class="headerlink" href="#social-hook-draft-quick-approve" title="Permanent link">&para;</a></h3>
-<p>Approve and schedule at optimal time in one step.</p>
+<p>Approve and schedule a draft for the next optimal posting time in one step.</p>
+<p>Combines approve + schedule. Considers your configured posting limits,
+preferred time windows, and minimum gap between posts to pick the best slot.</p>
+<p>Example: social-hook draft quick-approve draft_abc123</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -2031,6 +2383,9 @@ then marks the preview draft as superseded.</p>
 <hr />
 <h3 id="social-hook-draft-redraft"><code>social-hook draft redraft</code><a class="headerlink" href="#social-hook-draft-redraft" title="Permanent link">&para;</a></h3>
 <p>Redraft content using the Expert agent with a new angle.</p>
+<p>Calls the Expert LLM agent to rewrite the draft with a different
+direction. May also update the media spec. Changes are recorded
+in the draft's change history.</p>
 <p>Example: social-hook draft redraft draft-abc123 --angle "focus on the performance gains"</p>
 <p><strong>Arguments:</strong></p>
 <table>
@@ -2070,7 +2425,10 @@ then marks the preview draft as superseded.</p>
 </table>
 <hr />
 <h3 id="social-hook-draft-reject"><code>social-hook draft reject</code><a class="headerlink" href="#social-hook-draft-reject" title="Permanent link">&para;</a></h3>
-<p>Reject a draft (saves reason as voice memory when --reason provided).</p>
+<p>Reject a draft and optionally record feedback as voice memory.</p>
+<p>When --reason is provided, the feedback is saved to voice memory so the
+drafter learns from it in future runs. If the draft is an intro draft,
+rejection cascades to re-draft the introduction for that platform.</p>
 <p>Example: social-hook draft reject draft-abc123 --reason "too technical for the audience"</p>
 <p><strong>Arguments:</strong></p>
 <table>
@@ -2110,7 +2468,9 @@ then marks the preview draft as superseded.</p>
 </table>
 <hr />
 <h3 id="social-hook-draft-reopen"><code>social-hook draft reopen</code><a class="headerlink" href="#social-hook-draft-reopen" title="Permanent link">&para;</a></h3>
-<p>Reopen a cancelled or rejected draft.</p>
+<p>Reopen a cancelled or rejected draft, returning it to 'draft' status.</p>
+<p>Intro drafts cannot be reopened -- create a new draft instead.
+Clears any previous error message on the draft.</p>
 <p>Example: social-hook draft reopen draft-abc123</p>
 <p><strong>Arguments:</strong></p>
 <table>
@@ -2131,7 +2491,10 @@ then marks the preview draft as superseded.</p>
 </table>
 <hr />
 <h3 id="social-hook-draft-retry"><code>social-hook draft retry</code><a class="headerlink" href="#social-hook-draft-retry" title="Permanent link">&para;</a></h3>
-<p>Retry a failed draft.</p>
+<p>Re-queue a failed draft for another posting attempt.</p>
+<p>Resets the retry counter and sets status back to scheduled so
+the scheduler will try posting it again.</p>
+<p>Example: social-hook draft retry draft_abc123</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -2151,7 +2514,12 @@ then marks the preview draft as superseded.</p>
 </table>
 <hr />
 <h3 id="social-hook-draft-schedule"><code>social-hook draft schedule</code><a class="headerlink" href="#social-hook-draft-schedule" title="Permanent link">&para;</a></h3>
-<p>Schedule a draft for posting.</p>
+<p>Schedule a draft for posting at a specific or optimal time.</p>
+<p>With --time, posts at that exact ISO datetime. Without --time,
+automatically picks the next optimal slot based on your configured
+posting limits, time windows, and minimum gap between posts.</p>
+<p>Example: social-hook draft schedule draft_abc123
+Example: social-hook draft schedule draft_abc123 --time 2026-03-25T10:00:00</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -2236,7 +2604,9 @@ then marks the preview draft as superseded.</p>
 </table>
 <hr />
 <h3 id="social-hook-draft-unapprove"><code>social-hook draft unapprove</code><a class="headerlink" href="#social-hook-draft-unapprove" title="Permanent link">&para;</a></h3>
-<p>Revert approval on a draft.</p>
+<p>Revert approval on a draft, returning it to 'draft' status.</p>
+<p>Use when you approved a draft prematurely and want to make further
+edits before scheduling or posting.</p>
 <p>Example: social-hook draft unapprove draft-abc123</p>
 <p><strong>Arguments:</strong></p>
 <table>
@@ -2257,7 +2627,9 @@ then marks the preview draft as superseded.</p>
 </table>
 <hr />
 <h3 id="social-hook-draft-unschedule"><code>social-hook draft unschedule</code><a class="headerlink" href="#social-hook-draft-unschedule" title="Permanent link">&para;</a></h3>
-<p>Revert scheduling on a draft.</p>
+<p>Revert scheduling on a draft, returning it to 'draft' status.</p>
+<p>Clears the scheduled time. Use when you need to edit or reschedule
+a draft that was already queued for posting.</p>
 <p>Example: social-hook draft unschedule draft-abc123</p>
 <p><strong>Arguments:</strong></p>
 <table>
@@ -2332,7 +2704,7 @@ then marks the preview draft as superseded.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.10.0"}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.11.0"}</script>
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>

@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://nj-io.github.io/social-hook/docs/getting-started/quickstart/">
+        <link rel="canonical" href="https://nj-io.github.io/social-hook/docs/cli/strategy/">
       
       
-        <link rel="prev" href="../installation/">
+        <link rel="prev" href="../snapshot/">
       
       
-        <link rel="next" href="../../cli/">
+        <link rel="next" href="../logs/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Quick Start - Social Hook</title>
+        <title>strategy - Social Hook</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#quick-start" class="md-skip">
+        <a href="#social-hook-strategy" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Quick Start
+              strategy
             
           </span>
         </div>
@@ -288,8 +288,6 @@
       
   
   
-    
-  
   
   
     
@@ -302,11 +300,13 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
@@ -327,7 +327,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -345,7 +345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/" class="md-nav__link">
+      <a href="../../getting-started/installation/" class="md-nav__link">
         
   
   
@@ -353,6 +353,627 @@
     
   
     Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLI Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../root-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../account/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    account
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    arc
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../bot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../brief/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    content
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../credentials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    credentials
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cycles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cycles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../decision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    decision
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../draft/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    draft
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inspect/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    inspect
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../journey/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    journey
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../manual/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    manual
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../media/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    media
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    project
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../snapshot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    snapshot
   
 
     
@@ -389,7 +1010,7 @@
   <span class="md-ellipsis">
     
   
-    Quick Start
+    strategy
   
 
     
@@ -407,7 +1028,7 @@
   <span class="md-ellipsis">
     
   
-    Quick Start
+    strategy
   
 
     
@@ -433,10 +1054,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-install" class="md-nav__link">
+  <a href="#social-hook-strategy-add" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Install
+        social-hook strategy add
       
     </span>
   </a>
@@ -444,10 +1065,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-quickstart" class="md-nav__link">
+  <a href="#social-hook-strategy-delete" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Quickstart
+        social-hook strategy delete
       
     </span>
   </a>
@@ -455,10 +1076,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-review-your-first-draft" class="md-nav__link">
+  <a href="#social-hook-strategy-edit" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Review your first draft
+        social-hook strategy edit
       
     </span>
   </a>
@@ -466,10 +1087,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-set-your-voice" class="md-nav__link">
+  <a href="#social-hook-strategy-list" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Set your voice
+        social-hook strategy list
       
     </span>
   </a>
@@ -477,10 +1098,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-configure-platforms" class="md-nav__link">
+  <a href="#social-hook-strategy-reset" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Configure platforms
+        social-hook strategy reset
       
     </span>
   </a>
@@ -488,43 +1109,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-make-a-commit" class="md-nav__link">
+  <a href="#social-hook-strategy-show" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Make a commit
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#7-approve-and-post" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Approve and post
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#8-monitor" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Monitor
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#whats-next" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What's next?
+        social-hook strategy show
       
     </span>
   </a>
@@ -540,67 +1128,6 @@
 
               
             
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-      
-        
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
-      
-        
-        
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    CLI Reference
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    CLI Reference
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
               
                 
   
@@ -608,567 +1135,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Overview
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/root-commands/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Commands
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/account/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    account
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/arc/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    arc
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/bot/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    bot
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/brief/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    brief
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/config/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    config
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/content/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    content
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/credentials/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    credentials
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/cycles/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    cycles
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/decision/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    decision
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/draft/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    draft
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/inspect/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    inspect
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/journey/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    journey
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/manual/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    manual
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/media/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    media
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/memory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    memory
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/project/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    project
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/snapshot/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    snapshot
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/strategy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    strategy
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../cli/logs/" class="md-nav__link">
+      <a href="../logs/" class="md-nav__link">
         
   
   
@@ -1196,7 +1163,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/target/" class="md-nav__link">
+      <a href="../target/" class="md-nav__link">
         
   
   
@@ -1224,7 +1191,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/topics/" class="md-nav__link">
+      <a href="../topics/" class="md-nav__link">
         
   
   
@@ -1625,10 +1592,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-install" class="md-nav__link">
+  <a href="#social-hook-strategy-add" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Install
+        social-hook strategy add
       
     </span>
   </a>
@@ -1636,10 +1603,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-quickstart" class="md-nav__link">
+  <a href="#social-hook-strategy-delete" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Quickstart
+        social-hook strategy delete
       
     </span>
   </a>
@@ -1647,10 +1614,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-review-your-first-draft" class="md-nav__link">
+  <a href="#social-hook-strategy-edit" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Review your first draft
+        social-hook strategy edit
       
     </span>
   </a>
@@ -1658,10 +1625,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-set-your-voice" class="md-nav__link">
+  <a href="#social-hook-strategy-list" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Set your voice
+        social-hook strategy list
       
     </span>
   </a>
@@ -1669,10 +1636,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-configure-platforms" class="md-nav__link">
+  <a href="#social-hook-strategy-reset" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Configure platforms
+        social-hook strategy reset
       
     </span>
   </a>
@@ -1680,43 +1647,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-make-a-commit" class="md-nav__link">
+  <a href="#social-hook-strategy-show" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Make a commit
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#7-approve-and-post" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Approve and post
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#8-monitor" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Monitor
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#whats-next" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What's next?
+        social-hook strategy show
       
     </span>
   </a>
@@ -1740,7 +1674,7 @@
 
 
   
-    <a href="https://github.com/nj-io/social-hook/edit/main/site-docs/getting-started/quickstart.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/nj-io/social-hook/edit/main/site-docs/cli/strategy.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1748,83 +1682,321 @@
   
 
 
-<h1 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h1>
-<p>This guide gets you from zero to your first auto-generated social post in under 5 minutes.</p>
-<h2 id="1-install">1. Install<a class="headerlink" href="#1-install" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>social-hook
-</code></pre></div>
-<h2 id="2-quickstart">2. Quickstart<a class="headerlink" href="#2-quickstart" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">cd</span><span class="w"> </span>/path/to/your/repo
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>social-hook<span class="w"> </span>quickstart
-</code></pre></div>
-<p>This single command handles everything:</p>
-<ul>
-<li>Prompts for your Anthropic API key (or pass <code>--key sk-ant-...</code> to skip the prompt)</li>
-<li>Registers the current repo as a project</li>
-<li>Installs the git post-commit hook</li>
-<li>Runs AI-powered project discovery</li>
-<li>Generates an introductory draft based on what it learned about your project</li>
-</ul>
-<p>To also evaluate recent commits:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>social-hook<span class="w"> </span>quickstart<span class="w"> </span>--evaluate-last<span class="w"> </span><span class="m">3</span>
-</code></pre></div>
-<h2 id="3-review-your-first-draft">3. Review your first draft<a class="headerlink" href="#3-review-your-first-draft" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>social-hook<span class="w"> </span>inspect<span class="w"> </span>pending
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>social-hook<span class="w"> </span>draft<span class="w"> </span>show<span class="w"> </span>&lt;draft-id&gt;
-</code></pre></div>
-<p>The quickstart generates a <strong>preview draft</strong> (not tied to any platform). To promote it to a real platform:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>social-hook<span class="w"> </span>draft<span class="w"> </span>promote<span class="w"> </span>&lt;draft-id&gt;<span class="w"> </span>--platform<span class="w"> </span>x
-</code></pre></div>
-<h2 id="4-set-your-voice">4. Set your voice<a class="headerlink" href="#4-set-your-voice" title="Permanent link">&para;</a></h2>
-<p>Create <code>.social-hook/social-context.md</code> in your project (or <code>~/.social-hook/social-context.md</code> for global defaults). See <a href="../../configuration/social-context/">social-context configuration</a> for the full template.</p>
-<p>At minimum, describe your voice:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gu">## Author&#39;s Voice</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>Conversational, technically confident. Shares the journey honestly.
-</code></pre></div>
-<h2 id="5-configure-platforms">5. Configure platforms<a class="headerlink" href="#5-configure-platforms" title="Permanent link">&para;</a></h2>
-<p>To post to real platforms, run the setup wizard:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>social-hook<span class="w"> </span>setup<span class="w"> </span>--only<span class="w"> </span>platforms
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>social-hook<span class="w"> </span>setup<span class="w"> </span>--only<span class="w"> </span>apikeys
-</code></pre></div>
-<p>Or configure interactively:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>social-hook<span class="w"> </span>setup
-</code></pre></div>
-<h2 id="6-make-a-commit">6. Make a commit<a class="headerlink" href="#6-make-a-commit" title="Permanent link">&para;</a></h2>
-<p>Just commit as usual. The git hook triggers automatically:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>git<span class="w"> </span>add<span class="w"> </span>.
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;feat: add WebSocket support for real-time updates&quot;</span>
-</code></pre></div>
-<p>Social Hook evaluates the commit. If it's post-worthy, a draft appears:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>social-hook<span class="w"> </span>inspect<span class="w"> </span>pending
-</code></pre></div>
-<h2 id="7-approve-and-post">7. Approve and post<a class="headerlink" href="#7-approve-and-post" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># See the full draft</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>social-hook<span class="w"> </span>draft<span class="w"> </span>show<span class="w"> </span>&lt;draft-id&gt;
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># Approve it</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>social-hook<span class="w"> </span>draft<span class="w"> </span>approve<span class="w"> </span>&lt;draft-id&gt;
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="c1"># Or approve and schedule at optimal time</span>
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>social-hook<span class="w"> </span>draft<span class="w"> </span>quick-approve<span class="w"> </span>&lt;draft-id&gt;
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>
-<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="c1"># Or post immediately</span>
-<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>social-hook<span class="w"> </span>draft<span class="w"> </span>post-now<span class="w"> </span>&lt;draft-id&gt;
-</code></pre></div>
-<h2 id="8-monitor">8. Monitor<a class="headerlink" href="#8-monitor" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Watch pipeline events in real time</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>social-hook<span class="w"> </span>events
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># Or use the web dashboard</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>social-hook<span class="w"> </span>web
-</code></pre></div>
-<h2 id="whats-next">What's next?<a class="headerlink" href="#whats-next" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Fine-tune content:</strong> Edit <a href="../../configuration/content-config/">content-config.yaml</a> to adjust media tools, narrative strategy, and context limits</li>
-<li><strong>Manage narratives:</strong> Use <code>social-hook arc</code> commands to guide storylines (<a href="../../concepts/narrative-arcs/">learn more</a>)</li>
-<li><strong>Import history:</strong> Run <code>social-hook project import-commits</code> to backfill your timeline</li>
-<li><strong>Understand the pipeline:</strong> Read <a href="../../concepts/pipeline/">How the Pipeline Works</a></li>
-<li><strong>Explore the CLI:</strong> See the full <a href="../../cli/">CLI reference</a></li>
-</ul>
+<h1 id="social-hook-strategy">social-hook strategy<a class="headerlink" href="#social-hook-strategy" title="Permanent link">&para;</a></h1>
+<p>View and customize content strategies (voice, audience, editorial rules).</p>
+<hr />
+<h3 id="social-hook-strategy-add"><code>social-hook strategy add</code><a class="headerlink" href="#social-hook-strategy-add" title="Permanent link">&para;</a></h3>
+<p>Create a new custom content strategy.</p>
+<p>Creates a strategy in the project's config. Optionally base it on a
+built-in template to inherit defaults, then override specific fields.</p>
+<p>Example: social-hook strategy add --name dev-community --audience "open-source developers" --voice casual</p>
+<p><strong>Options:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--name</code>, <code>-n</code></td>
+<td>string</td>
+<td></td>
+<td>Strategy name</td>
+</tr>
+<tr>
+<td><code>--template</code>, <code>-t</code></td>
+<td>string</td>
+<td></td>
+<td>Built-in template ID to base on</td>
+</tr>
+<tr>
+<td><code>--audience</code></td>
+<td>string</td>
+<td></td>
+<td>Target audience</td>
+</tr>
+<tr>
+<td><code>--voice</code></td>
+<td>string</td>
+<td></td>
+<td>Voice/tone</td>
+</tr>
+<tr>
+<td><code>--angle</code></td>
+<td>string</td>
+<td></td>
+<td>Content angle</td>
+</tr>
+<tr>
+<td><code>--post-when</code></td>
+<td>string</td>
+<td></td>
+<td>When to post</td>
+</tr>
+<tr>
+<td><code>--avoid</code></td>
+<td>string</td>
+<td></td>
+<td>What to avoid</td>
+</tr>
+<tr>
+<td><code>--project</code>, <code>-p</code></td>
+<td>string</td>
+<td></td>
+<td>Repository path (default: cwd)</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Output as JSON</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="social-hook-strategy-delete"><code>social-hook strategy delete</code><a class="headerlink" href="#social-hook-strategy-delete" title="Permanent link">&para;</a></h3>
+<p>Delete a custom strategy from the project config.</p>
+<p>Fails if any targets reference the strategy (409 Conflict).
+Built-in template strategies cannot be deleted — use 'reset' instead.</p>
+<p>Example: social-hook strategy delete dev-community --yes</p>
+<p><strong>Arguments:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>yes</td>
+<td>Strategy name to delete</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Options:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--yes</code>, <code>-y</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Skip confirmation</td>
+</tr>
+<tr>
+<td><code>--project</code>, <code>-p</code></td>
+<td>string</td>
+<td></td>
+<td>Repository path (default: cwd)</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Output as JSON</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="social-hook-strategy-edit"><code>social-hook strategy edit</code><a class="headerlink" href="#social-hook-strategy-edit" title="Permanent link">&para;</a></h3>
+<p>Edit a strategy's fields in $EDITOR.</p>
+<p>Extracts the strategy's editable fields (audience, voice, angle,
+post_when, avoid, format_preference, media_preference) into a
+temporary YAML file, opens in $EDITOR, then writes changes back
+to the project's content-config.yaml.</p>
+<p>Example: social-hook strategy edit building-public</p>
+<p><strong>Arguments:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>yes</td>
+<td>Strategy name to edit</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Options:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--project</code>, <code>-p</code></td>
+<td>string</td>
+<td></td>
+<td>Repository path (default: cwd)</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Output as JSON</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="social-hook-strategy-list"><code>social-hook strategy list</code><a class="headerlink" href="#social-hook-strategy-list" title="Permanent link">&para;</a></h3>
+<p>List strategies: built-in templates + project overrides.</p>
+<p>Shows all content strategies available for the project, including
+built-in templates (building-public, product-news, etc.) merged
+with any project-level customizations.</p>
+<p>Example: social-hook strategy list</p>
+<p><strong>Options:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--project</code>, <code>-p</code></td>
+<td>string</td>
+<td></td>
+<td>Repository path (default: cwd)</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Output as JSON</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="social-hook-strategy-reset"><code>social-hook strategy reset</code><a class="headerlink" href="#social-hook-strategy-reset" title="Permanent link">&para;</a></h3>
+<p>Reset a strategy to built-in template defaults.</p>
+<p>Removes the project-level override for the named strategy,
+restoring it to its built-in template values.</p>
+<p>Example: social-hook strategy reset building-public --yes</p>
+<p><strong>Arguments:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>yes</td>
+<td>Strategy name to reset</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Options:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--yes</code>, <code>-y</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Skip confirmation</td>
+</tr>
+<tr>
+<td><code>--project</code>, <code>-p</code></td>
+<td>string</td>
+<td></td>
+<td>Repository path (default: cwd)</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Output as JSON</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="social-hook-strategy-show"><code>social-hook strategy show</code><a class="headerlink" href="#social-hook-strategy-show" title="Permanent link">&para;</a></h3>
+<p>Show full strategy definition (merges template + project override).</p>
+<p>Displays the strategy's label, description, type (built-in or custom),
+and fields: audience, voice, angle, post_when, avoid, format_preference,
+and media_preference.</p>
+<p>Example: social-hook strategy show building-public</p>
+<p><strong>Arguments:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>yes</td>
+<td>Strategy name</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Options:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--project</code>, <code>-p</code></td>
+<td>string</td>
+<td></td>
+<td>Repository path (default: cwd)</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Output as JSON</td>
+</tr>
+</tbody>
+</table>
+<hr />
 
 
 
