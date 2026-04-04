@@ -29,6 +29,12 @@ To also evaluate recent commits:
 social-hook quickstart --evaluate-last 3
 ```
 
+To select specific content strategies and filter by branch:
+
+```bash
+social-hook quickstart -s building-public -s product-news --branch main
+```
+
 ## 3. Review your first draft
 
 ```bash
@@ -113,6 +119,6 @@ social-hook web
 
 - **Fine-tune content:** Edit [content-config.yaml](../configuration/content-config.md) to adjust media tools, narrative strategy, and context limits
 - **Manage narratives:** Use `social-hook arc` commands to guide storylines ([learn more](../concepts/narrative-arcs.md))
-- **Import history:** Run `social-hook project import-commits` to backfill your timeline
+- **Import history:** Run `social-hook project import-commits` to backfill your timeline (use `--limit 50` to cap the import)
 - **Understand the pipeline:** Read [How the Pipeline Works](../concepts/pipeline.md)
 - **Explore the CLI:** See the full [CLI reference](../cli/index.md)
