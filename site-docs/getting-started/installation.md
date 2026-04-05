@@ -37,7 +37,7 @@ This will:
 4. Run project discovery (AI reads your codebase to understand what it does)
 5. Generate an introductory draft
 
-Pass `--evaluate-last 3` to also evaluate your 3 most recent commits for additional drafts.
+Pass `--evaluate-last 3` to also evaluate your 3 most recent commits for additional drafts. Use `-s <strategy>` (repeatable) to select content strategies and `--branch <name>` to set a trigger branch filter.
 
 ## Guided setup
 

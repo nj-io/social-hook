@@ -23,6 +23,12 @@ This single command handles everything:
 - Runs AI-powered project discovery
 - Generates an introductory draft based on what it learned about your project
 
+To select content strategies and a trigger branch:
+
+```bash
+social-hook quickstart -s building-public -s product-news --branch main
+```
+
 To also evaluate recent commits:
 
 ```bash

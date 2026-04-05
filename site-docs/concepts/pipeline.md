@@ -43,7 +43,12 @@ The trigger is designed to be fast and non-blocking. It runs in the post-commit 
 
 ### Batch evaluation
 
-When the interval threshold is met and deferred commits exist, the trigger collects all deferred commits and runs them through the pipeline together. The analyzer and evaluator see the full batch context (all commit messages, combined diffs) and can make decisions that account for the batch as a whole — for example, producing a synthesis draft that covers multiple small changes.
+Batches enter the pipeline through two paths:
+
+- **Automatic** — When the interval threshold is met and deferred commits exist, the trigger collects all deferred commits and runs them through the pipeline together.
+- **Manual** — `social-hook decision batch-evaluate <id1> <id2> ...` lets you explicitly group imported or deferred decisions into a batch. All decisions must belong to the same project.
+
+In both cases, the analyzer and evaluator see the full batch context (all commit messages, combined diffs) and can make decisions that account for the batch as a whole — for example, producing a synthesis draft that covers multiple small changes.
 
 ---
 
