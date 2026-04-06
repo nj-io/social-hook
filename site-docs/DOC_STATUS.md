@@ -1,5 +1,5 @@
-<!-- last_run_commit: eb11c6e861db2c40b665bf84b91dbaaeb0721210 -->
-<!-- last_run_date: 2026-03-31 -->
+<!-- last_run_commit: a4ee0a9e16da8531b4022df2f626a36cf9533039 -->
+<!-- last_run_date: 2026-04-06 -->
 
 # Documentation Status
 
@@ -9,7 +9,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Command | Coverage | Notes |
 |---------|----------|-------|
-| `quickstart` | ok | Enriched: explains full onboarding flow |
+| `quickstart` | ok | Enriched: explains full onboarding flow; `--strategy` and `--branch` flags for non-interactive use |
 | `consolidation-tick` | ok | Enriched: explains hold processing, modes, cron usage |
 | `scheduler-tick` | ok | Enriched: explains posting, deferred promotion, cron |
 | `discover` | ok | Enriched: explains two-pass LLM analysis |
@@ -31,7 +31,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `logs *` | ok | Replaced `system *`; query, tail, clear, health subcommands |
 | `target *` | ok | `enable` enriched with re-enable behavior |
 | `topics *` | ok | Group help enriched; subcommand docstrings already good |
-| `decision *` | ok | `list` and `delete` enriched with decision context |
+| `decision *` | ok | `list` and `delete` enriched with decision context; `batch-evaluate` added with full docstring |
 | `inspect *` | ok | `log`, `pending`, `usage`, `platforms` all enriched with detail and examples |
 | `manual *` | ok | `draft`, `consolidate`, `post` enriched with LLM context and examples |
 | `draft approve` | ok | Enriched: explains scheduler interaction |
@@ -53,6 +53,14 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `draft unapprove` | ok | Enriched: resulting status, when to use |
 | `draft connect` | ok | New: links preview draft to an account |
 | `draft unschedule` | ok | Enriched: resulting status, when to use |
+| `arc *` | ok | list, create, complete, abandon, resume subcommands |
+| `bot *` | ok | Bot management subcommands |
+| `config *` | ok | Configuration subcommands |
+| `journey *` | ok | Journey subcommands |
+| `media *` | ok | `gc` enriched with `--dry-run`/`--yes` examples |
+| `memory *` | ok | `clear` enriched with `--yes` example |
+| `project *` | ok | `import-commits` enriched with `--limit` flag |
+| `snapshot *` | ok | `save`/`restore` enriched with `--yes` examples |
 
 ## Conceptual Docs (site-docs/concepts/)
 
@@ -87,15 +95,15 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-03-31 | |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-03-31 | |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-03-31 | |
-| `ruff check src/ tests/` passes | 2026-03-31 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-03-31 | 28 errors, all `import-untyped` or pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-03-31 | 16 commands across 6 files enriched |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-03-31 | |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-03-31 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-03-31 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-06 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-06 | |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-06 | |
+| `ruff check src/ tests/` passes | 2026-04-06 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-06 | 28 errors, all `import-untyped` or pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-04-06 | 16 commands across 6 files enriched |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-06 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-06 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-06 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly; `quickstart --strategy --branch` for non-interactive onboarding |
 
 ## Backlog (waiting_approval)
 
