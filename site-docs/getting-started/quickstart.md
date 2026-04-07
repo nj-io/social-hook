@@ -29,6 +29,22 @@ To also evaluate recent commits:
 social-hook quickstart --evaluate-last 3
 ```
 
+### Multiple strategies
+
+By default, quickstart configures the `building-public` strategy. To start with multiple content strategies:
+
+```bash
+social-hook quickstart -s building-public -s technical
+```
+
+### Branch filtering
+
+To restrict the pipeline to a specific branch (useful for monorepos or trunk-based flows):
+
+```bash
+social-hook quickstart --branch main
+```
+
 ## 3. Review your first draft
 
 ```bash
