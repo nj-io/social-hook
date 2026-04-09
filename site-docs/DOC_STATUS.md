@@ -1,5 +1,5 @@
-<!-- last_run_commit: eb11c6e861db2c40b665bf84b91dbaaeb0721210 -->
-<!-- last_run_date: 2026-03-31 -->
+<!-- last_run_commit: ae73832509b165ae6e0674ac9a170e06a2cd80da -->
+<!-- last_run_date: 2026-04-09 -->
 
 # Documentation Status
 
@@ -73,29 +73,31 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | Page | Status | Notes |
 |------|--------|-------|
 | config.md | stale | OAuth 2.0 env vars correct; missing sections: rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus |
-| content-config.md | complete | |
+| content-config.md | complete | Added `max_discovery_tokens`, `max_file_size` to context table (2026-04-09) |
 | social-context.md | complete | |
 
 ## Getting Started (site-docs/getting-started/)
 
 | Page | Status | Notes |
 |------|--------|-------|
-| installation.md | complete | Accurate for current quickstart flow; targets workflow addendum in backlog |
-| quickstart.md | complete | Preview draft → promote flow still valid; targets onboarding in backlog |
+| installation.md | complete | Fixed: quickstart steps now match code (2026-04-09) |
+| quickstart.md | complete | Fixed: quickstart steps now match code (2026-04-09) |
 
 ## Recurring Checks
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-03-31 | |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-09 | |
 | `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-03-31 | |
 | OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-03-31 | |
-| `ruff check src/ tests/` passes | 2026-03-31 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-03-31 | 28 errors, all `import-untyped` or pre-existing |
+| `ruff check src/ tests/` passes | 2026-04-09 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-09 | 22 errors, all `import-untyped` or `no-any-return` pre-existing |
 | All CLI commands with poor/partial docstrings have been enriched | 2026-03-31 | 16 commands across 6 files enriched |
 | `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-03-31 | |
 | `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-03-31 | |
 | All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-03-31 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| Quickstart docs match quickstart code flow | 2026-04-09 | Fixed stale "install git hook" claim |
+| Config docs cover all ContextConfig fields | 2026-04-09 | Added max_discovery_tokens, max_file_size; rate_limits/identities/content_strategies still in backlog |
 
 ## Backlog (waiting_approval)
 
@@ -112,3 +114,17 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [x] ~~pipeline.md rewrite~~ (done — two-stage evaluation, commit analyzer, batch evaluation, interval gating, per-strategy decisions, target routing)
 - [ ] Testing guide — unit tests, E2E test suite, snapshots, VCR cassettes, verification scripts (source: docs/E2E_TESTING.md, docs/CLAUDE.md E2E section)
 - [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)
+
+## Changelog
+
+### 2026-04-09
+
+- Fixed: quickstart docs claimed "install git post-commit hook" but quickstart code imports commits instead (installation.md, quickstart.md)
+- Fixed: added `max_discovery_tokens` (default 60000) and `max_file_size` (default 256000) to content-config.md context table
+- CLI docs regenerated — no changes needed (already current)
+- Ruff: clean. Mypy: 22 pre-existing errors (down from 28 on 2026-03-31)
+- Added 2 new recurring checks: quickstart flow accuracy, ContextConfig field coverage
+
+### 2026-03-31
+
+- Previous maintenance run (see git history for details)

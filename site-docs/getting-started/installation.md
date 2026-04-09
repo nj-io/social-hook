@@ -33,7 +33,7 @@ This will:
 
 1. Prompt for your Anthropic API key (if not already configured)
 2. Register the repo as a project
-3. Install the git post-commit hook
+3. Import your commit history
 4. Run project discovery (AI reads your codebase to understand what it does)
 5. Generate an introductory draft
 

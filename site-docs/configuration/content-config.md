@@ -121,6 +121,8 @@ Controls how much historical context is assembled into LLM prompts. Larger value
 | `include_readme` | bool | `true` | Include project README.md in evaluator context |
 | `include_claude_md` | bool | `true` | Include CLAUDE.md in evaluator context |
 | `max_doc_tokens` | int | `10000` | Max tokens allocated to project docs |
+| `max_discovery_tokens` | int | `60000` | Max tokens used during project discovery |
+| `max_file_size` | int | `256000` | Max file size (bytes) considered during discovery |
 | `project_docs` | list | `[]` | Glob patterns for priority files to always include |
 | `pending_draft_detail` | string | `"full_content"` | `"full_content"` or `"summary"` — detail level for pending drafts in evaluator prompts |
 | `arc_context_chars` | int | `500` | Max chars of arc context per pending draft |

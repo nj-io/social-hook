@@ -19,7 +19,7 @@ This single command handles everything:
 
 - Prompts for your Anthropic API key (or pass `--key sk-ant-...` to skip the prompt)
 - Registers the current repo as a project
-- Installs the git post-commit hook
+- Imports your commit history
 - Runs AI-powered project discovery
 - Generates an introductory draft based on what it learned about your project
 
