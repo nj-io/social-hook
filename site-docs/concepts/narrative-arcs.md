@@ -63,7 +63,7 @@ If an active arc hasn't had a post in `arc_stagnation_days` (default 14), the ev
 
 ## Narrative debt
 
-Social Hook tracks **narrative debt** — a counter of how many reactive or opportunistic posts have been made since the last arc or synthesis post. When this exceeds `narrative_debt_threshold` (default 3), the evaluator is nudged to produce a synthesis post or advance an arc.
+Social Hook tracks **narrative debt** — a counter of how many opportunistic or experiment posts have been made since the last arc or synthesis post. When this exceeds `narrative_debt_threshold` (default 3), the evaluator is nudged to produce a synthesis post or advance an arc.
 
 This prevents the account from becoming a stream of disconnected updates. After 3 one-off posts, the system pushes toward narrative cohesion.
 

@@ -134,7 +134,7 @@ The evaluator returns a `LogEvaluationInput` containing:
 | `action` | `draft`, `skip`, or `hold` |
 | `reason` | Why this action was chosen |
 | `angle` | The specific angle for the post (if drafting) |
-| `post_category` | `standalone`, `arc`, or `reactive` |
+| `post_category` | `arc`, `opportunistic`, or `experiment` |
 | `arc_id` / `new_arc_theme` | Narrative arc assignment or creation |
 | `media_tool` | Which media tool the drafter should use (or `none`) |
 | `topic_id` | Content topic this decision addresses |
@@ -192,7 +192,7 @@ For each target action that has `action=draft`:
 
 4. **Media generation** — Happens once (shared across platforms) after the first successful draft. If the evaluator recommended a media tool, the system generates it:
    - Validates the tool is enabled (global → per-tool → project-level override)
-   - Dispatches to the appropriate adapter (ray.so, Mermaid, Gemini, Playwright)
+   - Dispatches to the appropriate adapter (ray.so, Mermaid, nano_banana_pro, Playwright)
    - Saves output to `~/.social-hook/media-cache/`
    - If media generation fails, the draft is created anyway — media errors are non-fatal
 
