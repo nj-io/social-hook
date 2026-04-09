@@ -2,7 +2,7 @@
 
 Models are organized in submodules:
   - models.enums      — Enums, status constants, helper predicates
-  - models.core       — Project, Decision, Draft, DraftTweet, DraftChange, Post, CommitInfo
+  - models.core       — Project, Decision, Draft, DraftPart, DraftChange, Post, CommitInfo
   - models.narrative   — Lifecycle, Arc, NarrativeDebt
   - models.content     — ContentTopic, ContentSuggestion, EvaluationCycle, DraftPattern
   - models.infra       — OAuthToken, UsageLog, SystemErrorRecord

@@ -414,6 +414,17 @@ export async function createDraftFromDecision(
   });
 }
 
+export async function createContent(
+  projectId: string,
+  body: { idea: string; vehicle?: string | null; reference_files?: string[]; target_id?: string },
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/create-content`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function deleteDecision(
   decisionId: string,
 ): Promise<{ status: string; decision_id: string }> {
@@ -567,6 +578,26 @@ export async function registerProject(
       install_git_hook: installHook,
     }),
   });
+}
+
+export async function uploadProjectDocs(
+  projectId: string,
+  files: File[],
+): Promise<{ uploaded: number; prompt_docs: string[]; brief: string | null }> {
+  const formData = new FormData();
+  for (const f of files) formData.append("files", f);
+  const headers = new Headers();
+  headers.set("X-Session-Id", getSessionId());
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/upload-docs`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
+  return res.json();
 }
 
 export async function deleteProject(projectId: string): Promise<{ status: string; project_id: string }> {
@@ -906,4 +937,42 @@ export async function deleteStrategy(projectId: string, name: string): Promise<{
 
 export async function acceptSuggestion(projectId: string, suggestionId: string): Promise<{ task_id: string; status: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions/${encodeURIComponent(suggestionId)}/accept`, { method: "POST" });
+}
+
+// Advisory Items
+export async function fetchAdvisoryItems(filters?: {
+  project_id?: string;
+  status?: string;
+  category?: string;
+  urgency?: string;
+}): Promise<{ advisory_items: Record<string, unknown>[] }> {
+  const params = new URLSearchParams();
+  if (filters?.project_id) params.set("project_id", filters.project_id);
+  if (filters?.status) params.set("status", filters.status);
+  if (filters?.category) params.set("category", filters.category);
+  if (filters?.urgency) params.set("urgency", filters.urgency);
+  const qs = params.toString();
+  return apiFetch(`/api/advisory${qs ? `?${qs}` : ""}`);
+}
+
+export async function fetchAdvisoryCount(filters?: {
+  project_id?: string;
+  status?: string;
+}): Promise<{ count: number }> {
+  const params = new URLSearchParams();
+  if (filters?.project_id) params.set("project_id", filters.project_id);
+  if (filters?.status) params.set("status", filters.status);
+  const qs = params.toString();
+  return apiFetch(`/api/advisory/count${qs ? `?${qs}` : ""}`);
+}
+
+export async function updateAdvisoryItem(
+  itemId: string,
+  data: Record<string, unknown>,
+): Promise<{ status: string; advisory_id: string }> {
+  return apiFetch(`/api/advisory/${encodeURIComponent(itemId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
 }

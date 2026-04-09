@@ -1009,6 +1009,7 @@ from social_hook.cli.snapshot import app as snapshot_app
 app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
 
 from social_hook.cli.account import app as account_app
+from social_hook.cli.advisory import app as advisory_app
 from social_hook.cli.brief import app as brief_app
 from social_hook.cli.content import app as content_app
 from social_hook.cli.credentials import app as credentials_app
@@ -1058,6 +1059,13 @@ app.add_typer(
     brief_app,
     name="brief",
     help="View and edit the project brief used by the evaluator and drafter.",
+)
+
+# Advisory items: list, complete, dismiss, create
+app.add_typer(
+    advisory_app,
+    name="advisory",
+    help="Manage advisory items — operator action items for manual tasks.",
 )
 
 # Content suggestions: suggest, list, dismiss, combine, hero-launch

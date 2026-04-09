@@ -225,7 +225,7 @@ def run(harness, runner):
 
     # B6: Free tier + long content → thread (structural check)
     def b6():
-        from social_hook.db.operations import get_draft_tweets
+        from social_hook.db.operations import get_draft_parts
 
         exit_code = run_trigger(
             COMMITS["large_feature"], str(harness.repo_path), verbose=runner.verbose
@@ -234,7 +234,7 @@ def run(harness, runner):
 
         drafts = get_pending_drafts(harness.conn, harness.project_id)
         for draft in drafts:
-            tweets = get_draft_tweets(harness.conn, draft.id)
+            tweets = get_draft_parts(harness.conn, draft.id)
             if tweets:
                 return f"Thread found: {len(tweets)} tweets"
 
@@ -766,11 +766,12 @@ def run(harness, runner):
     # B18: Drafter + real nano_banana_pro (seeded decision, real LLM + real Gemini)
     def b18():
         from pathlib import Path as _Path
-        from types import SimpleNamespace
 
+        from social_hook.config.platforms import resolve_platform
         from social_hook.config.project import load_project_config
         from social_hook.db import operations as ops
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import DraftingIntent, PlatformSpec
+        from social_hook.drafting import draft as run_draft
         from social_hook.filesystem import generate_id
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
@@ -828,37 +829,39 @@ def run(harness, runner):
             parent_timestamp=commit.parent_timestamp,
         )
 
-        # Build evaluation compat (what make_eval_compat would produce)
-        eval_compat = SimpleNamespace(
+        # Build DraftingIntent
+        project = ops.get_project(harness.conn, harness.project_id)
+        platform_specs = []
+        for pname, pcfg in config.platforms.items():
+            if pcfg.enabled:
+                rpcfg = resolve_platform(pname, pcfg, config.scheduling)
+                platform_specs.append(PlatformSpec(platform=pname, resolved=rpcfg))
+
+        intent = DraftingIntent(
             decision="draft",
             reasoning="E2E test — seeded decision for nano_banana_pro media",
             angle="Feature showcase",
-            episode_type="milestone",
             post_category="arc",
-            arc_id=None,
-            new_arc_theme=None,
             media_tool="nano_banana_pro",
-            reference_posts=[],
             commit_summary=commit.message,
-            include_project_docs=False,
+            decision_id=decision.id,
+            platforms=platform_specs,
         )
 
         # Run drafting pipeline
-        project = ops.get_project(harness.conn, harness.project_id)
-        draft_results = draft_for_platforms(
+        draft_results = run_draft(
+            intent,
             config,
             harness.conn,
             db,
             project,
-            decision_id=decision.id,
-            evaluation=eval_compat,
-            context=context,
-            commit=commit,
+            context,
+            commit,
             project_config=project_config,
             verbose=runner.verbose,
         )
 
-        assert len(draft_results) > 0, "No drafts created by draft_for_platforms"
+        assert len(draft_results) > 0, "No drafts created by draft()"
 
         draft = draft_results[0].draft
         assert draft.media_type == "nano_banana_pro", (

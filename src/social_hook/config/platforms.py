@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from social_hook.adapters.models import ARTICLE, SINGLE, THREAD
 from social_hook.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -39,11 +40,11 @@ SMART_DEFAULTS: dict[str, dict[str, dict[str, str]]] = {
 }
 
 
-# Platform thread support — used at config validation time when adapter
-# instances are unavailable. Must stay in sync with PlatformAdapter.supports_threads().
-PLATFORM_THREAD_SUPPORT: dict[str, bool] = {
-    "x": True,
-    "linkedin": False,
+# Platform vehicle support — used at config validation time when adapter
+# instances are unavailable. Must stay in sync with PlatformAdapter.capabilities().
+PLATFORM_VEHICLE_SUPPORT: dict[str, list] = {
+    "x": [SINGLE, THREAD, ARTICLE],
+    "linkedin": [SINGLE, ARTICLE],
 }
 
 

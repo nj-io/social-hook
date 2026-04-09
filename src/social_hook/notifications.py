@@ -116,9 +116,9 @@ def notify_draft_review(
     for result in draft_results:
         draft = result.draft
         schedule = result.schedule
-        thread_tweets = result.thread_tweets
-        is_thread = bool(thread_tweets)
-        tweet_count = len(thread_tweets) if is_thread else None
+        thread_parts = result.thread_parts
+        is_thread = bool(thread_parts)
+        part_count = len(thread_parts) if is_thread else None
         suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
         media_info = (
             f"{draft.media_type} ({len(draft.media_paths)} file)" if draft.media_paths else None
@@ -133,12 +133,14 @@ def notify_draft_review(
             suggested_time=suggested_time_str,
             draft_id=draft.id,
             is_thread=is_thread,
-            tweet_count=tweet_count,
+            part_count=part_count,
             media_info=media_info,
             post_category=result.post_category,
             angle=result.angle,
             episode_tags=result.episode_tags,
             is_intro=getattr(draft, "is_intro", False),
+            vehicle=getattr(draft, "vehicle", None),
+            char_count=len(draft.content) if draft.content else None,
         )
         buttons = get_review_buttons_normalized(
             draft.id,
@@ -202,6 +204,8 @@ def resend_draft_notification(
             post_category=decision.post_category if decision else None,
             episode_tags=decision.episode_tags if decision else None,
             is_intro=getattr(draft, "is_intro", False),
+            vehicle=getattr(draft, "vehicle", None),
+            char_count=len(draft.content) if draft.content else None,
         )
         buttons = get_review_buttons_normalized(
             draft.id,

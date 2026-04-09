@@ -6,7 +6,7 @@ Source: WS3_ASSUMPTIONS.md A5-A6 (OAuth, endpoint)
 
 from unittest.mock import MagicMock, patch
 
-from social_hook.adapters.models import RESHARE, SINGLE_POST, PostReference, ReferenceType
+from social_hook.adapters.models import RESHARE, SINGLE, PostReference, ReferenceType
 from social_hook.adapters.platform.linkedin import (
     LinkedInAdapter,
 )
@@ -213,7 +213,7 @@ class TestLinkedInAdapterThread:
 
         assert result.success is False
         assert "does not support threads" in result.error
-        assert result.tweet_results == []
+        assert result.part_results is None
 
 
 # =============================================================================
@@ -404,10 +404,10 @@ class TestLinkedInAdapterCapabilities:
     """LinkedInAdapter capability registry methods."""
 
     def test_capabilities_contains_expected(self):
-        """LinkedInAdapter.capabilities() returns SINGLE_POST, RESHARE."""
+        """LinkedInAdapter.capabilities() returns SINGLE, RESHARE."""
         adapter = LinkedInAdapter("fake_token")
         caps = adapter.capabilities()
-        assert SINGLE_POST in caps
+        assert SINGLE in caps
         assert RESHARE in caps
 
     def test_capabilities_returns_list(self):

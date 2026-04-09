@@ -49,7 +49,7 @@ def _extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    raise MalformedResponseError(f"Could not extract JSON from CLI output: {text[:200]}")
+    raise MalformedResponseError(f"Could not extract JSON from CLI output: {text}")
 
 
 class ClaudeCliClient(LLMClient):

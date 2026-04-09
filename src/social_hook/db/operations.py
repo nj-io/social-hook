@@ -14,8 +14,8 @@ from social_hook.models.content import (
     DraftPattern,
     EvaluationCycle,
 )
-from social_hook.models.core import Decision, Draft, DraftChange, DraftTweet, Post, Project
-from social_hook.models.infra import OAuthToken, SystemErrorRecord, UsageLog
+from social_hook.models.core import Decision, Draft, DraftChange, DraftPart, Post, Project
+from social_hook.models.infra import AdvisoryItem, OAuthToken, SystemErrorRecord, UsageLog
 from social_hook.models.narrative import Arc, Lifecycle, NarrativeDebt
 
 # =============================================================================
@@ -103,7 +103,7 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
 
     Uses explicit ordered deletes (not ON DELETE CASCADE) for safety.
     Deletes: narrative_debt, lifecycles, arcs, draft_changes (via drafts),
-    draft_tweets (via drafts), posts (via drafts), drafts, decisions, then project.
+    draft_parts (via drafts), posts (via drafts), drafts, decisions, then project.
 
     Returns True if the project was deleted.
     """
@@ -121,8 +121,9 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     # Delete in dependency order
     for draft_id in draft_ids:
         conn.execute("DELETE FROM draft_changes WHERE draft_id = ?", (draft_id,))
-        conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_id,))
+        conn.execute("DELETE FROM draft_parts WHERE draft_id = ?", (draft_id,))
 
+    conn.execute("DELETE FROM advisory_items WHERE project_id = ?", (project_id,))
     conn.execute("DELETE FROM posts WHERE project_id = ?", (project_id,))
     conn.execute("DELETE FROM drafts WHERE project_id = ?", (project_id,))
     conn.execute("DELETE FROM decisions WHERE project_id = ?", (project_id,))
@@ -143,34 +144,28 @@ def register_project(
 ) -> tuple[Project, str | None]:
     """Register a project from a repo path.
 
-    Validates git repo, extracts origin, checks duplicates, inserts project
-    + lifecycle + narrative debt.
+    Supports both git and non-git directories. If git: extracts origin.
+    If not git: repo_origin=None, no git hook needed.
 
     Returns (project, repo_origin) on success.
-    Raises ValueError on validation failure or duplicate.
+    Raises ValueError on duplicate registration.
     """
     from pathlib import Path
 
     from social_hook.filesystem import generate_id
+    from social_hook.trigger_git import is_git_repo
 
     path = Path(repo_path).resolve()
 
-    # Validate git repo
-    result = subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "--git-dir"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise ValueError(f"{path} is not a git repository")
-
-    # Extract remote origin
-    origin_result = subprocess.run(
-        ["git", "-C", str(path), "remote", "get-url", "origin"],
-        capture_output=True,
-        text=True,
-    )
-    repo_origin = origin_result.stdout.strip() if origin_result.returncode == 0 else None
+    # Optional git detection
+    repo_origin = None
+    if is_git_repo(str(path)):
+        origin_result = subprocess.run(
+            ["git", "-C", str(path), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+        )
+        repo_origin = origin_result.stdout.strip() if origin_result.returncode == 0 else None
 
     if not name:
         name = path.name
@@ -205,7 +200,7 @@ def register_project(
 def delete_decision(conn: sqlite3.Connection, decision_id: str) -> bool:
     """Delete a decision and all associated data.
 
-    Cascades to: draft_changes, draft_tweets, posts, drafts for this decision.
+    Cascades to: draft_changes, draft_parts, posts, drafts for this decision.
     Returns True if the decision was deleted.
     """
     # TODO: backport reference NULL-out from rewind_decision() — superseded_by
@@ -224,7 +219,7 @@ def delete_decision(conn: sqlite3.Connection, decision_id: str) -> bool:
     # Delete in dependency order
     for draft_id in draft_ids:
         conn.execute("DELETE FROM draft_changes WHERE draft_id = ?", (draft_id,))
-        conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_id,))
+        conn.execute("DELETE FROM draft_parts WHERE draft_id = ?", (draft_id,))
 
     conn.execute(
         "DELETE FROM posts WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
@@ -239,7 +234,7 @@ def delete_decision(conn: sqlite3.Connection, decision_id: str) -> bool:
 def rewind_decision(conn: sqlite3.Connection, decision_id: str, force: bool = False) -> dict | None:
     """Rewind a decision to its evaluation point, removing all downstream artifacts.
 
-    Keeps the decision row but deletes drafts, draft_tweets, draft_changes,
+    Keeps the decision row but deletes drafts, draft_parts, draft_changes,
     and posts. Resets the decision to unprocessed state (processed=0,
     processed_at=NULL, batch_id=NULL). Decrements the arc post_count if
     applicable and resets audience_introduced if the only intro drafts were
@@ -311,7 +306,7 @@ def rewind_decision(conn: sqlite3.Connection, decision_id: str, force: bool = Fa
     # Delete in FK dependency order
     for did in draft_ids:
         conn.execute("DELETE FROM draft_changes WHERE draft_id = ?", (did,))
-        conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (did,))
+        conn.execute("DELETE FROM draft_parts WHERE draft_id = ?", (did,))
 
     if draft_ids:
         placeholders_d = ",".join("?" * len(draft_ids))
@@ -731,10 +726,11 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
         """
         INSERT INTO drafts (id, project_id, decision_id, platform, status, content,
             media_paths, media_type, media_spec, media_spec_used, suggested_time, scheduled_time,
-            reasoning, superseded_by, retry_count, last_error, is_intro, post_format,
-            reference_post_id, target_id, evaluation_cycle_id, topic_id, suggestion_id, pattern_id,
+            reasoning, superseded_by, retry_count, last_error, is_intro, vehicle,
+            reference_type, reference_files, reference_post_id,
+            target_id, evaluation_cycle_id, topic_id, suggestion_id, pattern_id,
             preview_mode, arc_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         draft.to_row(),
     )
@@ -743,13 +739,13 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
 
 
 def delete_drafts_for_decision(conn: sqlite3.Connection, decision_id: str) -> None:
-    """Delete all drafts (and related draft_changes, draft_tweets) for a decision."""
+    """Delete all drafts (and related draft_changes, draft_parts) for a decision."""
     conn.execute(
         "DELETE FROM draft_changes WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
         (decision_id,),
     )
     conn.execute(
-        "DELETE FROM draft_tweets WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
+        "DELETE FROM draft_parts WHERE draft_id IN (SELECT id FROM drafts WHERE decision_id = ?)",
         (decision_id,),
     )
     conn.execute("DELETE FROM drafts WHERE decision_id = ?", (decision_id,))
@@ -782,7 +778,9 @@ def update_draft(
     media_spec: dict | None = None,
     media_spec_used: dict | None = None,
     is_intro: bool | None = None,
-    post_format: str | None = None,
+    vehicle: str | None = None,
+    reference_type: str | None = None,
+    reference_files: list[str] | None = None,
     reference_post_id: str | None = None,
 ) -> bool:
     """Update a draft.
@@ -822,9 +820,15 @@ def update_draft(
     if is_intro is not None:
         updates.append("is_intro = ?")
         params.append(1 if is_intro else 0)
-    if post_format is not None:
-        updates.append("post_format = ?")
-        params.append(post_format)
+    if vehicle is not None:
+        updates.append("vehicle = ?")
+        params.append(vehicle)
+    if reference_type is not None:
+        updates.append("reference_type = ?")
+        params.append(reference_type)
+    if reference_files is not None:
+        updates.append("reference_files = ?")
+        params.append(json.dumps(reference_files))
     if reference_post_id is not None:
         updates.append("reference_post_id = ?")
         params.append(reference_post_id)
@@ -951,52 +955,52 @@ def get_deferred_drafts(conn: sqlite3.Connection) -> list[Draft]:
 
 
 # =============================================================================
-# Draft Tweets
+# Draft Parts
 # =============================================================================
 
 
-def insert_draft_tweet(conn: sqlite3.Connection, tweet: DraftTweet) -> str:
-    """Insert a new draft tweet.
+def insert_draft_part(conn: sqlite3.Connection, part: DraftPart) -> str:
+    """Insert a new draft part.
 
-    Returns the tweet ID.
+    Returns the part ID.
     """
     conn.execute(
         """
-        INSERT INTO draft_tweets (id, draft_id, position, content, media_paths, external_id, posted_at, error)
+        INSERT INTO draft_parts (id, draft_id, position, content, media_paths, external_id, posted_at, error)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        tweet.to_row(),
+        part.to_row(),
     )
     conn.commit()
-    return tweet.id
+    return part.id
 
 
-def get_draft_tweets(conn: sqlite3.Connection, draft_id: str) -> list[DraftTweet]:
-    """Get all tweets for a draft thread."""
+def get_draft_parts(conn: sqlite3.Connection, draft_id: str) -> list[DraftPart]:
+    """Get all parts for a draft thread."""
     rows = conn.execute(
         """
-        SELECT * FROM draft_tweets
+        SELECT * FROM draft_parts
         WHERE draft_id = ?
         ORDER BY position ASC
         """,
         (draft_id,),
     ).fetchall()
-    return [DraftTweet.from_dict(dict(row)) for row in rows]
+    return [DraftPart.from_dict(dict(row)) for row in rows]
 
 
-def update_draft_tweet(
+def update_draft_part(
     conn: sqlite3.Connection,
-    tweet_id: str,
+    part_id: str,
     external_id: str | None = None,
     posted_at: str | None = None,
     error: str | None = None,
 ) -> bool:
-    """Update a draft tweet after posting.
+    """Update a draft part after posting.
 
     Args:
         conn: Database connection
-        tweet_id: Draft tweet ID
-        external_id: External tweet ID from platform
+        part_id: Draft part ID
+        external_id: External ID from platform
         posted_at: ISO datetime when posted
         error: Error message if posting failed
 
@@ -1019,30 +1023,30 @@ def update_draft_tweet(
     if not updates:
         return False
 
-    params.append(tweet_id)
+    params.append(part_id)
 
     cursor = conn.execute(
-        f"UPDATE draft_tweets SET {', '.join(updates)} WHERE id = ?",
+        f"UPDATE draft_parts SET {', '.join(updates)} WHERE id = ?",
         params,
     )
     conn.commit()
     return cursor.rowcount > 0
 
 
-def replace_draft_tweets(conn: sqlite3.Connection, draft_id: str, tweets: list[DraftTweet]) -> None:
-    """Delete existing tweets for a draft and insert replacements.
+def replace_draft_parts(conn: sqlite3.Connection, draft_id: str, parts: list[DraftPart]) -> None:
+    """Delete existing parts for a draft and insert replacements.
 
-    Used when content is edited on a threaded draft to keep draft_tweets
+    Used when content is edited on a threaded draft to keep draft_parts
     in sync with the updated content.
     """
-    conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_id,))
-    for tweet in tweets:
+    conn.execute("DELETE FROM draft_parts WHERE draft_id = ?", (draft_id,))
+    for part in parts:
         conn.execute(
             """
-            INSERT INTO draft_tweets (id, draft_id, position, content, media_paths, external_id, posted_at, error)
+            INSERT INTO draft_parts (id, draft_id, position, content, media_paths, external_id, posted_at, error)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            tweet.to_row(),
+            part.to_row(),
         )
     conn.commit()
 
@@ -2215,6 +2219,143 @@ def execute_queue_action(
         update_draft(conn, draft_id, status="cancelled", last_error=reason)
     else:
         raise ValueError(f"Unknown queue action: {action_type}")
+
+
+# =============================================================================
+# Advisory Items
+# =============================================================================
+
+
+def insert_advisory_item(conn: sqlite3.Connection, item: AdvisoryItem) -> str:
+    """Insert an advisory item. Returns the item ID."""
+    conn.execute(
+        """
+        INSERT INTO advisory_items (
+            id, project_id, category, title, description, status, urgency,
+            created_by, linked_entity_type, linked_entity_id, handler_type,
+            automation_level, verification_method, due_date,
+            dismissed_reason, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        item.to_row(),
+    )
+    conn.commit()
+    return item.id
+
+
+def get_advisory_item(conn: sqlite3.Connection, item_id: str) -> AdvisoryItem | None:
+    """Get an advisory item by ID."""
+    row = conn.execute("SELECT * FROM advisory_items WHERE id = ?", (item_id,)).fetchone()
+    if row:
+        return AdvisoryItem.from_dict(dict(row))
+    return None
+
+
+def get_advisory_items(
+    conn: sqlite3.Connection,
+    project_id: str | None = None,
+    status: str | None = None,
+    category: str | None = None,
+    urgency: str | None = None,
+    linked_entity_type: str | None = None,
+    linked_entity_id: str | None = None,
+) -> list[AdvisoryItem]:
+    """List advisory items with optional filters."""
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if project_id:
+        clauses.append("project_id = ?")
+        params.append(project_id)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if category:
+        clauses.append("category = ?")
+        params.append(category)
+    if urgency:
+        clauses.append("urgency = ?")
+        params.append(urgency)
+    if linked_entity_type:
+        clauses.append("linked_entity_type = ?")
+        params.append(linked_entity_type)
+    if linked_entity_id:
+        clauses.append("linked_entity_id = ?")
+        params.append(linked_entity_id)
+
+    where = " AND ".join(clauses) if clauses else "1=1"
+    rows = conn.execute(
+        f"SELECT * FROM advisory_items WHERE {where} ORDER BY created_at DESC",
+        params,
+    ).fetchall()
+    return [AdvisoryItem.from_dict(dict(r)) for r in rows]
+
+
+def update_advisory_item(conn: sqlite3.Connection, item_id: str, **kwargs: Any) -> bool:
+    """Update advisory item fields. Returns True if row was updated."""
+    if not kwargs:
+        return False
+    allowed = {
+        "status",
+        "title",
+        "description",
+        "urgency",
+        "category",
+        "dismissed_reason",
+        "completed_at",
+        "due_date",
+        "linked_entity_type",
+        "linked_entity_id",
+        "handler_type",
+        "automation_level",
+        "verification_method",
+    }
+    sets = []
+    params: list[Any] = []
+    for key, val in kwargs.items():
+        if key not in allowed:
+            logger.warning("Unknown advisory update field: %s", key)
+            continue
+        sets.append(f"{key} = ?")
+        params.append(val)
+    if not sets:
+        return False
+    params.append(item_id)
+    result = conn.execute(
+        f"UPDATE advisory_items SET {', '.join(sets)} WHERE id = ?",
+        params,
+    )
+    conn.commit()
+    return result.rowcount > 0
+
+
+def delete_advisory_item(conn: sqlite3.Connection, item_id: str) -> bool:
+    """Delete an advisory item. Returns True if row was deleted."""
+    result = conn.execute("DELETE FROM advisory_items WHERE id = ?", (item_id,))
+    conn.commit()
+    return result.rowcount > 0
+
+
+def count_advisory_items(
+    conn: sqlite3.Connection,
+    project_id: str | None = None,
+    status: str | None = None,
+) -> int:
+    """Count advisory items with optional filters."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if project_id:
+        clauses.append("project_id = ?")
+        params.append(project_id)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    where = " AND ".join(clauses) if clauses else "1=1"
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM advisory_items WHERE {where}",
+        params,
+    ).fetchone()
+    return row[0] if row else 0
 
 
 # =============================================================================

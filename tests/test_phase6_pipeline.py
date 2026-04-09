@@ -284,7 +284,7 @@ class TestTopicStatusOnPost:
 
         with (
             patch("social_hook.scheduler.send_notification"),
-            patch("social_hook.scheduler.ops.get_draft_tweets", return_value=[]),
+            patch("social_hook.scheduler.ops.get_draft_parts", return_value=[]),
             patch("social_hook.scheduler.ops.get_decision", return_value=None),
         ):
             record_post_success(db, draft, result, config, "test-project")
@@ -317,7 +317,7 @@ class TestTopicStatusOnPost:
 
         with (
             patch("social_hook.scheduler.send_notification"),
-            patch("social_hook.scheduler.ops.get_draft_tweets", return_value=[]),
+            patch("social_hook.scheduler.ops.get_draft_parts", return_value=[]),
             patch("social_hook.scheduler.ops.get_decision", return_value=None),
         ):
             record_post_success(db, draft, result, config, "test-project")
@@ -341,7 +341,7 @@ class TestTopicStatusOnPost:
 
         with (
             patch("social_hook.scheduler.send_notification"),
-            patch("social_hook.scheduler.ops.get_draft_tweets", return_value=[]),
+            patch("social_hook.scheduler.ops.get_draft_parts", return_value=[]),
             patch("social_hook.scheduler.ops.get_decision", return_value=None),
         ):
             # Should not raise — just verifies it runs cleanly

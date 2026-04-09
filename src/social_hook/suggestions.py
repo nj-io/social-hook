@@ -145,15 +145,15 @@ def evaluate_suggestion(
 
         # Route and draft if targets config exists
         if getattr(config, "targets", None) and isinstance(config.targets, dict) and config.targets:
-            from social_hook.drafting import draft_for_targets
+            from social_hook.content_sources import content_sources
+            from social_hook.drafting import draft as run_draft
+            from social_hook.drafting_intents import intent_from_routed_targets
+            from social_hook.models.core import Decision
             from social_hook.routing import route_to_targets
 
             target_actions = route_to_targets(evaluation.strategies, config, conn)
             draftable_actions = [a for a in target_actions if a.action == "draft"]
             if draftable_actions:
-                from social_hook.content_sources import content_sources
-                from social_hook.models.core import Decision
-
                 decision = Decision(
                     id=generate_id("decision"),
                     project_id=project_id,
@@ -165,24 +165,31 @@ def evaluate_suggestion(
                 )
                 ops.insert_decision(conn, decision)
 
-                draft_for_targets(
+                intents = intent_from_routed_targets(
                     draftable_actions,
+                    decision.id,
+                    evaluation,
                     config,
                     conn,
-                    db,
-                    project,
-                    decision_id=decision.id,
-                    evaluation=evaluation,
-                    context=context,
-                    commit=commit,
+                    project_id=project_id,
                     content_source_registry=content_sources,
-                    project_config=project_config,
-                    dry_run=dry_run,
                 )
+                for _intent in intents:
+                    run_draft(
+                        _intent,
+                        config,
+                        conn,
+                        db,
+                        project,
+                        context,
+                        commit,
+                        project_config=project_config,
+                        dry_run=dry_run,
+                    )
         else:
             # Legacy path: draft for platforms
-            from social_hook.compat import make_eval_compat
-            from social_hook.drafting import draft_for_platforms
+            from social_hook.drafting import draft as run_draft
+            from social_hook.drafting_intents import intent_from_platforms
             from social_hook.models.core import Decision
             from social_hook.parsing import enum_value
 
@@ -199,16 +206,15 @@ def evaluate_suggestion(
                 )
                 ops.insert_decision(conn, decision)
 
-                eval_compat = make_eval_compat(evaluation, "draft")
-                draft_for_platforms(
-                    config=config,
-                    conn=conn,
-                    db=db,
-                    project=project,
-                    decision_id=decision.id,
-                    evaluation=eval_compat,
-                    context=context,
-                    commit=commit,
+                intent = intent_from_platforms(evaluation, decision.id, config)
+                run_draft(
+                    intent,
+                    config,
+                    conn,
+                    db,
+                    project,
+                    context,
+                    commit,
                     project_config=project_config,
                 )
 

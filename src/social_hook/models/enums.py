@@ -87,15 +87,6 @@ class PostCategory(Enum):
     EXPERIMENT = "experiment"
 
 
-class PostFormat(Enum):
-    """Format of a drafted post."""
-
-    SINGLE = "single"
-    THREAD = "thread"
-    QUOTE = "quote"
-    REPLY = "reply"
-
-
 class LifecyclePhase(Enum):
     """Project lifecycle phases."""
 

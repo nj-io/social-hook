@@ -97,7 +97,7 @@ class TestXAdapterThreadTierIndependent:
         result = adapter.post_thread(tweets, dry_run=False)
         # Should fail validation before hitting API
         assert result.success is False
-        assert "280" in result.tweet_results[0].error
+        assert "280" in result.part_results[0].error
 
     def test_thread_accepts_280_per_tweet_on_premium(self):
         """Premium tier thread with 280-char tweets works."""
@@ -105,4 +105,4 @@ class TestXAdapterThreadTierIndependent:
         tweets = [{"content": "x" * 280} for _ in range(4)]
         result = adapter.post_thread(tweets, dry_run=True)
         assert result.success is True
-        assert len(result.tweet_results) == 4
+        assert len(result.part_results) == 4

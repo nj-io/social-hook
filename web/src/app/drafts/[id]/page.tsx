@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchChannelsStatus, fetchDraft, fetchEnabledPlatforms, generateMediaSpec, resendDraftNotification } from "@/lib/api";
 import { platformLabel } from "@/lib/platform";
-import type { Decision, Draft } from "@/lib/types";
+import type { Decision, Draft, DraftPart } from "@/lib/types";
 import { parseTags } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { MediaSection } from "@/components/media-section";
@@ -116,6 +116,9 @@ export default function DraftDetailPage() {
       {/* Meta info */}
       <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
         <span>Platform: <span className="font-medium text-foreground">{platLabel}</span></span>
+        {draft.vehicle && (
+          <span>Vehicle: <span className="font-medium text-foreground">{draft.vehicle}</span></span>
+        )}
         {draft.decision?.media_tool && (
           <span>Media: <span className="font-medium text-foreground">{draft.decision.media_tool}</span></span>
         )}
@@ -150,14 +153,14 @@ export default function DraftDetailPage() {
         <p className="whitespace-pre-wrap text-sm">{draft.content}</p>
       </div>
 
-      {/* Tweets (for thread-style posts) */}
-      {draft.tweets && draft.tweets.length > 0 && (
+      {/* Parts (for thread-style posts) */}
+      {draft.parts && draft.parts.length > 0 && (
         <div className="space-y-2">
           <h2 className="text-sm font-medium text-muted-foreground">Thread</h2>
-          {draft.tweets.map((tweet, i) => (
-            <div key={tweet.id} className="rounded-lg border border-border p-3">
-              <span className="text-xs text-muted-foreground">Tweet {i + 1}</span>
-              <p className="mt-1 whitespace-pre-wrap text-sm">{tweet.content}</p>
+          {draft.parts.map((part: DraftPart, i: number) => (
+            <div key={part.id} className="rounded-lg border border-border p-3">
+              <span className="text-xs text-muted-foreground">Part {i + 1}</span>
+              <p className="mt-1 whitespace-pre-wrap text-sm">{part.content}</p>
             </div>
           ))}
         </div>

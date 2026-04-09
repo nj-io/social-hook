@@ -1787,9 +1787,9 @@ def btn_promote_to(
             _send(adapter, chat_id, "Project not found.")
             return
 
-        from social_hook.compat import evaluation_from_decision
         from social_hook.config.project import ProjectConfig, load_project_config
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import draft as run_draft
+        from social_hook.drafting_intents import intent_from_decision
         from social_hook.errors import ConfigError
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
@@ -1821,19 +1821,17 @@ def btn_promote_to(
             parent_timestamp=getattr(commit, "parent_timestamp", None),
         )
 
-        evaluation = evaluation_from_decision(decision, "draft")
+        intent = intent_from_decision(decision, config, conn, target_platform=platform)
 
-        results = draft_for_platforms(
+        results = run_draft(
+            intent,
             config,
             conn,
             db,
             project,
-            decision_id=decision.id,
-            evaluation=evaluation,
-            context=context,
-            commit=commit,
+            context,
+            commit,
             project_config=project_config,
-            target_platform_names=[platform],
         )
 
         if not results:

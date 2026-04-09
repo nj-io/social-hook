@@ -112,9 +112,12 @@ export function useBackgroundTasks(
       .catch(() => {});
   }, [projectId]);
 
+  // Stable unique ID per hook instance — survives re-renders but not remounts
+  const instanceIdRef = useRef(`bg-tasks-${projectId}-${Math.random().toString(36).slice(2, 8)}`);
+
   // Listen for task events via WebSocket
   useEffect(() => {
-    const listenerId = `bg-tasks-${projectId}`;
+    const listenerId = instanceIdRef.current;
 
     addListener(listenerId, (envelope: GatewayEnvelope) => {
       if (envelope.type !== "event") return;

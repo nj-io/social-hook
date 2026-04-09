@@ -1,17 +1,15 @@
-"""Shared drafting pipeline: platform resolution, content generation, DB insertion."""
+"""Unified drafting pipeline: vehicle resolution, content generation, DB insertion."""
 
 from __future__ import annotations
 
 import logging
-import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from social_hook.config.platforms import resolve_platform
 from social_hook.config.yaml import TIER_CHAR_LIMITS
 from social_hook.filesystem import generate_id, get_base_path
-from social_hook.models.core import Draft, DraftTweet
+from social_hook.models.core import Draft, DraftPart
 from social_hook.scheduling import ScheduleResult, calculate_optimal_time
 
 logger = logging.getLogger(__name__)
@@ -23,143 +21,89 @@ class DraftResult:
 
     draft: Draft
     schedule: ScheduleResult
-    thread_tweets: list[str]
+    thread_parts: list[str]
     post_category: str | None = None
     angle: str | None = None
     episode_tags: list[str] | None = None
 
 
-def draft_for_platforms(
-    config,
+@dataclass
+class PlatformSpec:
+    """A single platform target within a DraftingIntent."""
+
+    platform: str
+    resolved: Any  # ResolvedPlatformConfig
+    target_id: str | None = None
+    preview_mode: bool = False
+
+
+@dataclass
+class DraftingIntent:
+    """Everything the drafting pipeline needs to produce a draft.
+
+    ONE input type. No SimpleNamespace, no compat layer.
+    Field names match what assemble_drafter_prompt reads via getattr().
+    """
+
+    # What to say
+    decision: str = "draft"
+    vehicle: str | None = None
+    angle: str = ""
+    reasoning: str = ""
+    post_category: str | None = None
+    commit_summary: str | None = None
+    episode_type: str | None = None
+
+    # Where to publish
+    platforms: list[PlatformSpec] = field(default_factory=list)
+
+    # Content enrichment
+    arc_id: str | None = None
+    reference_posts: list[str] | None = None
+    media_tool: str | None = None
+    include_project_docs: bool = False
+    content_source_context: dict[str, str] | None = None
+    topic_id: str | None = None
+
+    # Pipeline metadata
+    decision_id: str = ""
+    episode_tags: list[str] | None = None
+    cycle_id: str | None = None
+
+
+def draft(
+    intent: DraftingIntent,
+    config: Any,
     conn: sqlite3.Connection,
-    db,
-    project,
-    decision_id: str,
-    evaluation,
-    context,
-    commit,
-    project_config=None,
-    target_platform_names: list[str] | None = None,
+    db: Any,
+    project: Any,
+    context: Any,
+    commit: Any,
+    project_config: Any = None,
     dry_run: bool = False,
     verbose: bool = False,
 ) -> list[DraftResult]:
-    """Run the per-platform drafting pipeline: resolve, filter, draft, insert.
+    """The single drafting entry point.
 
-    This is a pure drafting function -- it does NOT handle notifications,
-    arc counting, or connection lifecycle. Those remain in the caller.
+    Handles: vehicle resolution, LLM draft creation, vehicle validation,
+    artifact materialization, media generation, scheduling, DB insertion.
 
-    Args:
-        config: Global Config object.
-        conn: SQLite connection (for scheduling queries).
-        db: DryRunContext wrapping conn.
-        project: Project model instance.
-        decision_id: ID of the decision that triggered drafting.
-        evaluation: Evaluator result (evaluation result or similar).
-        context: ProjectContext for drafter prompts.
-        commit: CommitInfo for this commit.
-        project_config: Optional ProjectConfig (per-project settings).
-        target_platform_names: If provided, only draft for these platforms.
-            None means all enabled platforms.
-        dry_run: If True, skip DB writes and real API calls.
-        verbose: If True, print detailed output.
-
-    Returns:
-        List of DraftResult for each successfully created draft.
-        Empty list if no platforms resolve or all are filtered.
+    If len(intent.platforms) > 1: shared-group LLM call (multi-variant).
+    If len(intent.platforms) == 1: single-platform LLM call.
     """
-    logger.warning(
-        "Using legacy platform-based drafting. Configure targets for per-strategy control."
-    )
-    resolved = _resolve_and_filter_platforms(config, target_platform_names, verbose)
-    if not resolved:
-        return []
-    return _draft_for_resolved_platforms(
-        resolved,
-        config,
-        conn,
-        db,
-        project,
-        decision_id=decision_id,
-        evaluation=evaluation,
-        context=context,
-        commit=commit,
-        project_config=project_config,
-        dry_run=dry_run,
-        verbose=verbose,
-    )
-
-
-def _resolve_and_filter_platforms(config, target_platform_names, verbose):
-    """Resolve enabled platforms.
-
-    Returns:
-        Dict of platform_name -> ResolvedPlatformConfig, or empty dict if none resolve.
-    """
-    # 1. Resolve enabled platforms
-    resolved_platforms = {}
-    for pname, pcfg in config.platforms.items():
-        if pcfg.enabled:
-            resolved_platforms[pname] = resolve_platform(
-                pname,
-                pcfg,
-                config.scheduling,
-            )
-
-    # Filter to target platforms if specified
-    if target_platform_names is not None:
-        resolved_platforms = {
-            k: v for k, v in resolved_platforms.items() if k in target_platform_names
-        }
-
-    if not resolved_platforms:
-        logger.info("No matching platforms. Skipping draft creation.")
-        if verbose:
-            print("No matching platforms. Skipping draft creation.")
-        return {}
-
-    return dict(resolved_platforms)
-
-
-def _draft_for_resolved_platforms(
-    platforms,
-    config,
-    conn: sqlite3.Connection,
-    db,
-    project,
-    decision_id: str,
-    evaluation,
-    context,
-    commit,
-    project_config=None,
-    dry_run: bool = False,
-    verbose: bool = False,
-    preview_targets: set[str] | None = None,
-    shared_group: bool = False,
-    content_source_context: dict[str, str] | None = None,
-    topic_id: str | None = None,
-    arc_id: str | None = None,
-    cycle_id: str | None = None,
-) -> list[DraftResult]:
-    """Core drafting loop: create drafter client, draft per platform, schedule, insert.
-
-    Called directly by merge execution (bypasses resolution + filter).
-    Called by draft_for_platforms() after resolution + filtering.
-
-    Args:
-        preview_targets: Set of target/platform names that are in preview mode
-            (accountless targets). Drafts for these get preview_mode=True.
-        shared_group: When True and multiple platforms are present, call the
-            drafter once for the most constrained platform and adapt the result
-            for the remaining platforms. Saves LLM calls.
-    """
-    # 3. Create drafter client
     from social_hook.errors import ConfigError
     from social_hook.llm.factory import create_client
+    from social_hook.vehicle import parse_thread_parts, validate_draft_for_vehicle
 
+    if not intent.platforms:
+        logger.info("No platforms in DraftingIntent, skipping draft creation.")
+        return []
+
+    # Create drafter client
     try:
         drafter_client = create_client(config.models.drafter, config, verbose=verbose)
     except ConfigError as e:
-        logger.error(f"Config error creating drafter client: {e}")
+        logger.error("Config error creating drafter client: %s", e)
         if verbose:
             print(f"Config error: {e}")
         return []
@@ -168,555 +112,255 @@ def _draft_for_resolved_platforms(
 
     drafter = Drafter(drafter_client)
 
-    # 4. Media will be generated after first successful draft (drafter produces spec)
-    media_paths, media_type_str, media_spec_dict, media_error = [], None, None, None
-    media_generated = False
-
-    # 4b. Assemble arc context if this is an arc post
+    # Assemble arc context
     arc_context: dict[str, Any] | None = None
-    _arc_id = getattr(evaluation, "arc_id", None)
-    if _arc_id:
+    if intent.arc_id:
         try:
             from social_hook.db import operations as _ops
 
-            arc_obj = _ops.get_arc(conn, _arc_id)
+            arc_obj = _ops.get_arc(conn, intent.arc_id)
             if arc_obj:
                 arc_context = {
                     "arc": arc_obj,
-                    "posts": _ops.get_arc_posts(conn, _arc_id),
+                    "posts": _ops.get_arc_posts(conn, intent.arc_id),
                 }
         except Exception as e:
-            logger.warning(f"Arc context assembly failed (non-fatal): {e}")
+            logger.warning("Arc context assembly failed (non-fatal): %s", e)
 
-    # 4c. Arc safety net: if evaluator set arc_id but not reference_posts,
-    # auto-inject the arc's latest post so the draft gets a structural link
-    _ref_post_ids = getattr(evaluation, "reference_posts", None)
-    if _arc_id and not _ref_post_ids and arc_context:
-        _arc_posts: list = arc_context.get("posts", [])
-        if _arc_posts:
-            _ref_post_ids = [_arc_posts[0].id]
+    # Arc safety net: auto-inject latest arc post if no reference_posts set
+    ref_post_ids = intent.reference_posts
+    if intent.arc_id and not ref_post_ids and arc_context:
+        arc_posts: list = arc_context.get("posts", [])
+        if arc_posts:
+            ref_post_ids = [arc_posts[0].id]
 
-    # 4d. Resolve reference posts for drafter context
+    # Resolve reference posts
     referenced_posts = None
-    if _ref_post_ids:
+    if ref_post_ids:
         from social_hook.db import operations as _ops
 
-        referenced_posts = _ops.get_posts_by_ids(conn, _ref_post_ids)
+        referenced_posts = _ops.get_posts_by_ids(conn, ref_post_ids)
 
-    # 5. Shared group optimisation: one LLM call, adapt for remaining platforms
-    if shared_group and len(platforms) > 1:
-        return _draft_shared_group(
-            platforms=platforms,
+    # Resolve vehicle: validate intent.vehicle against first platform's capabilities.
+    # intent.vehicle is already the merged value (operator choice or evaluator suggestion).
+    # If None, drafter decides. If unsupported by platform, falls back to None (drafter decides).
+    from social_hook.config.platforms import PLATFORM_VEHICLE_SUPPORT
+    from social_hook.vehicle import resolve_vehicle as _resolve_vehicle
+
+    first_spec = intent.platforms[0] if intent.platforms else None
+    first_caps = PLATFORM_VEHICLE_SUPPORT.get(first_spec.platform, []) if first_spec else []
+    resolved_vehicle = _resolve_vehicle(intent.vehicle, None, first_caps)
+
+    # Load project documentation if requested
+    project_docs_text: str | None = None
+    if intent.include_project_docs and project.repo_path:
+        try:
+            from social_hook.file_reader import read_files_within_budget
+            from social_hook.parsing import safe_json_loads
+
+            # Determine token budget: 40K for articles, 10K default
+            doc_budget = 40_000 if resolved_vehicle == "article" else 10_000
+
+            # Gather doc paths: discovery files + prompt_docs
+            doc_paths: list[str] = []
+            if project.discovery_files:
+                doc_paths.extend(
+                    safe_json_loads(project.discovery_files, "project.discovery_files", default=[])
+                )
+            if project.prompt_docs:
+                doc_paths.extend(
+                    safe_json_loads(project.prompt_docs, "project.prompt_docs", default=[])
+                )
+            if doc_paths:
+                text, _tokens = read_files_within_budget(
+                    doc_paths,
+                    project.repo_path,
+                    max_tokens=doc_budget,
+                )
+                if text:
+                    project_docs_text = text
+        except Exception as e:
+            logger.warning("Project docs loading failed (non-fatal): %s", e)
+
+    # Media generation: done once after first successful draft
+    media_paths: list[str] = []
+    media_type_str: str | None = None
+    media_spec_dict: dict | None = None
+    media_error: str | None = None
+    media_generated = False
+
+    # Shared-group: multi-variant LLM call
+    if len(intent.platforms) > 1:
+        return _draft_shared(
+            intent=intent,
             drafter=drafter,
             config=config,
             conn=conn,
             db=db,
             project=project,
-            decision_id=decision_id,
-            evaluation=evaluation,
             context=context,
             commit=commit,
             project_config=project_config,
             dry_run=dry_run,
             verbose=verbose,
-            preview_targets=preview_targets,
             arc_context=arc_context,
             referenced_posts=referenced_posts,
-            content_source_context=content_source_context,
-            topic_id=topic_id,
-            arc_id=arc_id,
-            cycle_id=cycle_id,
+            resolved_vehicle=resolved_vehicle,
+            project_docs_text=project_docs_text,
         )
 
-    # 5b. Draft for each target platform (default: one LLM call per platform)
-    results = []
-    for pname, rpcfg in platforms.items():
-        # Per-platform introduction check
-        platform_is_introduced = context.platform_introduced.get(pname, False)
+    # Single platform path
+    results: list[DraftResult] = []
+    pspec = intent.platforms[0]
+    pname = pspec.platform
+    rpcfg = pspec.resolved
 
-        # Resolve identity for this platform
-        from social_hook.config.yaml import resolve_identity
-        from social_hook.db import operations as _id_ops
+    platform_is_introduced = context.platform_introduced.get(pname, False)
 
-        resolved_identity = resolve_identity(config, pname)
-        target_post_count = len([p for p in context.recent_posts if p.platform == pname])
-        is_first_post = not platform_is_introduced
-        first_post_date = _id_ops.get_first_post_date(conn, project.id, pname)
+    from social_hook.config.yaml import resolve_identity
+    from social_hook.db import operations as _id_ops
 
-        try:
-            draft_result = drafter.create_draft(
-                evaluation,
-                context,
-                commit,
-                db,
-                platform=pname,
-                platform_config=rpcfg,
-                arc_context=arc_context,
-                config=project_config.context if project_config else None,
-                media_config=config.media_generation,
-                media_guidance=project_config.media_guidance if project_config else None,
-                referenced_posts=referenced_posts,
-                platform_introduced=platform_is_introduced,
-                identity=resolved_identity,
-                target_post_count=target_post_count,
-                is_first_post=is_first_post,
-                first_post_date=first_post_date,
-                content_source_context=content_source_context,
+    resolved_identity = resolve_identity(config, pname)
+    target_post_count = len([p for p in context.recent_posts if p.platform == pname])
+    is_first_post = not platform_is_introduced
+    first_post_date = _id_ops.get_first_post_date(conn, project.id, pname)
+
+    try:
+        draft_result = drafter.create_draft(
+            intent,  # used as evaluation — getattr reads angle, arc_id, etc.
+            context,
+            commit,
+            db,
+            platform=pname,
+            vehicle=resolved_vehicle,
+            platform_config=rpcfg,
+            arc_context=arc_context,
+            config=project_config.context if project_config else None,
+            media_config=config.media_generation,
+            media_guidance=project_config.media_guidance if project_config else None,
+            referenced_posts=referenced_posts,
+            platform_introduced=platform_is_introduced,
+            identity=resolved_identity,
+            target_post_count=target_post_count,
+            is_first_post=is_first_post,
+            first_post_date=first_post_date,
+            content_source_context=intent.content_source_context,
+            project_docs_text=project_docs_text,
+        )
+
+        # Override platform
+        draft_result.platform = pname
+
+        # Generate media once
+        if not media_generated:
+            media_paths, media_type_str, media_spec_dict, media_error = _extract_and_generate_media(
+                draft_result, config, dry_run, verbose, project_config
             )
+            media_generated = True
 
-            # Override platform: LLM may return any string for unconstrained field
-            draft_result.platform = pname
+        # Determine vehicle from LLM response if not pre-resolved
+        vehicle = resolved_vehicle or getattr(draft_result, "vehicle", None) or "single"
 
-            # Generate media once after first successful draft
-            if not media_generated:
-                _mt = getattr(draft_result, "media_type", None)
-                if _mt is not None and hasattr(_mt, "value"):
-                    _mt = _mt.value
-                _ms = getattr(draft_result, "media_spec", None)
-                if _mt and _mt != "none":
-                    if not _ms:
-                        logger.warning(
-                            "Drafter selected media_type=%s but media_spec is empty — skipping media generation",
-                            _mt,
-                        )
-                        _mt = None
-                    else:
-                        media_paths, media_type_str, media_spec_dict, media_error = _generate_media(
-                            config,
-                            _mt,
-                            _ms,
-                            dry_run=dry_run,
-                            verbose=verbose,
-                            project_config=project_config,
-                        )
-                media_generated = True
-
-            use_thread = _needs_thread(
-                draft_result,
+        # Vehicle validation
+        tier = rpcfg.account_tier or "free"
+        char_limit = TIER_CHAR_LIMITS.get(tier, 25000)
+        validation = validate_draft_for_vehicle(
+            draft_result.content,
+            vehicle,
+            pname,
+            char_limit,
+            thread_min=config.scheduling.thread_min_tweets,
+        )
+        if not validation.valid and validation.suggested_vehicle:
+            logger.info(
+                "Vehicle '%s' invalid for %s: %s. Retrying with '%s'",
+                vehicle,
                 pname,
-                rpcfg.account_tier or "free",
+                validation.violation,
+                validation.suggested_vehicle,
+            )
+            vehicle = validation.suggested_vehicle
+
+        # Parse thread parts if vehicle is thread
+        thread_parts: list[str] = []
+        if vehicle == "thread":
+            thread_parts = parse_thread_parts(
+                draft_result.content,
+                pname,
                 thread_min=config.scheduling.thread_min_tweets,
             )
-            thread_tweets = []
-            if use_thread:
-                thread_result = drafter.create_thread(
-                    evaluation,
-                    context,
-                    commit,
-                    db,
-                    platform=pname,
-                    media_config=config.media_generation,
-                    media_guidance=project_config.media_guidance if project_config else None,
-                    identity=resolved_identity,
-                    target_post_count=target_post_count,
-                    is_first_post=is_first_post,
-                    first_post_date=first_post_date,
-                )
-                thread_tweets = _parse_thread_tweets(
-                    thread_result.content,
-                    thread_min=config.scheduling.thread_min_tweets,
-                )
-                draft_content = thread_result.content
-                draft_reasoning = thread_result.reasoning
-            else:
-                draft_content = draft_result.content
-                draft_reasoning = draft_result.reasoning
 
-            # Per-platform scheduling
-            schedule = calculate_optimal_time(
-                conn,
-                project.id,
-                platform=pname,
-                tz=config.scheduling.timezone,
-                max_posts_per_day=rpcfg.max_posts_per_day,
-                min_gap_minutes=rpcfg.min_gap_minutes,
-                optimal_days=rpcfg.optimal_days,
-                optimal_hours=rpcfg.optimal_hours,
-                max_per_week=config.scheduling.max_per_week,
-            )
+        result = _finalize_draft(
+            intent=intent,
+            platform_spec=pspec,
+            draft_content=draft_result.content,
+            draft_reasoning=draft_result.reasoning,
+            vehicle=vehicle,
+            thread_parts=thread_parts,
+            config=config,
+            conn=conn,
+            db=db,
+            project=project,
+            context=context,
+            media_paths=media_paths,
+            media_type_str=media_type_str,
+            media_spec_dict=media_spec_dict,
+            media_error=media_error,
+            referenced_posts=referenced_posts,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+        if result:
+            results.append(result)
 
-            is_deferred = schedule.deferred
-            if is_deferred and verbose:
-                print(f"Platform {pname}: deferred ({schedule.day_reason})")
-
-            draft = Draft(
-                id=generate_id("draft"),
-                project_id=project.id,
-                decision_id=decision_id,
-                platform=pname,
-                content=draft_content,
-                media_paths=media_paths,
-                media_type=media_type_str,
-                media_spec=media_spec_dict,
-                media_spec_used=media_spec_dict if media_paths else None,
-                status="deferred" if is_deferred else "draft",
-                suggested_time=None if is_deferred else schedule.datetime,
-                reasoning=draft_reasoning,
-                last_error=f"Media generation failed: {media_error}"
-                if media_error and not media_paths
-                else None,
-                preview_mode=bool(preview_targets and pname in preview_targets),
-                topic_id=topic_id,
-                arc_id=arc_id,
-                evaluation_cycle_id=cycle_id,
-            )
-
-            # Set reference post info from evaluator (prefer same-platform for native quote)
-            if referenced_posts:
-                same_platform = [
-                    p for p in referenced_posts if p.platform == pname and p.external_id
-                ]
-                any_published = [p for p in referenced_posts if p.external_id]
-                ref_post = (
-                    same_platform[0]
-                    if same_platform
-                    else (any_published[0] if any_published else None)
-                )
-                if ref_post:
-                    draft.reference_post_id = ref_post.id
-                    if ref_post.platform == pname:
-                        draft.post_format = "quote"
-
-            # Mark as intro if platform not yet introduced
-            if not platform_is_introduced and not dry_run:
-                draft.is_intro = True
-
-            db.insert_draft(draft)
-
-            # After draft insertion, mark platform as introduced
-            if not platform_is_introduced and not dry_run:
-                from social_hook.db import operations as _intro_ops
-
-                _intro_ops.set_platform_introduced(conn, project.id, pname, True)
-                context.platform_introduced[pname] = True
-                db.emit_data_event("project", "updated", project.id, project.id)
-
-            db.emit_data_event(
-                "draft",
-                "created",
-                draft.id,
-                project.id,
-                extra={"content": draft.content[:500], "platform": pname},
-            )
-
-            if thread_tweets:
-                for pos, tc in enumerate(thread_tweets):
-                    db.insert_draft_tweet(
-                        DraftTweet(
-                            id=generate_id("tweet"),
-                            draft_id=draft.id,
-                            position=pos,
-                            content=tc,
-                        )
-                    )
-
-            if is_deferred:
-                from social_hook.notifications import send_notification
-
-                send_notification(
-                    config,
-                    f"*Draft deferred*\n\nPlatform: {pname}\nReason: {schedule.day_reason}\n\n```\n{draft.content[:300]}\n```",
-                    dry_run=dry_run,
-                )
-                continue
-
-            # Extract metadata from evaluation for notification pass-through
-            _post_cat = getattr(evaluation, "post_category", None)
-            if _post_cat is not None and hasattr(_post_cat, "value"):
-                _post_cat = _post_cat.value
-            _angle = getattr(evaluation, "angle", None)
-            _ep_tags = getattr(evaluation, "episode_tags", None)
-
-            results.append(
-                DraftResult(
-                    draft=draft,
-                    schedule=schedule,
-                    thread_tweets=thread_tweets,
-                    post_category=_post_cat,
-                    angle=_angle,
-                    episode_tags=_ep_tags,
-                )
-            )
-
-            if verbose:
-                print(f"Draft created for {pname}: {draft.id}")
-                if thread_tweets:
-                    print(f"  Format: thread ({len(thread_tweets)} tweets)")
-                print(f"  Content: {draft_content[:100]}...")
-                print(f"  Suggested time: {schedule.datetime} ({schedule.time_reason})")
-
-        except Exception as e:
-            logger.error(f"LLM API error during drafting for {pname}: {e}")
-            if verbose:
-                print(f"LLM API error during drafting for {pname}: {e}")
-            # Continue with other platforms
+    except Exception as e:
+        logger.error("LLM API error during drafting for %s: %s", pname, e)
+        if verbose:
+            print(f"LLM API error during drafting for {pname}: {e}")
 
     return results
 
 
-def draft_for_targets(
-    target_actions: list,  # list[RoutedTarget] — imported lazily
-    config,
+def _draft_shared(
+    intent: DraftingIntent,
+    drafter: Any,
+    config: Any,
     conn: sqlite3.Connection,
-    db,
-    project,
-    decision_id: str,
-    evaluation,
-    context,
-    commit,
-    content_source_registry=None,
-    project_config=None,
-    dry_run: bool = False,
-    verbose: bool = False,
-    cycle_id: str | None = None,
+    db: Any,
+    project: Any,
+    context: Any,
+    commit: Any,
+    project_config: Any,
+    dry_run: bool,
+    verbose: bool,
+    arc_context: dict | None,
+    referenced_posts: list | None,
+    resolved_vehicle: str | None,
+    project_docs_text: str | None = None,
 ) -> list[DraftResult]:
-    """Draft for resolved target actions.
-
-    Replaces draft_for_platforms() when targets config exists.
-    Groups targets by draft_group for draft sharing.
-    Assembles per-target context via ContentSource registry.
-    """
-    from social_hook.content_sources import content_sources as default_registry
-
-    registry = content_source_registry or default_registry
-
-    # Only process targets with "draft" action
-    draft_actions = [ta for ta in target_actions if ta.action == "draft"]
-    if not draft_actions:
-        if verbose:
-            print("No targets with 'draft' action.")
-        return []
-
-    # Group by draft_group for draft sharing
-    groups: dict[str, list] = {}
-    ungrouped: list = []
-    for ta in draft_actions:
-        if ta.draft_group:
-            groups.setdefault(ta.draft_group, []).append(ta)
-        else:
-            ungrouped.append(ta)
-
-    # Resolve content sources for each strategy decision
-    resolved_context: dict[str, dict[str, str]] = {}
-    for ta in draft_actions:
-        strategy_name = ta.target_config.strategy
-        if strategy_name in resolved_context:
-            continue
-        # Get context source spec from the strategy decision
-        spec = getattr(ta.strategy_decision, "context_source", None)
-        topic_id = getattr(ta.strategy_decision, "topic_id", None)
-        if topic_id:
-            if spec is None:
-                from social_hook.llm.schemas import ContextSourceSpec
-
-                spec = ContextSourceSpec(types=["topic"], topic_id=topic_id)
-            else:
-                if "topic" not in spec.types:
-                    spec.types.append("topic")
-                spec.topic_id = topic_id  # always sync to match top-level topic_id
-        if spec and hasattr(spec, "types") and spec.types:
-            kwargs: dict[str, Any] = {
-                "conn": conn,
-                "project_id": project.id,
-            }
-            if hasattr(spec, "topic_id") and spec.topic_id:
-                kwargs["topic_id"] = spec.topic_id
-            if hasattr(spec, "suggestion_id") and spec.suggestion_id:
-                kwargs["suggestion_id"] = spec.suggestion_id
-            resolved_context[strategy_name] = registry.resolve(source_types=spec.types, **kwargs)
-        else:
-            resolved_context[strategy_name] = {}
-
-    all_results: list[DraftResult] = []
-
-    # Collect targets that can't be posted — preview_mode=True on their drafts
-    # Preview if: no account configured, OR account has no OAuth credentials
-    _accounts_with_creds: set[str] = set()
-    cred_rows = conn.execute("SELECT account_name FROM oauth_tokens").fetchall()
-    for r in cred_rows:
-        _accounts_with_creds.add(r[0])
-
-    _preview_targets: set[str] = set()
-    for ta in draft_actions:
-        if not ta.target_config.account or ta.target_config.account not in _accounts_with_creds:
-            _preview_targets.add(ta.target_name)
-
-    def _resolve_target_platform(ta):
-        """Resolve a ResolvedPlatformConfig for a target action."""
-        account = ta.account_config
-        platform_name = account.platform
-        pcfg = config.platforms.get(platform_name)
-        if pcfg:
-            return resolve_platform(platform_name, pcfg, config.scheduling)
-        from social_hook.config.platforms import OutputPlatformConfig
-
-        raw = OutputPlatformConfig(
-            enabled=True,
-            priority="primary" if ta.target_config.primary else "secondary",
-            type="builtin" if platform_name in ("x", "linkedin") else "custom",
-            account_tier=account.tier,
-        )
-        return resolve_platform(platform_name, raw, config.scheduling)
-
-    def _draft_batch(
-        platforms_map,
-        shared_group: bool = False,
-        content_source_context: dict[str, str] | None = None,
-        topic_id: str | None = None,
-        arc_id: str | None = None,
-    ):
-        """Run _draft_for_resolved_platforms with shared kwargs."""
-        return _draft_for_resolved_platforms(
-            platforms_map,
-            config,
-            conn,
-            db,
-            project,
-            decision_id=decision_id,
-            evaluation=evaluation,
-            context=context,
-            commit=commit,
-            project_config=project_config,
-            dry_run=dry_run,
-            verbose=verbose,
-            preview_targets=_preview_targets,
-            shared_group=shared_group,
-            content_source_context=content_source_context,
-            topic_id=topic_id,
-            arc_id=arc_id,
-            cycle_id=cycle_id,
-        )
-
-    # Process grouped targets (shared draft per group — single LLM call)
-    for _group_name, group_targets in groups.items():
-        platforms_for_group = {ta.target_name: _resolve_target_platform(ta) for ta in group_targets}
-        content_ctx = resolved_context.get(group_targets[0].target_config.strategy, {})
-        all_results.extend(
-            _draft_batch(
-                platforms_for_group,
-                shared_group=True,
-                content_source_context=content_ctx or None,
-                topic_id=getattr(group_targets[0].strategy_decision, "topic_id", None),
-                arc_id=getattr(group_targets[0].strategy_decision, "arc_id", None),
-            )
-        )
-
-    # Process ungrouped targets individually
-    for ta in ungrouped:
-        content_ctx = resolved_context.get(ta.target_config.strategy, {})
-        all_results.extend(
-            _draft_batch(
-                {ta.target_name: _resolve_target_platform(ta)},
-                content_source_context=content_ctx or None,
-                topic_id=getattr(ta.strategy_decision, "topic_id", None),
-                arc_id=getattr(ta.strategy_decision, "arc_id", None),
-            )
-        )
-
-    return all_results
-
-
-def _pick_lead_platform(platforms: dict) -> tuple[str, Any]:
-    """Pick the most constrained platform (lowest max_length) as the lead.
-
-    When max_length is None, treat as unconstrained (infinity).
-    This ensures adaptation only expands (safe), never truncates (lossy).
-    """
-    lead_name = None
-    lead_rpcfg = None
-    lead_limit = float("inf")
-    for pname, rpcfg in platforms.items():
-        limit = rpcfg.max_length if rpcfg.max_length is not None else float("inf")
-        if rpcfg.account_tier:
-            tier_limit = TIER_CHAR_LIMITS.get(rpcfg.account_tier, float("inf"))
-            limit = min(limit, tier_limit)
-        if limit < lead_limit:
-            lead_limit = limit
-            lead_name = pname
-            lead_rpcfg = rpcfg
-    if lead_name is None:
-        lead_name = next(iter(platforms))
-        lead_rpcfg = platforms[lead_name]
-    return lead_name, lead_rpcfg
-
-
-def _unthread_content(thread_content: str) -> str:
-    """Reverse thread formatting: join tweets into a single post."""
-    stripped = re.sub(r"(?:^|\n+)\d+/\s*", "\n\n", thread_content)
-    paragraphs = [p.strip() for p in stripped.split("\n\n") if p.strip()]
-    return "\n\n".join(paragraphs)
-
-
-def _adapt_content_for_platform(
-    content: str,
-    was_threaded: bool,
-    target_platform: str,
-    max_length: int | None,
-) -> str:
-    """Adapt lead draft content for a different platform."""
-    adapted = content
-    if was_threaded and target_platform != "x":
-        adapted = _unthread_content(content)
-
-    if max_length and len(adapted) > max_length:
-        logger.warning(
-            "Adapted content for %s exceeds max_length (%d > %d), truncating",
-            target_platform,
-            len(adapted),
-            max_length,
-        )
-        adapted = adapted[:max_length]
-
-    return adapted
-
-
-def _draft_shared_group(
-    platforms,
-    drafter,
-    config,
-    conn: sqlite3.Connection,
-    db,
-    project,
-    decision_id: str,
-    evaluation,
-    context,
-    commit,
-    project_config=None,
-    dry_run: bool = False,
-    verbose: bool = False,
-    preview_targets: set[str] | None = None,
-    arc_context=None,
-    referenced_posts=None,
-    content_source_context: dict[str, str] | None = None,
-    topic_id: str | None = None,
-    arc_id: str | None = None,
-    cycle_id: str | None = None,
-) -> list[DraftResult]:
-    """Single LLM call produces per-platform variants for a shared strategy group.
-
-    Each platform gets its own Draft row, scheduling, and preview_mode.
-    The LLM receives all platform constraints and produces optimized variants.
-    """
+    """Multi-platform shared group: single LLM call with variants."""
     from social_hook.config.yaml import resolve_identity
     from social_hook.db import operations as _id_ops
+    from social_hook.vehicle import parse_thread_parts, validate_draft_for_vehicle
 
     if verbose:
-        print(f"Shared group: {len(platforms)} platforms, single multi-variant LLM call")
+        print(f"Shared group: {len(intent.platforms)} platforms, single multi-variant LLM call")
 
     # Build platform_configs list (deduplicated by platform name)
     platform_configs: list[tuple[str, Any]] = []
     seen_platforms: set[str] = set()
     first_pname = None
     first_rpcfg = None
-    for pname, rpcfg in platforms.items():
-        real_name = rpcfg.name  # platform name like "x", not target name like "lead-timeline"
+    for pspec in intent.platforms:
+        real_name = pspec.resolved.name
         if real_name not in seen_platforms:
             seen_platforms.add(real_name)
-            platform_configs.append((real_name, rpcfg))
+            platform_configs.append((real_name, pspec.resolved))
             if first_pname is None:
-                first_pname, first_rpcfg = pname, rpcfg
+                first_pname = pspec.platform
+                first_rpcfg = pspec.resolved
 
-    # Resolve per-platform identity + intro state
+    # Per-platform intro state
     platform_intro_states: dict[str, dict] = {}
     for real_name, _rpcfg in platform_configs:
         is_introduced = context.platform_introduced.get(real_name, False)
@@ -726,21 +370,20 @@ def _draft_shared_group(
             "post_count": post_count,
         }
 
-    # Use first platform for system prompt identity/intro context
     first_real = first_rpcfg.name if first_rpcfg else "x"
     first_identity = resolve_identity(config, first_real)
     first_is_introduced = context.platform_introduced.get(first_real, False)
     first_post_count = len([p for p in context.recent_posts if p.platform == first_real])
     first_first_date = _id_ops.get_first_post_date(conn, project.id, first_real)
 
-    # Single LLM call with all platform constraints
     try:
         draft_result = drafter.create_draft(
-            evaluation,
+            intent,
             context,
             commit,
             db,
             platform=first_real,
+            vehicle=resolved_vehicle,
             platform_configs=platform_configs,
             arc_context=arc_context,
             config=project_config.context if project_config else None,
@@ -752,30 +395,267 @@ def _draft_shared_group(
             target_post_count=first_post_count,
             is_first_post=not first_is_introduced,
             first_post_date=first_first_date,
-            content_source_context=content_source_context,
+            content_source_context=intent.content_source_context,
             platform_intro_states=platform_intro_states,
+            project_docs_text=project_docs_text,
         )
     except Exception as e:
-        logger.error(f"LLM API error during shared-group drafting: {e}")
+        logger.error("LLM API error during shared-group drafting: %s", e)
         if verbose:
             print(f"LLM API error during shared-group drafting: {e}")
         return []
 
-    # Build variant lookup by platform name
+    # Build variant lookup
     variant_by_platform: dict[str, Any] = {}
     if draft_result.variants:
         for v in draft_result.variants:
             variant_by_platform[v.platform] = v
     if not variant_by_platform:
-        # Fallback: no variants returned — use flat content for all platforms
         logger.warning(
             "Drafter returned no variants for shared group — using flat content for all platforms"
         )
 
-    draft_reasoning = draft_result.reasoning
+    # Generate media once
+    media_paths, media_type_str, media_spec_dict, media_error = _extract_and_generate_media(
+        draft_result, config, dry_run, verbose, project_config
+    )
 
-    # Generate media once from the draft result
-    media_paths, media_type_str, media_spec_dict, media_error = [], None, None, None
+    results: list[DraftResult] = []
+
+    for pspec in intent.platforms:
+        pname = pspec.platform
+        rpcfg = pspec.resolved
+        try:
+            real_name = rpcfg.name
+
+            # Get variant content
+            variant = variant_by_platform.get(real_name)
+            if variant:
+                draft_content = variant.content
+                variant_vehicle = variant.vehicle
+            else:
+                draft_content = draft_result.content
+                variant_vehicle = draft_result.vehicle
+
+            # Determine vehicle
+            vehicle = resolved_vehicle or variant_vehicle or "single"
+
+            # Vehicle validation
+            tier = rpcfg.account_tier or "free"
+            char_limit = TIER_CHAR_LIMITS.get(tier, 25000)
+            validation = validate_draft_for_vehicle(
+                draft_content,
+                vehicle,
+                real_name,
+                char_limit,
+                thread_min=config.scheduling.thread_min_tweets,
+            )
+            if not validation.valid and validation.suggested_vehicle:
+                vehicle = validation.suggested_vehicle
+
+            # Parse thread parts
+            thread_parts: list[str] = []
+            if vehicle == "thread":
+                thread_parts = parse_thread_parts(
+                    draft_content,
+                    real_name,
+                    thread_min=config.scheduling.thread_min_tweets,
+                )
+
+            if verbose:
+                print(f"  {pname} ({real_name}): variant {'found' if variant else 'fallback'}")
+
+            result = _finalize_draft(
+                intent=intent,
+                platform_spec=pspec,
+                draft_content=draft_content,
+                draft_reasoning=draft_result.reasoning,
+                vehicle=vehicle,
+                thread_parts=thread_parts,
+                config=config,
+                conn=conn,
+                db=db,
+                project=project,
+                context=context,
+                media_paths=media_paths,
+                media_type_str=media_type_str,
+                media_spec_dict=media_spec_dict,
+                media_error=media_error,
+                referenced_posts=referenced_posts,
+                dry_run=dry_run,
+                verbose=verbose,
+            )
+            if result:
+                results.append(result)
+
+        except Exception as e:
+            logger.error("Error creating draft for %s in shared group: %s", pname, e)
+            if verbose:
+                print(f"Error creating draft for {pname} in shared group: {e}")
+
+    return results
+
+
+def _finalize_draft(
+    intent: DraftingIntent,
+    platform_spec: PlatformSpec,
+    draft_content: str,
+    draft_reasoning: str,
+    vehicle: str,
+    thread_parts: list[str],
+    config: Any,
+    conn: sqlite3.Connection,
+    db: Any,
+    project: Any,
+    context: Any,
+    media_paths: list[str],
+    media_type_str: str | None,
+    media_spec_dict: dict | None,
+    media_error: str | None,
+    referenced_posts: list | None,
+    dry_run: bool,
+    verbose: bool,
+) -> DraftResult | None:
+    """ONE place for post-draft logic: scheduling, Draft construction,
+    reference resolution, intro marking, DB insertion,
+    materialize_vehicle_artifacts(), event emission, deferred notification.
+    Called once per platform in the drafting loop."""
+    pname = platform_spec.platform
+    rpcfg = platform_spec.resolved
+    platform_is_introduced = context.platform_introduced.get(pname, False)
+
+    # Per-platform scheduling
+    schedule = calculate_optimal_time(
+        conn,
+        project.id,
+        platform=pname,
+        tz=config.scheduling.timezone,
+        max_posts_per_day=rpcfg.max_posts_per_day,
+        min_gap_minutes=rpcfg.min_gap_minutes,
+        optimal_days=rpcfg.optimal_days,
+        optimal_hours=rpcfg.optimal_hours,
+        max_per_week=config.scheduling.max_per_week,
+    )
+
+    is_deferred = schedule.deferred
+    if is_deferred and verbose:
+        print(f"Platform {pname}: deferred ({schedule.day_reason})")
+
+    draft_obj = Draft(
+        id=generate_id("draft"),
+        project_id=project.id,
+        decision_id=intent.decision_id,
+        platform=pname,
+        vehicle=vehicle,
+        content=draft_content,
+        media_paths=media_paths,
+        media_type=media_type_str,
+        media_spec=media_spec_dict,
+        media_spec_used=media_spec_dict if media_paths else None,
+        status="deferred" if is_deferred else "draft",
+        suggested_time=None if is_deferred else schedule.datetime,
+        reasoning=draft_reasoning,
+        last_error=f"Media generation failed: {media_error}"
+        if media_error and not media_paths
+        else None,
+        preview_mode=platform_spec.preview_mode,
+        topic_id=intent.topic_id,
+        arc_id=intent.arc_id,
+        evaluation_cycle_id=intent.cycle_id,
+    )
+
+    # Set target_id from platform spec
+    if platform_spec.target_id:
+        draft_obj.target_id = platform_spec.target_id
+
+    # Set reference post info from evaluator
+    if referenced_posts:
+        same_platform = [p for p in referenced_posts if p.platform == pname and p.external_id]
+        any_published = [p for p in referenced_posts if p.external_id]
+        ref_post = (
+            same_platform[0] if same_platform else (any_published[0] if any_published else None)
+        )
+        if ref_post:
+            draft_obj.reference_post_id = ref_post.id
+            if ref_post.platform == pname:
+                draft_obj.reference_type = "quote"
+
+    # Mark as intro if platform not yet introduced
+    if not platform_is_introduced and not dry_run:
+        draft_obj.is_intro = True
+
+    db.insert_draft(draft_obj)
+
+    # After draft insertion, mark platform as introduced
+    if not platform_is_introduced and not dry_run:
+        from social_hook.db import operations as _intro_ops
+
+        _intro_ops.set_platform_introduced(conn, project.id, pname, True)
+        context.platform_introduced[pname] = True
+        db.emit_data_event("project", "updated", project.id, project.id)
+
+    db.emit_data_event(
+        "draft",
+        "created",
+        draft_obj.id,
+        project.id,
+        extra={"content": draft_obj.content[:500], "platform": pname},
+    )
+
+    # Materialize thread parts in DB
+    if thread_parts:
+        for pos, tc in enumerate(thread_parts):
+            db.insert_draft_part(
+                DraftPart(
+                    id=generate_id("part"),
+                    draft_id=draft_obj.id,
+                    position=pos,
+                    content=tc,
+                )
+            )
+
+    if is_deferred:
+        from social_hook.notifications import send_notification
+
+        send_notification(
+            config,
+            f"*Draft deferred*\n\nPlatform: {pname}\nReason: {schedule.day_reason}\n\n```\n{draft_obj.content[:300]}\n```",
+            dry_run=dry_run,
+        )
+        return None
+
+    # Extract metadata from intent
+    _post_cat = intent.post_category
+    _angle = intent.angle
+    _ep_tags = intent.episode_tags
+
+    result = DraftResult(
+        draft=draft_obj,
+        schedule=schedule,
+        thread_parts=thread_parts,
+        post_category=_post_cat,
+        angle=_angle,
+        episode_tags=_ep_tags,
+    )
+
+    if verbose:
+        print(f"Draft created for {pname}: {draft_obj.id}")
+        if thread_parts:
+            print(f"  Format: thread ({len(thread_parts)} parts)")
+        print(f"  Content: {draft_content[:100]}...")
+        print(f"  Suggested time: {schedule.datetime} ({schedule.time_reason})")
+
+    return result
+
+
+def _extract_and_generate_media(
+    draft_result: Any,
+    config: Any,
+    dry_run: bool,
+    verbose: bool,
+    project_config: Any,
+) -> tuple[list[str], str | None, dict | None, str | None]:
+    """Extract media spec from draft result and generate."""
     _mt = getattr(draft_result, "media_type", None)
     if _mt is not None and hasattr(_mt, "value"):
         _mt = _mt.value
@@ -786,207 +666,11 @@ def _draft_shared_group(
                 "Drafter selected media_type=%s but media_spec is empty — skipping media generation",
                 _mt,
             )
-            _mt = None
-        else:
-            media_paths, media_type_str, media_spec_dict, media_error = _generate_media(
-                config,
-                _mt,
-                _ms,
-                dry_run=dry_run,
-                verbose=verbose,
-                project_config=project_config,
-            )
-
-    # Create a Draft + DraftResult for each platform using variant content
-    results: list[DraftResult] = []
-
-    for pname, rpcfg in platforms.items():
-        try:
-            platform_is_introduced = context.platform_introduced.get(pname, False)
-            real_name = rpcfg.name
-
-            # Get variant content for this platform (fallback to flat content)
-            variant = variant_by_platform.get(real_name)
-            if variant:
-                draft_content = variant.content
-                variant_format_hint = variant.format_hint
-                variant_beat_count = variant.beat_count
-            else:
-                draft_content = draft_result.content
-                variant_format_hint = draft_result.format_hint
-                variant_beat_count = draft_result.beat_count
-
-            # Per-platform thread validation
-            from types import SimpleNamespace
-
-            variant_obj = SimpleNamespace(
-                content=draft_content,
-                format_hint=variant_format_hint,
-                beat_count=variant_beat_count,
-            )
-            was_threaded = _needs_thread(
-                variant_obj,
-                real_name,
-                rpcfg.account_tier or "free",
-                thread_min=config.scheduling.thread_min_tweets,
-            )
-            thread_tweets: list[str] = []
-            if was_threaded:
-                # Thread validation triggered — need a separate create_thread call
-                p_identity = resolve_identity(config, real_name)
-                p_intro = platform_intro_states.get(real_name, {})
-                p_first_date = _id_ops.get_first_post_date(conn, project.id, real_name)
-                thread_result = drafter.create_thread(
-                    evaluation,
-                    context,
-                    commit,
-                    db,
-                    platform=real_name,
-                    media_config=config.media_generation,
-                    media_guidance=project_config.media_guidance if project_config else None,
-                    identity=p_identity,
-                    target_post_count=p_intro.get("post_count", 0),
-                    is_first_post=p_intro.get("is_first", False),
-                    first_post_date=p_first_date,
-                )
-                thread_tweets = _parse_thread_tweets(
-                    thread_result.content,
-                    thread_min=config.scheduling.thread_min_tweets,
-                )
-                draft_content = thread_result.content
-
-            if verbose:
-                print(f"  {pname} ({real_name}): variant {'found' if variant else 'fallback'}")
-
-            # Per-platform scheduling
-            schedule = calculate_optimal_time(
-                conn,
-                project.id,
-                platform=pname,
-                tz=config.scheduling.timezone,
-                max_posts_per_day=rpcfg.max_posts_per_day,
-                min_gap_minutes=rpcfg.min_gap_minutes,
-                optimal_days=rpcfg.optimal_days,
-                optimal_hours=rpcfg.optimal_hours,
-                max_per_week=config.scheduling.max_per_week,
-            )
-
-            is_deferred = schedule.deferred
-            if is_deferred and verbose:
-                print(f"Platform {pname}: deferred ({schedule.day_reason})")
-
-            draft = Draft(
-                id=generate_id("draft"),
-                project_id=project.id,
-                decision_id=decision_id,
-                platform=pname,
-                content=draft_content,
-                media_paths=media_paths,
-                media_type=media_type_str,
-                media_spec=media_spec_dict,
-                media_spec_used=media_spec_dict if media_paths else None,
-                status="deferred" if is_deferred else "draft",
-                suggested_time=None if is_deferred else schedule.datetime,
-                reasoning=draft_reasoning,
-                last_error=f"Media generation failed: {media_error}"
-                if media_error and not media_paths
-                else None,
-                preview_mode=bool(preview_targets and pname in preview_targets),
-                topic_id=topic_id,
-                arc_id=arc_id,
-                evaluation_cycle_id=cycle_id,
-            )
-
-            # Set reference post info from evaluator
-            if referenced_posts:
-                same_platform = [
-                    p for p in referenced_posts if p.platform == pname and p.external_id
-                ]
-                any_published = [p for p in referenced_posts if p.external_id]
-                ref_post = (
-                    same_platform[0]
-                    if same_platform
-                    else (any_published[0] if any_published else None)
-                )
-                if ref_post:
-                    draft.reference_post_id = ref_post.id
-                    if ref_post.platform == pname:
-                        draft.post_format = "quote"
-
-            # Mark as intro if platform not yet introduced
-            if not platform_is_introduced and not dry_run:
-                draft.is_intro = True
-
-            db.insert_draft(draft)
-
-            # After draft insertion, mark platform as introduced
-            if not platform_is_introduced and not dry_run:
-                from social_hook.db import operations as _intro_ops
-
-                _intro_ops.set_platform_introduced(conn, project.id, pname, True)
-                context.platform_introduced[pname] = True
-                db.emit_data_event("project", "updated", project.id, project.id)
-
-            db.emit_data_event(
-                "draft",
-                "created",
-                draft.id,
-                project.id,
-                extra={"content": draft.content[:500], "platform": pname},
-            )
-
-            if thread_tweets:
-                for pos, tc in enumerate(thread_tweets):
-                    db.insert_draft_tweet(
-                        DraftTweet(
-                            id=generate_id("tweet"),
-                            draft_id=draft.id,
-                            position=pos,
-                            content=tc,
-                        )
-                    )
-
-            if is_deferred:
-                from social_hook.notifications import send_notification
-
-                send_notification(
-                    config,
-                    f"*Draft deferred*\n\nPlatform: {pname}\nReason: {schedule.day_reason}\n\n```\n{draft.content[:300]}\n```",
-                    dry_run=dry_run,
-                )
-                continue
-
-            # Extract metadata from evaluation for notification pass-through
-            _post_cat = getattr(evaluation, "post_category", None)
-            if _post_cat is not None and hasattr(_post_cat, "value"):
-                _post_cat = _post_cat.value
-            _angle = getattr(evaluation, "angle", None)
-            _ep_tags = getattr(evaluation, "episode_tags", None)
-
-            results.append(
-                DraftResult(
-                    draft=draft,
-                    schedule=schedule,
-                    thread_tweets=thread_tweets,
-                    post_category=_post_cat,
-                    angle=_angle,
-                    episode_tags=_ep_tags,
-                )
-            )
-
-            if verbose:
-                print(f"Draft created for {pname}: {draft.id}")
-                if thread_tweets:
-                    print(f"  Format: thread ({len(thread_tweets)} tweets)")
-                print(f"  Content: {draft_content[:100]}...")
-                print(f"  Suggested time: {schedule.datetime} ({schedule.time_reason})")
-
-        except Exception as e:
-            logger.error(f"Error creating draft for {pname} in shared group: {e}")
-            if verbose:
-                print(f"Error creating draft for {pname} in shared group: {e}")
-
-    return results
+            return [], None, None, None
+        return _generate_media(
+            config, _mt, _ms, dry_run=dry_run, verbose=verbose, project_config=project_config
+        )
+    return [], None, None, None
 
 
 def _generate_media(
@@ -1064,66 +748,9 @@ def _generate_media(
                     print(f"Media generated: {result.file_path}")
             else:
                 media_error = result.error or "Unknown media generation failure"
-                logger.warning(f"Media generation failed: {media_error}")
+                logger.warning("Media generation failed: %s", media_error)
     except Exception as e:
         media_error = str(e)
-        logger.warning(f"Media generation error (non-fatal): {e}")
+        logger.warning("Media generation error (non-fatal): %s", e)
 
     return media_paths, media_type_str, media_spec_dict, media_error
-
-
-def _needs_thread(draft_result, platform: str, tier: str, thread_min: int = 4) -> bool:
-    """Determine if content should be posted as a thread.
-
-    LLM-driven format decision with platform constraint enforcement.
-    """
-    if platform != "x":
-        return False
-
-    format_hint = getattr(draft_result, "format_hint", None)
-    beat_count = getattr(draft_result, "beat_count", None)
-    content_len = len(draft_result.content)
-    char_limit = TIER_CHAR_LIMITS.get(tier, 280)
-
-    # Free tier overflow: MUST thread (platform constraint)
-    if tier == "free" and content_len > char_limit:
-        return True
-
-    # Drafter explicitly chose single -> respect it (unless free tier overflow above)
-    if format_hint == "single":
-        return False
-
-    # Drafter explicitly recommends thread
-    if format_hint == "thread":
-        return True
-
-    # Content has thread_min+ narrative beats -> thread candidate
-    return bool(beat_count is not None and beat_count >= thread_min)
-
-
-def _parse_thread_tweets(thread_content: str, thread_min: int = 4) -> list[str]:
-    """Parse thread content into individual tweet texts.
-
-    Handles numbered format (1/, 2/) and --- separators.
-    """
-    # Try numbered format first: "1/ ...\n\n2/ ..."
-    numbered = re.split(r"(?:^|\n+)\d+/\s*", thread_content)
-    # First element may be empty if content starts with "1/"
-    numbered = [t.strip() for t in numbered if t.strip()]
-    if len(numbered) >= thread_min:
-        return numbered
-
-    # Try --- separator
-    separated = thread_content.split("---")
-    separated = [t.strip() for t in separated if t.strip()]
-    if len(separated) >= thread_min:
-        return separated
-
-    # Try double-newline separation
-    paragraphs = thread_content.split("\n\n")
-    paragraphs = [p.strip() for p in paragraphs if p.strip()]
-    if len(paragraphs) >= thread_min:
-        return paragraphs
-
-    # Fallback: return as single tweet list (shouldn't normally happen for threads)
-    return [thread_content.strip()] if thread_content.strip() else []

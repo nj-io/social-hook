@@ -51,6 +51,13 @@ export function PipelineToasts() {
         if (entry) {
           addToast(`${entry.msg}${platform}`, { detail: preview, variant: entry.variant });
         }
+      } else if (data.entity === "advisory") {
+        const title = data.title || data.entity_id;
+        if (data.action === "created") {
+          addToast(`Advisory: ${title}`, {});
+        } else if (data.action === "updated") {
+          addToast("Advisory completed", { variant: "success" });
+        }
       }
       // Decision status changes are NOT toasted — they are implementation details.
       // Pipeline stage events (ANALYZING, EVALUATING, DRAFTING, QUEUED) provide

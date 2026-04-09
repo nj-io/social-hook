@@ -110,9 +110,9 @@ def _insert_arc(conn, arc_id="arc_001", post_count=3):
     conn.commit()
 
 
-def _insert_draft_tweet(conn, tweet_id, draft_id):
+def _insert_draft_part(conn, tweet_id, draft_id):
     conn.execute(
-        "INSERT INTO draft_tweets (id, draft_id, position, content) VALUES (?, ?, ?, ?)",
+        "INSERT INTO draft_parts (id, draft_id, position, content) VALUES (?, ?, ?, ?)",
         (tweet_id, draft_id, 1, "tweet content"),
     )
     conn.commit()
@@ -330,14 +330,14 @@ class TestRewindDecisionOps:
         conn = _conn(db_env)
         _insert_decision(conn)
         _insert_draft(conn, "draft_001")
-        _insert_draft_tweet(conn, "tweet_001", "draft_001")
+        _insert_draft_part(conn, "tweet_001", "draft_001")
         _insert_draft_change(conn, "change_001", "draft_001")
 
         ops.rewind_decision(conn, "decision_001")
 
         assert (
             conn.execute(
-                "SELECT COUNT(*) FROM draft_tweets WHERE draft_id = 'draft_001'"
+                "SELECT COUNT(*) FROM draft_parts WHERE draft_id = 'draft_001'"
             ).fetchone()[0]
             == 0
         )

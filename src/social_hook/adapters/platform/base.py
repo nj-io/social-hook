@@ -7,7 +7,6 @@ from social_hook.adapters.models import (
     PostReference,
     PostResult,
     ReferenceType,
-    ThreadResult,
 )
 
 
@@ -34,7 +33,7 @@ class PlatformAdapter(ABC):
         pass
 
     @abstractmethod
-    def post_thread(self, tweets: list[dict], dry_run: bool = False) -> ThreadResult:
+    def post_thread(self, tweets: list[dict], dry_run: bool = False) -> PostResult:
         """Post a thread of connected posts.
 
         Args:
@@ -42,7 +41,7 @@ class PlatformAdapter(ABC):
             dry_run: If True, return simulated success without API calls
 
         Returns:
-            ThreadResult with success status and per-tweet results
+            PostResult with part_results for per-tweet results
         """
         pass
 
@@ -119,9 +118,9 @@ class PlatformAdapter(ABC):
 
     def capabilities(self) -> list[PostCapability]:
         """Return the list of posting capabilities this platform supports."""
-        from social_hook.adapters.models import SINGLE_POST
+        from social_hook.adapters.models import SINGLE
 
-        return [SINGLE_POST]
+        return [SINGLE]
 
     def supports_threads(self) -> bool:
         """Whether this platform supports threaded posts."""

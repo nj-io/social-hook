@@ -671,7 +671,7 @@ class TestSchedulerTickDraftId:
 class TestPostDraftReferencePosting:
     """Tests for _post_draft reference posting via abstract adapter interface."""
 
-    def _setup_with_reference(self, conn, post_format="quote"):
+    def _setup_with_reference(self, conn, reference_type="quote"):
         """Create project, decision, draft with reference_post_id, and referenced post."""
         from social_hook.db import operations as db_ops
 
@@ -719,7 +719,7 @@ class TestPostDraftReferencePosting:
             platform="x",
             content="New quote post",
             status="scheduled",
-            post_format=post_format,
+            reference_type=reference_type,
             reference_post_id=ref_post.id,
         )
         insert_draft(conn, draft)
@@ -735,7 +735,7 @@ class TestPostDraftReferencePosting:
         _registry.clear()
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
-        project, draft, ref_post = self._setup_with_reference(conn, post_format="quote")
+        project, draft, ref_post = self._setup_with_reference(conn, reference_type="quote")
 
         mock_adapter = MagicMock()
         mock_adapter.supports_reference_type.return_value = True
@@ -766,7 +766,7 @@ class TestPostDraftReferencePosting:
         _registry.clear()
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
-        project, draft, ref_post = self._setup_with_reference(conn, post_format="reply")
+        project, draft, ref_post = self._setup_with_reference(conn, reference_type="reply")
 
         mock_adapter = MagicMock()
         mock_adapter.supports_reference_type.return_value = True
@@ -795,7 +795,7 @@ class TestPostDraftReferencePosting:
         _registry.clear()
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
-        project, draft, ref_post = self._setup_with_reference(conn, post_format="quote")
+        project, draft, ref_post = self._setup_with_reference(conn, reference_type="quote")
 
         mock_adapter = MagicMock()
         mock_adapter.supports_reference_type.return_value = False  # Doesn't support QUOTE

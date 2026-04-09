@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260330135609
+SCHEMA_VERSION = 20260408120000
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -100,7 +100,9 @@ CREATE TABLE IF NOT EXISTS drafts (
     retry_count     INTEGER NOT NULL DEFAULT 0,
     last_error      TEXT,
     is_intro        INTEGER NOT NULL DEFAULT 0,
-    post_format     TEXT DEFAULT NULL CHECK (post_format IN ('single', 'thread', 'quote', 'reply')),
+    vehicle         TEXT NOT NULL DEFAULT 'single' CHECK (vehicle IN ('single', 'thread', 'article')),
+    reference_type  TEXT DEFAULT NULL CHECK (reference_type IN ('quote', 'reply')),
+    reference_files TEXT DEFAULT NULL,
     reference_post_id TEXT DEFAULT NULL REFERENCES posts(id),
     target_id       TEXT,
     evaluation_cycle_id TEXT,
@@ -120,8 +122,8 @@ CREATE INDEX IF NOT EXISTS idx_drafts_reference_post ON drafts(reference_post_id
 CREATE INDEX IF NOT EXISTS idx_drafts_target ON drafts(target_id) WHERE target_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_drafts_topic_id ON drafts(topic_id) WHERE topic_id IS NOT NULL;
 
--- Draft Tweets (Thread Support)
-CREATE TABLE IF NOT EXISTS draft_tweets (
+-- Draft Parts (Thread/Multi-part Support)
+CREATE TABLE IF NOT EXISTS draft_parts (
     id          TEXT PRIMARY KEY,
     draft_id    TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
     position    INTEGER NOT NULL,
@@ -134,8 +136,8 @@ CREATE TABLE IF NOT EXISTS draft_tweets (
     UNIQUE(draft_id, position)
 );
 
-CREATE INDEX IF NOT EXISTS idx_draft_tweets_draft ON draft_tweets(draft_id, position);
-CREATE INDEX IF NOT EXISTS idx_draft_tweets_external ON draft_tweets(external_id) WHERE external_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_draft_parts_draft ON draft_parts(draft_id, position);
+CREATE INDEX IF NOT EXISTS idx_draft_parts_external ON draft_parts(external_id) WHERE external_id IS NOT NULL;
 
 -- Draft Changes (Audit Trail)
 CREATE TABLE IF NOT EXISTS draft_changes (
@@ -379,6 +381,41 @@ CREATE TABLE IF NOT EXISTS system_errors (
 
 CREATE INDEX IF NOT EXISTS idx_system_errors_severity ON system_errors(severity, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_system_errors_component ON system_errors(component, created_at DESC);
+
+-- Advisory items (operator action items)
+CREATE TABLE IF NOT EXISTS advisory_items (
+    id                  TEXT PRIMARY KEY,
+    project_id          TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    category            TEXT NOT NULL CHECK (category IN (
+                            'platform_presence', 'product_infrastructure',
+                            'content_asset', 'code_change',
+                            'external_action', 'outreach')),
+    title               TEXT NOT NULL,
+    description         TEXT,
+    status              TEXT NOT NULL DEFAULT 'pending'
+                            CHECK (status IN ('pending', 'completed', 'dismissed')),
+    urgency             TEXT NOT NULL DEFAULT 'normal'
+                            CHECK (urgency IN ('blocking', 'normal')),
+    created_by          TEXT NOT NULL,
+    linked_entity_type  TEXT,
+    linked_entity_id    TEXT,
+    handler_type        TEXT,
+    automation_level    TEXT NOT NULL DEFAULT 'manual'
+                            CHECK (automation_level IN (
+                                'manual', 'assisted', 'semi_automated', 'automated')),
+    verification_method TEXT,
+    due_date            TEXT,
+    dismissed_reason    TEXT,
+    completed_at        TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_advisory_project_status
+    ON advisory_items(project_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_advisory_linked
+    ON advisory_items(linked_entity_type, linked_entity_id)
+    WHERE linked_entity_type IS NOT NULL;
 """
 
 

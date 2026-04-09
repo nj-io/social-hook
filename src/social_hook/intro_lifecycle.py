@@ -57,10 +57,10 @@ def on_intro_rejected(conn, draft, project_id, verbose=False, skip_intro=False) 
     replacement_count = 0
 
     try:
-        from social_hook.compat import evaluation_from_decision
         from social_hook.config.project import load_project_config
         from social_hook.config.yaml import load_full_config
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import draft as run_draft
+        from social_hook.drafting_intents import intent_from_decision
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.models.core import CommitInfo
 
@@ -72,8 +72,7 @@ def on_intro_rejected(conn, draft, project_id, verbose=False, skip_intro=False) 
             if not decision:
                 continue
 
-            # Build minimal eval compat from decision fields
-            eval_compat = evaluation_from_decision(decision)
+            intent = intent_from_decision(decision, config, conn, target_platform=platform)
 
             commit = CommitInfo(
                 hash=decision.commit_hash,
@@ -95,19 +94,17 @@ def on_intro_rejected(conn, draft, project_id, verbose=False, skip_intro=False) 
             context.platform_introduced[platform] = False
 
             try:
-                new_results = draft_for_platforms(
+                new_results = run_draft(
+                    intent,
                     config,
                     conn,
                     db,
                     project,
-                    decision_id=decision_id,
-                    evaluation=eval_compat,
-                    context=context,
-                    commit=commit,
+                    context,
+                    commit,
                     project_config=project_config,
                     dry_run=False,
                     verbose=verbose,
-                    target_platform_names=[platform],
                 )
             except Exception as e:
                 logger.warning(f"Re-draft failed for decision {decision_id}: {e}")

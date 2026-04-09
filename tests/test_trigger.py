@@ -11,7 +11,6 @@ from social_hook.models.core import Decision, Project
 from social_hook.rate_limits import GateResult
 from social_hook.trigger import (
     _build_merge_commit,
-    _build_merge_evaluation,
     _execute_merge_groups,
     git_remote_origin,
     parse_commit_info,
@@ -504,7 +503,7 @@ class TestTriggerUsesAdapter:
         draft_result = MagicMock()
         draft_result.content = "Check out this feature!"
         draft_result.reasoning = "Short and punchy"
-        draft_result.format_hint = "single"
+        draft_result.vehicle = "single"
         draft_result.beat_count = 1
         draft_result.media_type = None
         drafter_instance.create_draft.return_value = draft_result
@@ -635,19 +634,13 @@ def _make_trigger_mocks(
     draft_result = MagicMock()
     draft_result.content = "Check out this feature!"
     draft_result.reasoning = "Short and punchy"
-    draft_result.format_hint = "thread" if use_thread else "single"
+    draft_result.vehicle = "thread" if use_thread else "single"
     draft_result.beat_count = 5 if use_thread else 1
     draft_result.media_type = drafter_media_type
     draft_result.media_spec = {"prompt": "a diagram"} if drafter_media_type else None
 
     drafter_instance = MagicMock()
     drafter_instance.create_draft.return_value = draft_result
-    if use_thread:
-        thread_result = MagicMock()
-        thread_result.content = "1/ First tweet\n\n2/ Second tweet\n\n3/ Third\n\n4/ Fourth"
-        thread_result.reasoning = "Thread reasoning"
-        drafter_instance.create_thread.return_value = thread_result
-
     schedule = MagicMock()
     schedule.datetime = datetime(2026, 2, 20, 12, 0, 0)
     schedule.time_reason = "optimal"
@@ -1025,7 +1018,7 @@ class TestTriggerMedia:
             def insert_draft(self, draft):
                 saved_drafts.append(draft)
 
-            def insert_draft_tweet(self, tweet):
+            def insert_draft_part(self, part):
                 pass
 
             def emit_data_event(self, *args, **kwargs):
@@ -1191,7 +1184,7 @@ class TestPerPlatformPipeline:
         draft_result = MagicMock()
         draft_result.content = "Check out this feature!"
         draft_result.reasoning = "Short and punchy"
-        draft_result.format_hint = "single"
+        draft_result.vehicle = "single"
         draft_result.beat_count = 1
         draft_result.media_type = None
 
@@ -1278,7 +1271,7 @@ class TestPerPlatformPipeline:
             def insert_draft(self, draft):
                 saved_drafts.append(draft)
 
-            def insert_draft_tweet(self, tweet):
+            def insert_draft_part(self, part):
                 pass
 
             def emit_data_event(self, *args, **kwargs):
@@ -1360,7 +1353,7 @@ class TestPerPlatformPipeline:
             def insert_draft(self, draft):
                 saved_drafts.append(draft)
 
-            def insert_draft_tweet(self, tweet):
+            def insert_draft_part(self, part):
                 pass
 
             def emit_data_event(self, *args, **kwargs):
@@ -1430,7 +1423,7 @@ class TestPerPlatformPipeline:
                 saved_drafts.append(draft)
                 return draft
 
-            def insert_draft_tweet(self, tweet):
+            def insert_draft_part(self, part):
                 pass
 
             def emit_data_event(self, *args, **kwargs):
@@ -1850,59 +1843,54 @@ class TestGenerateMediaPerTool:
 # =============================================================================
 
 
-class TestNeedsThreadThreshold:
-    """Tests for configurable thread_min in _needs_thread()."""
+class TestVehicleValidationThreshold:
+    """Tests for configurable thread_min in validate_draft_for_vehicle()."""
 
-    def test_thread_min_3(self):
-        """With thread_min=3, 3 beats triggers thread."""
-        from social_hook.trigger import _needs_thread
-
-        draft = MagicMock()
-        draft.format_hint = None
-        draft.beat_count = 3
-        draft.content = "short"
-        assert _needs_thread(draft, "x", "free", thread_min=3) is True
-
-    def test_thread_min_6(self):
-        """With thread_min=6, 4 beats does NOT trigger thread."""
-        from social_hook.trigger import _needs_thread
-
-        draft = MagicMock()
-        draft.format_hint = None
-        draft.beat_count = 4
-        draft.content = "short"
-        assert _needs_thread(draft, "x", "free", thread_min=6) is False
-
-    def test_default_threshold_4(self):
-        """Default thread_min=4, 4 beats triggers thread."""
-        from social_hook.trigger import _needs_thread
-
-        draft = MagicMock()
-        draft.format_hint = None
-        draft.beat_count = 4
-        draft.content = "short"
-        assert _needs_thread(draft, "x", "free") is True
-
-
-class TestParseThreadTweetsThreshold:
-    """Tests for configurable thread_min in _parse_thread_tweets()."""
-
-    def test_thread_min_3_accepts(self):
-        """With thread_min=3, 3 numbered tweets are accepted."""
-        from social_hook.trigger import _parse_thread_tweets
-
-        content = "1/ First tweet\n\n2/ Second tweet\n\n3/ Third tweet"
-        tweets = _parse_thread_tweets(content, thread_min=3)
-        assert len(tweets) == 3
-
-    def test_default_rejects_3(self):
-        """Default thread_min=4 rejects 3 numbered tweets (falls to single)."""
-        from social_hook.trigger import _parse_thread_tweets
+    def test_thread_min_3_accepts_3_parts(self):
+        """With thread_min=3, content with 3 parts is valid as thread."""
+        from social_hook.vehicle import validate_draft_for_vehicle
 
         content = "1/ First\n\n2/ Second\n\n3/ Third"
-        tweets = _parse_thread_tweets(content, thread_min=4)
-        # 3 tweets < 4 min, numbered parse fails, try separators, paragraphs, then fallback
-        assert len(tweets) == 1  # fallback single
+        result = validate_draft_for_vehicle(content, "thread", "x", 280, thread_min=3)
+        assert result.valid is True
+
+    def test_thread_min_6_rejects_4_parts(self):
+        """With thread_min=6, content with 4 parts is invalid as thread."""
+        from social_hook.vehicle import validate_draft_for_vehicle
+
+        content = "1/ One\n\n2/ Two\n\n3/ Three\n\n4/ Four"
+        result = validate_draft_for_vehicle(content, "thread", "x", 280, thread_min=6)
+        assert result.valid is False
+        assert result.suggested_vehicle == "single"
+
+    def test_default_threshold_4_accepts_4_parts(self):
+        """Default thread_min=4 accepts content with 4 parts."""
+        from social_hook.vehicle import validate_draft_for_vehicle
+
+        content = "1/ One\n\n2/ Two\n\n3/ Three\n\n4/ Four"
+        result = validate_draft_for_vehicle(content, "thread", "x", 280)
+        assert result.valid is True
+
+
+class TestParseThreadPartsThreshold:
+    """Tests for configurable thread_min in parse_thread_parts()."""
+
+    def test_thread_min_3_accepts(self):
+        """With thread_min=3, 3 numbered parts are accepted."""
+        from social_hook.vehicle import parse_thread_parts
+
+        content = "1/ First tweet\n\n2/ Second tweet\n\n3/ Third tweet"
+        parts = parse_thread_parts(content, "x", thread_min=3)
+        assert len(parts) == 3
+
+    def test_default_rejects_3(self):
+        """Default thread_min=4 rejects 3 numbered parts (falls to single)."""
+        from social_hook.vehicle import parse_thread_parts
+
+        content = "1/ First\n\n2/ Second\n\n3/ Third"
+        parts = parse_thread_parts(content, "x", thread_min=4)
+        # 3 parts < 4 min, numbered parse fails, try separators, paragraphs, then fallback
+        assert len(parts) == 1  # fallback single
 
 
 # =============================================================================
@@ -1985,7 +1973,7 @@ class TestDecisionNotification:
         assert "test-proj" in msg.text
 
     @patch("social_hook.notifications.broadcast_notification")
-    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.drafting.draft")
     @patch("social_hook.llm.evaluator.Evaluator")
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.config.project.load_project_config")
@@ -2006,7 +1994,7 @@ class TestDecisionNotification:
         mock_proj_config,
         mock_create_client,
         mock_evaluator_cls,
-        mock_draft_for_platforms,
+        mock_draft_fn,
         mock_broadcast,
     ):
         """Decision notification NOT sent for post_worthy when drafts are created.
@@ -2060,25 +2048,25 @@ class TestDecisionNotification:
         evaluator_instance.evaluate.return_value = evaluation
         mock_evaluator_cls.return_value = evaluator_instance
 
-        # draft_for_platforms returns a result, so decision notification should be skipped
+        # draft() returns a result, so decision notification should be skipped
         from datetime import datetime
 
-        mock_draft = MagicMock()
-        mock_draft.id = "d1"
-        mock_draft.platform = "x"
-        mock_draft.content = "Test post"
-        mock_draft.media_paths = []
-        mock_draft.media_type = None
+        mock_draft_obj = MagicMock()
+        mock_draft_obj.id = "d1"
+        mock_draft_obj.platform = "x"
+        mock_draft_obj.content = "Test post"
+        mock_draft_obj.media_paths = []
+        mock_draft_obj.media_type = None
 
         mock_schedule = MagicMock()
         mock_schedule.datetime = datetime(2026, 1, 1, 12, 0)
 
         mock_result = MagicMock()
-        mock_result.draft = mock_draft
+        mock_result.draft = mock_draft_obj
         mock_result.schedule = mock_schedule
-        mock_result.thread_tweets = []
+        mock_result.thread_parts = []
 
-        mock_draft_for_platforms.return_value = [mock_result]
+        mock_draft_fn.return_value = [mock_result]
 
         exit_code = run_trigger("abc12345", "/tmp", dry_run=False)
         assert exit_code == 0
@@ -2206,84 +2194,6 @@ class TestDecisionNotification:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildMergeEvaluation:
-    """Tests for _build_merge_evaluation."""
-
-    def _make_draft(self, **kwargs):
-        defaults = {
-            "id": "draft_1",
-            "project_id": "p1",
-            "decision_id": "dec_1",
-            "platform": "x",
-            "content": "Some draft content",
-            "status": "draft",
-        }
-        defaults.update(kwargs)
-        from social_hook.models.core import Draft
-
-        return Draft(**defaults)
-
-    def _make_decision(self, **kwargs):
-        defaults = {
-            "id": "dec_1",
-            "project_id": "p1",
-            "commit_hash": "abc12345",
-            "decision": "draft",
-            "reasoning": "Good commit",
-            "angle": "feature angle",
-            "post_category": "arc",
-            "arc_id": "arc_1",
-            "media_tool": "mermaid",
-            "commit_summary": "Added a feature",
-        }
-        defaults.update(kwargs)
-        return Decision(**defaults)
-
-    def test_with_instruction(self):
-        drafts = [self._make_draft(id="d1"), self._make_draft(id="d2")]
-        decisions = [
-            self._make_decision(id="dec_1", commit_summary="First change"),
-            self._make_decision(
-                id="dec_2",
-                commit_hash="def67890",
-                commit_summary="Second change",
-                post_category="opportunistic",
-                arc_id=None,
-                media_tool=None,
-            ),
-        ]
-        result = _build_merge_evaluation(drafts, decisions, "Lead with the API angle")
-        assert result.angle == "Lead with the API angle"
-        assert result.decision == "draft"
-        assert result.episode_type is None
-        assert result.post_category == "opportunistic"  # from decisions[-1]
-        assert result.arc_id is None  # from decisions[-1]
-        assert result.media_tool is None  # from decisions[-1]
-        assert "First change" in result.commit_summary
-        assert "Second change" in result.commit_summary
-        assert result.new_arc_theme is None
-        assert result.reference_posts is None
-        assert result.include_project_docs is None
-
-    def test_without_instruction(self):
-        drafts = [self._make_draft(id="d1"), self._make_draft(id="d2")]
-        decisions = [
-            self._make_decision(id="dec_1", angle="angle one"),
-            self._make_decision(id="dec_2", commit_hash="def67890", angle="angle two"),
-        ]
-        result = _build_merge_evaluation(drafts, decisions, None)
-        assert result.angle == "angle one + angle two"
-
-    def test_without_instruction_no_angles(self):
-        drafts = [self._make_draft(id="d1"), self._make_draft(id="d2")]
-        decisions = [
-            self._make_decision(id="dec_1", angle=None),
-            self._make_decision(id="dec_2", commit_hash="def67890", angle=None),
-        ]
-        result = _build_merge_evaluation(drafts, decisions, None)
-        assert result.angle == "Consolidate these drafts"
-
-
 class TestBuildMergeCommit:
     """Tests for _build_merge_commit."""
 
@@ -2400,7 +2310,7 @@ class TestExecuteMergeGroups:
 
         return config, conn, db, project, context, pconfig
 
-    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.drafting.draft")
     @patch("social_hook.trigger.ops.supersede_draft")
     @patch("social_hook.trigger.ops.get_decision")
     @patch("social_hook.trigger.ops.get_draft")
@@ -2439,7 +2349,7 @@ class TestExecuteMergeGroups:
         mock_supersede.assert_any_call(conn, "d1", "merged_d1")
         mock_supersede.assert_any_call(conn, "d2", "merged_d1")
 
-    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.drafting.draft")
     @patch("social_hook.trigger.ops.get_decision")
     @patch("social_hook.trigger.ops.get_draft")
     def test_single_valid_draft_skips(self, mock_get_draft, mock_get_dec, mock_dfp):
@@ -2464,7 +2374,7 @@ class TestExecuteMergeGroups:
 
         mock_dfp.assert_not_called()
 
-    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.drafting.draft")
     @patch("social_hook.trigger.ops.supersede_draft")
     @patch("social_hook.trigger.ops.get_decision")
     @patch("social_hook.trigger.ops.get_draft")
@@ -2509,7 +2419,7 @@ class TestExecuteMergeGroups:
 
         assert mock_dfp.call_count == 2
 
-    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.drafting.draft")
     @patch("social_hook.trigger.ops.supersede_draft")
     @patch("social_hook.trigger.ops.get_decision")
     @patch("social_hook.trigger.ops.get_draft")
@@ -2551,7 +2461,7 @@ class TestExecuteMergeGroups:
         mock_dfp.assert_called_once()
         assert mock_supersede.call_count == 2  # only the 2 "x" drafts superseded
 
-    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.drafting.draft")
     @patch("social_hook.trigger.ops.supersede_draft")
     @patch("social_hook.trigger.ops.get_decision")
     @patch("social_hook.trigger.ops.get_draft")
@@ -2586,7 +2496,7 @@ class TestExecuteMergeGroups:
         # dry_run: drafting happens (for preview) but supersede should not
         mock_supersede.assert_not_called()
 
-    @patch("social_hook.drafting.draft_for_platforms")
+    @patch("social_hook.drafting.draft")
     @patch("social_hook.trigger.ops.supersede_draft")
     @patch("social_hook.trigger.ops.get_decision")
     @patch("social_hook.trigger.ops.get_draft")

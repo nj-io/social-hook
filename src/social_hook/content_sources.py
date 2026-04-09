@@ -74,17 +74,19 @@ def resolve_brief(
     project_id: str,
     **kwargs: Any,
 ) -> str:
-    """Return project brief/summary sections."""
+    """Return project brief/summary sections (dynamic — iterates whatever sections exist)."""
     from social_hook.db import operations as ops
-    from social_hook.llm.brief import get_brief_sections
+    from social_hook.llm.brief import BRIEF_SECTIONS, get_brief_sections
 
     project = ops.get_project(conn, project_id)
     if project and project.summary:
         sections = get_brief_sections(project.summary)
         if sections:
             parts = []
-            for section_name, section_text in sections.items():
-                parts.append(f"## {section_name}\n{section_text}")
+            for slug, section_text in sections.items():
+                # Use canonical heading for known sections, slug as-is otherwise
+                heading = BRIEF_SECTIONS.get(slug, slug)
+                parts.append(f"## {heading}\n{section_text}")
             return "\n\n".join(parts)
 
     # Fallback: raw project summary

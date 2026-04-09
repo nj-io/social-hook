@@ -76,7 +76,7 @@ class TestDraftCommand:
             patch("social_hook.trigger.parse_commit_info") as mock_parse,
             patch("social_hook.config.project.load_project_config") as mock_proj_config,
             patch("social_hook.llm.prompts.assemble_evaluator_context") as mock_ctx,
-            patch("social_hook.drafting.draft_for_platforms") as mock_draft,
+            patch("social_hook.drafting.draft") as mock_draft,
         ):
             mock_parse.return_value = MagicMock(timestamp=None, parent_timestamp=None)
             mock_proj_config.return_value = MagicMock()
@@ -87,7 +87,7 @@ class TestDraftCommand:
             result = runner.invoke(app, ["draft", decision.id])
             # Should NOT exit with 1 (no post_worthy rejection)
             assert result.exit_code == 0
-            # draft_for_platforms should have been called
+            # draft() should have been called
             mock_draft.assert_called_once()
 
     @patch("social_hook.filesystem.get_db_path")

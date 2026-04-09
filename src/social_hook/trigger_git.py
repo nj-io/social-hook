@@ -134,6 +134,109 @@ def git_remote_origin(repo_path: str) -> str | None:
         return None
 
 
+def is_git_repo(path: str) -> bool:
+    """Check if a path is inside a git repository.
+
+    Args:
+        path: Directory path to check
+
+    Returns:
+        True if the path is inside a git repo, False otherwise
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "true"
+    except (OSError, FileNotFoundError):
+        return False
+
+
+def collect_git_stats(repo_path: str) -> dict | None:
+    """Collect countable project stats from git.
+
+    Returns a dict with keys like commit_count, contributor_count,
+    first_commit_date, latest_commit_date, active_branch_count.
+    Returns None for non-git directories or on failure.
+
+    Args:
+        repo_path: Path to the git repository
+    """
+    if not is_git_repo(repo_path):
+        return None
+
+    stats: dict = {}
+
+    try:
+        # Total commit count
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-list", "--count", "HEAD"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            stats["commit_count"] = safe_int(result.stdout.strip(), 0, "commit count")
+
+        # Contributor count
+        result = subprocess.run(
+            ["git", "-C", repo_path, "shortlog", "-sn", "--all"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            stats["contributor_count"] = len(
+                [line for line in result.stdout.strip().split("\n") if line.strip()]
+            )
+
+        # First commit date
+        result = subprocess.run(
+            ["git", "-C", repo_path, "log", "--reverse", "--format=%aI", "--max-count=1"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            stats["first_commit_date"] = result.stdout.strip()
+
+        # Latest commit date
+        result = subprocess.run(
+            ["git", "-C", repo_path, "log", "--format=%aI", "--max-count=1"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            stats["latest_commit_date"] = result.stdout.strip()
+
+        # Active branch count
+        result = subprocess.run(
+            ["git", "-C", repo_path, "branch", "--list"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            stats["active_branch_count"] = len(
+                [line for line in result.stdout.strip().split("\n") if line.strip()]
+            )
+
+        # Commits in last 30 days
+        result = subprocess.run(
+            ["git", "-C", repo_path, "rev-list", "--count", "--since=30.days", "HEAD"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            stats["commits_last_30_days"] = safe_int(
+                result.stdout.strip(), 0, "commits last 30 days"
+            )
+
+    except (OSError, FileNotFoundError):
+        logger.debug("Git not available for stats collection at %s", repo_path)
+        return None
+
+    return stats if stats else None
+
+
 def _get_current_branch(repo_path: str) -> str | None:
     """Get the current git branch name. Returns None for detached HEAD."""
     try:

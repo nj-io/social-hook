@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from social_hook.config.platforms import FREQUENCY_PRESETS, PLATFORM_THREAD_SUPPORT, SMART_DEFAULTS
+from social_hook.config.platforms import FREQUENCY_PRESETS, PLATFORM_VEHICLE_SUPPORT, SMART_DEFAULTS
 from social_hook.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -313,15 +313,18 @@ def validate_strategy_constraints(config: Config) -> None:
 
         # --- format_preference "thread" requires thread support ---
         if strat.format_preference == "thread":
+            from social_hook.adapters.models import THREAD as THREAD_CAP
+
             for platform_name in platforms:
-                supports = PLATFORM_THREAD_SUPPORT.get(platform_name)
-                if supports is False:
-                    logger.warning(
-                        "Strategy '%s' prefers threads but platform '%s' does not support threads",
-                        strat_name,
-                        platform_name,
-                    )
-                elif supports is None:
+                vehicle_caps = PLATFORM_VEHICLE_SUPPORT.get(platform_name)
+                if vehicle_caps is not None:
+                    if THREAD_CAP not in vehicle_caps:
+                        logger.warning(
+                            "Strategy '%s' prefers threads but platform '%s' does not support threads",
+                            strat_name,
+                            platform_name,
+                        )
+                else:
                     logger.warning(
                         "Strategy '%s' prefers threads but platform '%s' "
                         "has unknown thread support",

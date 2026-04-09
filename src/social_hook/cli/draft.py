@@ -41,30 +41,6 @@ def _get_draft_or_exit(conn, draft_id: str):
     return draft
 
 
-def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
-    """Re-split content into draft_tweets if the draft has an existing thread."""
-    from social_hook.db import operations as ops
-    from social_hook.drafting import _parse_thread_tweets
-    from social_hook.filesystem import generate_id
-    from social_hook.models.core import DraftTweet
-
-    existing = ops.get_draft_tweets(conn, draft_id)
-    if not existing:
-        return
-
-    parts = _parse_thread_tweets(new_content, thread_min=1)
-    new_tweets = [
-        DraftTweet(
-            id=generate_id("tweet"),
-            draft_id=draft_id,
-            position=i,
-            content=part,
-        )
-        for i, part in enumerate(parts)
-    ]
-    ops.replace_draft_tweets(conn, draft_id, new_tweets)
-
-
 @app.command()
 def approve(
     ctx: typer.Context,
@@ -377,7 +353,10 @@ def edit(
             raise typer.Exit(1)
         old_content = draft.content
         ops.update_draft(conn, draft_id, content=content)
-        _resync_thread_tweets(conn, draft_id, content)
+
+        from social_hook.vehicle import rematerialize_draft_parts
+
+        rematerialize_draft_parts(conn, draft, content)
         ops.insert_draft_change(
             conn,
             DraftChange(
@@ -473,7 +452,10 @@ def redraft(
             if result.refined_content:
                 old_content = draft.content
                 ops.update_draft(conn, draft_id, content=result.refined_content)
-                _resync_thread_tweets(conn, draft_id, result.refined_content)
+
+                from social_hook.vehicle import rematerialize_draft_parts
+
+                rematerialize_draft_parts(conn, draft, result.refined_content)
                 ops.insert_draft_change(
                     conn,
                     DraftChange(
@@ -885,7 +867,7 @@ def list_cmd(
         for d in drafts:
             content_preview = d.content[:35].replace("\n", " ") if d.content else ""
             intro = "[INTRO]" if getattr(d, "is_intro", False) else ""
-            fmt = d.post_format or "single"
+            fmt = getattr(d, "vehicle", "single") or "single"
             media = d.media_type[:5] if d.media_type else "-"
 
             # Build tags from linked decision
@@ -928,7 +910,7 @@ def show(
     try:
         draft = _get_draft_or_exit(conn, draft_id)
         changes = ops.get_draft_changes(conn, draft_id)
-        tweets = ops.get_draft_tweets(conn, draft_id)
+        tweets = ops.get_draft_parts(conn, draft_id)
 
         json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
 
@@ -1001,11 +983,11 @@ def promote(
 
     Example: social-hook draft promote draft-abc123 --platform x
     """
-    from social_hook.compat import evaluation_from_decision
     from social_hook.config.project import ProjectConfig, load_project_config
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
-    from social_hook.drafting import draft_for_platforms
+    from social_hook.drafting import draft as run_draft
+    from social_hook.drafting_intents import intent_from_decision
     from social_hook.errors import ConfigError
     from social_hook.llm.dry_run import DryRunContext
     from social_hook.llm.prompts import assemble_evaluator_context
@@ -1069,22 +1051,20 @@ def promote(
             parent_timestamp=getattr(commit, "parent_timestamp", None),
         )
 
-        evaluation = evaluation_from_decision(decision, "draft")
+        intent = intent_from_decision(decision, config, conn, target_platform=platform)
 
         from social_hook.cli._spinner import spinner
 
         with spinner(f"Redrafting for {platform}..."):
-            results = draft_for_platforms(
+            results = run_draft(
+                intent,
                 config,
                 conn,
                 db,
                 project,
-                decision_id=decision.id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit,
+                context,
+                commit,
                 project_config=project_config,
-                target_platform_names=[platform],
             )
 
         if not results:

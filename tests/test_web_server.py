@@ -55,7 +55,7 @@ def tmp_env(tmp_path):
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
-        CREATE TABLE IF NOT EXISTS draft_tweets (
+        CREATE TABLE IF NOT EXISTS draft_parts (
             id TEXT PRIMARY KEY,
             draft_id TEXT,
             position INTEGER,
@@ -183,6 +183,25 @@ def tmp_env(tmp_path):
             token_count INTEGER NOT NULL DEFAULT 0,
             period_start TEXT NOT NULL,
             period_end TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS advisory_items (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            category TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            urgency TEXT NOT NULL DEFAULT 'normal',
+            created_by TEXT NOT NULL,
+            linked_entity_type TEXT,
+            linked_entity_id TEXT,
+            handler_type TEXT,
+            automation_level TEXT NOT NULL DEFAULT 'manual',
+            verification_method TEXT,
+            due_date TEXT,
+            dismissed_reason TEXT,
+            completed_at TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         """
@@ -357,7 +376,7 @@ class TestDataEndpoints:
             ("draft_1", "proj_1", "dec_1", "x", "Hello", "draft"),
         )
         conn.execute(
-            "INSERT INTO draft_tweets (id, draft_id, position, content) VALUES (?, ?, ?, ?)",
+            "INSERT INTO draft_parts (id, draft_id, position, content) VALUES (?, ?, ?, ?)",
             ("tweet_1", "draft_1", 0, "First tweet"),
         )
         conn.execute(
@@ -372,7 +391,7 @@ class TestDataEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "draft_1"
-        assert len(data["tweets"]) == 1
+        assert len(data["parts"]) == 1
         assert len(data["changes"]) == 1
 
     def test_draft_detail_not_found(self, client, tmp_env):
@@ -1593,7 +1612,7 @@ def _make_draft_result(
         day_reason="test",
         time_reason="test",
     )
-    return DraftResult(draft=draft, schedule=schedule, thread_tweets=[])
+    return DraftResult(draft=draft, schedule=schedule, thread_parts=[])
 
 
 def _mock_create_draft_patches():
@@ -1668,9 +1687,7 @@ class TestCreateDraftEndpoint:
             p1,
             p2,
             p3,
-            patch(
-                "social_hook.drafting.draft_for_platforms", return_value=[mock_result]
-            ) as mock_dfp,
+            patch("social_hook.drafting.draft", return_value=[mock_result]) as mock_dfp,
             patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
@@ -1687,9 +1704,11 @@ class TestCreateDraftEndpoint:
             assert result["draft_ids"] == ["draft_test_1"]
             assert result["count"] == 1
 
-        # Verify platform was passed
-        call_kwargs = mock_dfp.call_args[1]
-        assert call_kwargs["target_platform_names"] == ["x"]
+        # Verify platform was passed via intent
+        call_args = mock_dfp.call_args[0]
+        intent = call_args[0]
+        assert len(intent.platforms) == 1
+        assert intent.platforms[0].platform == "x"
 
     def test_create_draft_no_platform(self, client, tmp_env):
         """POST /api/decisions/{id}/create-draft with no platform drafts all enabled."""
@@ -1704,9 +1723,7 @@ class TestCreateDraftEndpoint:
             p1,
             p2,
             p3,
-            patch(
-                "social_hook.drafting.draft_for_platforms", return_value=mock_results
-            ) as mock_dfp,
+            patch("social_hook.drafting.draft", return_value=mock_results) as mock_dfp,
             patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={})
@@ -1718,9 +1735,10 @@ class TestCreateDraftEndpoint:
             assert result["count"] == 2
             assert result["draft_ids"] == ["d1", "d2"]
 
-        # target_platform_names should be None for all-enabled
-        call_kwargs = mock_dfp.call_args[1]
-        assert call_kwargs["target_platform_names"] is None
+        # All enabled platforms should be in the intent
+        call_args = mock_dfp.call_args[0]
+        intent = call_args[0]
+        assert len(intent.platforms) >= 1
 
     def test_create_draft_not_post_worthy_override(self, client, tmp_env):
         """POST /api/decisions/{id}/create-draft works for not_post_worthy decisions."""
@@ -1732,7 +1750,7 @@ class TestCreateDraftEndpoint:
             p1,
             p2,
             p3,
-            patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
+            patch("social_hook.drafting.draft", return_value=[mock_result]),
             patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
@@ -1782,7 +1800,7 @@ class TestConsolidateEndpoint:
             p1,
             p2,
             p3,
-            patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
+            patch("social_hook.drafting.draft", return_value=[mock_result]),
             patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post(

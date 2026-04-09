@@ -1,9 +1,11 @@
-"""Tests for shared-group drafting pipeline: _draft_shared_group, preview_mode."""
+"""Tests for shared-group drafting pipeline: _draft_shared, preview_mode."""
 
 from unittest.mock import MagicMock, patch
 
 from social_hook.drafting import (
-    _draft_for_resolved_platforms,
+    DraftingIntent,
+    PlatformSpec,
+    draft,
 )
 from social_hook.models.core import CommitInfo
 
@@ -63,7 +65,7 @@ def _make_evaluation():
 
 
 # =============================================================================
-# _draft_shared_group: preview_mode for accountless targets
+# _draft_shared: preview_mode for accountless targets
 # =============================================================================
 
 
@@ -75,7 +77,7 @@ class TestDraftSharedGroupPreviewMode:
         from social_hook.filesystem import generate_id
         from social_hook.models.core import Draft
 
-        # This is the exact logic from _draft_for_resolved_platforms line 349:
+        # This is the exact logic from draft() finalization:
         # preview_mode=bool(preview_targets and pname in preview_targets)
         preview_targets = {"x-feed", "linkedin-preview"}
         pname = "x-feed"
@@ -131,58 +133,49 @@ class TestDraftSharedGroupPreviewMode:
 
 
 # =============================================================================
-# _draft_shared_group: one LLM call, N drafts out
+# _draft_shared: one LLM call, N drafts out
 # =============================================================================
 
 
 class TestDraftSharedGroupOneLLMCall:
     """Shared group makes one LLM call for lead, adapts for remaining."""
 
-    @patch("social_hook.drafting._draft_shared_group")
+    @patch("social_hook.drafting._draft_shared")
     @patch("social_hook.llm.factory.create_client")
     def test_shared_group_flag_triggers_shared_path(
         self,
         mock_create_client,
         mock_shared_group,
     ):
-        """When shared_group=True and >1 platforms, _draft_shared_group is called."""
+        """When >1 platforms, _draft_shared is called."""
         mock_create_client.return_value = MagicMock()
         mock_shared_group.return_value = []
 
         config = _make_config()
         project = MagicMock(id="proj-1")
         context = _make_context(project)
-        evaluation = _make_evaluation()
         commit = CommitInfo(hash="abc", message="test", diff="")
         db = MagicMock()
 
-        platforms = {
-            "x": _make_rpcfg(name="x"),
-            "linkedin": _make_rpcfg(name="linkedin"),
-        }
-
-        _draft_for_resolved_platforms(
-            platforms,
-            config,
-            MagicMock(),  # conn
-            db,
-            project,
+        intent = DraftingIntent(
             decision_id="dec-1",
-            evaluation=evaluation,
-            context=context,
-            commit=commit,
-            shared_group=True,
+            platforms=[
+                PlatformSpec(platform="x", resolved=_make_rpcfg(name="x")),
+                PlatformSpec(platform="linkedin", resolved=_make_rpcfg(name="linkedin")),
+            ],
         )
+
+        draft(intent, config, MagicMock(), db, project, context, commit)
         mock_shared_group.assert_called_once()
 
-    @patch("social_hook.drafting._draft_shared_group")
+    @patch("social_hook.drafting._draft_shared")
     @patch("social_hook.llm.factory.create_client")
     def test_single_platform_skips_shared_group(
         self,
         mock_create_client,
         mock_shared_group,
     ):
-        """With only one platform, shared_group doesn't trigger _draft_shared_group."""
+        """With only one platform, _draft_shared is not called."""
         mock_create_client.return_value = MagicMock()
         mock_shared_group.return_value = []
 
@@ -190,57 +183,42 @@ class TestDraftSharedGroupOneLLMCall:
         project = MagicMock(id="proj-1")
         context = _make_context(project)
         context.platform_introduced = {"x": True}
-        evaluation = _make_evaluation()
         commit = CommitInfo(hash="abc", message="test", diff="")
         db = MagicMock()
 
-        platforms = {
-            "x": _make_rpcfg(name="x"),
-        }
-
-        _draft_for_resolved_platforms(
-            platforms,
-            config,
-            MagicMock(),
-            db,
-            project,
+        intent = DraftingIntent(
             decision_id="dec-1",
-            evaluation=evaluation,
-            context=context,
-            commit=commit,
-            shared_group=True,
+            platforms=[
+                PlatformSpec(platform="x", resolved=_make_rpcfg(name="x")),
+            ],
         )
-        # With only 1 platform, _draft_shared_group is NOT called
+
+        draft(intent, config, MagicMock(), db, project, context, commit)
+        # With only 1 platform, _draft_shared is NOT called
         mock_shared_group.assert_not_called()
 
 
 # =============================================================================
-# draft_for_platforms legacy deprecation warning
+# draft() with empty platforms returns empty
 # =============================================================================
 
 
-class TestDraftForPlatformsLegacyWarning:
-    """draft_for_platforms() logs a deprecation warning."""
+class TestDraftEmptyPlatforms:
+    """draft() with no platforms returns empty list."""
 
-    @patch("social_hook.drafting._resolve_and_filter_platforms", return_value={})
-    def test_deprecation_warning_logged(self, mock_resolve, caplog):
-        """draft_for_platforms() logs 'Using legacy platform-based drafting'."""
-        import logging
+    def test_no_platforms_returns_empty(self):
+        """draft() with empty platforms in intent returns []."""
+        from social_hook.drafting import DraftingIntent, draft
 
-        from social_hook.drafting import draft_for_platforms
+        intent = DraftingIntent(platforms=[])
+        result = draft(
+            intent=intent,
+            config=MagicMock(),
+            conn=MagicMock(),
+            db=MagicMock(),
+            project=MagicMock(id="p1"),
+            context=MagicMock(),
+            commit=CommitInfo(hash="abc", message="test", diff=""),
+        )
 
-        config = _make_config()
-
-        with caplog.at_level(logging.WARNING, logger="social_hook.drafting"):
-            draft_for_platforms(
-                config=config,
-                conn=MagicMock(),
-                db=MagicMock(),
-                project=MagicMock(id="p1"),
-                decision_id="d1",
-                evaluation=_make_evaluation(),
-                context=MagicMock(),
-                commit=CommitInfo(hash="abc", message="test", diff=""),
-            )
-
-        assert any("legacy platform-based drafting" in r.message.lower() for r in caplog.records)
+        assert result == []

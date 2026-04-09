@@ -328,6 +328,31 @@ def discover_project(
         logger.warning("Discovery pass 2: no files could be loaded")
         return None, [], [], []
 
+    # Collect git stats for trajectory narrative
+    git_stats_text = ""
+    try:
+        from social_hook.trigger_git import collect_git_stats
+
+        git_stats = collect_git_stats(repo_path)
+        if git_stats:
+            stat_parts = []
+            if git_stats.get("commit_count"):
+                stat_parts.append(f"Total commits: {git_stats['commit_count']}")
+            if git_stats.get("contributor_count"):
+                stat_parts.append(f"Contributors: {git_stats['contributor_count']}")
+            if git_stats.get("first_commit_date"):
+                stat_parts.append(f"First commit: {git_stats['first_commit_date']}")
+            if git_stats.get("latest_commit_date"):
+                stat_parts.append(f"Latest commit: {git_stats['latest_commit_date']}")
+            if git_stats.get("active_branch_count"):
+                stat_parts.append(f"Active branches: {git_stats['active_branch_count']}")
+            if git_stats.get("commits_last_30_days"):
+                stat_parts.append(f"Commits (last 30 days): {git_stats['commits_last_30_days']}")
+            if stat_parts:
+                git_stats_text = "\n\n--- GIT STATS ---\n" + "\n".join(stat_parts)
+    except Exception:
+        logger.debug("Git stats collection failed during discovery", exc_info=True)
+
     summary_system = (
         "Generate a comprehensive project summary (~1000-1500 tokens) covering: "
         "what the project does, the problem it solves, architecture overview, "
@@ -337,9 +362,19 @@ def discover_project(
         "and select 3-5 file paths that would provide the most useful ongoing "
         "context for understanding this project."
     )
+    if git_stats_text:
+        summary_system += (
+            " Git stats are provided — synthesize a trajectory narrative: "
+            "Is this project growing, stable, or declining? "
+            "How active is development? Include this in the summary."
+        )
+
+    user_content = "\n\n".join(loaded_content)
+    if git_stats_text:
+        user_content += git_stats_text
 
     summary_response = client.complete(
-        messages=[{"role": "user", "content": "\n\n".join(loaded_content)}],
+        messages=[{"role": "user", "content": user_content}],
         tools=[GENERATE_SUMMARY_TOOL],
         system=summary_system,
         max_tokens=4096,

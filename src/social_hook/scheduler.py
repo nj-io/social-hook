@@ -147,9 +147,9 @@ def record_post_success(conn, draft, result, config, project_name: str, dry_run:
         else:
             logger.warning("Decision %s not found for draft %s", draft.decision_id, draft.id)
 
-    # Thread head: draft has thread tweets
-    draft_tweets = ops.get_draft_tweets(conn, draft.id)
-    if draft_tweets:
+    # Thread head: draft has parts
+    draft_parts = ops.get_draft_parts(conn, draft.id)
+    if draft_parts:
         is_thread_head = True
 
     post = Post(
@@ -665,6 +665,26 @@ def _tick_single_draft(conn, config, draft_id, dry_run, db_path=None) -> int:
         return 1
 
 
+def _build_reference(conn, draft, adapter):
+    """Build a PostReference for quote/reply drafts, or return None."""
+    if draft.reference_post_id and draft.reference_type in ("quote", "reply"):
+        ref_post = ops.get_post(conn, draft.reference_post_id)
+        if ref_post and ref_post.external_id:
+            from social_hook.adapters.models import PostReference, ReferenceType
+
+            ref_type = (
+                ReferenceType.QUOTE if draft.reference_type == "quote" else ReferenceType.REPLY
+            )
+            if not adapter.supports_reference_type(ref_type):
+                ref_type = ReferenceType.LINK
+            return PostReference(
+                external_id=ref_post.external_id,
+                external_url=ref_post.external_url or "",
+                reference_type=ref_type,
+            )
+    return None
+
+
 def _post_draft(conn, draft, config, db_path=None):
     """Post a draft using the appropriate platform adapter.
 
@@ -675,7 +695,7 @@ def _post_draft(conn, draft, config, db_path=None):
         db_path: Path to SQLite database (for OAuth 2.0 token refresh)
 
     Returns:
-        PostResult or ThreadResult
+        PostResult
     """
     from social_hook.adapters.models import PostResult
 
@@ -728,88 +748,77 @@ def _post_draft(conn, draft, config, db_path=None):
         )
         return PostResult(success=False, error=str(e))
 
-    # Post format assignment: determine quote/reply for arc continuations
+    # Reference type assignment: determine quote/reply for arc continuations
     decision = None
     if draft.decision_id:
         decision = ops.get_decision(conn, draft.decision_id)
 
-    if decision and decision.arc_id and not draft.post_format:
+    if decision and decision.arc_id and not draft.reference_type:
         all_arc_posts = ops.get_arc_posts(conn, decision.arc_id)
         platform_posts = [p for p in all_arc_posts if p.platform == draft.platform]
         prior = platform_posts[0] if platform_posts else None
         if prior:
             if len(platform_posts) <= 1:
-                draft.post_format = "quote"
+                draft.reference_type = "quote"
             else:
-                draft.post_format = "reply"
+                draft.reference_type = "reply"
             draft.reference_post_id = prior.id
             ops.update_draft(
                 conn,
                 draft.id,
-                post_format=draft.post_format,
+                reference_type=draft.reference_type,
                 reference_post_id=draft.reference_post_id,
             )
 
-    # Handle reference posting via abstract adapter interface
-    if draft.reference_post_id and draft.post_format in ("quote", "reply"):
-        ref_post = ops.get_post(conn, draft.reference_post_id)
-        if ref_post and ref_post.external_id:
-            from social_hook.adapters.models import PostReference, ReferenceType
+    # Build reference for quote/reply
+    reference = _build_reference(conn, draft, adapter)
 
-            ref_type = ReferenceType.QUOTE if draft.post_format == "quote" else ReferenceType.REPLY
-            if not adapter.supports_reference_type(ref_type):
-                ref_type = ReferenceType.LINK
-            reference = PostReference(
-                external_id=ref_post.external_id,
-                external_url=ref_post.external_url or "",
-                reference_type=ref_type,
-            )
-            return adapter.post_with_reference(draft.content, reference, draft.media_paths or None)
+    # Fetch parts for thread vehicle
+    vehicle = getattr(draft, "vehicle", "single") or "single"
+    parts = ops.get_draft_parts(conn, draft.id) if vehicle == "thread" else None
 
-    # X-specific: check if this is a thread (has draft_tweets)
-    if draft.platform == "x":
-        tweets = ops.get_draft_tweets(conn, draft.id)
-        if tweets:
-            tweet_dicts = []
-            for i, t in enumerate(tweets):
-                td = {"content": t.content, "media_paths": t.media_paths}
-                # Attach draft-level media to first tweet if tweet has no own media
-                if i == 0 and not t.media_paths and draft.media_paths:
-                    td["media_paths"] = draft.media_paths
-                tweet_dicts.append(td)
-            thread_result = adapter.post_thread(tweet_dicts)
+    # Dispatch via vehicle pipeline
+    from social_hook.llm.dry_run import DryRunContext
+    from social_hook.vehicle import post_by_vehicle
 
-            # Update each draft_tweet with external_id and posted_at
-            if thread_result.success:
-                from datetime import datetime, timezone
+    db = DryRunContext(conn, dry_run=False)
+    result = post_by_vehicle(adapter, draft, parts, draft.media_paths or None, reference, db=db)
 
-                now_iso = datetime.now(timezone.utc).isoformat()
-                for tweet, tweet_result in zip(tweets, thread_result.tweet_results, strict=False):
-                    if tweet_result.success:
-                        ops.update_draft_tweet(
-                            conn,
-                            tweet.id,
-                            external_id=tweet_result.external_id,
-                            posted_at=now_iso,
-                        )
-                    else:
-                        ops.update_draft_tweet(
-                            conn,
-                            tweet.id,
-                            error=tweet_result.error,
-                        )
+    if not result.success and result.error and result.error.startswith("ADVISORY:"):
+        _create_article_advisory(draft, conn, config)
+        return result
 
-            # Return first tweet's result as the PostResult for compatibility
-            first = thread_result.tweet_results[0] if thread_result.tweet_results else None
-            return PostResult(
-                success=thread_result.success,
-                external_id=first.external_id if first else None,
-                external_url=first.external_url if first else None,
-                error=thread_result.error,
-            )
+    return result
 
-    # Standard single-post (X, LinkedIn, or other)
-    return adapter.post(draft.content, media_paths=draft.media_paths or None)
+
+def _create_article_advisory(draft, conn, config):
+    """Create an advisory item for an article draft that needs manual posting."""
+    from social_hook.messaging.base import OutboundMessage
+    from social_hook.models.infra import AdvisoryItem
+    from social_hook.notifications import broadcast_notification
+
+    item = AdvisoryItem(
+        id=generate_id("advisory"),
+        project_id=draft.project_id,
+        category="content_asset",
+        title=f"Article draft ready — post manually ({draft.platform})",
+        description=f"Draft {draft.id[:12]} contains article content that cannot be auto-posted. "
+        "Copy the content and publish it on the platform manually.",
+        urgency="normal",
+        created_by="system",
+        linked_entity_type="draft",
+        linked_entity_id=draft.id,
+    )
+    ops.insert_advisory_item(conn, item)
+    ops.emit_data_event(
+        conn, "advisory", "created", item.id, draft.project_id, extra={"title": item.title}
+    )
+    logger.info("Created article advisory %s for draft %s", item.id, draft.id)
+
+    broadcast_notification(
+        config,
+        OutboundMessage(text=f"Article draft ready — post manually ({draft.platform})"),
+    )
 
 
 def _handle_post_failure(conn, draft, error_msg, config, dry_run):

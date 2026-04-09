@@ -114,7 +114,7 @@ export interface PlatformIntroduced {
   first_post_date?: string;
 }
 
-export interface DraftTweet {
+export interface DraftPart {
   id: string;
   draft_id: string;
   position: number;
@@ -147,11 +147,13 @@ export interface Draft {
   retry_count?: number;
   is_intro: boolean;
   preview_mode: boolean;
-  post_format: string | null;
+  vehicle: string;
+  reference_type: string | null;
+  reference_files: string[] | null;
   reference_post_id: string | null;
   created_at: string;
   updated_at?: string;
-  tweets?: DraftTweet[];
+  parts?: DraftPart[];
   changes?: DraftChange[];
   decision_id?: string;
   decision?: Decision;
@@ -309,6 +311,7 @@ export interface DataChangeEvent {
   platform?: string;
   stage?: string;
   stage_label?: string;
+  title?: string;
 }
 
 export interface Memory {

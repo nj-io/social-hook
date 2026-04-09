@@ -7,7 +7,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from social_hook.adapters.models import MediaResult, PostResult, ThreadResult
+from social_hook.adapters.models import MediaResult, PostResult
 
 
 def generate_dry_run_id() -> str:
@@ -26,18 +26,18 @@ def dry_run_post_result() -> PostResult:
     )
 
 
-def dry_run_thread_result(tweet_count: int) -> ThreadResult:
-    """Create a simulated successful ThreadResult.
+def dry_run_thread_result(part_count: int) -> PostResult:
+    """Create a simulated successful thread PostResult.
 
     Args:
-        tweet_count: Number of tweets in the thread
+        part_count: Number of parts in the thread
 
     Returns:
-        ThreadResult with simulated PostResults
+        PostResult with part_results containing simulated per-part results
     """
-    return ThreadResult(
+    return PostResult(
         success=True,
-        tweet_results=[dry_run_post_result() for _ in range(tweet_count)],
+        part_results=[dry_run_post_result() for _ in range(part_count)],
         error=None,
     )
 
