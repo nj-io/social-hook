@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage narrative arcs — story threads that guide tone and framing of generated posts.
 
 ---
 

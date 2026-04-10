@@ -1,6 +1,6 @@
 # social-hook snapshot
 
-DB snapshot management.
+Save, restore, reset, and delete named database snapshots.
 
 ---
 

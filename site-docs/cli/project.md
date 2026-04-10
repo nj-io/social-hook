@@ -1,6 +1,6 @@
 # social-hook project
 
-Project management.
+Register repos, import commits, install hooks, and control project lifecycle.
 
 ---
 

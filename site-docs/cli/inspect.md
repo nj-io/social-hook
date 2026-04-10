@@ -1,6 +1,6 @@
 # social-hook inspect
 
-Inspect system state.
+Inspect pipeline state: recent log, pending drafts, LLM usage, and platform status.
 
 ---
 

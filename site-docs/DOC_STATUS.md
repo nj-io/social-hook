@@ -1,5 +1,5 @@
-<!-- last_run_commit: ae73832509b165ae6e0674ac9a170e06a2cd80da -->
-<!-- last_run_date: 2026-04-09 -->
+<!-- last_run_commit: a4ee0a9e16da8531b4022df2f626a36cf9533039 -->
+<!-- last_run_date: 2026-04-10 -->
 
 # Documentation Status
 
@@ -53,6 +53,14 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `draft unapprove` | ok | Enriched: resulting status, when to use |
 | `draft connect` | ok | New: links preview draft to an account |
 | `draft unschedule` | ok | Enriched: resulting status, when to use |
+| `arc *` | ok | Group help enriched; subcommand docstrings adequate |
+| `bot *` | ok | Group help adequate |
+| `config *` | ok | Subcommand docstrings adequate (show, get, set) |
+| `journey *` | ok | Group help adequate (on, off, status) |
+| `media *` | ok | Group help enriched; `gc` has examples |
+| `memory *` | ok | Group help enriched; subcommand docstrings adequate |
+| `project *` | ok | Group help enriched; subcommand docstrings with examples |
+| `snapshot *` | ok | Group help enriched; subcommand docstrings with examples |
 
 ## Conceptual Docs (site-docs/concepts/)
 
@@ -87,17 +95,17 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-09 | |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-03-31 | |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-03-31 | |
-| `ruff check src/ tests/` passes | 2026-04-09 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-09 | 22 errors, all `import-untyped` or `no-any-return` pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-03-31 | 16 commands across 6 files enriched |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-03-31 | |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-03-31 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-03-31 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
-| Quickstart docs match quickstart code flow | 2026-04-09 | Fixed stale "install git hook" claim |
-| Config docs cover all ContextConfig fields | 2026-04-09 | Added max_discovery_tokens, max_file_size; rate_limits/identities/content_strategies still in backlog |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-10 | Regenerated after group help enrichment |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-10 | 23 nav entries match 23 generated files |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-10 | |
+| `ruff check src/ tests/` passes | 2026-04-10 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-10 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-04-10 | 8 group help texts enriched in __init__.py (arc, decision, inspect, manual, media, memory, project, snapshot) |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-10 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-10 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-10 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| Quickstart docs match quickstart code flow | 2026-04-10 | Fixed: section 6 now mentions `social-hook trigger` and explains hook vs manual trigger |
+| Config docs cover all ContextConfig fields | 2026-04-10 | Added max_discovery_tokens, max_file_size; rate_limits/identities/content_strategies still in backlog |
 
 ## Backlog (waiting_approval)
 
@@ -116,6 +124,16 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)
 
 ## Changelog
+
+### 2026-04-10
+
+- Enriched 8 CLI group help texts in `__init__.py` (arc, decision, inspect, manual, media, memory, project, snapshot) — terse one-liners replaced with descriptive help
+- Added 8 previously untracked CLI groups to coverage table (arc, bot, config, journey, media, memory, project, snapshot)
+- Fixed: quickstart.md section 6 claimed "git hook triggers automatically" unconditionally — now explains both hook and manual `trigger` paths
+- Regenerated CLI docs (9 files updated)
+- Fixed stale `last_run_commit` (previous value referenced non-existent SHA)
+- All 11 recurring checks pass. Ruff clean, mypy 28 pre-existing errors
+- No new backlog approvals found in PR #75 or PR #71 comments
 
 ### 2026-04-09
 

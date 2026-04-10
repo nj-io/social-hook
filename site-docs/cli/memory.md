@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories — persistent notes the LLM uses for consistent voice across drafts.
 
 ---
 

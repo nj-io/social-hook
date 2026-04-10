@@ -68,16 +68,17 @@ Or configure interactively:
 social-hook setup
 ```
 
-## 6. Make a commit
-
-Just commit as usual. The git hook triggers automatically:
+## 6. Make a commit and trigger
 
 ```bash
 git add .
 git commit -m "feat: add WebSocket support for real-time updates"
+social-hook trigger
 ```
 
-Social Hook evaluates the commit. If it's post-worthy, a draft appears:
+If you ran the full `social-hook setup` wizard, a git post-commit hook is installed and triggers automatically on each commit. Otherwise, run `social-hook trigger` manually after committing.
+
+If the commit is post-worthy, a draft appears:
 
 ```bash
 social-hook inspect pending

@@ -963,13 +963,13 @@ from social_hook.cli.setup import app as setup_app
 from social_hook.cli.test_cmd import app as test_app
 
 # Project commands: register, unregister, list
-app.add_typer(project_app, name="project", help="Project management.")
+app.add_typer(project_app, name="project", help="Register repos, import commits, install hooks, and control project lifecycle.")
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(inspect_app, name="inspect", help="Inspect pipeline state: recent log, pending drafts, LLM usage, and platform status.")
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(manual_app, name="manual", help="Manually evaluate commits, generate drafts, or post content outside the automated pipeline.")
 
 # Setup wizard
 app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
@@ -984,16 +984,16 @@ app.add_typer(journey_app, name="journey", help="Development Journey capture.")
 app.add_typer(config_app, name="config", help="View and modify configuration.")
 
 # Memory commands: list, add, delete, clear
-app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+app.add_typer(memory_app, name="memory", help="Manage voice memories — persistent notes the LLM uses for consistent voice across drafts.")
 
 # Arc commands: list, create, complete, abandon
-app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+app.add_typer(arc_app, name="arc", help="Manage narrative arcs — story threads that guide tone and framing of generated posts.")
 
 from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(decision_app, name="decision", help="View, delete, retrigger, or rewind pipeline evaluation decisions.")
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
 app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
@@ -1001,12 +1001,12 @@ app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(media_app, name="media", help="Media cache management — clean up orphaned generated images.")
 
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
-app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+app.add_typer(snapshot_app, name="snapshot", help="Save, restore, reset, and delete named database snapshots.")
 
 from social_hook.cli.account import app as account_app
 from social_hook.cli.brief import app as brief_app

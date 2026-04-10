@@ -20,23 +20,23 @@ These options can be placed before any command.
 | Group | Description |
 |-------|-------------|
 | [`account`](account.md) | Manage OAuth-authenticated platform accounts (X, LinkedIn). |
-| [`arc`](arc.md) | Manage narrative arcs. |
+| [`arc`](arc.md) | Manage narrative arcs — story threads that guide tone and framing of generated posts. |
 | [`bot`](bot.md) | Bot daemon management. |
 | [`brief`](brief.md) | View and edit the project brief used by the evaluator and drafter. |
 | [`config`](config.md) | View and modify configuration. |
 | [`content`](content.md) | Submit content ideas, combine topics, and trigger hero launch drafts. |
 | [`credentials`](credentials.md) | Manage API keys and secrets in ~/.social-hook/.env. |
 | [`cycles`](cycles.md) | Inspect evaluation cycle history and per-strategy outcomes. |
-| [`decision`](decision.md) | Decision management. |
+| [`decision`](decision.md) | View, delete, retrigger, or rewind pipeline evaluation decisions. |
 | [`draft`](draft.md) | Draft lifecycle management. |
-| [`inspect`](inspect.md) | Inspect system state. |
+| [`inspect`](inspect.md) | Inspect pipeline state: recent log, pending drafts, LLM usage, and platform status. |
 | [`journey`](journey.md) | Development Journey capture. |
 | [`logs`](logs.md) | Log queries, tailing, and health. |
-| [`manual`](manual.md) | Manual operations. |
-| [`media`](media.md) | Media management. |
-| [`memory`](memory.md) | Manage voice memories. |
-| [`project`](project.md) | Project management. |
-| [`snapshot`](snapshot.md) | DB snapshot management. |
+| [`manual`](manual.md) | Manually evaluate commits, generate drafts, or post content outside the automated pipeline. |
+| [`media`](media.md) | Media cache management — clean up orphaned generated images. |
+| [`memory`](memory.md) | Manage voice memories — persistent notes the LLM uses for consistent voice across drafts. |
+| [`project`](project.md) | Register repos, import commits, install hooks, and control project lifecycle. |
+| [`snapshot`](snapshot.md) | Save, restore, reset, and delete named database snapshots. |
 | [`strategy`](strategy.md) | View and customize content strategies (voice, audience, editorial rules). |
 | [`target`](target.md) | Configure where content is distributed (account + destination + strategy). |
 | [`topics`](topics.md) | Manage the prioritised content topic queue per strategy. |
