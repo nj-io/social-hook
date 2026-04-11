@@ -43,7 +43,15 @@ Example: social-hook discover my-project-id
 
 Watch live pipeline events (commits, decisions, drafts).
 
-Example: social-hook events --json
+Streams data_change events from the database in real time.
+Entity types: pipeline, decision, draft, task. Filter with
+--entity. Use --since 0 for full history or --no-follow for
+a one-shot dump. In human mode, internal 'task' events are
+suppressed for readability.
+
+Example: social-hook events
+Example: social-hook events --entity draft --json
+Example: social-hook events --since 0 --no-follow
 
 **Options:**
 
@@ -108,10 +116,15 @@ and generates an introductory draft — all in one command.
 
 ### `social-hook rate-limits`
 
-Show current rate limit status (daily cap, gap timer, queue, cost).
+Show current rate limit status.
+
+Displays: auto evaluations today vs daily cap, manual evaluation
+count, gap timer countdown (seconds until next eval is allowed),
+number of queued deferred triggers, and total LLM cost today.
+Configured via rate_limits in config.yaml.
 
 Example: social-hook rate-limits
-Example: social-hook --json rate-limits
+Example: social-hook rate-limits --json
 
 **Options:**
 

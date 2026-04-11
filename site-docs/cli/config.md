@@ -8,6 +8,12 @@ View and modify configuration.
 
 Get a single configuration value by dotted key path.
 
+Traverses the YAML config tree using dot-separated keys.
+Returns scalars directly or nested structures as YAML.
+
+Example: social-hook config get context.max_discovery_tokens
+Example: social-hook config get platforms.x.account_tier
+
 **Arguments:**
 
 | Name | Required | Description |
@@ -49,6 +55,13 @@ For lists/arrays, edit the YAML directly or use the web UI.
 ### `social-hook config show`
 
 Show the full configuration as YAML.
+
+Prints the merged config.yaml contents. Use --content to show
+content-config.yaml instead (social context, voice, post
+categories).
+
+Example: social-hook config show
+Example: social-hook config show --content
 
 **Options:**
 

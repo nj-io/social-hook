@@ -174,7 +174,7 @@ If the evaluator chose "draft" for one or more strategies, the system routes dec
 
 Per-strategy decisions are routed to targets via `route_to_targets()`. Each target maps a strategy to an account + destination (e.g., the "building-public" strategy → X account @myproject / timeline). The router produces a list of `TargetAction` objects, each specifying the target, strategy decision, and platform details.
 
-Strategies with no connected targets produce **preview drafts** (`preview_mode=True`) — the full pipeline runs but the draft isn't eligible for posting until you promote it (`draft promote`) or connect it to an account (`draft connect`).
+Targets with no account configured, or whose account lacks OAuth credentials, produce **preview drafts** (`preview_mode=True`) — the full pipeline runs but the draft isn't eligible for posting until you promote it (`draft promote`) or connect it to an account (`draft connect`).
 
 ### Per-target drafting loop
 
@@ -198,7 +198,7 @@ For each target action that has `action=draft`:
 
 ### Preview mode
 
-When a strategy has no connected targets (no account + destination), the pipeline still drafts content but marks each draft as `preview_mode=True`. Preview drafts let you run the full pipeline and review what it would generate without configuring real platform credentials.
+When a target has no account configured, or the account exists but has no OAuth credentials stored, the pipeline still drafts content but marks the draft as `preview_mode=True`. Preview drafts let you run the full pipeline and review what it would generate without configuring real platform credentials.
 
 To publish a preview draft, either promote it to a specific platform (`draft promote`) or connect it to an existing account (`draft connect`). Both operations clear preview mode and make the draft eligible for scheduling.
 

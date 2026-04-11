@@ -29,7 +29,15 @@ def events(
 ):
     """Watch live pipeline events (commits, decisions, drafts).
 
-    Example: social-hook events --json
+    Streams data_change events from the database in real time.
+    Entity types: pipeline, decision, draft, task. Filter with
+    --entity. Use --since 0 for full history or --no-follow for
+    a one-shot dump. In human mode, internal 'task' events are
+    suppressed for readability.
+
+    Example: social-hook events
+    Example: social-hook events --entity draft --json
+    Example: social-hook events --since 0 --no-follow
     """
     from social_hook.db.connection import ResilientConnection, init_database
     from social_hook.filesystem import get_db_path

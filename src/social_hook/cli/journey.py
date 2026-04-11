@@ -12,7 +12,15 @@ app = typer.Typer()
 
 @app.command("on")
 def journey_on():
-    """Enable Development Journey capture."""
+    """Enable Development Journey capture.
+
+    Installs a Claude Code session hook that records development
+    narratives (reasoning, decisions, context) to JSONL files.
+    These narratives enrich the LLM's understanding of your work.
+    Restart any running Claude Code sessions for the hook to take effect.
+
+    Example: social-hook journey on
+    """
     from social_hook.setup.install import install_narrative_hook
 
     config_path = get_config_path()
@@ -33,7 +41,13 @@ def journey_on():
 
 @app.command("off")
 def journey_off():
-    """Disable Development Journey capture."""
+    """Disable Development Journey capture.
+
+    Removes the Claude Code session hook and stops recording
+    narratives. Existing narrative files are preserved.
+
+    Example: social-hook journey off
+    """
     from social_hook.setup.install import uninstall_narrative_hook
 
     config_path = get_config_path()
@@ -53,7 +67,13 @@ def journey_off():
 
 @app.command("status")
 def journey_status():
-    """Show Development Journey status."""
+    """Show Development Journey status.
+
+    Displays: whether capture is enabled, hook installation state,
+    Claude CLI detection, and number of narrative files recorded.
+
+    Example: social-hook journey status
+    """
     from social_hook.config.yaml import load_full_config
     from social_hook.setup.install import check_narrative_hook_installed
 

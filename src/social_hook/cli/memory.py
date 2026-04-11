@@ -16,7 +16,14 @@ def _resolve_project(project: str | None = None) -> str:
 def list_cmd(
     project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
 ):
-    """List all voice memories for a project."""
+    """List all voice memories for a project.
+
+    Voice memories are human feedback entries (context + feedback pairs)
+    that the LLM receives during drafting to shape tone and style.
+    Shows index number, date, context, feedback, and associated draft ID.
+
+    Example: social-hook memory list
+    """
     from social_hook.config.project import list_memories
 
     repo_path = _resolve_project(project)
@@ -41,7 +48,15 @@ def add(
     draft_id: str = typer.Option("", "--draft-id", "-d", help="Reference to original draft"),
     project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
 ):
-    """Add a voice memory to the project."""
+    """Add a voice memory to the project.
+
+    Voice memories teach the LLM your tone preferences. The --context
+    describes the content type (e.g. "bug fix posts") and --feedback
+    provides the guidance (e.g. "keep it casual, skip jargon").
+    Optionally link to a specific draft with --draft-id.
+
+    Example: social-hook memory add -c "release announcements" -f "be enthusiastic but concise"
+    """
     from social_hook.config.project import save_memory
 
     repo_path = _resolve_project(project)
@@ -54,7 +69,13 @@ def delete(
     index: int = typer.Argument(help="Memory number to delete (1-based, from 'memory list')"),
     project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
 ):
-    """Delete a voice memory by its number."""
+    """Delete a voice memory by its number.
+
+    Use the 1-based index from 'memory list' to identify which
+    memory to remove.
+
+    Example: social-hook memory delete 3
+    """
     from social_hook.config.project import delete_memory
 
     repo_path = _resolve_project(project)

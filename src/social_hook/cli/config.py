@@ -63,7 +63,15 @@ def show(
         None, "--project", "-p", help="Project path for project-specific config"
     ),
 ):
-    """Show the full configuration as YAML."""
+    """Show the full configuration as YAML.
+
+    Prints the merged config.yaml contents. Use --content to show
+    content-config.yaml instead (social context, voice, post
+    categories).
+
+    Example: social-hook config show
+    Example: social-hook config show --content
+    """
     from social_hook.filesystem import get_config_path
 
     config_path = get_config_path()
@@ -90,7 +98,14 @@ def get_key(
     ),
     project_path: str = typer.Option(None, "--project", "-p", help="Project path"),
 ):
-    """Get a single configuration value by dotted key path."""
+    """Get a single configuration value by dotted key path.
+
+    Traverses the YAML config tree using dot-separated keys.
+    Returns scalars directly or nested structures as YAML.
+
+    Example: social-hook config get context.max_discovery_tokens
+    Example: social-hook config get platforms.x.account_tier
+    """
     from social_hook.filesystem import get_config_path
 
     config_path = get_config_path()

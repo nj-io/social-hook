@@ -10,10 +10,15 @@ def rate_limits(
     ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """Show current rate limit status (daily cap, gap timer, queue, cost).
+    """Show current rate limit status.
+
+    Displays: auto evaluations today vs daily cap, manual evaluation
+    count, gap timer countdown (seconds until next eval is allowed),
+    number of queued deferred triggers, and total LLM cost today.
+    Configured via rate_limits in config.yaml.
 
     Example: social-hook rate-limits
-    Example: social-hook --json rate-limits
+    Example: social-hook rate-limits --json
     """
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops

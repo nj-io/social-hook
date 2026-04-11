@@ -55,6 +55,11 @@ Examples:
 
 Install git post-commit hook for a project.
 
+The hook runs 'social-hook git-hook' after each commit, which
+triggers the evaluation pipeline automatically. Safe to re-run
+if the hook is already installed.
+
+Example: social-hook project install-hook
 Example: social-hook project install-hook /path/to/repo
 
 **Arguments:**
@@ -88,11 +93,22 @@ Manage per-platform introduction status.
 
 List all registered projects.
 
+Shows project ID (truncated), name, status (active/paused),
+branch filter, and repository path for each registered project.
+
+Example: social-hook project list
+
 ---
 
 ### `social-hook project pause`
 
 Pause a project (skip commit evaluation).
+
+While paused, commits are still recorded by the git hook but
+not evaluated by the LLM pipeline. Auto-detects the project
+from the current directory if no ID is given.
+
+Example: social-hook project pause
 
 **Arguments:**
 
@@ -105,6 +121,14 @@ Pause a project (skip commit evaluation).
 ### `social-hook project register`
 
 Register a project for social-hook.
+
+Creates a database entry for the repository and optionally installs
+a git post-commit hook that triggers evaluation on each commit.
+Use --no-git-hook to skip hook installation. The project name
+defaults to the repository directory name.
+
+Example: social-hook project register
+Example: social-hook project register /path/to/repo --name "my-project"
 
 **Arguments:**
 
@@ -125,6 +149,13 @@ Register a project for social-hook.
 
 Set which branch triggers the pipeline for a project.
 
+When a branch filter is set, only commits on that branch are
+evaluated. Use --all to clear the filter and evaluate all
+branches. Auto-detects the project from the current directory.
+
+Example: social-hook project set-branch main
+Example: social-hook project set-branch --all
+
 **Arguments:**
 
 | Name | Required | Description |
@@ -144,7 +175,12 @@ Set which branch triggers the pipeline for a project.
 
 Remove git post-commit hook from a project.
 
-Example: social-hook project uninstall-hook /path/to/repo
+Deletes the social-hook post-commit hook script from the
+repository's .git/hooks/ directory. Requires confirmation
+unless --force is passed.
+
+Example: social-hook project uninstall-hook
+Example: social-hook project uninstall-hook /path/to/repo --force
 
 **Arguments:**
 
@@ -165,6 +201,12 @@ Example: social-hook project uninstall-hook /path/to/repo
 
 Unpause a project (resume commit evaluation).
 
+Resumes LLM evaluation for new commits. Already-paused commits
+are not retroactively evaluated; use 'project evaluate-recent'
+to process missed commits.
+
+Example: social-hook project unpause
+
 **Arguments:**
 
 | Name | Required | Description |
@@ -176,6 +218,13 @@ Unpause a project (resume commit evaluation).
 ### `social-hook project unregister`
 
 Unregister a project.
+
+Deletes the project and all its data (decisions, drafts, arcs,
+memories) from the database. Also removes the git post-commit
+hook. Requires confirmation unless --force is passed.
+
+Example: social-hook project unregister proj_abc123
+Example: social-hook project unregister proj_abc123 --force
 
 **Arguments:**
 

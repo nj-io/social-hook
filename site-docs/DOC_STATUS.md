@@ -1,5 +1,5 @@
-<!-- last_run_commit: a4ee0a9e16da8531b4022df2f626a36cf9533039 -->
-<!-- last_run_date: 2026-04-10 -->
+<!-- last_run_commit: 7aeb10f562605b582bfb105f6b95cd812c3494d8 -->
+<!-- last_run_date: 2026-04-11 -->
 
 # Documentation Status
 
@@ -95,17 +95,17 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-10 | Regenerated after group help enrichment |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-10 | 23 nav entries match 23 generated files |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-10 | |
-| `ruff check src/ tests/` passes | 2026-04-10 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-10 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-04-10 | 8 group help texts enriched in __init__.py (arc, decision, inspect, manual, media, memory, project, snapshot) |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-10 | |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-10 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-10 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
-| Quickstart docs match quickstart code flow | 2026-04-10 | Fixed: section 6 now mentions `social-hook trigger` and explains hook vs manual trigger |
-| Config docs cover all ContextConfig fields | 2026-04-10 | Added max_discovery_tokens, max_file_size; rate_limits/identities/content_strategies still in backlog |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-11 | Regenerated after subcommand docstring enrichment (8 files) |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-11 | 23 nav entries match 23 generated files |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-11 | |
+| `ruff check src/ tests/` passes | 2026-04-11 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-11 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-04-11 | 25 subcommands enriched across arc, journey, memory, project, config, media, events, rate-limits |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-11 | Fixed preview mode to include OAuth credential check |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-11 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-11 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| Quickstart docs match quickstart code flow | 2026-04-11 | Fixed: `trigger` command now shows required `--commit` and `--repo` args |
+| Config docs cover all ContextConfig fields | 2026-04-11 | Added max_discovery_tokens, max_file_size; rate_limits/identities/content_strategies still in backlog |
 
 ## Backlog (waiting_approval)
 
@@ -124,6 +124,15 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)
 
 ## Changelog
+
+### 2026-04-11
+
+- Enriched 25 CLI subcommand docstrings across 8 files: arc (5), journey (3), memory (3), project (8), config (2), media (1), events (1), rate-limits (1) — terse one-liners replaced with explanatory prose and examples
+- Fixed: quickstart.md `social-hook trigger` shown without args — command requires `--commit <hash> --repo <path>`
+- Fixed: pipeline.md preview mode only mentioned "no connected targets" — now also documents the OAuth credential check
+- Regenerated CLI docs (8 files updated)
+- All 11 recurring checks pass. Ruff clean, mypy 28 pre-existing errors
+- No new backlog approvals found in PR #71 or PR #75 comments
 
 ### 2026-04-10
 

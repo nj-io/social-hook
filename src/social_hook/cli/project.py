@@ -22,7 +22,16 @@ def register(
         True, "--git-hook/--no-git-hook", help="Install git post-commit hook"
     ),
 ):
-    """Register a project for social-hook."""
+    """Register a project for social-hook.
+
+    Creates a database entry for the repository and optionally installs
+    a git post-commit hook that triggers evaluation on each commit.
+    Use --no-git-hook to skip hook installation. The project name
+    defaults to the repository directory name.
+
+    Example: social-hook project register
+    Example: social-hook project register /path/to/repo --name "my-project"
+    """
     from social_hook.config import load_full_config
     from social_hook.db import init_database
     from social_hook.db.operations import register_project
@@ -64,7 +73,15 @@ def unregister(
     project_id: str = typer.Argument(..., help="Project ID to unregister"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ):
-    """Unregister a project."""
+    """Unregister a project.
+
+    Deletes the project and all its data (decisions, drafts, arcs,
+    memories) from the database. Also removes the git post-commit
+    hook. Requires confirmation unless --force is passed.
+
+    Example: social-hook project unregister proj_abc123
+    Example: social-hook project unregister proj_abc123 --force
+    """
     from social_hook.db import delete_project, get_project, init_database
     from social_hook.filesystem import get_db_path
 
@@ -100,7 +117,14 @@ def pause(
         None, help="Project ID (default: detect from current directory)"
     ),
 ):
-    """Pause a project (skip commit evaluation)."""
+    """Pause a project (skip commit evaluation).
+
+    While paused, commits are still recorded by the git hook but
+    not evaluated by the LLM pipeline. Auto-detects the project
+    from the current directory if no ID is given.
+
+    Example: social-hook project pause
+    """
     _set_paused(project_id, paused=True)
 
 
@@ -111,7 +135,14 @@ def unpause(
         None, help="Project ID (default: detect from current directory)"
     ),
 ):
-    """Unpause a project (resume commit evaluation)."""
+    """Unpause a project (resume commit evaluation).
+
+    Resumes LLM evaluation for new commits. Already-paused commits
+    are not retroactively evaluated; use 'project evaluate-recent'
+    to process missed commits.
+
+    Example: social-hook project unpause
+    """
     _set_paused(project_id, paused=False)
 
 
@@ -187,7 +218,15 @@ def set_branch(
         False, "--all", help="Clear filter (trigger on all branches)"
     ),
 ):
-    """Set which branch triggers the pipeline for a project."""
+    """Set which branch triggers the pipeline for a project.
+
+    When a branch filter is set, only commits on that branch are
+    evaluated. Use --all to clear the filter and evaluate all
+    branches. Auto-detects the project from the current directory.
+
+    Example: social-hook project set-branch main
+    Example: social-hook project set-branch --all
+    """
     import subprocess as sp
 
     from social_hook.db import (
@@ -361,7 +400,13 @@ def import_commits(
 
 @app.command("list")
 def list_projects(ctx: typer.Context):
-    """List all registered projects."""
+    """List all registered projects.
+
+    Shows project ID (truncated), name, status (active/paused),
+    branch filter, and repository path for each registered project.
+
+    Example: social-hook project list
+    """
     from social_hook.db import get_all_projects, init_database
     from social_hook.filesystem import get_db_path
 
@@ -396,7 +441,14 @@ def install_hook_cmd(
     json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Install git post-commit hook for a project.
-    Example: social-hook project install-hook /path/to/repo"""
+
+    The hook runs 'social-hook git-hook' after each commit, which
+    triggers the evaluation pipeline automatically. Safe to re-run
+    if the hook is already installed.
+
+    Example: social-hook project install-hook
+    Example: social-hook project install-hook /path/to/repo
+    """
     from social_hook.setup.install import install_git_hook
 
     if path is None:
@@ -427,7 +479,14 @@ def uninstall_hook_cmd(
     json_mode: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Remove git post-commit hook from a project.
-    Example: social-hook project uninstall-hook /path/to/repo"""
+
+    Deletes the social-hook post-commit hook script from the
+    repository's .git/hooks/ directory. Requires confirmation
+    unless --force is passed.
+
+    Example: social-hook project uninstall-hook
+    Example: social-hook project uninstall-hook /path/to/repo --force
+    """
     from social_hook.setup.install import check_git_hook_installed, uninstall_git_hook
 
     if path is None:

@@ -73,10 +73,10 @@ social-hook setup
 ```bash
 git add .
 git commit -m "feat: add WebSocket support for real-time updates"
-social-hook trigger
+social-hook trigger --commit $(git rev-parse HEAD) --repo .
 ```
 
-If you ran the full `social-hook setup` wizard, a git post-commit hook is installed and triggers automatically on each commit. Otherwise, run `social-hook trigger` manually after committing.
+If you ran the full `social-hook setup` wizard, a git post-commit hook is installed and triggers automatically on each commit. Otherwise, run `social-hook trigger --commit <hash> --repo <path>` manually after committing.
 
 If the commit is post-worthy, a draft appears:
 

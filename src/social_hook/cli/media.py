@@ -15,8 +15,12 @@ def media_gc(
 ):
     """Remove orphaned files from media cache.
 
+    Orphaned media are cache directories whose associated draft
+    no longer exists in the database (e.g. after draft deletion).
+    Use --dry-run to preview what would be removed.
+
     Example: social-hook media gc --dry-run
-    Example: social-hook media gc --yes  (skip confirmation)
+    Example: social-hook media gc --yes
     """
     from social_hook.db.connection import init_database
     from social_hook.filesystem import cleanup_orphaned_media, get_db_path

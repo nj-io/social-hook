@@ -19,7 +19,15 @@ def list_cmd(
         None, "--status", "-s", help="Filter by status: active, completed, abandoned, all"
     ),
 ):
-    """List narrative arcs for a project."""
+    """List narrative arcs for a project.
+
+    Shows ID, status, post count, and theme for each arc.
+    Defaults to active arcs only; use --status to filter
+    (active, completed, abandoned, all).
+
+    Example: social-hook arc list
+    Example: social-hook arc list --status all
+    """
     from social_hook.db import operations as ops
     from social_hook.db.connection import init_database
     from social_hook.filesystem import get_db_path
@@ -54,7 +62,15 @@ def create(
     project: str | None = typer.Option(None, "--project", "-p", help="Project path (default: cwd)"),
     notes: str | None = typer.Option(None, "--notes", "-n", help="Optional notes"),
 ):
-    """Create a new narrative arc."""
+    """Create a new narrative arc.
+
+    Arcs give the LLM a thematic thread to weave through posts.
+    A project can have at most 3 active arcs; complete or
+    abandon an existing arc to make room.
+
+    Example: social-hook arc create "WebSocket migration"
+    Example: social-hook arc create "Performance sprint" --notes "Q2 focus"
+    """
     from social_hook.db import operations as ops
     from social_hook.db.connection import init_database
     from social_hook.errors import MaxArcsError
@@ -89,7 +105,14 @@ def complete(
     arc_id: str = typer.Argument(..., help="Arc ID to complete"),
     notes: str | None = typer.Option(None, "--notes", "-n", help="Optional completion notes"),
 ):
-    """Mark a narrative arc as completed."""
+    """Mark a narrative arc as completed.
+
+    Completed arcs are no longer included in the LLM evaluation
+    context. The post count is preserved. Use 'arc resume' to
+    reactivate a completed arc later (subject to the 3-arc limit).
+
+    Example: social-hook arc complete arc_abc123
+    """
     from social_hook.db import operations as ops
     from social_hook.db.connection import init_database
     from social_hook.filesystem import get_db_path
@@ -117,7 +140,12 @@ def resume(
     arc_id: str = typer.Argument(..., help="Arc ID to resume"),
 ):
     """Resume a completed or abandoned arc.
-    Example: social-hook arc resume arc_abc123"""
+
+    Moves the arc back to active status so it is included in
+    future LLM evaluations. Fails if 3 arcs are already active.
+
+    Example: social-hook arc resume arc_abc123
+    """
     from social_hook.db import operations as ops
     from social_hook.db.connection import init_database
     from social_hook.errors import MaxArcsError
@@ -150,7 +178,14 @@ def abandon(
     arc_id: str = typer.Argument(..., help="Arc ID to abandon"),
     notes: str | None = typer.Option(None, "--notes", "-n", help="Optional notes"),
 ):
-    """Mark a narrative arc as abandoned."""
+    """Mark a narrative arc as abandoned.
+
+    Abandoned arcs are removed from the LLM evaluation context.
+    Unlike completed arcs, abandonment signals the theme was
+    dropped rather than concluded. Use 'arc resume' to reactivate.
+
+    Example: social-hook arc abandon arc_abc123
+    """
     from social_hook.db import operations as ops
     from social_hook.db.connection import init_database
     from social_hook.filesystem import get_db_path
