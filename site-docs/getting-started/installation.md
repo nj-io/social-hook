@@ -32,12 +32,13 @@ social-hook quickstart
 This will:
 
 1. Prompt for your Anthropic API key (if not already configured)
-2. Register the repo as a project
-3. Import your commit history
-4. Run project discovery (AI reads your codebase to understand what it does)
-5. Generate an introductory draft
+2. Write a minimal `config.yaml` with your chosen content strategy
+3. Register the repo as a project
+4. Import your commit history
+5. Run project discovery (AI reads your codebase to understand what it does)
+6. Generate an introductory draft
 
-Pass `--evaluate-last 3` to also evaluate your 3 most recent commits for additional drafts.
+Pass `--strategy` to select content strategies (default: `building-public`), `--branch` to set a trigger branch filter, and `--evaluate-last 3` to evaluate recent commits:
 
 ## Guided setup
 

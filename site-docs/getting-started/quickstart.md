@@ -18,12 +18,27 @@ social-hook quickstart
 This single command handles everything:
 
 - Prompts for your Anthropic API key (or pass `--key sk-ant-...` to skip the prompt)
+- Writes a minimal `config.yaml` with your chosen content strategy
 - Registers the current repo as a project
 - Imports your commit history
 - Runs AI-powered project discovery
 - Generates an introductory draft based on what it learned about your project
 
-To also evaluate recent commits:
+### Options
+
+Choose one or more content strategies with `--strategy` (default: `building-public`):
+
+```bash
+social-hook quickstart -s building-public -s product-news
+```
+
+Set a trigger branch filter so only commits on that branch are evaluated:
+
+```bash
+social-hook quickstart --branch main
+```
+
+Evaluate recent commits during setup:
 
 ```bash
 social-hook quickstart --evaluate-last 3

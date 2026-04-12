@@ -1,5 +1,5 @@
-<!-- last_run_commit: 7aeb10f562605b582bfb105f6b95cd812c3494d8 -->
-<!-- last_run_date: 2026-04-11 -->
+<!-- last_run_commit: a00cf0f5a546610dbcde104b8e480d823af3856f -->
+<!-- last_run_date: 2026-04-12 -->
 
 # Documentation Status
 
@@ -9,7 +9,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Command | Coverage | Notes |
 |---------|----------|-------|
-| `quickstart` | ok | Enriched: explains full onboarding flow |
+| `quickstart` | ok | Enriched: full onboarding flow, `--strategy`/`--branch` flags |
 | `consolidation-tick` | ok | Enriched: explains hold processing, modes, cron usage |
 | `scheduler-tick` | ok | Enriched: explains posting, deferred promotion, cron |
 | `discover` | ok | Enriched: explains two-pass LLM analysis |
@@ -31,7 +31,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `logs *` | ok | Replaced `system *`; query, tail, clear, health subcommands |
 | `target *` | ok | `enable` enriched with re-enable behavior |
 | `topics *` | ok | Group help enriched; subcommand docstrings already good |
-| `decision *` | ok | `list` and `delete` enriched with decision context |
+| `decision *` | ok | `list` and `delete` enriched; `batch-evaluate` added with full docstring and example |
 | `inspect *` | ok | `log`, `pending`, `usage`, `platforms` all enriched with detail and examples |
 | `manual *` | ok | `draft`, `consolidate`, `post` enriched with LLM context and examples |
 | `draft approve` | ok | Enriched: explains scheduler interaction |
@@ -88,24 +88,24 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Page | Status | Notes |
 |------|--------|-------|
-| installation.md | complete | Fixed: quickstart steps now match code (2026-04-09) |
-| quickstart.md | complete | Fixed: quickstart steps now match code (2026-04-09) |
+| installation.md | complete | Updated: quickstart steps match code; `--strategy`/`--branch`/`--evaluate-last` flags documented |
+| quickstart.md | complete | Updated: `--strategy`/`--branch` flags documented; trigger path fixed; preview → promote flow valid |
 
 ## Recurring Checks
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-11 | Regenerated after subcommand docstring enrichment (8 files) |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-11 | 23 nav entries match 23 generated files |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-11 | |
-| `ruff check src/ tests/` passes | 2026-04-11 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-11 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-04-11 | 25 subcommands enriched across arc, journey, memory, project, config, media, events, rate-limits |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-11 | Fixed preview mode to include OAuth credential check |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-11 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-11 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
-| Quickstart docs match quickstart code flow | 2026-04-11 | Fixed: `trigger` command now shows required `--commit` and `--repo` args |
-| Config docs cover all ContextConfig fields | 2026-04-11 | Added max_discovery_tokens, max_file_size; rate_limits/identities/content_strategies still in backlog |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-12 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-12 | 23 nav entries match 23 generated files |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-12 | |
+| `ruff check src/ tests/` passes | 2026-04-12 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-12 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-04-12 | 25+ subcommands enriched; `batch-evaluate` added |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-12 | Includes OAuth credential check in preview mode |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-12 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-12 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| Quickstart docs match quickstart code flow | 2026-04-12 | `--strategy`/`--branch` flags documented; trigger path accurate |
+| Config docs cover all ContextConfig fields | 2026-04-12 | Added max_discovery_tokens, max_file_size; rate_limits/identities/content_strategies still in backlog |
 
 ## Backlog (waiting_approval)
 
@@ -124,6 +124,16 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)
 
 ## Changelog
+
+### 2026-04-12
+
+- Merged develop (50+ commits since last run: targets feature #72, v0.12.0 release, multi-strategy quickstart, batch evaluation, import limit)
+- Updated quickstart.md: documented new `--strategy`/`-s` and `--branch`/`-b` flags with examples
+- Updated installation.md: quickstart steps now include config.yaml creation and new flag options
+- Tracked new `decision batch-evaluate` command in DOC_STATUS coverage table
+- CLI docs already fresh (regenerated by CI in `b845e24`)
+- All 11 recurring checks pass. Ruff clean, mypy 28 pre-existing errors
+- No new backlog approvals found in PR #71-#74 comments
 
 ### 2026-04-11
 
