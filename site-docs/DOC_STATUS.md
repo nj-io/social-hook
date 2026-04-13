@@ -1,5 +1,5 @@
-<!-- last_run_commit: a00cf0f5a546610dbcde104b8e480d823af3856f -->
-<!-- last_run_date: 2026-04-12 -->
+<!-- last_run_commit: a4ee0a9e16da8531b4022df2f626a36cf9533039 -->
+<!-- last_run_date: 2026-04-13 -->
 
 # Documentation Status
 
@@ -81,7 +81,7 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | Page | Status | Notes |
 |------|--------|-------|
 | config.md | stale | OAuth 2.0 env vars correct; missing sections: rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus |
-| content-config.md | complete | Added `max_discovery_tokens`, `max_file_size` to context table (2026-04-09) |
+| content-config.md | complete | All 15 ContextConfig fields documented; added `commit_analysis_interval`, `topic_granularity` (2026-04-13) |
 | social-context.md | complete | |
 
 ## Getting Started (site-docs/getting-started/)
@@ -95,17 +95,17 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-12 | |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-12 | 23 nav entries match 23 generated files |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-12 | |
-| `ruff check src/ tests/` passes | 2026-04-12 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-12 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-04-12 | 25+ subcommands enriched; `batch-evaluate` added |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-12 | Includes OAuth credential check in preview mode |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-12 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-12 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
-| Quickstart docs match quickstart code flow | 2026-04-12 | `--strategy`/`--branch` flags documented; trigger path accurate |
-| Config docs cover all ContextConfig fields | 2026-04-12 | Added max_discovery_tokens, max_file_size; rate_limits/identities/content_strategies still in backlog |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-13 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-13 | 23 nav entries match 23 generated files |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-13 | |
+| `ruff check src/ tests/` passes | 2026-04-13 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-13 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-04-13 | 25+ subcommands enriched; `batch-evaluate` added |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-13 | Includes OAuth credential check in preview mode |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-13 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-13 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| Quickstart docs match quickstart code flow | 2026-04-13 | `--strategy`/`--branch` flags documented; trigger path accurate |
+| Config docs cover all ContextConfig fields | 2026-04-13 | All 15 ContextConfig fields documented (added `commit_analysis_interval`, `topic_granularity`) |
 
 ## Backlog (waiting_approval)
 
@@ -124,6 +124,13 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)
 
 ## Changelog
+
+### 2026-04-13
+
+- No new code changes on develop since last run
+- **Fixed**: content-config.md missing 2 ContextConfig fields — added `commit_analysis_interval` (int, default 1) and `topic_granularity` (string, default "low") to context table and YAML example
+- All 11 recurring checks pass. CLI docs fresh, ruff clean, mypy 28 pre-existing errors
+- No new backlog approvals found in PR #71 comments
 
 ### 2026-04-12
 

@@ -128,6 +128,8 @@ Controls how much historical context is assembled into LLM prompts. Larger value
 | `arc_context_chars` | int | `500` | Max chars of arc context per pending draft |
 | `pending_drafts_cap` | int | `10` | Max pending drafts included in context |
 | `max_hold_count` | int | `5` | Max held decisions before forcing skip |
+| `commit_analysis_interval` | int | `1` | Number of commits between full pipeline evaluations (1 = every commit) |
+| `topic_granularity` | string | `"low"` | Granularity for topic extraction from commits (`"low"`, `"medium"`, `"high"`) |
 
 ```yaml
 context:
@@ -135,6 +137,8 @@ context:
   recent_posts: 15
   max_tokens: 150000
   pending_draft_detail: full_content
+  commit_analysis_interval: 3
+  topic_granularity: low
   project_docs:
     - "docs/REQUIREMENTS.md"
     - "src/core/**/*.py"
