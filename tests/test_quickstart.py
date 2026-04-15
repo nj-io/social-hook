@@ -169,7 +169,7 @@ class TestAutoConfigure:
 
 class TestRunSummaryTrigger:
     def test_creates_decision_and_calls_drafter(self, temp_db):
-        """run_summary_trigger creates a decision and calls draft_for_platforms."""
+        """run_summary_trigger creates a decision and calls draft."""
         from social_hook.trigger import run_summary_trigger
 
         project = Project(
@@ -191,7 +191,7 @@ class TestRunSummaryTrigger:
         mock_config = MagicMock()
 
         with (
-            patch("social_hook.drafting.draft_for_platforms", return_value=[mock_draft]),
+            patch("social_hook.drafting.draft", return_value=[mock_draft]),
             patch("social_hook.trigger.assemble_evaluator_context", return_value=MagicMock()),
             patch("social_hook.config.project.load_project_config", return_value=MagicMock()),
         ):
@@ -217,7 +217,7 @@ class TestRunSummaryTrigger:
         assert decision.commit_hash == "summary"
 
     def test_returns_none_on_drafter_failure(self, temp_db):
-        """When draft_for_platforms raises, return None."""
+        """When draft raises, return None."""
         from social_hook.trigger import run_summary_trigger
 
         project = Project(
@@ -231,7 +231,7 @@ class TestRunSummaryTrigger:
 
         with (
             patch(
-                "social_hook.drafting.draft_for_platforms",
+                "social_hook.drafting.draft",
                 side_effect=RuntimeError("LLM down"),
             ),
             patch("social_hook.trigger.assemble_evaluator_context", return_value=MagicMock()),
@@ -249,7 +249,7 @@ class TestRunSummaryTrigger:
         assert result is None
 
     def test_returns_none_on_empty_results(self, temp_db):
-        """When draft_for_platforms returns empty list, return None."""
+        """When draft returns empty list, return None."""
         from social_hook.trigger import run_summary_trigger
 
         project = Project(
@@ -262,7 +262,7 @@ class TestRunSummaryTrigger:
         mock_config = MagicMock()
 
         with (
-            patch("social_hook.drafting.draft_for_platforms", return_value=[]),
+            patch("social_hook.drafting.draft", return_value=[]),
             patch("social_hook.trigger.assemble_evaluator_context", return_value=MagicMock()),
             patch("social_hook.config.project.load_project_config", return_value=MagicMock()),
         ):

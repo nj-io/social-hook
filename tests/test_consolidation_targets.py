@@ -59,7 +59,7 @@ class TestConsolidationTargetsPath:
                 return_value=self._mock_evaluator(evaluation),
             ),
             patch("social_hook.routing.route_to_targets", return_value=[mock_routed]),
-            patch("social_hook.drafting.draft_for_targets", return_value=[]) as mock_dft,
+            patch("social_hook.drafting.draft", return_value=[]) as mock_dft,
             patch("social_hook.consolidation.ops"),
         ):
             decisions = [MagicMock(id="d1", commit_summary="test")]
@@ -98,8 +98,8 @@ class TestConsolidationTargetsPath:
                 "social_hook.llm.evaluator.Evaluator",
                 return_value=self._mock_evaluator(evaluation),
             ),
-            patch("social_hook.drafting.draft_for_platforms", return_value=[]) as mock_dfp,
-            patch("social_hook.compat.make_eval_compat", return_value=MagicMock()) as mock_compat,
+            patch("social_hook.drafting.draft", return_value=[]) as mock_dfp,
+            patch("social_hook.drafting_intents.intent_from_platforms") as mock_compat,
             patch("social_hook.consolidation.ops"),
         ):
             decisions = [MagicMock(id="d1", commit_summary="test")]

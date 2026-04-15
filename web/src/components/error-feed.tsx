@@ -171,7 +171,7 @@ export function ErrorFeed() {
                     Copy
                   </button>
                 </div>
-                <p className="mt-1 text-sm">{err.message}</p>
+                <p className={`mt-1 text-sm ${expandedId === err.id ? "whitespace-pre-wrap" : "line-clamp-2"}`}>{err.message}</p>
                 {expandedId === err.id && err.context && err.context !== "{}" && (
                   <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-2 text-xs">
                     {(() => {

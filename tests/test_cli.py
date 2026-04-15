@@ -228,7 +228,7 @@ class TestDraftCommand:
             patch("social_hook.trigger.parse_commit_info") as mock_parse,
             patch("social_hook.config.project.load_project_config") as mock_proj,
             patch("social_hook.llm.prompts.assemble_evaluator_context") as mock_ctx,
-            patch("social_hook.drafting.draft_for_platforms") as mock_draft,
+            patch("social_hook.drafting.draft") as mock_draft,
         ):
             mock_parse.return_value = MagicMock(timestamp=None, parent_timestamp=None)
             mock_proj.return_value = MagicMock()

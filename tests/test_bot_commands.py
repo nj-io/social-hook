@@ -1522,6 +1522,7 @@ class TestExpertRefineSaves:
         expert_result.action.value = "refine_draft"
         expert_result.refined_content = "Punchy improved content"
         expert_result.refined_media_spec = None
+        expert_result.refined_vehicle = None
         expert_result.context_note = None
         expert_result.answer = None
         expert_result.reasoning = "Made it punchier"
@@ -2757,6 +2758,7 @@ class TestApplyExpertResultUnpack:
         result = MagicMock()
         result.refined_content = None
         result.refined_media_spec = {"some": "spec"}
+        result.refined_vehicle = None
 
         config = MagicMock()
 
@@ -2846,73 +2848,15 @@ class TestButtonRestoration:
         assert len(msg.buttons) > 0
 
 
-class TestResyncThreadTweets:
-    """Tests that draft_tweets are re-split when content is edited on a threaded draft."""
+class TestVehicleArtifacts:
+    """Tests for vehicle artifact behavior in bot commands."""
 
     @patch("social_hook.bot.commands._get_conn")
-    def test_save_edit_resyncs_tweets(self, mock_conn, mock_adapter, temp_dir):
-        """_save_edit re-splits draft_tweets when editing a threaded draft."""
+    def test_save_edit_no_parts_is_noop(self, mock_conn, mock_adapter, temp_dir):
+        """_save_edit on a non-threaded draft does not create draft_parts."""
         from social_hook.bot.commands import _save_edit
         from social_hook.db import insert_decision
-        from social_hook.db.operations import get_draft_tweets, insert_draft_tweet
-        from social_hook.models.core import Decision, DraftTweet
-
-        db_path = temp_dir / "test.db"
-        conn = init_database(db_path)
-        mock_conn.return_value = conn
-
-        project = Project(id=generate_id("project"), name="test", repo_path="/tmp/test")
-        insert_project(conn, project)
-        decision = Decision(
-            id=generate_id("decision"),
-            project_id=project.id,
-            commit_hash="abc",
-            decision="draft",
-            reasoning="test",
-        )
-        insert_decision(conn, decision)
-        draft = Draft(
-            id=generate_id("draft"),
-            project_id=project.id,
-            decision_id=decision.id,
-            platform="x",
-            content="1/ Old tweet one\n\n2/ Old tweet two\n\n3/ Old tweet three\n\n4/ Old tweet four",
-            status="draft",
-        )
-        insert_draft(conn, draft)
-
-        # Insert original thread tweets
-        for i, text in enumerate(
-            ["Old tweet one", "Old tweet two", "Old tweet three", "Old tweet four"]
-        ):
-            insert_draft_tweet(
-                conn,
-                DraftTweet(
-                    id=generate_id("tweet"),
-                    draft_id=draft.id,
-                    position=i,
-                    content=text,
-                ),
-            )
-
-        assert len(get_draft_tweets(conn, draft.id)) == 4
-
-        new_content = "1/ New first tweet\n\n2/ New second tweet\n\n3/ New third tweet\n\n4/ New fourth tweet\n\n5/ Bonus fifth tweet"
-        _save_edit(mock_adapter, "123", draft.id, new_content)
-
-        conn2 = get_connection(db_path)
-        tweets = get_draft_tweets(conn2, draft.id)
-        assert len(tweets) == 5
-        assert tweets[0].content == "New first tweet"
-        assert tweets[4].content == "Bonus fifth tweet"
-        conn2.close()
-
-    @patch("social_hook.bot.commands._get_conn")
-    def test_save_edit_no_tweets_is_noop(self, mock_conn, mock_adapter, temp_dir):
-        """_save_edit on a non-threaded draft does not create draft_tweets."""
-        from social_hook.bot.commands import _save_edit
-        from social_hook.db import insert_decision
-        from social_hook.db.operations import get_draft_tweets
+        from social_hook.db.operations import get_draft_parts
         from social_hook.models.core import Decision
 
         db_path = temp_dir / "test.db"
@@ -2942,19 +2886,19 @@ class TestResyncThreadTweets:
         _save_edit(mock_adapter, "123", draft.id, "Updated single post")
 
         conn2 = get_connection(db_path)
-        tweets = get_draft_tweets(conn2, draft.id)
+        tweets = get_draft_parts(conn2, draft.id)
         assert len(tweets) == 0
         conn2.close()
 
-    def test_replace_draft_tweets(self, temp_dir):
-        """replace_draft_tweets deletes old tweets and inserts new ones."""
+    def test_replace_draft_parts(self, temp_dir):
+        """replace_draft_parts deletes old tweets and inserts new ones."""
         from social_hook.db import insert_decision
         from social_hook.db.operations import (
-            get_draft_tweets,
-            insert_draft_tweet,
-            replace_draft_tweets,
+            get_draft_parts,
+            insert_draft_part,
+            replace_draft_parts,
         )
-        from social_hook.models.core import Decision, DraftTweet
+        from social_hook.models.core import Decision, DraftPart
 
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
@@ -2981,25 +2925,25 @@ class TestResyncThreadTweets:
 
         # Insert 3 original tweets
         for i in range(3):
-            insert_draft_tweet(
+            insert_draft_part(
                 conn,
-                DraftTweet(
+                DraftPart(
                     id=generate_id("tweet"),
                     draft_id=draft.id,
                     position=i,
                     content=f"old {i}",
                 ),
             )
-        assert len(get_draft_tweets(conn, draft.id)) == 3
+        assert len(get_draft_parts(conn, draft.id)) == 3
 
         # Replace with 2 new tweets
         new_tweets = [
-            DraftTweet(id=generate_id("tweet"), draft_id=draft.id, position=0, content="new A"),
-            DraftTweet(id=generate_id("tweet"), draft_id=draft.id, position=1, content="new B"),
+            DraftPart(id=generate_id("tweet"), draft_id=draft.id, position=0, content="new A"),
+            DraftPart(id=generate_id("tweet"), draft_id=draft.id, position=1, content="new B"),
         ]
-        replace_draft_tweets(conn, draft.id, new_tweets)
+        replace_draft_parts(conn, draft.id, new_tweets)
 
-        tweets = get_draft_tweets(conn, draft.id)
+        tweets = get_draft_parts(conn, draft.id)
         assert len(tweets) == 2
         assert tweets[0].content == "new A"
         assert tweets[1].content == "new B"

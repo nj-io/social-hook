@@ -184,8 +184,8 @@ def run(harness, runner):
                     draft = drafts[0]
                     if draft.reference_post_id:
                         detail += f", draft ref_id={draft.reference_post_id}"
-                    if draft.post_format:
-                        detail += f", post_format={draft.post_format}"
+                    if draft.reference_type:
+                        detail += f", reference_type={draft.reference_type}"
 
             evaluation = {
                 "angle": d.angle,
@@ -312,7 +312,7 @@ def run(harness, runner):
             external_url="https://x.com/user/status/s4_external_123",
         )
 
-        # Create a Decision + Draft with post_format="quote" and reference_post_id
+        # Create a Decision + Draft with reference_type="quote" and reference_post_id
         decision = Decision(
             id=generate_id("decision"),
             project_id=harness.project_id,
@@ -331,7 +331,7 @@ def run(harness, runner):
             platform="x",
             content="This post references a previous one. #test",
             status="scheduled",
-            post_format="quote",
+            reference_type="quote",
             reference_post_id=seeded_post.id,
         )
         insert_draft(harness.conn, draft)
@@ -423,7 +423,7 @@ def run(harness, runner):
         )
         insert_post(harness.conn, first_post)
 
-        # Create second Decision + Draft for "current" commit in same arc (no post_format set)
+        # Create second Decision + Draft for "current" commit in same arc (no reference_type set)
         second_decision = Decision(
             id=generate_id("decision"),
             project_id=harness.project_id,
@@ -443,7 +443,7 @@ def run(harness, runner):
             platform="x",
             content="Second post continuing the arc.",
             status="scheduled",
-            # Intentionally no post_format or reference_post_id
+            # Intentionally no reference_type or reference_post_id
         )
         insert_draft(harness.conn, second_draft)
         harness.conn.commit()
@@ -463,10 +463,10 @@ def run(harness, runner):
         ):
             result = _post_draft(harness.conn, second_draft, config)
 
-        # _post_draft should have detected arc continuation and set post_format + reference_post_id
+        # _post_draft should have detected arc continuation and set reference_type + reference_post_id
         updated = ops.get_draft(harness.conn, second_draft.id)
-        assert updated.post_format == "quote", (
-            f"Expected post_format='quote', got '{updated.post_format}'"
+        assert updated.reference_type == "quote", (
+            f"Expected reference_type='quote', got '{updated.reference_type}'"
         )
         assert updated.reference_post_id == first_post.id, (
             f"Expected reference_post_id='{first_post.id}', got '{updated.reference_post_id}'"
@@ -474,7 +474,7 @@ def run(harness, runner):
         assert result.success, f"Post failed: {result.error}"
 
         return (
-            f"Arc continuation: post_format={updated.post_format}, "
+            f"Arc continuation: reference_type={updated.reference_type}, "
             f"reference_post_id={updated.reference_post_id}"
         )
 
@@ -482,10 +482,11 @@ def run(harness, runner):
 
     # S6: Deterministic drafting pipeline
     def s6():
-        from types import SimpleNamespace
 
+        from social_hook.config.platforms import resolve_platform
         from social_hook.config.project import load_project_config
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import DraftingIntent, PlatformSpec
+        from social_hook.drafting import draft as run_draft
         from social_hook.filesystem import generate_id
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
@@ -517,21 +518,6 @@ def run(harness, runner):
         insert_decision(harness.conn, decision)
         harness.conn.commit()
 
-        # Build evaluation with reference_posts pointing to seeded post
-        evaluation = SimpleNamespace(
-            decision="draft",
-            reasoning="S6 test",
-            angle="Feature showcase",
-            episode_type="milestone",
-            post_category="arc",
-            arc_id=None,
-            new_arc_theme=None,
-            media_tool=None,
-            reference_posts=[seeded_post.id],
-            commit_summary="WS3 adapters implementation",
-            include_project_docs=False,
-        )
-
         config = harness.load_config()
         project_config = load_project_config(str(harness.repo_path))
         commit = parse_commit_info(COMMITS["major_feature"], str(harness.repo_path))
@@ -547,33 +533,50 @@ def run(harness, runner):
 
         project = ops.get_project(harness.conn, harness.project_id)
 
-        draft_results = draft_for_platforms(
+        # Build DraftingIntent with reference_posts
+        platform_specs = []
+        for pname, pcfg in config.platforms.items():
+            if pcfg.enabled:
+                rpcfg = resolve_platform(pname, pcfg, config.scheduling)
+                platform_specs.append(PlatformSpec(platform=pname, resolved=rpcfg))
+
+        intent = DraftingIntent(
+            decision="draft",
+            reasoning="S6 test",
+            angle="Feature showcase",
+            post_category="arc",
+            reference_posts=[seeded_post.id],
+            commit_summary="WS3 adapters implementation",
+            decision_id=decision.id,
+            platforms=platform_specs,
+        )
+
+        draft_results = run_draft(
+            intent,
             config,
             harness.conn,
             db,
             project,
-            decision_id=decision.id,
-            evaluation=evaluation,
-            context=context,
-            commit=commit,
+            context,
+            commit,
             project_config=project_config,
             verbose=runner.verbose,
         )
 
-        assert len(draft_results) > 0, "No drafts created by draft_for_platforms"
+        assert len(draft_results) > 0, "No drafts created by draft()"
 
-        draft = draft_results[0].draft
-        assert draft.reference_post_id == seeded_post.id, (
-            f"Expected reference_post_id={seeded_post.id}, got {draft.reference_post_id}"
+        draft_obj = draft_results[0].draft
+        assert draft_obj.reference_post_id == seeded_post.id, (
+            f"Expected reference_post_id={seeded_post.id}, got {draft_obj.reference_post_id}"
         )
-        assert draft.post_format == "quote", (
-            f"Expected post_format='quote', got '{draft.post_format}'"
+        assert draft_obj.reference_type == "quote", (
+            f"Expected reference_type='quote', got '{draft_obj.reference_type}'"
         )
 
         detail = (
-            f"Draft ref_id={draft.reference_post_id}, "
-            f"post_format={draft.post_format}, "
-            f"content_len={len(draft.content)}"
+            f"Draft ref_id={draft_obj.reference_post_id}, "
+            f"reference_type={draft_obj.reference_type}, "
+            f"content_len={len(draft_obj.content)}"
         )
 
         runner.add_review_item(
@@ -582,15 +585,15 @@ def run(harness, runner):
             decision="draft",
             episode_type="milestone",
             reasoning="S6 test — seeded evaluation with reference_posts",
-            draft_content=draft.content,
+            draft_content=draft_obj.content,
             evaluation={
                 "reference_posts": [seeded_post.id],
-                "post_format": draft.post_format,
-                "reference_post_id": draft.reference_post_id,
+                "reference_type": draft_obj.reference_type,
+                "reference_post_id": draft_obj.reference_post_id,
             },
             review_question=(
                 "Does the draft reference the seeded post? "
-                "Is reference_post_id and post_format='quote' set correctly?"
+                "Is reference_post_id and reference_type='quote' set correctly?"
             ),
         )
         return detail

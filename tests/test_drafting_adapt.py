@@ -1,9 +1,8 @@
-"""Tests for draft_for_targets grouping."""
+"""Tests for intent_from_routed_targets grouping."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from social_hook.drafting import draft_for_targets
-from social_hook.models.core import CommitInfo
+from social_hook.drafting_intents import intent_from_routed_targets
 from social_hook.routing import RoutedTarget
 
 
@@ -22,12 +21,12 @@ def _make_rpcfg(max_length=None, account_tier=None, name="x", **kwargs):
 
 
 # =============================================================================
-# draft_for_targets: grouping behavior
+# intent_from_routed_targets: grouping behavior
 # =============================================================================
 
 
-class TestDraftForTargetsGrouping:
-    """draft_for_targets groups targets by draft_group."""
+class TestIntentFromRoutedTargetsGrouping:
+    """intent_from_routed_targets groups targets by draft_group."""
 
     def _make_target_action(
         self, target_name, strategy, account_platform="x", draft_group=None, account_name="prod"
@@ -45,6 +44,12 @@ class TestDraftForTargetsGrouping:
         strategy_decision.context_source = None
         strategy_decision.topic_id = None
         strategy_decision.arc_id = None
+        strategy_decision.angle = "test angle"
+        strategy_decision.reason = "test reason"
+        strategy_decision.post_category = "standalone"
+        strategy_decision.media_tool = None
+        strategy_decision.include_project_docs = False
+        strategy_decision.reference_posts = None
         return RoutedTarget(
             target_name=target_name,
             target_config=target_config,
@@ -54,51 +59,48 @@ class TestDraftForTargetsGrouping:
             draft_group=draft_group,
         )
 
-    @patch("social_hook.drafting._draft_for_resolved_platforms")
-    @patch("social_hook.drafting.resolve_platform")
-    def test_grouped_targets_use_shared_group(self, mock_resolve, mock_draft):
-        """Targets with same draft_group are batched with shared_group=True."""
-        mock_resolve.return_value = _make_rpcfg(name="x")
-        mock_draft.return_value = []
+    def _make_evaluation(self):
+        eval_mock = MagicMock()
+        eval_mock.commit_analysis.summary = "test"
+        return eval_mock
+
+    def test_grouped_targets_produce_single_intent(self):
+        """Targets with same draft_group produce one intent with multiple platform specs."""
+        from social_hook.config.yaml import SchedulingConfig
 
         config = MagicMock()
-        config.platforms = {"x": MagicMock(enabled=True)}
-        config.scheduling.timezone = "UTC"
+        config.platforms = {}  # Empty so _resolve_target_platform builds from account config
+        config.scheduling = SchedulingConfig()
 
         target_actions = [
             self._make_target_action("x-feed", "building-public", draft_group="group-1"),
             self._make_target_action("x-community", "building-public", draft_group="group-1"),
         ]
 
-        draft_for_targets(
-            target_actions=target_actions,
-            config=config,
-            conn=MagicMock(),
-            db=MagicMock(),
-            project=MagicMock(id="p1"),
-            decision_id="d1",
-            evaluation=MagicMock(),
-            context=MagicMock(recent_posts=[]),
-            commit=CommitInfo(hash="abc", message="test", diff=""),
+        conn = MagicMock()
+        conn.execute.return_value.fetchall.return_value = [("prod",)]
+
+        intents = intent_from_routed_targets(
+            target_actions,
+            "d1",
+            self._make_evaluation(),
+            config,
+            conn,
+            project_id="test-project",
         )
 
-        # Should call _draft_for_resolved_platforms once for the group
-        assert mock_draft.call_count == 1
-        # The shared_group kwarg should be True
-        call_kwargs = mock_draft.call_args[1] if mock_draft.call_args[1] else {}
-        # shared_group is passed as keyword
-        assert call_kwargs.get("shared_group") is True
+        # Should produce one intent for the group
+        assert len(intents) == 1
+        # With two platform specs
+        assert len(intents[0].platforms) == 2
 
-    @patch("social_hook.drafting._draft_for_resolved_platforms")
-    @patch("social_hook.drafting.resolve_platform")
-    def test_ungrouped_targets_drafted_individually(self, mock_resolve, mock_draft):
-        """Targets without draft_group are drafted one at a time."""
-        mock_resolve.return_value = _make_rpcfg(name="x")
-        mock_draft.return_value = []
+    def test_ungrouped_targets_produce_separate_intents(self):
+        """Targets without draft_group produce one intent each."""
+        from social_hook.config.yaml import SchedulingConfig
 
         config = MagicMock()
-        config.platforms = {"x": MagicMock(enabled=True)}
-        config.scheduling.timezone = "UTC"
+        config.platforms = {}
+        config.scheduling = SchedulingConfig()
 
         target_actions = [
             self._make_target_action("x-feed", "building-public", draft_group=None),
@@ -107,24 +109,22 @@ class TestDraftForTargetsGrouping:
             ),
         ]
 
-        draft_for_targets(
-            target_actions=target_actions,
-            config=config,
-            conn=MagicMock(),
-            db=MagicMock(),
-            project=MagicMock(id="p1"),
-            decision_id="d1",
-            evaluation=MagicMock(),
-            context=MagicMock(recent_posts=[]),
-            commit=CommitInfo(hash="abc", message="test", diff=""),
+        conn = MagicMock()
+        conn.execute.return_value.fetchall.return_value = [("prod",)]
+
+        intents = intent_from_routed_targets(
+            target_actions,
+            "d1",
+            self._make_evaluation(),
+            config,
+            conn,
+            project_id="test-project",
         )
 
-        # Two ungrouped targets = two calls
-        assert mock_draft.call_count == 2
+        # Two ungrouped targets = two intents
+        assert len(intents) == 2
 
-    @patch("social_hook.drafting._draft_for_resolved_platforms")
-    @patch("social_hook.drafting.resolve_platform")
-    def test_no_draft_actions_returns_empty(self, mock_resolve, mock_draft):
+    def test_no_draft_actions_returns_empty(self):
         """If all target_actions are non-draft, returns empty list."""
         from social_hook.config.targets import AccountConfig, TargetConfig
 
@@ -144,62 +144,46 @@ class TestDraftForTargetsGrouping:
             skip_reason="not relevant",
         )
 
-        result = draft_for_targets(
-            target_actions=[skip_action],
-            config=MagicMock(),
-            conn=MagicMock(),
-            db=MagicMock(),
-            project=MagicMock(id="p1"),
-            decision_id="d1",
-            evaluation=MagicMock(),
-            context=MagicMock(recent_posts=[]),
-            commit=CommitInfo(hash="abc", message="test", diff=""),
+        conn = MagicMock()
+        conn.execute.return_value.fetchall.return_value = []
+
+        intents = intent_from_routed_targets(
+            [skip_action],
+            "d1",
+            MagicMock(commit_analysis=MagicMock(summary="test")),
+            MagicMock(),
+            conn,
+            project_id="test-project",
         )
 
-        assert result == []
-        mock_draft.assert_not_called()
+        assert intents == []
 
-    @patch("social_hook.drafting._draft_for_resolved_platforms")
-    @patch("social_hook.drafting.resolve_platform")
-    def test_accountless_targets_in_preview_set(self, mock_resolve, mock_draft):
-        """Targets without account should appear in preview_targets set."""
-        mock_resolve.return_value = _make_rpcfg(name="x")
-        mock_draft.return_value = []
+    def test_accountless_targets_get_preview_mode(self):
+        """Targets without account should have preview_mode=True."""
+        from social_hook.config.yaml import SchedulingConfig
 
         config = MagicMock()
-        config.platforms = {"x": MagicMock(enabled=True)}
-        config.scheduling.timezone = "UTC"
+        config.platforms = {}
+        config.scheduling = SchedulingConfig()
 
-        from social_hook.config.targets import AccountConfig, TargetConfig
+        target_actions = [
+            self._make_target_action(
+                "x-feed", "building-public", draft_group=None, account_name="unknown_acct"
+            ),
+        ]
 
-        # Accountless target
-        target_config = TargetConfig(account="", platform="x", strategy="s1")
-        account_config = AccountConfig(platform="x")
-        strategy_decision = MagicMock()
-        strategy_decision.context_source = None
-        strategy_decision.topic_id = None
-        strategy_decision.arc_id = None
+        conn = MagicMock()
+        # Return empty oauth_tokens — "unknown_acct" won't be in the set
+        conn.execute.return_value.fetchall.return_value = []
 
-        ta = RoutedTarget(
-            target_name="x-preview",
-            target_config=target_config,
-            account_config=account_config,
-            strategy_decision=strategy_decision,
-            action="draft",
+        intents = intent_from_routed_targets(
+            target_actions,
+            "d1",
+            self._make_evaluation(),
+            config,
+            conn,
+            project_id="test-project",
         )
 
-        draft_for_targets(
-            target_actions=[ta],
-            config=config,
-            conn=MagicMock(),
-            db=MagicMock(),
-            project=MagicMock(id="p1"),
-            decision_id="d1",
-            evaluation=MagicMock(),
-            context=MagicMock(recent_posts=[]),
-            commit=CommitInfo(hash="abc", message="test", diff=""),
-        )
-
-        # Check preview_targets was passed to _draft_for_resolved_platforms
-        call_kwargs = mock_draft.call_args[1]
-        assert "x-preview" in call_kwargs["preview_targets"]
+        assert len(intents) == 1
+        assert intents[0].platforms[0].preview_mode is True

@@ -808,6 +808,7 @@ def assemble_drafter_prompt(
     is_first_post: bool = False,
     first_post_date: str | None = None,
     content_source_context: dict[str, str] | None = None,
+    project_docs_text: str | None = None,
 ) -> str:
     """Assemble full drafter system prompt with context.
 
@@ -833,6 +834,8 @@ def assemble_drafter_prompt(
         target_post_count: Posts published on this platform
         is_first_post: Whether this is the first post on this platform
         first_post_date: Earliest posted_at for this platform
+        content_source_context: Resolved content source text per type
+        project_docs_text: Pre-assembled project documentation text (from file_reader)
 
     Returns:
         Complete system prompt string
@@ -907,7 +910,12 @@ def assemble_drafter_prompt(
     ):
         include_docs = True
 
-    if include_docs and project_context.project.repo_path:
+    if include_docs and project_docs_text:
+        # Pre-assembled docs text from file_reader (preferred path)
+        sections.append("\n---\n## Project Documentation")
+        sections.append(project_docs_text)
+    elif include_docs and project_context.project.repo_path:
+        # Fallback: read from filesystem (legacy path for callers not yet migrated)
         repo = Path(project_context.project.repo_path)
 
         # When audience hasn't been introduced and discovery files exist,
@@ -1245,6 +1253,8 @@ def assemble_expert_prompt(
     sections.append("\n---\n## Current Draft")
     if hasattr(draft, "content"):
         sections.append(f"- Platform: {draft.platform}")
+        if hasattr(draft, "vehicle") and draft.vehicle:
+            sections.append(f"- Vehicle: {draft.vehicle}")
         sections.append(f"- Content: {draft.content}")
         if hasattr(draft, "media_type") and draft.media_type:
             sections.append(f"- Media type: {draft.media_type}")

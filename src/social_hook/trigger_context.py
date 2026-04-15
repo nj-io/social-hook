@@ -89,18 +89,39 @@ class EvaluatorExtras:
 def build_platform_summaries(config: Config) -> list[str]:
     """Build human-readable platform summary strings for evaluator context.
 
+    Includes tier, character limit, and available content vehicles per platform.
+
     Args:
         config: Global Config object with platforms dict.
 
     Returns:
-        List of summary strings like "x (primary)" or "blog (secondary) — My blog".
+        List of summary strings like
+        "x (primary, basic tier, 25K chars) — vehicles: Self-contained post, Multi-part narrative".
     """
+    from social_hook.config.platforms import PLATFORM_VEHICLE_SUPPORT
+    from social_hook.config.yaml import TIER_CHAR_LIMITS
+
     summaries = []
     for pname, pcfg in config.platforms.items():
         if pcfg.enabled:
-            summary = f"{pname} ({pcfg.priority})"
+            tier = pcfg.account_tier or "free"
+            char_limit = TIER_CHAR_LIMITS.get(tier, 25000)
+            # Format char limit as human-readable (e.g. 280, 25K)
+            if char_limit >= 1000:
+                limit_str = f"{char_limit // 1000}K chars"
+            else:
+                limit_str = f"{char_limit} chars"
+
+            summary = f"{pname} ({pcfg.priority}, {tier} tier, {limit_str})"
             if pcfg.type == "custom" and pcfg.description:
                 summary += f" — {pcfg.description}"
+
+            # Add available vehicles from PLATFORM_VEHICLE_SUPPORT
+            vehicles = PLATFORM_VEHICLE_SUPPORT.get(pname, [])
+            if vehicles:
+                vehicle_descs = [cap.description for cap in vehicles]
+                summary += f" — vehicles: {', '.join(vehicle_descs)}"
+
             summaries.append(summary)
     return summaries
 

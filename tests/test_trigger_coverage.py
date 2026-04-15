@@ -401,7 +401,11 @@ class TestRunTargetsPathDrafting:
 
         with (
             patch("social_hook.routing.route_to_targets", return_value=[mock_routed]) as mock_route,
-            patch("social_hook.drafting.draft_for_targets", return_value=[]) as mock_draft,
+            patch(
+                "social_hook.drafting_intents.intent_from_routed_targets",
+                return_value=[MagicMock()],
+            ),
+            patch("social_hook.drafting.draft", return_value=[]) as mock_draft,
             patch("social_hook.db.operations.get_held_decisions", return_value=[]),
         ):
             from social_hook.llm.dry_run import DryRunContext

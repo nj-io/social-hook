@@ -262,7 +262,11 @@ class TestEvaluateSuggestionStrategyWiring:
             patch("social_hook.llm.factory.create_client", return_value=MagicMock()),
             patch("social_hook.llm.evaluator.Evaluator", return_value=mock_evaluator),
             patch("social_hook.routing.route_to_targets", return_value=[mock_routed]),
-            patch("social_hook.drafting.draft_for_targets"),
+            patch(
+                "social_hook.drafting_intents.intent_from_routed_targets",
+                return_value=[MagicMock()],
+            ),
+            patch("social_hook.drafting.draft"),
         ):
             result = evaluate_suggestion(
                 conn=temp_db,
@@ -284,7 +288,7 @@ class TestEvaluateSuggestionStrategyWiring:
 
 
 class TestEvaluateSuggestionLegacyPath:
-    """evaluate_suggestion uses legacy draft_for_platforms when no targets."""
+    """evaluate_suggestion uses legacy draft() when no targets."""
 
     def test_legacy_path_with_draft_action(self, temp_db):
         from social_hook.db import operations as ops
@@ -327,7 +331,7 @@ class TestEvaluateSuggestionLegacyPath:
             patch("social_hook.llm.prompts.assemble_evaluator_context", return_value=MagicMock()),
             patch("social_hook.llm.factory.create_client", return_value=MagicMock()),
             patch("social_hook.llm.evaluator.Evaluator", return_value=mock_evaluator),
-            patch("social_hook.drafting.draft_for_platforms") as mock_legacy_draft,
+            patch("social_hook.drafting.draft") as mock_legacy_draft,
         ):
             result = evaluate_suggestion(
                 conn=temp_db,

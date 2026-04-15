@@ -170,14 +170,16 @@ class TestSchedulerPostDraftTargetBranching:
         mock_draft.content = "test content"
         mock_draft.decision_id = None
         mock_draft.media_paths = None
-        mock_draft.post_format = None
+        mock_draft.reference_type = None
         mock_draft.reference_post_id = None
+        mock_draft.vehicle = "single"
 
         mock_config = MagicMock()
         mock_config.targets = {}
 
         mock_adapter = MagicMock()
         mock_adapter.post.return_value = PostResult(success=True, external_id="123")
+        mock_adapter.capabilities.return_value = []
 
         with patch("social_hook.scheduler._registry") as mock_registry:
             mock_registry.get.return_value = mock_adapter
@@ -198,8 +200,9 @@ class TestSchedulerPostDraftTargetBranching:
         mock_draft.content = "test content"
         mock_draft.decision_id = None
         mock_draft.media_paths = None
-        mock_draft.post_format = None
+        mock_draft.reference_type = None
         mock_draft.reference_post_id = None
+        mock_draft.vehicle = "single"
 
         mock_config = MagicMock()
         mock_config.targets = {
@@ -215,6 +218,7 @@ class TestSchedulerPostDraftTargetBranching:
 
         mock_adapter = MagicMock()
         mock_adapter.post.return_value = PostResult(success=True, external_id="456")
+        mock_adapter.capabilities.return_value = []
 
         with patch("social_hook.scheduler._registry") as mock_registry:
             mock_registry.get_for_account.return_value = mock_adapter

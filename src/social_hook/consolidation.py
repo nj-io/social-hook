@@ -227,7 +227,8 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
             ops.emit_data_event(conn, "decision", "updated", most_recent.id, project.id)
 
         from social_hook.content_sources import content_sources
-        from social_hook.drafting import draft_for_targets
+        from social_hook.drafting import draft as run_draft
+        from social_hook.drafting_intents import intent_from_routed_targets
         from social_hook.routing import route_to_targets
 
         target_actions = route_to_targets(evaluation.strategies, config, conn)
@@ -235,20 +236,29 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
 
         draft_results = []
         if draftable_actions:
-            draft_results = draft_for_targets(
+            intents = intent_from_routed_targets(
                 draftable_actions,
+                most_recent.id,
+                evaluation,
                 config,
                 conn,
-                db,
-                project,
-                decision_id=most_recent.id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit,
+                project_id=project.id,
                 content_source_registry=content_sources,
-                project_config=project_config,
-                dry_run=dry_run,
             )
+            for _intent in intents:
+                draft_results.extend(
+                    run_draft(
+                        _intent,
+                        config,
+                        conn,
+                        db,
+                        project,
+                        context,
+                        commit,
+                        project_config=project_config,
+                        dry_run=dry_run,
+                    )
+                )
     else:
         # --- Legacy path ---
         target = evaluation.strategies.get("default")
@@ -277,19 +287,18 @@ def _process_re_evaluate(config, conn, db, project, decisions, batch_id, dry_run
             )
             ops.emit_data_event(conn, "decision", "updated", most_recent.id, project.id)
 
-        from social_hook.compat import make_eval_compat
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import draft as run_draft
+        from social_hook.drafting_intents import intent_from_platforms
 
-        eval_compat = make_eval_compat(evaluation, "draft")
-        draft_results = draft_for_platforms(
+        intent = intent_from_platforms(evaluation, most_recent.id, config)
+        draft_results = run_draft(
+            intent,
             config,
             conn,
             db,
             project,
-            decision_id=most_recent.id,
-            evaluation=eval_compat,
-            context=context,
-            commit=commit,
+            context,
+            commit,
             project_config=project_config,
             dry_run=dry_run,
         )

@@ -11,7 +11,7 @@ from social_hook.adapters.dry_run import (
     dry_run_post_result,
     dry_run_thread_result,
 )
-from social_hook.adapters.models import MediaResult, PostResult, ThreadResult
+from social_hook.adapters.models import MediaResult, PostResult
 from social_hook.errors import ErrorType, classify_error
 
 
@@ -47,17 +47,17 @@ class TestDryRunPlatform:
     def test_dry_run_thread_result(self):
         """dry_run_thread_result returns N simulated PostResults."""
         result = dry_run_thread_result(4)
-        assert isinstance(result, ThreadResult)
+        assert isinstance(result, PostResult)
         assert result.success is True
-        assert len(result.tweet_results) == 4
-        for tweet in result.tweet_results:
+        assert len(result.part_results) == 4
+        for tweet in result.part_results:
             assert tweet.success is True
             assert tweet.external_id is not None
 
     def test_dry_run_thread_result_single(self):
         """Single-tweet thread dry-run works."""
         result = dry_run_thread_result(1)
-        assert len(result.tweet_results) == 1
+        assert len(result.part_results) == 1
 
     def test_xadapter_post_dry_run(self):
         """XAdapter.post(dry_run=True) returns simulated success, no API call."""
@@ -71,7 +71,7 @@ class TestDryRunPlatform:
         assert result.success is True
 
     def test_xadapter_thread_dry_run(self):
-        """XAdapter.post_thread(dry_run=True) returns simulated ThreadResult."""
+        """XAdapter.post_thread(dry_run=True) returns simulated PostResult."""
         from social_hook.adapters.platform.x import XAdapter
 
         adapter = XAdapter("test-token")
@@ -82,7 +82,7 @@ class TestDryRunPlatform:
             mock_req.post.assert_not_called()
 
         assert result.success is True
-        assert len(result.tweet_results) == 4
+        assert len(result.part_results) == 4
 
 
 class TestDryRunMedia:

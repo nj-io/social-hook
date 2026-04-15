@@ -9,20 +9,31 @@ from social_hook.constants import PROJECT_SLUG
 app = typer.Typer()
 intro_app = typer.Typer(help="Manage per-platform introduction status.")
 app.add_typer(intro_app, name="intro")
+prompt_docs_app = typer.Typer(help="Manage project prompt documentation files.")
+app.add_typer(prompt_docs_app, name="prompt-docs")
 
 
 @app.command()
 def register(
     ctx: typer.Context,
     path: Path | None = typer.Argument(
-        None, help="Path to repository (default: current directory)"
+        None, help="Path to repository or directory (default: current directory)"
     ),
     name: str | None = typer.Option(None, "--name", "-n", help="Project name"),
     git_hook: bool = typer.Option(
         True, "--git-hook/--no-git-hook", help="Install git post-commit hook"
     ),
+    docs: list[str] | None = typer.Option(
+        None, "--docs", "-d", help="Documentation files to add as project context"
+    ),
 ):
-    """Register a project for social-hook."""
+    """Register a project for social-hook.
+
+    Supports both git repos and plain directories. For non-git projects,
+    provide --docs to seed project context.
+
+    Example: social-hook project register /path/to/project --docs README.md --docs guide.md
+    """
     from social_hook.config import load_full_config
     from social_hook.db import init_database
     from social_hook.db.operations import register_project
@@ -43,14 +54,66 @@ def register(
         if repo_origin:
             typer.echo(f"  Origin: {repo_origin}")
 
-        if git_hook:
+        # Only install git hook if this is a git repo
+        from social_hook.trigger_git import is_git_repo
+
+        if git_hook and is_git_repo(project.repo_path):
             success, msg = install_git_hook(project.repo_path)
             typer.echo(f"  {msg}")
 
-        if not check_hook_installed():
-            typer.echo()
-            typer.echo("Note: Claude Code commit hook is not installed.")
-            typer.echo(f"  Git hook is {'active' if git_hook else 'not installed'}.")
+            if not check_hook_installed():
+                typer.echo()
+                typer.echo("Note: Claude Code commit hook is not installed.")
+                typer.echo(f"  Git hook is {'active' if git_hook else 'not installed'}.")
+        elif not is_git_repo(project.repo_path):
+            typer.echo("  Non-git project — git hook skipped.")
+
+        # Handle --docs flag: copy files and generate brief
+        if docs:
+            import shutil
+
+            docs_dir = Path(project.repo_path) / ".social-hook" / "docs"
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            prompt_doc_paths = []
+            for doc_path in docs:
+                src = Path(doc_path).resolve()
+                if not src.is_file():
+                    typer.echo(f"  Warning: {doc_path} not found, skipping.")
+                    continue
+                dest = docs_dir / src.name
+                shutil.copy2(str(src), str(dest))
+                rel = f".social-hook/docs/{src.name}"
+                prompt_doc_paths.append(rel)
+                typer.echo(f"  Copied: {src.name}")
+
+            if prompt_doc_paths:
+                from social_hook.db.operations import update_prompt_docs
+
+                update_prompt_docs(conn, project.id, prompt_doc_paths)
+                typer.echo(f"  Added {len(prompt_doc_paths)} doc(s) to prompt_docs.")
+
+                # Generate brief from docs
+                try:
+                    from social_hook.llm.brief import generate_brief_from_docs
+                    from social_hook.llm.factory import create_client
+
+                    _cfg = load_full_config(
+                        str(ctx.obj["config"]) if ctx.obj and ctx.obj.get("config") else None
+                    )
+                    client = create_client(_cfg.models.drafter, _cfg)
+                    brief = generate_brief_from_docs(
+                        prompt_doc_paths,
+                        project.repo_path,
+                        client,
+                        project_id=project.id,
+                    )
+                    if brief:
+                        from social_hook.db.operations import update_project_summary
+
+                        update_project_summary(conn, project.id, brief)
+                        typer.echo("  Brief generated from docs.")
+                except Exception as e:
+                    typer.echo(f"  Note: Brief generation skipped ({e})")
     except ValueError as e:
         typer.echo(f"Error: {e}")
         raise typer.Exit(1) from None
@@ -81,9 +144,12 @@ def unregister(
                 typer.echo("Cancelled.")
                 return
 
-        from social_hook.setup.install import uninstall_git_hook
+        from social_hook.trigger_git import is_git_repo
 
-        uninstall_git_hook(project.repo_path)
+        if is_git_repo(project.repo_path):
+            from social_hook.setup.install import uninstall_git_hook
+
+            uninstall_git_hook(project.repo_path)
 
         if delete_project(conn, project_id):
             typer.echo(f"Project '{project.name}' unregistered.")
@@ -740,5 +806,131 @@ def intro_set(
             typer.echo(json_mod.dumps({"platform": platform, "introduced": True}))
         else:
             typer.echo(f"Marked '{platform}' as introduced for '{proj.name}'.")
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# prompt-docs subcommands
+# ---------------------------------------------------------------------------
+
+
+@prompt_docs_app.callback(invoke_without_command=True)
+def prompt_docs_list(
+    ctx: typer.Context,
+    project: str | None = typer.Option(None, "--project", "-p", help="Project ID or path"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """List prompt documentation files for a project.
+
+    Examples:
+        social-hook project prompt-docs
+        social-hook project prompt-docs --json
+        social-hook project prompt-docs -p my-project
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    import json as json_mod
+
+    from social_hook.parsing import safe_json_loads
+
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+
+    conn, proj = _resolve_project_for_intro(project)
+    try:
+        doc_paths = safe_json_loads(proj.prompt_docs, "project.prompt_docs", default=[])
+
+        if json_output:
+            typer.echo(json_mod.dumps({"project": proj.name, "prompt_docs": doc_paths}, indent=2))
+        else:
+            typer.echo(f"Prompt docs for '{proj.name}':")
+            if not doc_paths:
+                typer.echo("  (none)")
+            else:
+                for p in doc_paths:
+                    typer.echo(f"  {p}")
+    finally:
+        conn.close()
+
+
+@prompt_docs_app.command("add")
+def prompt_docs_add(
+    paths: list[str] = typer.Argument(..., help="File paths to add (relative to project root)"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project ID or path"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Add files to the project's prompt documentation list.
+
+    Examples:
+        social-hook project prompt-docs add README.md docs/API.md
+        social-hook project prompt-docs add --project my-proj guide.md
+    """
+    import json as json_mod
+
+    from social_hook.db.operations import update_prompt_docs
+    from social_hook.parsing import safe_json_loads
+
+    conn, proj = _resolve_project_for_intro(project)
+    try:
+        existing = safe_json_loads(proj.prompt_docs, "project.prompt_docs", default=[])
+        added = []
+        for p in paths:
+            if p not in existing:
+                existing.append(p)
+                added.append(p)
+
+        update_prompt_docs(conn, proj.id, existing)
+
+        if json_output:
+            typer.echo(json_mod.dumps({"added": added, "prompt_docs": existing}, indent=2))
+        else:
+            if added:
+                typer.echo(f"Added {len(added)} file(s) to prompt docs for '{proj.name}':")
+                for a in added:
+                    typer.echo(f"  + {a}")
+            else:
+                typer.echo("All paths already in prompt docs.")
+    finally:
+        conn.close()
+
+
+@prompt_docs_app.command("remove")
+def prompt_docs_remove(
+    paths: list[str] = typer.Argument(..., help="File paths to remove"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project ID or path"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Remove files from the project's prompt documentation list.
+
+    Examples:
+        social-hook project prompt-docs remove old-docs.md
+        social-hook project prompt-docs remove --json README.md
+    """
+    import json as json_mod
+
+    from social_hook.db.operations import update_prompt_docs
+    from social_hook.parsing import safe_json_loads
+
+    conn, proj = _resolve_project_for_intro(project)
+    try:
+        existing = safe_json_loads(proj.prompt_docs, "project.prompt_docs", default=[])
+        removed = []
+        for p in paths:
+            if p in existing:
+                existing.remove(p)
+                removed.append(p)
+
+        update_prompt_docs(conn, proj.id, existing)
+
+        if json_output:
+            typer.echo(json_mod.dumps({"removed": removed, "prompt_docs": existing}, indent=2))
+        else:
+            if removed:
+                typer.echo(f"Removed {len(removed)} file(s) from prompt docs for '{proj.name}':")
+                for r in removed:
+                    typer.echo(f"  - {r}")
+            else:
+                typer.echo("None of the specified paths were in prompt docs.")
     finally:
         conn.close()

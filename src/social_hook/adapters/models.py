@@ -1,6 +1,6 @@
 """Result dataclasses for adapter operations."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -12,15 +12,7 @@ class PostResult:
     external_id: str | None = None
     external_url: str | None = None
     error: str | None = None
-
-
-@dataclass
-class ThreadResult:
-    """Result of a thread post operation."""
-
-    success: bool
-    tweet_results: list[PostResult] = field(default_factory=list)
-    error: str | None = None
+    part_results: list["PostResult"] | None = None
 
 
 @dataclass
@@ -62,8 +54,10 @@ class MediaMode:
 class PostCapability:
     """Describes a posting capability of a platform adapter."""
 
-    name: str  # "single_post", "thread", "quote", "reply", "reshare"
+    name: str  # "single", "thread", "article", "quote", "reply", "reshare"
     media_modes: tuple[MediaMode, ...]  # what media this capability accepts
+    description: str = ""
+    auto_postable: bool = True
 
 
 # Common media modes
@@ -73,8 +67,11 @@ GIF = MediaMode("gif", ("gif",), 15_728_640)  # 15MB
 VIDEO = MediaMode("video", ("mp4",), 536_870_912)  # 512MB
 
 # Common capabilities
-SINGLE_POST = PostCapability("single_post", (SINGLE_IMAGE, MULTI_IMAGE, GIF))
-THREAD = PostCapability("thread", (SINGLE_IMAGE, GIF))
-QUOTE = PostCapability("quote", (SINGLE_IMAGE, GIF))
-REPLY = PostCapability("reply", (SINGLE_IMAGE, GIF))
-RESHARE = PostCapability("reshare", ())
+SINGLE = PostCapability("single", (SINGLE_IMAGE, MULTI_IMAGE, GIF), "Self-contained post")
+THREAD = PostCapability("thread", (SINGLE_IMAGE, GIF), "Multi-part narrative (4+ connected posts)")
+ARTICLE = PostCapability(
+    "article", (SINGLE_IMAGE,), "Long-form structured content (manual post)", auto_postable=False
+)
+QUOTE = PostCapability("quote", (SINGLE_IMAGE, GIF), "Quote an existing post")
+REPLY = PostCapability("reply", (SINGLE_IMAGE, GIF), "Reply to an existing post")
+RESHARE = PostCapability("reshare", (), "Share an existing post")

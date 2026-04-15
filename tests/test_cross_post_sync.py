@@ -67,7 +67,8 @@ class TestGetSisterDrafts:
                 retry_count INTEGER DEFAULT 0,
                 last_error TEXT,
                 is_intro INTEGER DEFAULT 0,
-                post_format TEXT,
+                reference_type TEXT,
+                vehicle TEXT NOT NULL DEFAULT 'single',
                 reference_post_id TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))
@@ -166,7 +167,8 @@ class TestSyncMediaToDrafts:
                 retry_count INTEGER DEFAULT 0,
                 last_error TEXT,
                 is_intro INTEGER DEFAULT 0,
-                post_format TEXT,
+                reference_type TEXT,
+                vehicle TEXT NOT NULL DEFAULT 'single',
                 reference_post_id TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))

@@ -4,10 +4,21 @@ import { parseTags } from "@/lib/types";
 import { platformLabel } from "@/lib/platform";
 import { Badge } from "./ui/badge";
 
+const vehicleLabels: Record<string, string> = {
+  single: "Single",
+  thread: "Thread",
+  article: "Article",
+};
+
 export function DraftCard({ draft }: { draft: Draft }) {
-  const preview = draft.content.length > 140
-    ? draft.content.slice(0, 140) + "..."
-    : draft.content;
+  const isArticle = draft.vehicle === "article";
+  const preview = isArticle
+    ? draft.content.length > 500
+      ? draft.content.slice(0, 500) + "..."
+      : draft.content
+    : draft.content.length > 140
+      ? draft.content.slice(0, 140) + "..."
+      : draft.content;
 
   return (
     <Link
@@ -20,11 +31,25 @@ export function DraftCard({ draft }: { draft: Draft }) {
             <span className="text-xs font-medium text-muted-foreground">
               {platformLabel(draft.platform)}
             </span>
+            {draft.vehicle && draft.vehicle !== "single" && (
+              <Badge value={vehicleLabels[draft.vehicle] || draft.vehicle} variant="system" />
+            )}
             <Badge value={draft.status} variant="status" />
             {!!draft.is_intro && <Badge value="INTRO" variant="system" />}
             {!!draft.preview_mode && <Badge value="Preview" variant="system" />}
           </div>
-          <p className="text-sm text-foreground">{preview}</p>
+          <p className="text-sm text-foreground whitespace-pre-wrap">{preview}</p>
+          {isArticle && (
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                navigator.clipboard.writeText(draft.content);
+              }}
+              className="mt-2 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+            >
+              Copy content
+            </button>
+          )}
           {draft.decision && (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {draft.decision.episode_type && <Badge value={draft.decision.episode_type} variant="category" />}

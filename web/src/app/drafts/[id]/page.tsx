@@ -5,13 +5,15 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchChannelsStatus, fetchDraft, fetchEnabledPlatforms, generateMediaSpec, resendDraftNotification } from "@/lib/api";
 import { platformLabel } from "@/lib/platform";
-import type { Decision, Draft } from "@/lib/types";
+import type { Decision, Draft, DraftPart } from "@/lib/types";
 import { parseTags } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { MediaSection } from "@/components/media-section";
 import { DraftActionPanel } from "@/components/draft-action-panel";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { useToast } from "@/lib/toast-context";
+import type { BackgroundTask } from "@/lib/api";
 
 export default function DraftDetailPage() {
   const params = useParams();
@@ -41,7 +43,15 @@ export default function DraftDetailPage() {
 
   useDataEvents(["draft"], reload);
 
-  const { trackTask, isRunning } = useBackgroundTasks(draft?.project_id ?? "");
+  const { addToast } = useToast();
+  const onTaskCompleted = useCallback((task: BackgroundTask) => {
+    if (task.status === "failed") {
+      addToast("Media spec generation failed", { variant: "error", detail: task.error ?? "Unknown error" });
+    }
+    reload();
+  }, [addToast, reload]);
+
+  const { trackTask, isRunning } = useBackgroundTasks(draft?.project_id ?? "", onTaskCompleted);
 
   const handleGenerateSpec = useCallback(async (draftId: string, mediaType: string) => {
     const res = await generateMediaSpec(draftId, mediaType);
@@ -116,6 +126,9 @@ export default function DraftDetailPage() {
       {/* Meta info */}
       <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
         <span>Platform: <span className="font-medium text-foreground">{platLabel}</span></span>
+        {draft.vehicle && (
+          <span>Vehicle: <span className="font-medium text-foreground">{draft.vehicle}</span></span>
+        )}
         {draft.decision?.media_tool && (
           <span>Media: <span className="font-medium text-foreground">{draft.decision.media_tool}</span></span>
         )}
@@ -136,6 +149,9 @@ export default function DraftDetailPage() {
         </div>
       )}
 
+      {/* Diagnostics */}
+      <DraftDiagnostics draft={draft} />
+
       {/* Preview banner */}
       {!!draft.preview_mode && draft.status !== "superseded" && (
         <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
@@ -150,14 +166,14 @@ export default function DraftDetailPage() {
         <p className="whitespace-pre-wrap text-sm">{draft.content}</p>
       </div>
 
-      {/* Tweets (for thread-style posts) */}
-      {draft.tweets && draft.tweets.length > 0 && (
+      {/* Parts (for thread-style posts) */}
+      {draft.parts && draft.parts.length > 0 && (
         <div className="space-y-2">
           <h2 className="text-sm font-medium text-muted-foreground">Thread</h2>
-          {draft.tweets.map((tweet, i) => (
-            <div key={tweet.id} className="rounded-lg border border-border p-3">
-              <span className="text-xs text-muted-foreground">Tweet {i + 1}</span>
-              <p className="mt-1 whitespace-pre-wrap text-sm">{tweet.content}</p>
+          {draft.parts.map((part: DraftPart, i: number) => (
+            <div key={part.id} className="rounded-lg border border-border p-3">
+              <span className="text-xs text-muted-foreground">Part {i + 1}</span>
+              <p className="mt-1 whitespace-pre-wrap text-sm">{part.content}</p>
             </div>
           ))}
         </div>
@@ -265,6 +281,29 @@ function EvaluatorAnalysis({ decision }: { decision: Decision }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function DraftDiagnostics({ draft }: { draft: Draft }) {
+  const diagnostics = (draft as unknown as Record<string, unknown>).diagnostics as
+    | { code: string; severity: string; message: string; suggestion: string | null }[]
+    | undefined;
+
+  if (!diagnostics || diagnostics.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+      <ul className="space-y-1">
+        {diagnostics.map((d) => (
+          <li key={d.code} className="text-sm text-amber-800 dark:text-amber-300">
+            <span className="font-medium">{d.code}:</span> {d.message}
+            {d.suggestion && (
+              <span className="ml-1 text-amber-600 dark:text-amber-500">— {d.suggestion}</span>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

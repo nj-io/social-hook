@@ -49,9 +49,12 @@ export function TopicQueue({ projectId }: { projectId: string }) {
   const loadRef = useRef<() => void>(() => {});
   const { addToast } = useToast();
 
-  const onTaskCompleted = useCallback((_task: BackgroundTask) => {
+  const onTaskCompleted = useCallback((task: BackgroundTask) => {
+    if (task.status === "failed") {
+      addToast("Topic action failed", { variant: "error", detail: task.error ?? "Unknown error" });
+    }
     loadRef.current();
-  }, []);
+  }, [addToast]);
 
   const { trackTask, isRunning, getTask } = useBackgroundTasks(projectId, onTaskCompleted);
 

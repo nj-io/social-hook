@@ -28,15 +28,28 @@ def _trigger_brief_update(
     evaluator_client,
     dry_run: bool,
     verbose: bool,
+    analyzer_result=None,
 ) -> bool:
     """Update the project brief after commit analysis if the commit is non-trivial.
 
     Returns True ONLY when the brief content actually changed and the write
-    succeeded. Returns False for all other paths (no tags, ImportError,
-    Exception, brief unchanged, dry_run).
+    succeeded. Returns False for all other paths (no analyzer_result, no
+    brief_update guidance, ImportError, Exception, brief unchanged, dry_run).
+
+    Args:
+        analyzer_result: Full CommitAnalysisResult from stage 1 (has brief_update field).
+            When None (manual retriggers, batch paths), brief update is skipped.
     """
-    # Only update for non-trivial commits (has episode tags beyond trivial markers)
-    if not analysis.episode_tags:
+    # Gate: require analyzer_result with meaningful brief_update guidance
+    if analyzer_result is None:
+        return False
+
+    brief_update = getattr(analyzer_result, "brief_update", None)
+    if brief_update is None:
+        return False
+
+    # Only proceed if the analyzer identified sections to update or new facts
+    if not brief_update.sections_to_update and not brief_update.new_facts:
         return False
 
     try:
@@ -58,6 +71,8 @@ def _trigger_brief_update(
             section_metadata=section_metadata,
             db=db,
             project_id=project.id,
+            sections_to_update=brief_update.sections_to_update or None,
+            new_facts=brief_update.new_facts or None,
         )
         if updated_brief != current_brief and not dry_run:
             db.update_project_summary(project.id, updated_brief)
@@ -155,45 +170,6 @@ def _send_decision_notification(config, project, commit, decision, diagnostics=N
     broadcast_notification(config, OutboundMessage(text=msg_text))
 
 
-def _build_merge_evaluation(
-    drafts: list[Draft],
-    decisions: list[Decision],
-    merge_instruction: str | None,
-):
-    """Build a synthetic evaluation for a merge group.
-
-    Returns a SimpleNamespace matching the shape produced by make_eval_compat()
-    in compat.py — the same interface the drafter pipeline expects.
-    """
-    from types import SimpleNamespace
-
-    latest = decisions[-1]
-
-    if merge_instruction:
-        angle = merge_instruction
-    else:
-        combined = " + ".join(d.angle for d in decisions if d.angle)
-        angle = combined or "Consolidate these drafts"
-
-    combined_summary = "\n".join(
-        f"- {d.commit_summary or d.commit_message or d.commit_hash[:8]}" for d in decisions
-    )
-
-    return SimpleNamespace(
-        decision="draft",
-        reasoning=f"Merged from {len(drafts)} drafts",
-        angle=angle,
-        episode_type=None,
-        post_category=latest.post_category,
-        arc_id=latest.arc_id,
-        new_arc_theme=None,
-        media_tool=latest.media_tool,
-        reference_posts=None,
-        commit_summary=combined_summary,
-        include_project_docs=None,
-    )
-
-
 def _build_merge_commit(
     decisions: list[Decision],
     drafts: list[Draft],
@@ -237,7 +213,8 @@ def _execute_merge_groups(
     """
     from collections import defaultdict
 
-    from social_hook.drafting import draft_for_platforms
+    from social_hook.drafting import draft as run_draft
+    from social_hook.drafting_intents import intent_from_merge
 
     for _target_name, actions in queue_actions.items():
         merge_actions = [a for a in actions if a.action == "merge"]
@@ -261,19 +238,19 @@ def _execute_merge_groups(
             valid_drafts: list[Draft] = []
             valid_decisions: list[Decision] = []
             for ga in group_actions:
-                draft = ops.get_draft(conn, ga.draft_id)
+                draft_obj = ops.get_draft(conn, ga.draft_id)
                 # Intentionally excludes deferred — queue actions target active drafts only
                 if (
-                    not draft
-                    or draft.status not in ("draft", "approved", "scheduled")
-                    or draft.project_id != project.id
+                    not draft_obj
+                    or draft_obj.status not in ("draft", "approved", "scheduled")
+                    or draft_obj.project_id != project.id
                 ):
                     if verbose:
                         print(f"Merge skipped: draft {ga.draft_id} not actionable")
                     continue
-                valid_drafts.append(draft)
-                if draft.decision_id:
-                    dec = ops.get_decision(conn, draft.decision_id)
+                valid_drafts.append(draft_obj)
+                if draft_obj.decision_id:
+                    dec = ops.get_decision(conn, draft_obj.decision_id)
                     if dec:
                         valid_decisions.append(dec)
 
@@ -311,22 +288,24 @@ def _execute_merge_groups(
                         dec for dec in valid_decisions if dec.id in platform_decision_ids
                     ] or valid_decisions[-1:]  # fallback to latest
 
-                    merged_eval = _build_merge_evaluation(
-                        platform_drafts, platform_decisions, merge_instruction
+                    intent = intent_from_merge(
+                        platform_drafts,
+                        platform_decisions,
+                        merge_instruction,
+                        config,
+                        platform,
                     )
                     merged_commit = _build_merge_commit(platform_decisions, platform_drafts)
 
-                    draft_results = draft_for_platforms(
+                    draft_results = run_draft(
+                        intent,
                         config,
                         conn,
                         db,
                         project,
-                        decision_id=platform_decisions[-1].id,
-                        evaluation=merged_eval,
-                        context=context,
-                        commit=merged_commit,
+                        context,
+                        merged_commit,
                         project_config=project_config,
-                        target_platform_names=[platform],
                         dry_run=dry_run,
                         verbose=verbose,
                     )

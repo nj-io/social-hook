@@ -52,7 +52,7 @@ def tmp_env(tmp_path):
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
-        CREATE TABLE IF NOT EXISTS draft_tweets (
+        CREATE TABLE IF NOT EXISTS draft_parts (
             id TEXT PRIMARY KEY,
             draft_id TEXT,
             position INTEGER,
@@ -250,7 +250,7 @@ def _make_draft_result(
         day_reason="test",
         time_reason="test",
     )
-    return DraftResult(draft=draft, schedule=schedule, thread_tweets=[])
+    return DraftResult(draft=draft, schedule=schedule, thread_parts=[])
 
 
 def _mock_create_draft_patches():
@@ -299,7 +299,7 @@ class TestCreateDraftFromDecision:
             p1,
             p2,
             p3,
-            patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
+            patch("social_hook.drafting.draft", return_value=[mock_result]),
             patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "x"})
@@ -328,9 +328,7 @@ class TestCreateDraftFromDecision:
             p1,
             p2,
             p3,
-            patch(
-                "social_hook.drafting.draft_for_platforms", return_value=mock_results
-            ) as mock_dfp,
+            patch("social_hook.drafting.draft", return_value=mock_results) as mock_dfp,
             patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={})
@@ -359,7 +357,7 @@ class TestCreateDraftFromDecision:
             p1,
             p2,
             p3,
-            patch("social_hook.drafting.draft_for_platforms", return_value=[mock_result]),
+            patch("social_hook.drafting.draft", return_value=[mock_result]),
             patch("social_hook.notifications.notify_draft_review"),
         ):
             resp = client.post("/api/decisions/dec_1/create-draft", json={"platform": "linkedin"})

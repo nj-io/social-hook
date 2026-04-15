@@ -171,6 +171,17 @@ class TestMigrations:
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE draft_tweets (
+                id TEXT PRIMARY KEY,
+                draft_id TEXT NOT NULL REFERENCES drafts(id),
+                position INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                media_paths TEXT DEFAULT '[]',
+                external_id TEXT,
+                posted_at TEXT,
+                error TEXT
+            );
+
             CREATE TABLE posts (
                 id TEXT PRIMARY KEY,
                 draft_id TEXT NOT NULL REFERENCES drafts(id),

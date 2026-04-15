@@ -18,7 +18,7 @@ from social_hook.db import (
     get_distinct_branches,
     get_draft,
     get_draft_changes,
-    get_draft_tweets,
+    get_draft_parts,
     get_due_drafts,
     get_last_auto_evaluation_time,
     get_lifecycle,
@@ -45,7 +45,7 @@ from social_hook.db import (
     insert_decisions_batch,
     insert_draft,
     insert_draft_change,
-    insert_draft_tweet,
+    insert_draft_part,
     insert_lifecycle,
     insert_milestone_summary,
     insert_narrative_debt,
@@ -61,7 +61,7 @@ from social_hook.db import (
     update_project_summary,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models.core import Decision, Draft, DraftChange, DraftTweet, Post, Project
+from social_hook.models.core import Decision, Draft, DraftChange, DraftPart, Post, Project
 from social_hook.models.infra import UsageLog
 from social_hook.models.narrative import Arc, Lifecycle, NarrativeDebt
 
@@ -91,7 +91,7 @@ class TestDatabaseInitialization:
         assert result[0] == 1
 
     def test_all_tables_exist(self, temp_db):
-        """Verify all 23 tables exist."""
+        """Verify all 25 tables exist."""
         tables = temp_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
@@ -101,7 +101,7 @@ class TestDatabaseInitialization:
             "projects",
             "decisions",
             "drafts",
-            "draft_tweets",
+            "draft_parts",
             "draft_changes",
             "posts",
             "lifecycles",
@@ -122,6 +122,7 @@ class TestDatabaseInitialization:
             "draft_patterns",
             "system_errors",
             "topic_commits",
+            "advisory_items",
         }
 
         assert table_names == expected_tables
@@ -636,8 +637,8 @@ class TestDatabaseOperations:
         assert loaded.phase == "build"
         assert loaded.confidence == 0.75
 
-    def test_draft_tweets_operations(self, temp_db):
-        """Draft tweets insert and get work for threads."""
+    def test_draft_parts_operations(self, temp_db):
+        """Draft parts insert and get work for threads."""
         project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
         insert_project(temp_db, project)
 
@@ -659,21 +660,21 @@ class TestDatabaseOperations:
         )
         insert_draft(temp_db, draft)
 
-        # Insert tweets
+        # Insert parts
         for i in range(3):
-            tweet = DraftTweet(
-                id=generate_id("tweet"),
+            part = DraftPart(
+                id=generate_id("part"),
                 draft_id=draft.id,
                 position=i + 1,
-                content=f"Tweet {i + 1}",
+                content=f"Part {i + 1}",
             )
-            insert_draft_tweet(temp_db, tweet)
+            insert_draft_part(temp_db, part)
 
-        tweets = get_draft_tweets(temp_db, draft.id)
-        assert len(tweets) == 3
-        assert tweets[0].position == 1
-        assert tweets[1].position == 2
-        assert tweets[2].position == 3
+        parts = get_draft_parts(temp_db, draft.id)
+        assert len(parts) == 3
+        assert parts[0].position == 1
+        assert parts[1].position == 2
+        assert parts[2].position == 3
 
     def test_draft_changes_audit(self, temp_db):
         """Draft changes audit trail works."""
@@ -965,8 +966,8 @@ class TestDeleteProject:
         )
         insert_draft(temp_db, draft)
 
-        tweet = DraftTweet(id=generate_id("tweet"), draft_id=draft.id, position=1, content="t1")
-        insert_draft_tweet(temp_db, tweet)
+        part = DraftPart(id=generate_id("part"), draft_id=draft.id, position=1, content="t1")
+        insert_draft_part(temp_db, part)
 
         change = DraftChange(
             id=generate_id("change"),
@@ -1307,7 +1308,7 @@ class TestDraftMediaFields:
 
         # Verify to_row returns exactly 26 elements
         row = draft.to_row()
-        assert len(row) == 26
+        assert len(row) == 28
 
         # Verify round-trip via to_dict/from_dict
         d = draft.to_dict()

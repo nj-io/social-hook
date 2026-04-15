@@ -6,7 +6,7 @@ from social_hook.adapters.models import PostResult
 from social_hook.db import operations as ops
 from social_hook.db.connection import init_database
 from social_hook.filesystem import generate_id
-from social_hook.models.core import Decision, Draft, DraftTweet, Project
+from social_hook.models.core import Decision, Draft, DraftPart, Project
 from social_hook.scheduler import record_post_success
 
 
@@ -91,22 +91,18 @@ class TestPostMetadataPopulation:
         assert post.feature_tags == []
         conn.close()
 
-    def test_is_thread_head_true_when_draft_has_tweets(self, tmp_path):
-        """is_thread_head is True when the draft has draft_tweets."""
+    def test_is_thread_head_true_when_draft_has_parts(self, tmp_path):
+        """is_thread_head is True when the draft has draft_parts."""
         conn = init_database(tmp_path / "test.db")
         project, decision, draft = self._setup_project_decision_draft(
             conn, episode_tags=["threading"]
         )
 
-        # Add thread tweets
-        tweet1 = DraftTweet(
-            id=generate_id("tweet"), draft_id=draft.id, position=0, content="Tweet 1"
-        )
-        tweet2 = DraftTweet(
-            id=generate_id("tweet"), draft_id=draft.id, position=1, content="Tweet 2"
-        )
-        ops.insert_draft_tweet(conn, tweet1)
-        ops.insert_draft_tweet(conn, tweet2)
+        # Add thread parts
+        part1 = DraftPart(id=generate_id("part"), draft_id=draft.id, position=0, content="Part 1")
+        part2 = DraftPart(id=generate_id("part"), draft_id=draft.id, position=1, content="Part 2")
+        ops.insert_draft_part(conn, part1)
+        ops.insert_draft_part(conn, part2)
 
         result = PostResult(success=True, external_id="ext-4", external_url="https://x.com/4")
 
@@ -120,8 +116,8 @@ class TestPostMetadataPopulation:
         assert db_post.is_thread_head is True
         conn.close()
 
-    def test_is_thread_head_false_when_no_tweets(self, tmp_path):
-        """is_thread_head is False for single posts (no draft_tweets)."""
+    def test_is_thread_head_false_when_no_parts(self, tmp_path):
+        """is_thread_head is False for single posts (no draft_parts)."""
         conn = init_database(tmp_path / "test.db")
         project, decision, draft = self._setup_project_decision_draft(conn, episode_tags=["auth"])
         result = PostResult(success=True, external_id="ext-5", external_url="https://x.com/5")
@@ -221,10 +217,10 @@ class TestPostMetadataPopulation:
         )
 
         # Add a thread tweet
-        tweet = DraftTweet(
+        tweet = DraftPart(
             id=generate_id("tweet"), draft_id=draft.id, position=0, content="Thread tweet 1"
         )
-        ops.insert_draft_tweet(conn, tweet)
+        ops.insert_draft_part(conn, tweet)
 
         result = PostResult(success=True, external_id="ext-8", external_url="https://x.com/8")
 

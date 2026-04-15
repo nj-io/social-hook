@@ -6,6 +6,7 @@ import type { BackgroundTask } from "@/lib/api";
 import type { Draft } from "@/lib/types";
 import { platformLabel } from "@/lib/platform";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { useToast } from "@/lib/toast-context";
 
 interface DraftActionPanelProps {
   draft: Draft;
@@ -24,17 +25,20 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
   const [textInput, setTextInput] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const { addToast } = useToast();
+
   // Track background tasks for LLM actions (edit_angle, etc.)
   const onTaskCompleted = useCallback((task: BackgroundTask) => {
     if (task.status === "failed") {
       setActionError(task.error || "Action failed");
+      addToast("Draft action failed", { variant: "error", detail: task.error ?? "Unknown error" });
     }
     onUpdate();
     setActionPending("");
     setTextPrompt(null);
     setTextInput("");
     setSubmenu(null);
-  }, [onUpdate]);
+  }, [onUpdate, addToast]);
   const { trackTask } = useBackgroundTasks(draft.project_id, onTaskCompleted);
 
   // Actions that stay in the edit submenu (no navigation away from current view)
@@ -367,6 +371,71 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
                 Reject with note...
               </button>
             </SubmenuRow>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (status === "advisory") {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+          This {draft.vehicle || "content"} requires manual posting. Review the{" "}
+          <a href="/advisory" className="underline font-medium hover:text-blue-900 dark:hover:text-blue-200">Advisory page</a>{" "}
+          for next steps.
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <SubmenuToggle
+            label="Edit"
+            active={submenu === "edit"}
+            disabled={isDisabled}
+            onClick={() => setSubmenu(submenu === "edit" ? null : "edit")}
+            variant="neutral"
+          />
+          <SubmenuToggle
+            label="Reject"
+            active={submenu === "reject"}
+            disabled={isDisabled}
+            onClick={() => setSubmenu(submenu === "reject" ? null : "reject")}
+            variant="danger"
+          />
+        </div>
+        {submenu === "edit" && (
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => openTextPrompt("edit_text")}
+              disabled={isDisabled}
+              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            >
+              Edit text
+            </button>
+            <button
+              onClick={() => openTextPrompt("edit_angle")}
+              disabled={isDisabled}
+              className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            >
+              Change angle
+            </button>
+          </div>
+        )}
+        {submenu === "reject" && (
+          <div className="flex flex-wrap gap-2">
+            <ActionButton
+              label="Reject"
+              action="reject"
+              pending={actionPending}
+              disabled={isDisabled}
+              onClick={handleAction}
+              variant="danger"
+            />
+            <button
+              onClick={() => openTextPrompt("reject_note")}
+              disabled={isDisabled}
+              className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+            >
+              Reject with note...
+            </button>
           </div>
         )}
       </div>

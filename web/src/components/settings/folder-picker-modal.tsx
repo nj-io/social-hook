@@ -44,7 +44,7 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
 
   return (
     <Modal open={open} onClose={onClose} maxWidth="max-w-lg">
-      <h3 className="mb-4 text-lg font-semibold">Select Repository</h3>
+      <h3 className="mb-4 text-lg font-semibold">Select Project Folder</h3>
 
       <div className="mb-3 flex items-center gap-2">
         <button
@@ -83,21 +83,19 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
                 <span className="truncate">{d.name}</span>
               </button>
               {d.is_git && (
-                <>
-                  <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                    git
-                  </span>
-                  <button
-                    onClick={() => {
-                      onSelect(d.path);
-                      onClose();
-                    }}
-                    className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground transition-colors hover:bg-accent/80"
-                  >
-                    Select
-                  </button>
-                </>
+                <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                  git
+                </span>
               )}
+              <button
+                onClick={() => {
+                  onSelect(d.path);
+                  onClose();
+                }}
+                className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground transition-colors hover:bg-accent/80"
+              >
+                Select
+              </button>
             </div>
           ))
         )}
@@ -105,8 +103,10 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
 
       <div className="mt-4 flex items-center justify-between">
         <div>
-          {!currentIsGit && currentPath && (
-            <p className="text-xs text-muted-foreground">Not a git repository</p>
+          {currentPath && (
+            <p className="text-xs text-muted-foreground">
+              {currentIsGit ? "Git repository" : "Plain directory"}
+            </p>
           )}
         </div>
         <div className="flex gap-2">
@@ -121,8 +121,7 @@ export function FolderPickerModal({ open, onClose, onSelect }: FolderPickerModal
               onSelect(currentPath);
               onClose();
             }}
-            disabled={!currentPath || !currentIsGit}
-            title={!currentIsGit ? "Not a git repository" : undefined}
+            disabled={!currentPath}
             className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
           >
             Select

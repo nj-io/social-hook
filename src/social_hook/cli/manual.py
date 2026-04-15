@@ -116,28 +116,25 @@ def draft(
             parent_timestamp=commit_info.parent_timestamp,
         )
 
-        # Build evaluation from stored decision, forcing draft for override
-        from social_hook.compat import evaluation_from_decision
+        # Build intent from stored decision
+        from social_hook.drafting import draft as run_draft
+        from social_hook.drafting_intents import intent_from_decision
 
-        evaluation = evaluation_from_decision(decision, "draft")
+        intent = intent_from_decision(decision, config, conn, target_platform=platform)
 
-        # Draft for platforms
+        # Draft
         from social_hook.cli._spinner import spinner
-        from social_hook.drafting import draft_for_platforms
 
-        target_platform_names = [platform] if platform else None
         with spinner("Creating draft..."):
-            results = draft_for_platforms(
+            results = run_draft(
+                intent,
                 config,
                 conn,
                 db,
                 project,
-                decision_id=decision.id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit_info,
+                context,
+                commit_info,
                 project_config=project_config,
-                target_platform_names=target_platform_names,
                 dry_run=dry_run,
                 verbose=verbose,
             )
@@ -216,8 +213,9 @@ def consolidate(
         )
 
         # Assemble context
-        from social_hook.compat import evaluation_from_decision
         from social_hook.config.project import ProjectConfig, load_project_config
+        from social_hook.drafting import draft as run_draft
+        from social_hook.drafting_intents import intent_from_decision
         from social_hook.errors import ConfigError
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
@@ -236,22 +234,20 @@ def consolidate(
 
         # Use most recent decision as anchor
         anchor = decisions[-1]
-        evaluation = evaluation_from_decision(anchor, "draft")
+        intent = intent_from_decision(anchor, config, conn)
 
-        # Draft for platforms
+        # Draft
         from social_hook.cli._spinner import spinner
-        from social_hook.drafting import draft_for_platforms
 
         with spinner("Consolidating and drafting..."):
-            results = draft_for_platforms(
+            results = run_draft(
+                intent,
                 config,
                 conn,
                 db,
                 project,
-                decision_id=anchor.id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit,
+                context,
+                commit,
                 project_config=project_config,
                 dry_run=dry_run,
                 verbose=verbose,

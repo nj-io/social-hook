@@ -1,3 +1,3 @@
 """Social Hook - Automated social media content from development activity."""
 
-__version__ = "0.9.0"
+__version__ = "0.11.0"

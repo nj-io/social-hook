@@ -50,6 +50,7 @@ class TestRegisterCommand:
     @patch("social_hook.filesystem.get_db_path")
     @patch("social_hook.config.load_full_config")
     def test_register_non_git_dir(self, mock_config, mock_db_path, temp_dir):
+        """Non-git directories can be registered (Phase 6: non-git projects)."""
         from typer.testing import CliRunner
 
         from social_hook.cli.project import app
@@ -61,7 +62,9 @@ class TestRegisterCommand:
 
         runner = CliRunner()
         result = runner.invoke(app, ["register", str(temp_dir)])
-        assert result.exit_code == 1
+        assert result.exit_code == 0
+        assert "Registered" in result.output
+        assert "Non-git project" in result.output
 
 
 class TestUnregisterCommand:

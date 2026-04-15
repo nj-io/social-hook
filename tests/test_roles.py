@@ -434,7 +434,9 @@ class TestDrafter:
 
         assert result.media_type.value == "mermaid"
 
-    def test_create_thread(self, mock_client, mock_db, sample_commit, sample_context, prompts_dir):
+    def test_create_draft_with_thread_vehicle(
+        self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
+    ):
         thread_content = (
             "1/ Just shipped user authentication for my project.\n\n"
             "2/ The tricky part was handling token refresh without losing state.\n\n"
@@ -466,11 +468,12 @@ class TestDrafter:
 
         with patch("social_hook.llm.prompts.Path.home", return_value=prompts_dir.parent.parent):
             drafter = Drafter(mock_client)
-            result = drafter.create_thread(
+            result = drafter.create_draft(
                 decision,
                 sample_context,
                 sample_commit,
                 mock_db,
+                vehicle="thread",
             )
 
         assert isinstance(result, CreateDraftInput)
@@ -478,7 +481,6 @@ class TestDrafter:
         call_kwargs = mock_client.complete.call_args[1]
         user_msg = call_kwargs["messages"][0]["content"]
         assert "thread" in user_msg.lower()
-        assert "minimum 4" in user_msg
 
     def test_create_draft_free_tier_link_warning(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir

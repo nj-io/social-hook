@@ -1,112 +1,83 @@
-"""Tests for trigger thread pipeline and format decisions (Phase A)."""
+"""Tests for vehicle validation and thread parsing."""
 
-from types import SimpleNamespace
-
-from social_hook.trigger import _needs_thread, _parse_thread_tweets
+from social_hook.vehicle import parse_thread_parts, validate_draft_for_vehicle
 
 
-class TestNeedsThread:
-    """Tests for _needs_thread format decision logic."""
+class TestValidateDraftForVehicle:
+    """Tests for validate_draft_for_vehicle() validation logic."""
 
-    def _make_draft(self, content="short", format_hint=None, beat_count=None):
-        return SimpleNamespace(
-            content=content,
-            format_hint=format_hint,
-            beat_count=beat_count,
-        )
+    def test_non_x_platform_rejects_thread(self):
+        """LinkedIn does not support threads."""
+        result = validate_draft_for_vehicle("content", "thread", "linkedin", 3000)
+        assert result.valid is False
+        assert result.suggested_vehicle == "single"
 
-    def test_non_x_platform_never_threads(self):
-        """LinkedIn never uses threads."""
-        draft = self._make_draft(format_hint="thread", beat_count=6)
-        assert _needs_thread(draft, "linkedin", "free") is False
+    def test_free_tier_overflow_suggests_thread(self):
+        """Free tier: >280 chars single post suggests thread."""
+        result = validate_draft_for_vehicle("x" * 300, "single", "x", 280)
+        assert result.valid is False
+        assert result.suggested_vehicle == "thread"
 
-    def test_free_tier_overflow_forces_thread(self):
-        """Free tier: >280 chars must thread."""
-        draft = self._make_draft(content="x" * 300, format_hint="single")
-        assert _needs_thread(draft, "x", "free") is True
+    def test_free_tier_under_limit_valid(self):
+        """Free tier: <=280 chars single is valid."""
+        result = validate_draft_for_vehicle("x" * 100, "single", "x", 280)
+        assert result.valid is True
 
-    def test_free_tier_under_limit_single(self):
-        """Free tier: <=280 chars stays single."""
-        draft = self._make_draft(content="x" * 100)
-        assert _needs_thread(draft, "x", "free") is False
+    def test_paid_tier_long_single_valid(self):
+        """Paid tier: long content single is valid (higher char limit)."""
+        result = validate_draft_for_vehicle("x" * 1000, "single", "x", 25000)
+        assert result.valid is True
 
-    def test_paid_tier_no_overflow_forced(self):
-        """Paid tier: long content doesn't force thread."""
-        draft = self._make_draft(content="x" * 1000, format_hint="single")
-        assert _needs_thread(draft, "x", "premium") is False
+    def test_thread_on_x_with_enough_parts(self):
+        """Thread on X with 4+ parts is valid."""
+        content = "1/ First\n\n2/ Second\n\n3/ Third\n\n4/ Fourth"
+        result = validate_draft_for_vehicle(content, "thread", "x", 280)
+        assert result.valid is True
 
-    def test_explicit_single_hint_respected(self):
-        """Drafter says single → respect it."""
-        draft = self._make_draft(content="x" * 200, format_hint="single")
-        assert _needs_thread(draft, "x", "premium") is False
+    def test_thread_too_few_parts(self):
+        """Thread with fewer than 4 parts suggests single."""
+        content = "1/ First\n\n2/ Second\n\n3/ Third"
+        result = validate_draft_for_vehicle(content, "thread", "x", 280, thread_min=4)
+        assert result.valid is False
+        assert result.suggested_vehicle == "single"
 
-    def test_explicit_thread_hint_respected(self):
-        """Drafter says thread → thread."""
-        draft = self._make_draft(format_hint="thread")
-        assert _needs_thread(draft, "x", "free") is True
+    def test_article_always_valid(self):
+        """Article vehicle is always valid."""
+        result = validate_draft_for_vehicle("x" * 5000, "article", "x", 280)
+        assert result.valid is True
 
-    def test_explicit_thread_hint_paid(self):
-        """Drafter says thread on paid tier → thread."""
-        draft = self._make_draft(format_hint="thread")
-        assert _needs_thread(draft, "x", "premium") is True
-
-    def test_four_beats_triggers_thread(self):
-        """4+ beats → thread candidate."""
-        draft = self._make_draft(beat_count=4)
-        assert _needs_thread(draft, "x", "free") is True
-
-    def test_three_beats_no_thread(self):
-        """3 beats is not enough for thread."""
-        draft = self._make_draft(beat_count=3)
-        assert _needs_thread(draft, "x", "free") is False
-
-    def test_no_hints_short_content_single(self):
-        """No hints, short content → single."""
-        draft = self._make_draft(content="Quick update")
-        assert _needs_thread(draft, "x", "free") is False
-
-    def test_free_tier_overflow_overrides_single_hint(self):
-        """Free tier overflow overrides even explicit 'single' hint."""
-        draft = self._make_draft(content="x" * 500, format_hint="single")
-        assert _needs_thread(draft, "x", "free") is True
-
-    def test_paid_tier_postmortem_thread(self):
-        """Paid tier: drafter recommends thread for postmortem."""
-        draft = self._make_draft(format_hint="thread", beat_count=5)
-        assert _needs_thread(draft, "x", "premium_plus") is True
-
-    def test_paid_tier_milestone_single(self):
-        """Paid tier: punchy milestone stays single."""
-        draft = self._make_draft(content="Shipped v2!", format_hint="single")
-        assert _needs_thread(draft, "x", "basic") is False
+    def test_unknown_vehicle_valid(self):
+        """Unknown vehicle is treated as valid."""
+        result = validate_draft_for_vehicle("content", "newsletter", "x", 280)
+        assert result.valid is True
 
 
-class TestParseThreadTweets:
-    """Tests for _parse_thread_tweets parsing."""
+class TestParseThreadParts:
+    """Tests for parse_thread_parts() parsing."""
 
     def test_numbered_format(self):
         content = "1/ First beat\n\n2/ Second beat\n\n3/ Third beat\n\n4/ Fourth beat"
-        tweets = _parse_thread_tweets(content)
-        assert len(tweets) == 4
-        assert tweets[0] == "First beat"
-        assert tweets[3] == "Fourth beat"
+        parts = parse_thread_parts(content, "x")
+        assert len(parts) == 4
+        assert parts[0] == "First beat"
+        assert parts[3] == "Fourth beat"
 
     def test_separator_format(self):
         content = "First beat\n---\nSecond beat\n---\nThird beat\n---\nFourth beat"
-        tweets = _parse_thread_tweets(content)
-        assert len(tweets) == 4
+        parts = parse_thread_parts(content, "x")
+        assert len(parts) == 4
 
     def test_double_newline_format(self):
         content = "First beat\n\nSecond beat\n\nThird beat\n\nFourth beat"
-        tweets = _parse_thread_tweets(content)
-        assert len(tweets) == 4
+        parts = parse_thread_parts(content, "x")
+        assert len(parts) == 4
 
     def test_empty_content(self):
-        tweets = _parse_thread_tweets("")
-        assert tweets == []
+        parts = parse_thread_parts("", "x")
+        assert parts == []
 
     def test_single_paragraph(self):
         """Single paragraph returns single-element list."""
-        tweets = _parse_thread_tweets("Just one tweet.")
-        assert len(tweets) == 1
-        assert tweets[0] == "Just one tweet."
+        parts = parse_thread_parts("Just one tweet.", "x")
+        assert len(parts) == 1
+        assert parts[0] == "Just one tweet."

@@ -45,28 +45,30 @@ def check_platform_abc():
 
 
 def check_dataclasses():
-    from social_hook.adapters.models import MediaResult, PostResult, ThreadResult
+    from social_hook.adapters.models import MediaResult, PostResult
 
     pr = PostResult(success=True, external_id="123", external_url="https://example.com/123")
     assert pr.success is True
     assert pr.external_id == "123"
 
-    tr = ThreadResult(success=True, tweet_results=[pr])
-    assert len(tr.tweet_results) == 1
+    # PostResult with part_results (replaces ThreadResult)
+    thread_pr = PostResult(success=True, part_results=[pr])
+    assert thread_pr.part_results is not None
+    assert len(thread_pr.part_results) == 1
 
     mr = MediaResult(success=True, file_path="/tmp/test.png")
     assert mr.file_path is not None
 
 
-# ── Check 3: ThreadResult default (no explicit tweet_results) ─────────
+# ── Check 3: PostResult part_results default (None) ──────────────────
 
 
-def check_thread_result_default():
-    from social_hook.adapters.models import ThreadResult
+def check_post_result_part_results_default():
+    from social_hook.adapters.models import PostResult
 
-    tr = ThreadResult(success=False, error="test error")
-    assert tr.tweet_results == [], f"Expected empty list, got {tr.tweet_results}"
-    assert tr.error == "test error"
+    pr = PostResult(success=False, error="test error")
+    assert pr.part_results is None, f"Expected None, got {pr.part_results}"
+    assert pr.error == "test error"
 
 
 # ── Check 4: XAdapter dry-run post ────────────────────────────────────
@@ -92,7 +94,8 @@ def check_x_adapter_dry_run_thread():
     tweets = [{"content": f"Tweet {i}", "media_paths": []} for i in range(1, 5)]
     result = adapter.post_thread(tweets, dry_run=True)
     assert result.success is True
-    assert len(result.tweet_results) == 4, f"Expected 4, got {len(result.tweet_results)}"
+    assert result.part_results is not None
+    assert len(result.part_results) == 4, f"Expected 4, got {len(result.part_results)}"
 
 
 # ── Check 6: LinkedInAdapter dry-run post ─────────────────────────────
@@ -320,7 +323,7 @@ def main():
 
     check("PlatformAdapter ABC enforcement", check_platform_abc)
     check("Dataclass creation and field access", check_dataclasses)
-    check("ThreadResult default (no tweet_results)", check_thread_result_default)
+    check("PostResult part_results default (None)", check_post_result_part_results_default)
     check("XAdapter dry-run post", check_x_adapter_dry_run_post)
     check("XAdapter thread dry-run (4 tweets)", check_x_adapter_dry_run_thread)
     check("LinkedInAdapter dry-run post", check_linkedin_dry_run_post)

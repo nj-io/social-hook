@@ -119,6 +119,7 @@ class StrategyDecisionInput(BaseModel):
     post_category: PostCategorySchema | None = None
     media_tool: MediaTool | None = None
     include_project_docs: bool | None = None
+    vehicle: str | None = None
     topic_id: str | None = None
     context_source: ContextSourceSpec | None = None
 
@@ -225,6 +226,11 @@ class LogEvaluationInput(BaseModel):
                                     "type": "boolean",
                                     "description": "Set true when the Drafter needs project-level documentation",
                                 },
+                                "vehicle": {
+                                    "type": "string",
+                                    "enum": ["single", "thread", "article"],
+                                    "description": "Suggested content vehicle. single = self-contained post, thread = multi-part narrative, article = long-form structured content",
+                                },
                                 "topic_id": {
                                     "type": "string",
                                     "description": "ID of the content topic this relates to",
@@ -306,7 +312,7 @@ class PlatformVariant(BaseModel):
 
     platform: str
     content: str
-    format_hint: str | None = None
+    vehicle: str | None = None
     beat_count: int | None = None
 
 
@@ -318,7 +324,7 @@ class CreateDraftInput(BaseModel):
     reasoning: str
     media_type: MediaTool | None = None
     media_spec: dict[str, Any] | None = None
-    format_hint: str | None = None
+    vehicle: str | None = None
     beat_count: int | None = None
     variants: list[PlatformVariant] | None = None
 
@@ -356,10 +362,10 @@ class CreateDraftInput(BaseModel):
                         "type": "string",
                         "description": "Why this angle/content was chosen",
                     },
-                    "format_hint": {
+                    "vehicle": {
                         "type": "string",
-                        "enum": ["single", "thread"],
-                        "description": "Recommended format. Use 'thread' when content has 4+ distinct beats/steps that benefit from visual separation.",
+                        "enum": ["single", "thread", "article"],
+                        "description": "Content vehicle. Use 'thread' when content has 4+ distinct beats/steps that benefit from visual separation. Use 'article' for long-form structured content.",
                     },
                     "beat_count": {
                         "type": "integer",
@@ -378,9 +384,9 @@ class CreateDraftInput(BaseModel):
                                     "type": "string",
                                     "description": "Platform-optimized post content",
                                 },
-                                "format_hint": {
+                                "vehicle": {
                                     "type": "string",
-                                    "enum": ["single", "thread"],
+                                    "enum": ["single", "thread", "article"],
                                 },
                                 "beat_count": {"type": "integer"},
                             },
@@ -398,7 +404,7 @@ class CreateDraftInput(BaseModel):
         """Validate tool call input data."""
         # LLM sometimes returns a list for content (thread format) instead of a string.
         # Extract text from each item and join with double newlines so
-        # _parse_thread_tweets() can split on the numbered "1/, 2/" pattern.
+        # parse_thread_parts() can split on the numbered "1/, 2/" pattern.
         if isinstance(data.get("content"), list):
             items = data["content"]
             if items and isinstance(items[0], dict) and "content" in items[0]:
@@ -566,6 +572,7 @@ class ExpertResponseInput(BaseModel):
     reasoning: str
     refined_content: str | None = None
     refined_media_spec: dict[str, Any] | None = None
+    refined_vehicle: str | None = None
     answer: str | None = None
     context_note: str | None = None
 
@@ -594,6 +601,14 @@ class ExpertResponseInput(BaseModel):
                             "Fields depend on tool: ray_so needs {code, language?, title?}, "
                             "mermaid needs {diagram}, nano_banana_pro needs {prompt}, "
                             "playwright needs {url, selector?}."
+                        ),
+                    },
+                    "refined_vehicle": {
+                        "type": "string",
+                        "enum": ["single", "thread", "article"],
+                        "description": (
+                            "For refine_draft: change the content vehicle. "
+                            "Use when the user asks to reformat as a thread, single post, or article."
                         ),
                     },
                     "answer": {

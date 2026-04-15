@@ -103,9 +103,9 @@ class TestFormatDraftReviewExtended:
             platform="x",
             content="Thread content",
             is_thread=True,
-            tweet_count=4,
+            part_count=4,
         )
-        assert "Thread: 4 tweets" in msg
+        assert "Thread: 4 parts" in msg
 
 
 class TestFormatDraftReviewEvaluatorContext:

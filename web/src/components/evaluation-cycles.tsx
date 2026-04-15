@@ -7,6 +7,7 @@ import type { BackgroundTask } from "@/lib/api";
 import { fetchCycles, approveAllCycleDrafts, sendCallback, connectDraft, draftNowTopic, fetchTopics } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { useToast } from "@/lib/toast-context";
 import { AsyncButton } from "@/components/async-button";
 import { Badge } from "@/components/ui/badge";
 import { relativeTime, absoluteTime } from "@/lib/relative-time";
@@ -20,10 +21,14 @@ export function EvaluationCycles({ projectId }: { projectId: string }) {
   const [topicNameById, setTopicNameById] = useState<Record<string, string>>({});
 
   const loadRef = useRef<() => void>(() => {});
+  const { addToast } = useToast();
 
-  const onTaskCompleted = useCallback((_task: BackgroundTask) => {
+  const onTaskCompleted = useCallback((task: BackgroundTask) => {
+    if (task.status === "failed") {
+      addToast("Evaluation failed", { variant: "error", detail: task.error ?? "Unknown error" });
+    }
     loadRef.current();
-  }, []);
+  }, [addToast]);
 
   const { trackTask, isRunning, getTask } = useBackgroundTasks(projectId, onTaskCompleted);
 

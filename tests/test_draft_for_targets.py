@@ -1,12 +1,12 @@
-"""Tests for draft_for_targets() in drafting.py."""
+"""Tests for intent_from_routed_targets() in drafting_intents.py."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from social_hook.config.targets import AccountConfig, TargetConfig
 from social_hook.config.yaml import Config, SchedulingConfig
-from social_hook.drafting import draft_for_targets
+from social_hook.drafting import DraftingIntent, draft
+from social_hook.drafting_intents import intent_from_routed_targets
 from social_hook.llm.schemas import StrategyDecisionInput, TargetAction
-from social_hook.models.core import Project
 from social_hook.routing import RoutedTarget
 
 
@@ -37,34 +37,37 @@ def _make_routed_target(
     )
 
 
-class TestDraftForTargets:
-    """Tests for draft_for_targets()."""
+class TestIntentFromRoutedTargets:
+    """Tests for intent_from_routed_targets()."""
+
+    def _make_conn(self, accounts=None):
+        conn = MagicMock()
+        rows = [(a,) for a in (accounts or ["acc-x"])]
+        conn.execute.return_value.fetchall.return_value = rows
+        return conn
+
+    def _make_evaluation(self):
+        eval_mock = MagicMock()
+        eval_mock.commit_analysis.summary = "test"
+        return eval_mock
 
     def test_no_draft_actions(self, temp_db):
         """No targets with draft action -> empty result."""
         targets = [_make_routed_target("main", action="skip")]
         config = Config(scheduling=SchedulingConfig())
-        project = MagicMock(spec=Project)
-        project.id = "proj-1"
 
-        result = draft_for_targets(
-            target_actions=targets,
-            config=config,
-            conn=temp_db,
-            db=MagicMock(),
-            project=project,
-            decision_id="dec-1",
-            evaluation=MagicMock(),
-            context=MagicMock(),
-            commit=MagicMock(),
+        result = intent_from_routed_targets(
+            targets,
+            "dec-1",
+            self._make_evaluation(),
+            config,
+            self._make_conn(),
+            project_id="test-project",
         )
         assert result == []
 
-    @patch("social_hook.drafting._draft_for_resolved_platforms")
-    def test_single_target_calls_drafting(self, mock_draft, temp_db):
-        """Single draft target calls _draft_for_resolved_platforms."""
-        mock_draft.return_value = []
-
+    def test_single_target_produces_intent(self, temp_db):
+        """Single draft target produces one DraftingIntent."""
         targets = [_make_routed_target("main", action="draft")]
         config = Config(
             scheduling=SchedulingConfig(),
@@ -84,28 +87,22 @@ class TestDraftForTargets:
                 ),
             },
         )
-        project = MagicMock(spec=Project)
-        project.id = "proj-1"
 
-        draft_for_targets(
-            target_actions=targets,
-            config=config,
-            conn=temp_db,
-            db=MagicMock(),
-            project=project,
-            decision_id="dec-1",
-            evaluation=MagicMock(),
-            context=MagicMock(),
-            commit=MagicMock(),
+        intents = intent_from_routed_targets(
+            targets,
+            "dec-1",
+            self._make_evaluation(),
+            config,
+            self._make_conn(),
+            project_id="test-project",
         )
 
-        assert mock_draft.called
+        assert len(intents) == 1
+        assert isinstance(intents[0], DraftingIntent)
+        assert len(intents[0].platforms) == 1
 
-    @patch("social_hook.drafting._draft_for_resolved_platforms")
-    def test_grouped_targets_single_call(self, mock_draft, temp_db):
-        """Targets in same draft_group produce one _draft_for_resolved_platforms call."""
-        mock_draft.return_value = []
-
+    def test_grouped_targets_single_intent(self, temp_db):
+        """Targets in same draft_group produce one intent with multiple platform specs."""
         targets = [
             _make_routed_target("x-main", platform="x", draft_group="group-bip"),
             _make_routed_target("li-main", platform="linkedin", draft_group="group-bip"),
@@ -141,33 +138,22 @@ class TestDraftForTargets:
                 ),
             },
         )
-        project = MagicMock(spec=Project)
-        project.id = "proj-1"
 
-        draft_for_targets(
-            target_actions=targets,
-            config=config,
-            conn=temp_db,
-            db=MagicMock(),
-            project=project,
-            decision_id="dec-1",
-            evaluation=MagicMock(),
-            context=MagicMock(),
-            commit=MagicMock(),
+        intents = intent_from_routed_targets(
+            targets,
+            "dec-1",
+            self._make_evaluation(),
+            config,
+            self._make_conn(["acc-x", "acc-linkedin"]),
+            project_id="test-project",
         )
 
-        # Grouped targets -> one call with both targets
-        assert mock_draft.call_count == 1
-        platforms_arg = mock_draft.call_args[0][0]
-        assert len(platforms_arg) == 2
-        assert "x-main" in platforms_arg
-        assert "li-main" in platforms_arg
+        # Grouped targets -> one intent
+        assert len(intents) == 1
+        assert len(intents[0].platforms) == 2
 
-    @patch("social_hook.drafting._draft_for_resolved_platforms")
-    def test_different_groups_separate_calls(self, mock_draft, temp_db):
-        """Targets in different draft_groups produce separate calls."""
-        mock_draft.return_value = []
-
+    def test_different_groups_separate_intents(self, temp_db):
+        """Targets in different draft_groups produce separate intents."""
         targets = [
             _make_routed_target("x-main", platform="x", draft_group="group-bip"),
             _make_routed_target("li-main", platform="linkedin", draft_group="group-brand"),
@@ -203,28 +189,19 @@ class TestDraftForTargets:
                 ),
             },
         )
-        project = MagicMock(spec=Project)
-        project.id = "proj-1"
 
-        draft_for_targets(
-            target_actions=targets,
-            config=config,
-            conn=temp_db,
-            db=MagicMock(),
-            project=project,
-            decision_id="dec-1",
-            evaluation=MagicMock(),
-            context=MagicMock(),
-            commit=MagicMock(),
+        intents = intent_from_routed_targets(
+            targets,
+            "dec-1",
+            self._make_evaluation(),
+            config,
+            self._make_conn(["acc-x", "acc-linkedin"]),
+            project_id="test-project",
         )
 
-        # Different groups -> separate calls
-        assert mock_draft.call_count == 2
+        # Different groups -> separate intents
+        assert len(intents) == 2
 
-    @patch("social_hook.drafting._draft_for_resolved_platforms")
-    def test_backward_compat_draft_for_platforms(self, mock_draft, temp_db):
-        """draft_for_platforms() still works when called directly."""
-        # This test just verifies the old function still exists and is callable
-        from social_hook.drafting import draft_for_platforms
-
-        assert callable(draft_for_platforms)
+    def test_draft_function_is_callable(self, temp_db):
+        """draft() function exists and is callable."""
+        assert callable(draft)

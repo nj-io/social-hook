@@ -13,7 +13,7 @@ import requests
 from social_hook.adapters.models import (
     QUOTE,
     REPLY,
-    SINGLE_POST,
+    SINGLE,
     THREAD,
     PostReference,
     ReferenceType,
@@ -365,7 +365,7 @@ class TestXAdapterThread:
 
     @patch("social_hook.adapters.platform.x.requests.post")
     def test_valid_thread_4_tweets(self, mock_post):
-        """4-tweet thread returns ThreadResult(success=True) with 4 results."""
+        """4-tweet thread returns PostResult(success=True) with 4 part_results."""
         call_count = 0
 
         def mock_post_fn(*args, **kwargs):
@@ -380,8 +380,8 @@ class TestXAdapterThread:
         result = adapter.post_thread(tweets)
 
         assert result.success is True
-        assert len(result.tweet_results) == 4
-        for i, tr in enumerate(result.tweet_results):
+        assert len(result.part_results) == 4
+        for i, tr in enumerate(result.part_results):
             assert tr.success is True
             assert tr.external_id == f"tweet_{i + 1}"
 
@@ -409,10 +409,10 @@ class TestXAdapterThread:
         result = adapter.post_thread(tweets)
 
         assert result.success is False
-        assert len(result.tweet_results) == 3  # 2 success + 1 failure
-        assert result.tweet_results[0].success is True
-        assert result.tweet_results[1].success is True
-        assert result.tweet_results[2].success is False
+        assert len(result.part_results) == 3  # 2 success + 1 failure
+        assert result.part_results[0].success is True
+        assert result.part_results[1].success is True
+        assert result.part_results[2].success is False
         assert "Tweet 3 failed" in result.error
 
     @patch("social_hook.adapters.platform.x.requests.post")
@@ -453,7 +453,7 @@ class TestXAdapterThread:
         mock_post.assert_not_called()
 
         assert result.success is True
-        assert len(result.tweet_results) == 4
+        assert len(result.part_results) == 4
 
 
 # =============================================================================
@@ -676,10 +676,10 @@ class TestXAdapterCapabilities:
     """XAdapter capability registry methods."""
 
     def test_capabilities_contains_expected(self):
-        """XAdapter.capabilities() returns SINGLE_POST, THREAD, QUOTE, REPLY."""
+        """XAdapter.capabilities() returns SINGLE, THREAD, QUOTE, REPLY."""
         adapter = XAdapter("test-token")
         caps = adapter.capabilities()
-        assert SINGLE_POST in caps
+        assert SINGLE in caps
         assert THREAD in caps
         assert QUOTE in caps
         assert REPLY in caps
