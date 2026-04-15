@@ -20,6 +20,7 @@ These options can be placed before any command.
 | Group | Description |
 |-------|-------------|
 | [`account`](account.md) | Manage OAuth-authenticated platform accounts (X, LinkedIn). |
+| [`advisory`](advisory.md) | Manage advisory items — operator action items for manual tasks. |
 | [`arc`](arc.md) | Manage narrative arcs. |
 | [`bot`](bot.md) | Bot daemon management. |
 | [`brief`](brief.md) | View and edit the project brief used by the evaluator and drafter. |
