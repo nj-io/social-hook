@@ -748,8 +748,8 @@ def _apply_expert_result(
                 id=generate_id("change"),
                 draft_id=draft.id,
                 field="content",
-                old_value=old_content[:200],
-                new_value=result.refined_content[:200],
+                old_value=old_content,
+                new_value=result.refined_content,
                 changed_by="expert",
             ),
         )
@@ -789,8 +789,8 @@ def _apply_expert_result(
                 id=generate_id("change"),
                 draft_id=draft.id,
                 field="media_spec",
-                old_value=json_mod.dumps(draft.media_spec)[:200] if draft.media_spec else "null",
-                new_value=json_mod.dumps(result.refined_media_spec)[:200],
+                old_value=json_mod.dumps(draft.media_spec) if draft.media_spec else "null",
+                new_value=json_mod.dumps(result.refined_media_spec),
                 changed_by="expert",
             ),
         )
@@ -939,8 +939,8 @@ def _save_edit(
             id=generate_id("change"),
             draft_id=draft_id,
             field="content",
-            old_value=old_content[:200],
-            new_value=new_content[:200],
+            old_value=old_content,
+            new_value=new_content,
             changed_by=changed_by,
         )
         insert_draft_change(conn, change)
@@ -1489,7 +1489,18 @@ def cmd_approve(adapter: MessagingAdapter, chat_id: str, args: str, config: Any)
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 
+        from social_hook.db import operations as ops
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            handle_advisory_approval(conn, draft, config)
+            _send(
+                adapter, chat_id, f"Draft `{draft_id[:12]}` → advisory (requires manual posting)."
+            )
+            return
+
         update_draft(conn, draft_id, status="approved")
+        ops.emit_data_event(conn, "draft", "approved", draft_id, draft.project_id)
         _send(adapter, chat_id, f"Draft `{draft_id[:12]}` approved.")
     finally:
         conn.close()

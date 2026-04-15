@@ -8,7 +8,7 @@ import type { Draft } from "@/lib/types";
 import { DraftCard } from "@/components/draft-card";
 import { useDataEvents } from "@/lib/use-data-events";
 
-const STATUSES = ["All", "draft", "approved", "scheduled", "deferred", "posted", "rejected", "failed"];
+const STATUSES = ["All", "draft", "approved", "scheduled", "deferred", "advisory", "posted", "rejected", "failed"];
 
 export default function DraftsPage() {
   const searchParams = useSearchParams();

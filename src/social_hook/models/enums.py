@@ -21,6 +21,7 @@ class DraftStatus(Enum):
     SUPERSEDED = "superseded"
     CANCELLED = "cancelled"
     DEFERRED = "deferred"
+    ADVISORY = "advisory"
 
 
 # Single source of truth for status group checks.
@@ -31,6 +32,7 @@ TERMINAL_STATUSES = frozenset(
         DraftStatus.REJECTED.value,
         DraftStatus.CANCELLED.value,
         DraftStatus.SUPERSEDED.value,
+        DraftStatus.ADVISORY.value,
     }
 )
 PENDING_STATUSES = frozenset(

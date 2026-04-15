@@ -234,12 +234,14 @@ class TestPostByVehicle:
         adapter.post_thread.assert_called_once()
         assert result.external_id == "t-1"
 
-    def test_advisory_vehicle(self):
+    def test_advisory_vehicle_safety_net(self):
+        """Non-auto-postable vehicles should never reach post_by_vehicle in normal flow.
+        If they do, it's a safety net — returns failure with a clear message."""
         adapter = self._make_adapter(caps=[SINGLE, THREAD, ARTICLE])
         draft = SimpleNamespace(vehicle="article", content="long content", media_paths=[])
         result = post_by_vehicle(adapter, draft, None, None)
         assert result.success is False
-        assert result.error.startswith("ADVISORY:")
+        assert "not auto-postable" in result.error
 
     def test_unsupported_vehicle(self):
         adapter = self._make_adapter(caps=[SINGLE])

@@ -948,6 +948,28 @@ async def api_draft_detail(draft_id: str):
         else:
             draft["decision"] = None
 
+        # Compute draft diagnostics at read time (not stored)
+        import social_hook.draft_diagnostics  # noqa: F401 — side-effect registration
+        from social_hook.draft_diagnostics import draft_diagnostics_registry
+        from social_hook.vehicle import check_auto_postable
+
+        diag_ctx = {
+            "vehicle": draft.get("vehicle", "single"),
+            "status": draft.get("status"),
+            "platform": draft.get("platform"),
+            "auto_postable": check_auto_postable(
+                type(
+                    "_D",
+                    (),
+                    {
+                        "vehicle": draft.get("vehicle", "single"),
+                        "platform": draft.get("platform", ""),
+                    },
+                )()
+            ),
+        }
+        draft["diagnostics"] = [d.to_dict() for d in draft_diagnostics_registry.run(diag_ctx)]
+
         return draft
     finally:
         conn.close()
@@ -983,8 +1005,8 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
                 id=generate_id("change"),
                 draft_id=draft_id,
                 field="media_spec",
-                old_value=json.dumps(old_spec)[:200] if old_spec else "null",
-                new_value=json.dumps(media_spec)[:200],
+                old_value=json.dumps(old_spec) if old_spec else "null",
+                new_value=json.dumps(media_spec),
                 changed_by="human",
             ),
         )
@@ -1132,8 +1154,8 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
                     id=generate_id("change"),
                     draft_id=draft_id,
                     field="media_spec",
-                    old_value=json.dumps(old_spec)[:200] if old_spec else "null",
-                    new_value=json.dumps(spec)[:200],
+                    old_value=json.dumps(old_spec) if old_spec else "null",
+                    new_value=json.dumps(spec),
                     changed_by="human",
                 ),
             )
@@ -2088,7 +2110,7 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
         id=generate_id("decision"),
         project_id=project_id,
         commit_hash=commit.hash,
-        commit_message=idea[:200],
+        commit_message=idea,
         decision="draft",
         reasoning=idea,
         trigger_source="create",
@@ -5828,16 +5850,26 @@ async def api_approve_all_cycle_drafts(project_id: str, cycle_id: str):
         if not approvable:
             return {"status": "no_drafts", "approved_count": 0}
 
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        config = _get_config()
         approved_ids = []
+        advisory_ids = []
         for draft in approvable:
-            ops.update_draft(conn, draft.id, status="approved")
-            ops.emit_data_event(conn, "draft", "updated", draft.id, project_id)
-            approved_ids.append(draft.id)
+            if not check_auto_postable(draft):
+                handle_advisory_approval(conn, draft, config)
+                advisory_ids.append(draft.id)
+            else:
+                ops.update_draft(conn, draft.id, status="approved")
+                ops.emit_data_event(conn, "draft", "approved", draft.id, project_id)
+                approved_ids.append(draft.id)
 
         return {
             "status": "approved",
             "approved_count": len(approved_ids),
+            "advisory_count": len(advisory_ids),
             "draft_ids": approved_ids,
+            "advisory_ids": advisory_ids,
         }
     finally:
         conn.close()

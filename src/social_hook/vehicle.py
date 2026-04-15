@@ -45,6 +45,120 @@ def resolve_vehicle(
     return None
 
 
+# ---------------------------------------------------------------------------
+# Advisory helpers — auto_postable checks and advisory item creation
+# ---------------------------------------------------------------------------
+
+
+def check_auto_postable(draft: Any) -> bool:
+    """Check if a draft's vehicle is auto-postable on its platform.
+
+    Returns True for auto-postable vehicles (single, thread), False for
+    vehicles that require manual posting (article). Uses the static
+    PLATFORM_VEHICLE_SUPPORT map — no adapter instance needed.
+    """
+    from social_hook.config.platforms import PLATFORM_VEHICLE_SUPPORT
+
+    vehicle = getattr(draft, "vehicle", "single") or "single"
+    if vehicle == "single":
+        return True
+
+    caps = PLATFORM_VEHICLE_SUPPORT.get(getattr(draft, "platform", ""), [])
+    cap = next((c for c in caps if c.name == vehicle), None)
+    return not (cap and not getattr(cap, "auto_postable", True))
+
+
+def handle_advisory_approval(
+    conn: Any,
+    draft: Any,
+    config: Any,
+    scheduled_time: str | None = None,
+) -> None:
+    """Handle approval of a non-auto-postable draft.
+
+    Creates an advisory item, sets draft status to 'advisory', and emits
+    events. Call this instead of the normal approval flow when
+    check_auto_postable() returns False.
+
+    Args:
+        scheduled_time: ISO datetime string for the advisory due_date.
+            Pass the calculated optimal time when available (quick_approve,
+            schedule). None for immediate actions (post_now, plain approve).
+    """
+    from social_hook.db import operations as ops
+
+    create_draft_advisory(draft, conn, config, due_date=scheduled_time)
+    ops.update_draft(conn, draft.id, status="advisory")
+    ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
+    logger.info(
+        "Draft %s → advisory (vehicle '%s' not auto-postable)",
+        draft.id,
+        getattr(draft, "vehicle", "?"),
+    )
+
+
+def create_draft_advisory(
+    draft: Any,
+    conn: Any,
+    config: Any,
+    dry_run: bool = False,
+    due_date: str | None = None,
+) -> None:
+    """Create an advisory item for a non-auto-postable draft.
+
+    Called when a vehicle's PostCapability has auto_postable=False (e.g.,
+    articles). The draft gets status='advisory' and never enters the
+    scheduler pipeline.
+    """
+    from social_hook.db import operations as ops
+    from social_hook.filesystem import generate_id
+    from social_hook.messaging.base import OutboundMessage
+    from social_hook.models.infra import AdvisoryItem
+    from social_hook.notifications import broadcast_notification
+
+    if dry_run:
+        logger.info(
+            "Dry run: skipping advisory creation for %s draft %s",
+            getattr(draft, "vehicle", "?"),
+            draft.id,
+        )
+        return
+
+    vehicle = getattr(draft, "vehicle", "article")
+    item = AdvisoryItem(
+        id=generate_id("advisory"),
+        project_id=draft.project_id,
+        category="content_asset",
+        title=f"{vehicle.capitalize()} draft ready — post manually ({draft.platform})",
+        description=(
+            f"Draft {draft.id[:12]} contains {vehicle} content that cannot be "
+            "auto-posted. Review the advisory page once approved."
+        ),
+        urgency="normal",
+        created_by="system",
+        linked_entity_type="draft",
+        linked_entity_id=draft.id,
+        due_date=due_date,
+    )
+    ops.insert_advisory_item(conn, item)
+    ops.emit_data_event(
+        conn,
+        "advisory",
+        "created",
+        item.id,
+        draft.project_id,
+        extra={"title": item.title},
+    )
+    logger.info("Created advisory %s for %s draft %s", item.id, vehicle, draft.id)
+
+    broadcast_notification(
+        config,
+        OutboundMessage(
+            text=f"{vehicle.capitalize()} draft ready — post manually ({draft.platform})"
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class VehicleValidation:
     """Result of validating draft content against vehicle constraints."""
@@ -208,9 +322,16 @@ def post_by_vehicle(
     vehicle = getattr(draft, "vehicle", "single") or "single"
     cap = capabilities.get(vehicle)
 
-    # Advisory: vehicle exists but is not auto-postable (e.g., article)
+    # Safety net: non-auto-postable vehicles should never reach the scheduler.
+    # _finalize_draft() sets status='advisory' at creation time. If we get here,
+    # something bypassed the normal flow — log a warning and refuse to post.
     if cap and not getattr(cap, "auto_postable", True):
-        return PostResult(success=False, error=f"ADVISORY:{cap.description}")
+        logger.warning(
+            "Non-auto-postable vehicle '%s' reached post_by_vehicle — "
+            "this should have been handled at draft creation time",
+            vehicle,
+        )
+        return PostResult(success=False, error=f"Vehicle '{vehicle}' is not auto-postable")
 
     # Validate platform supports this vehicle
     if vehicle not in ("single",) and not cap:

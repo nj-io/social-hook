@@ -12,6 +12,8 @@ import { MediaSection } from "@/components/media-section";
 import { DraftActionPanel } from "@/components/draft-action-panel";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { useToast } from "@/lib/toast-context";
+import type { BackgroundTask } from "@/lib/api";
 
 export default function DraftDetailPage() {
   const params = useParams();
@@ -41,7 +43,15 @@ export default function DraftDetailPage() {
 
   useDataEvents(["draft"], reload);
 
-  const { trackTask, isRunning } = useBackgroundTasks(draft?.project_id ?? "");
+  const { addToast } = useToast();
+  const onTaskCompleted = useCallback((task: BackgroundTask) => {
+    if (task.status === "failed") {
+      addToast("Media spec generation failed", { variant: "error", detail: task.error ?? "Unknown error" });
+    }
+    reload();
+  }, [addToast, reload]);
+
+  const { trackTask, isRunning } = useBackgroundTasks(draft?.project_id ?? "", onTaskCompleted);
 
   const handleGenerateSpec = useCallback(async (draftId: string, mediaType: string) => {
     const res = await generateMediaSpec(draftId, mediaType);
@@ -138,6 +148,9 @@ export default function DraftDetailPage() {
           ))}
         </div>
       )}
+
+      {/* Diagnostics */}
+      <DraftDiagnostics draft={draft} />
 
       {/* Preview banner */}
       {!!draft.preview_mode && draft.status !== "superseded" && (
@@ -268,6 +281,29 @@ function EvaluatorAnalysis({ decision }: { decision: Decision }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function DraftDiagnostics({ draft }: { draft: Draft }) {
+  const diagnostics = (draft as unknown as Record<string, unknown>).diagnostics as
+    | { code: string; severity: string; message: string; suggestion: string | null }[]
+    | undefined;
+
+  if (!diagnostics || diagnostics.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+      <ul className="space-y-1">
+        {diagnostics.map((d) => (
+          <li key={d.code} className="text-sm text-amber-800 dark:text-amber-300">
+            <span className="font-medium">{d.code}:</span> {d.message}
+            {d.suggestion && (
+              <span className="ml-1 text-amber-600 dark:text-amber-500">— {d.suggestion}</span>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

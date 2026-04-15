@@ -142,14 +142,15 @@ def draft(
         referenced_posts = _ops.get_posts_by_ids(conn, ref_post_ids)
 
     # Resolve vehicle: validate intent.vehicle against first platform's capabilities.
-    # intent.vehicle is already the merged value (operator choice or evaluator suggestion).
+    # intent.vehicle is the operator/evaluator merged value — passed as operator_choice
+    # so it takes priority over any evaluator suggestion in resolve_vehicle's fallback chain.
     # If None, drafter decides. If unsupported by platform, falls back to None (drafter decides).
     from social_hook.config.platforms import PLATFORM_VEHICLE_SUPPORT
     from social_hook.vehicle import resolve_vehicle as _resolve_vehicle
 
     first_spec = intent.platforms[0] if intent.platforms else None
     first_caps = PLATFORM_VEHICLE_SUPPORT.get(first_spec.platform, []) if first_spec else []
-    resolved_vehicle = _resolve_vehicle(intent.vehicle, None, first_caps)
+    resolved_vehicle = _resolve_vehicle(None, intent.vehicle, first_caps)
 
     # Load project documentation if requested
     project_docs_text: str | None = None

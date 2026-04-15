@@ -262,20 +262,21 @@ class TestAdvisoryCRUD:
 
 
 class TestArticleAdvisory:
-    def test_create_article_advisory(self, temp_db, project):
-        """_create_article_advisory creates an advisory and sends notification."""
-        from social_hook.scheduler import _create_article_advisory
+    def test_create_draft_advisory(self, temp_db, project):
+        """_create_draft_advisory creates an advisory and sends notification."""
+        from social_hook.vehicle import create_draft_advisory
 
         # Create a minimal draft-like object
         draft = MagicMock()
         draft.id = generate_id("draft")
         draft.project_id = project.id
         draft.platform = "x"
+        draft.vehicle = "article"
 
         config = MagicMock()
 
         with patch("social_hook.notifications.broadcast_notification") as mock_notify:
-            _create_article_advisory(draft, temp_db, config)
+            create_draft_advisory(draft, temp_db, config, dry_run=False)
 
         # Advisory was created
         items = ops.get_advisory_items(temp_db, project_id=project.id)
@@ -289,6 +290,26 @@ class TestArticleAdvisory:
 
         # Notification was sent
         mock_notify.assert_called_once()
+
+    def test_create_draft_advisory_dry_run_skips(self, temp_db, project):
+        """_create_draft_advisory does nothing in dry-run mode."""
+        from social_hook.vehicle import create_draft_advisory
+
+        draft = MagicMock()
+        draft.id = generate_id("draft")
+        draft.project_id = project.id
+        draft.platform = "x"
+        draft.vehicle = "article"
+
+        config = MagicMock()
+
+        with patch("social_hook.notifications.broadcast_notification") as mock_notify:
+            create_draft_advisory(draft, temp_db, config, dry_run=True)
+
+        # No advisory created in dry-run
+        items = ops.get_advisory_items(temp_db, project_id=project.id)
+        assert len(items) == 0
+        mock_notify.assert_not_called()
 
 
 # =============================================================================

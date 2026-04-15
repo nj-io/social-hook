@@ -230,6 +230,19 @@ def btn_approve(
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 
+        # Non-auto-postable vehicles → advisory instead of approve
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            handle_advisory_approval(conn, draft, config)
+            _clear_original_buttons(
+                adapter, chat_id, kwargs.get("message_id"), draft_id, "advisory"
+            )
+            _send(
+                adapter, chat_id, f"Draft `{draft_id[:12]}` → advisory (requires manual posting)."
+            )
+            return
+
         update_draft(conn, draft_id, status="approved")
         ops.emit_data_event(conn, "draft", "approved", draft_id, draft.project_id)
         _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "approved")
@@ -461,6 +474,18 @@ def btn_quick_approve(
             optimal_hours=config.scheduling.optimal_hours if config else None,
         )
         scheduled_str = result.datetime.isoformat()
+
+        # Non-auto-postable vehicles → advisory with due_date
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            handle_advisory_approval(conn, draft, config, scheduled_time=scheduled_str)
+            _clear_original_buttons(
+                adapter, chat_id, kwargs.get("message_id"), draft_id, "advisory"
+            )
+            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` → advisory (due {scheduled_str}).")
+            return
+
         update_draft(conn, draft_id, status="scheduled", scheduled_time=scheduled_str)
         ops.emit_data_event(conn, "draft", "approved", draft_id, draft.project_id)
         _clear_original_buttons(
@@ -525,6 +550,19 @@ def btn_post_now(
         project = ops.get_project(conn, draft.project_id)
         if project and project.paused:
             _send(adapter, chat_id, "Project is paused. Unpause before posting.")
+            return
+
+        # Non-auto-postable vehicles → advisory immediately
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            handle_advisory_approval(conn, draft, config)
+            _clear_original_buttons(
+                adapter, chat_id, kwargs.get("message_id"), draft_id, "advisory"
+            )
+            _send(
+                adapter, chat_id, f"Draft `{draft_id[:12]}` → advisory (requires manual posting)."
+            )
             return
 
         from datetime import datetime, timezone
@@ -1920,18 +1958,26 @@ def handle_cycle_approve(
             _send(adapter, chat_id, f"No drafts found for cycle `{cycle_id[:12]}`.")
             return
 
-        approved = already = terminal = 0
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        approved = advisory = already = terminal = 0
         for draft in drafts:
             if draft.status in EDITABLE_STATUSES:
-                ops.update_draft(conn, draft.id, status="approved")
-                ops.emit_data_event(conn, "draft", "approved", draft.id, draft.project_id)
-                approved += 1
+                if not check_auto_postable(draft):
+                    handle_advisory_approval(conn, draft, config)
+                    advisory += 1
+                else:
+                    ops.update_draft(conn, draft.id, status="approved")
+                    ops.emit_data_event(conn, "draft", "approved", draft.id, draft.project_id)
+                    approved += 1
             elif draft.status in TERMINAL_STATUSES:
                 terminal += 1
             else:
                 already += 1  # approved, scheduled — already processed
 
         parts = [f"Approved {approved}."]
+        if advisory:
+            parts.append(f"Advisory: {advisory}.")
         if already:
             parts.append(f"Already processed: {already}.")
         if terminal:

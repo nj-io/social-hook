@@ -66,6 +66,17 @@ def approve(
         if draft.status in TERMINAL_STATUSES:
             typer.echo(f"Cannot approve: draft status is '{draft.status}'")
             raise typer.Exit(1)
+
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            from social_hook.config.yaml import load_full_config
+
+            config = load_full_config()
+            handle_advisory_approval(conn, draft, config)
+            typer.echo(f"Draft {draft_id} → advisory (requires manual posting).")
+            return
+
         ops.update_draft(conn, draft_id, status="approved")
         ops.emit_data_event(conn, "draft", "approved", draft_id, draft.project_id)
         typer.echo(f"Draft {draft_id} approved.")
@@ -154,9 +165,19 @@ def schedule(
                 "No account connected. Run 'social-hook account add' to connect and enable posting."
             )
             raise typer.Exit(1)
-        if draft.status not in PENDING_STATUSES:
+        if draft.status in TERMINAL_STATUSES:
             typer.echo(f"Cannot schedule: draft status is '{draft.status}'")
             raise typer.Exit(1)
+
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            from social_hook.config.yaml import load_full_config
+
+            config = load_full_config()
+            handle_advisory_approval(conn, draft, config, scheduled_time=time)
+            typer.echo(f"Draft {draft_id} → advisory (requires manual posting).")
+            return
 
         if time:
             try:
@@ -539,6 +560,19 @@ def post_now(
                 typer.echo(msg)
             raise typer.Exit(1)
 
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            from social_hook.config.yaml import load_full_config
+
+            config = load_full_config()
+            handle_advisory_approval(conn, draft, config)
+            if json_output:
+                typer.echo(json_mod.dumps({"status": "advisory", "draft_id": draft_id}))
+            else:
+                typer.echo(f"Draft {draft_id} → advisory (requires manual posting).")
+            return
+
         if dry_run:
             if json_output:
                 typer.echo(
@@ -650,6 +684,14 @@ def quick_approve(
             optimal_hours=config.scheduling.optimal_hours if config else None,
         )
         scheduled_str = result.datetime.isoformat()
+
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            handle_advisory_approval(conn, draft, config, scheduled_time=scheduled_str)
+            typer.echo(f"Draft {draft_id} → advisory (due {scheduled_str}).")
+            return
+
         ops.update_draft(conn, draft_id, status="scheduled", scheduled_time=scheduled_str)
         ops.emit_data_event(conn, "draft", "approved", draft_id, draft.project_id)
         typer.echo(f"Draft {draft_id} approved and scheduled for {scheduled_str}.")

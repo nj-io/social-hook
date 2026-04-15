@@ -667,7 +667,7 @@ class TestStatusGroups:
 
     def test_terminal_statuses_values(self):
         """TERMINAL_STATUSES contains exactly the expected values."""
-        assert {"posted", "rejected", "cancelled", "superseded"} == TERMINAL_STATUSES
+        assert {"posted", "rejected", "cancelled", "superseded", "advisory"} == TERMINAL_STATUSES
 
     def test_pending_statuses_values(self):
         """PENDING_STATUSES contains exactly the expected values."""

@@ -168,74 +168,43 @@ export default function AdvisoryPage() {
       {items.length === 0 ? (
         <p className="text-sm text-muted-foreground">No advisory items match the current filters.</p>
       ) : (
-        <div className="space-y-3">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className="rounded-lg border border-border p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex items-center gap-2">
-                    <span
-                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${statusStyles[item.status] || ""}`}
-                    >
-                      {item.status}
-                    </span>
-                    <span
-                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${urgencyStyles[item.urgency] || ""}`}
-                    >
-                      {item.urgency}
-                    </span>
-                    <Badge value={categoryLabels[item.category] || item.category} variant="category" />
-                    {projectMap[item.project_id] && (
-                      <span className="text-xs text-muted-foreground">
-                        {projectMap[item.project_id]}
-                      </span>
-                    )}
-                  </div>
-                  <p className="font-medium text-sm">{item.title}</p>
-                  {item.description && (
-                    <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
-                  )}
-                  {item.linked_entity_type === "draft" && item.linked_entity_id && (
-                    <Link
-                      href={`/drafts/${item.linked_entity_id}`}
-                      className="mt-1 inline-block text-xs text-accent hover:underline"
-                    >
-                      View linked draft
-                    </Link>
-                  )}
-                  {item.linked_entity_type && item.linked_entity_type !== "draft" && item.linked_entity_id && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Linked: {item.linked_entity_type} {item.linked_entity_id.slice(0, 12)}
-                    </p>
-                  )}
-                  {item.created_at && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Created: {new Date(item.created_at).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-                {item.status === "pending" && (
-                  <div className="flex shrink-0 gap-2">
-                    <button
-                      onClick={() => handleComplete(item)}
-                      className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
-                    >
-                      Complete
-                    </button>
-                    <button
-                      onClick={() => setDismissItem(item)}
-                      className="rounded border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-muted"
-                    >
-                      Dismiss
-                    </button>
+        <div className="space-y-6">
+          {/* Upcoming: pending items with future due_date */}
+          {(() => {
+            const now = new Date();
+            const upcoming = items.filter(
+              (i) => i.status === "pending" && i.due_date && new Date(i.due_date) > now
+            );
+            const rest = items.filter(
+              (i) => !(i.status === "pending" && i.due_date && new Date(i.due_date) > now)
+            );
+            return (
+              <>
+                {upcoming.length > 0 && (
+                  <div>
+                    <h2 className="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wide">Upcoming</h2>
+                    <div className="space-y-3">
+                      {upcoming.map((item) => (
+                        <AdvisoryCard key={item.id} item={item} projectMap={projectMap} onComplete={handleComplete} onDismiss={setDismissItem} showCountdown />
+                      ))}
+                    </div>
                   </div>
                 )}
-              </div>
-            </div>
-          ))}
+                {rest.length > 0 && (
+                  <div>
+                    {upcoming.length > 0 && (
+                      <h2 className="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wide">Action Required</h2>
+                    )}
+                    <div className="space-y-3">
+                      {rest.map((item) => (
+                        <AdvisoryCard key={item.id} item={item} projectMap={projectMap} onComplete={handleComplete} onDismiss={setDismissItem} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -273,4 +242,101 @@ export default function AdvisoryPage() {
       )}
     </div>
   );
+}
+
+function AdvisoryCard({
+  item,
+  projectMap,
+  onComplete,
+  onDismiss,
+  showCountdown,
+}: {
+  item: AdvisoryItem;
+  projectMap: Record<string, string>;
+  onComplete: (item: AdvisoryItem) => void;
+  onDismiss: (item: AdvisoryItem) => void;
+  showCountdown?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-border p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex items-center gap-2">
+            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${statusStyles[item.status] || ""}`}>
+              {item.status}
+            </span>
+            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${urgencyStyles[item.urgency] || ""}`}>
+              {item.urgency}
+            </span>
+            <Badge value={categoryLabels[item.category] || item.category} variant="category" />
+            {projectMap[item.project_id] && (
+              <span className="text-xs text-muted-foreground">{projectMap[item.project_id]}</span>
+            )}
+          </div>
+          <p className="font-medium text-sm">{item.title}</p>
+          {item.description && (
+            <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
+          )}
+          {item.linked_entity_type === "draft" && item.linked_entity_id && (
+            <Link href={`/drafts/${item.linked_entity_id}`} className="mt-1 inline-block text-xs text-accent hover:underline">
+              View linked draft
+            </Link>
+          )}
+          {item.linked_entity_type && item.linked_entity_type !== "draft" && item.linked_entity_id && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Linked: {item.linked_entity_type} {item.linked_entity_id.slice(0, 12)}
+            </p>
+          )}
+          <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
+            {item.created_at && <span>Created: {new Date(item.created_at).toLocaleString()}</span>}
+            {item.due_date && <span>Due: {new Date(item.due_date).toLocaleString()}</span>}
+            {showCountdown && item.due_date && <Countdown target={item.due_date} />}
+          </div>
+        </div>
+        {item.status === "pending" && (
+          <div className="flex shrink-0 gap-2">
+            <button
+              onClick={() => onComplete(item)}
+              className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+            >
+              Complete
+            </button>
+            <button
+              onClick={() => onDismiss(item)}
+              className="rounded border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-muted"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Countdown({ target }: { target: string }) {
+  const [label, setLabel] = useState("");
+
+  useEffect(() => {
+    function update() {
+      const diff = new Date(target).getTime() - Date.now();
+      if (diff <= 0) {
+        setLabel("now");
+        return;
+      }
+      const hours = Math.floor(diff / 3600000);
+      const minutes = Math.floor((diff % 3600000) / 60000);
+      if (hours > 0) {
+        setLabel(`in ${hours}h ${minutes}m`);
+      } else {
+        setLabel(`in ${minutes}m`);
+      }
+    }
+    update();
+    const timer = setInterval(update, 60000);
+    return () => clearInterval(timer);
+  }, [target]);
+
+  if (!label) return null;
+  return <span className="font-medium text-purple-600 dark:text-purple-400">{label}</span>;
 }

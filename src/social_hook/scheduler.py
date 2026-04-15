@@ -582,6 +582,10 @@ def scheduler_tick(
                         # Post via adapter
                         result = _post_draft(conn, draft, config, db_path=db_path)
 
+                    if result is None:
+                        processed += 1  # advisory handled inside _post_draft
+                        continue
+
                     if result.success:
                         record_post_success(
                             conn, draft, result, config, project.name, dry_run=dry_run
@@ -652,6 +656,9 @@ def _tick_single_draft(conn, config, draft_id, dry_run, db_path=None) -> int:
         else:
             result = _post_draft(conn, draft, config, db_path=db_path)
 
+        if result is None:
+            return 1  # advisory handled inside _post_draft
+
         if result.success:
             record_post_success(conn, draft, result, config, project.name, dry_run=dry_run)
         else:
@@ -695,7 +702,8 @@ def _post_draft(conn, draft, config, db_path=None):
         db_path: Path to SQLite database (for OAuth 2.0 token refresh)
 
     Returns:
-        PostResult
+        PostResult, or None if the draft was handled as an advisory
+        (non-auto-postable vehicle). Callers must check for None.
     """
     from social_hook.adapters.models import PostResult
 
@@ -704,6 +712,16 @@ def _post_draft(conn, draft, config, db_path=None):
             success=False,
             error="No account connected. Run 'social-hook account add' to connect and enable posting.",
         )
+
+    # Non-auto-postable vehicles (e.g., articles) don't need an adapter —
+    # they create an advisory item instead of posting. Same early-return
+    # pattern as preview_mode above. Safety net for drafts that bypassed
+    # the approval-time check (e.g., auto-scheduled by commit trigger).
+    from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+    if not check_auto_postable(draft):
+        handle_advisory_approval(conn, draft, config)
+        return None
 
     # Get adapter: targets path (draft.target_id set) or legacy path
     db_path_str = str(db_path) if db_path else None
@@ -784,41 +802,7 @@ def _post_draft(conn, draft, config, db_path=None):
     db = DryRunContext(conn, dry_run=False)
     result = post_by_vehicle(adapter, draft, parts, draft.media_paths or None, reference, db=db)
 
-    if not result.success and result.error and result.error.startswith("ADVISORY:"):
-        _create_article_advisory(draft, conn, config)
-        return result
-
     return result
-
-
-def _create_article_advisory(draft, conn, config):
-    """Create an advisory item for an article draft that needs manual posting."""
-    from social_hook.messaging.base import OutboundMessage
-    from social_hook.models.infra import AdvisoryItem
-    from social_hook.notifications import broadcast_notification
-
-    item = AdvisoryItem(
-        id=generate_id("advisory"),
-        project_id=draft.project_id,
-        category="content_asset",
-        title=f"Article draft ready — post manually ({draft.platform})",
-        description=f"Draft {draft.id[:12]} contains article content that cannot be auto-posted. "
-        "Copy the content and publish it on the platform manually.",
-        urgency="normal",
-        created_by="system",
-        linked_entity_type="draft",
-        linked_entity_id=draft.id,
-    )
-    ops.insert_advisory_item(conn, item)
-    ops.emit_data_event(
-        conn, "advisory", "created", item.id, draft.project_id, extra={"title": item.title}
-    )
-    logger.info("Created article advisory %s for draft %s", item.id, draft.id)
-
-    broadcast_notification(
-        config,
-        OutboundMessage(text=f"Article draft ready — post manually ({draft.platform})"),
-    )
 
 
 def _handle_post_failure(conn, draft, error_msg, config, dry_run):
