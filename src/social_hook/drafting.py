@@ -668,7 +668,7 @@ def _extract_and_generate_media(
                 _mt,
             )
             return [], None, None, None
-        return _generate_media(
+        return _generate_media(  # type: ignore[no-any-return]
             config, _mt, _ms, dry_run=dry_run, verbose=verbose, project_config=project_config
         )
     return [], None, None, None

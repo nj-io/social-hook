@@ -7,7 +7,7 @@ Loads files within a token budget, skipping binary/missing/unreadable files.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def _default_token_count(text: str) -> int:
 
 
 def read_files_within_budget(
-    paths: list[str | Path],
+    paths: Sequence[str | Path],
     base_dir: str | Path,
     max_tokens: int = 10_000,
     extensions: set[str] | None = None,
