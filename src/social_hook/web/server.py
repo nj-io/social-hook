@@ -4096,7 +4096,7 @@ async def api_upload_project_docs(project_id: str, files: list[UploadFile]):
                 from social_hook.llm.factory import create_client
 
                 config = _get_config()
-                client = create_client(config)
+                client = create_client(config.models.drafter, config)
                 brief = generate_brief_from_docs(
                     all_paths,
                     project.repo_path,
@@ -4134,8 +4134,8 @@ async def api_get_prompt_docs(project_id: str):
         from social_hook.parsing import safe_json_loads
 
         docs = (
-            safe_json_loads(project.prompt_docs, "prompt_docs", default=[])
-            if project.prompt_docs
+            safe_json_loads(project["prompt_docs"], "prompt_docs", default=[])
+            if project["prompt_docs"]
             else []
         )
         return {"prompt_docs": docs}
@@ -6085,7 +6085,7 @@ async def api_update_platform_settings(platform: str, body: dict[str, Any] = Bod
 
 def _advisory_to_api(item) -> dict[str, Any]:
     """Convert AdvisoryItem to API response dict with Z-suffixed timestamps."""
-    d = item.to_dict()
+    d: dict[str, Any] = item.to_dict()
     for key in ("created_at", "completed_at", "due_date"):
         if d.get(key) and isinstance(d[key], str) and not d[key].endswith("Z"):
             d[key] = d[key] + "Z"

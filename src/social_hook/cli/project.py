@@ -97,11 +97,10 @@ def register(
                     from social_hook.llm.brief import generate_brief_from_docs
                     from social_hook.llm.factory import create_client
 
-                    client = create_client(
-                        load_full_config(
-                            str(ctx.obj["config"]) if ctx.obj and ctx.obj.get("config") else None
-                        )
+                    _cfg = load_full_config(
+                        str(ctx.obj["config"]) if ctx.obj and ctx.obj.get("config") else None
                     )
+                    client = create_client(_cfg.models.drafter, _cfg)
                     brief = generate_brief_from_docs(
                         prompt_doc_paths,
                         project.repo_path,
