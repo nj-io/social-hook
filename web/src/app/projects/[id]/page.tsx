@@ -660,17 +660,17 @@ export default function ProjectDetailPage() {
                                 <Badge value={d.classification} variant="classification" />
                               )}
                             </div>
-                            <p className="text-xs text-muted-foreground">
-                              {d.commit_message?.split("\n")[0]}
-                            </p>
+                            {!isExpanded ? (
+                              <p className="text-xs text-muted-foreground line-clamp-1">
+                                {d.commit_message?.split("\n")[0]}
+                              </p>
+                            ) : (
+                              <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
+                                {d.commit_message}
+                              </p>
+                            )}
                             {isExpanded && (
                               <div className="mt-2 space-y-2">
-                                {d.commit_message && (
-                                  <div className="rounded border border-border bg-muted/50 p-2">
-                                    <p className="text-xs font-medium text-muted-foreground">Commit Message</p>
-                                    <p className="mt-1 whitespace-pre-wrap text-xs">{d.commit_message}</p>
-                                  </div>
-                                )}
                                 {d.media_tool && (
                                   <p className="text-xs text-muted-foreground">
                                     Media: <span className="font-medium text-foreground">{d.media_tool}</span>

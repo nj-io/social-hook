@@ -63,6 +63,11 @@ export function useBackgroundTasks(
         seen.add(t.ref_id);
         latestTasks.push(t);
       }
+      // Collect completed tasks outside the updater — calling fireCompleted
+      // (which triggers addToast/setToasts) inside a setState updater is a
+      // side effect that React 18 concurrent mode can discard or replay.
+      const justCompleted: BackgroundTask[] = [];
+
       setTasks((prev) => {
         // Merge trackedRef into prev so we detect transitions even when
         // React batched the trackTask setTasks with this one.
@@ -87,15 +92,20 @@ export function useBackgroundTasks(
             });
           }
         }
-        // Fire callback for tasks that just completed
+        // Detect tasks that just completed (transition from running → done)
         for (const t of latestTasks) {
           const existing = merged.get(t.ref_id);
           if (existing?.status === "running" && t.status !== "running") {
-            fireCompleted(t);
+            justCompleted.push(t);
           }
         }
         return next;
       });
+
+      // Fire callbacks AFTER state update commits — not inside the updater
+      for (const t of justCompleted) {
+        fireCompleted(t);
+      }
     } catch {
       // Non-critical
     }

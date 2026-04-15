@@ -6,6 +6,7 @@ import type { BackgroundTask } from "@/lib/api";
 import { fetchSuggestions, createSuggestion, dismissSuggestion, fetchStrategies, acceptSuggestion } from "@/lib/api";
 import { useDataEvents } from "@/lib/use-data-events";
 import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { useToast } from "@/lib/toast-context";
 import { AsyncButton } from "@/components/async-button";
 import { Modal } from "@/components/ui/modal";
 
@@ -33,10 +34,14 @@ export function ContentSuggestions({ projectId }: { projectId: string }) {
   const [confirmDismiss, setConfirmDismiss] = useState<string | null>(null);
   const [dismissing, setDismissing] = useState(false);
   const loadRef = useRef<() => void>(() => {});
+  const { addToast } = useToast();
 
-  const onTaskCompleted = useCallback((_task: BackgroundTask) => {
+  const onTaskCompleted = useCallback((task: BackgroundTask) => {
+    if (task.status === "failed") {
+      addToast("Suggestion action failed", { variant: "error", detail: task.error ?? "Unknown error" });
+    }
     loadRef.current();
-  }, []);
+  }, [addToast]);
 
   const { trackTask, isRunning: isTaskRunning, getTask } = useBackgroundTasks(projectId, onTaskCompleted);
 
