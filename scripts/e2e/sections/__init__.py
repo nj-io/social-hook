@@ -22,6 +22,7 @@ FIXTURE_REQUIREMENTS = {
     "S": "base-project",
     "T": "base-project",
     "U": "base-project",
+    "V": "base-project",
 }
 
 SECTION_REGISTRY = {
@@ -52,5 +53,10 @@ SECTION_REGISTRY = {
         "module": "platform_posting",
         "needs_adapter": False,
         "needs_live": True,
+    },
+    "V": {
+        "name": "Content Vehicles & Advisory",
+        "module": "vehicles",
+        "needs_adapter": True,
     },
 }

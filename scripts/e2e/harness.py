@@ -418,6 +418,7 @@ class E2EHarness:
             project_id=project_id,
             decision_id=decision.id,
             platform=kwargs.pop("platform", "x"),
+            vehicle=kwargs.pop("vehicle", "single"),
             content=kwargs.pop("content", "E2E test draft content for social media."),
             status=status,
             media_paths=kwargs.pop("media_paths", []),
