@@ -1,5 +1,5 @@
 <!-- last_run_commit: a4ee0a9e16da8531b4022df2f626a36cf9533039 -->
-<!-- last_run_date: 2026-04-13 -->
+<!-- last_run_date: 2026-04-15 -->
 
 # Documentation Status
 
@@ -95,17 +95,17 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-13 | |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-13 | 23 nav entries match 23 generated files |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-13 | |
-| `ruff check src/ tests/` passes | 2026-04-13 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-13 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-04-13 | 25+ subcommands enriched; `batch-evaluate` added |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-13 | Includes OAuth credential check in preview mode |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-13 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-13 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
-| Quickstart docs match quickstart code flow | 2026-04-13 | `--strategy`/`--branch` flags documented; trigger path accurate |
-| Config docs cover all ContextConfig fields | 2026-04-13 | All 15 ContextConfig fields documented (added `commit_analysis_interval`, `topic_granularity`) |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-15 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-15 | 23 nav entries match 23 generated files |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-15 | |
+| `ruff check src/ tests/` passes | 2026-04-15 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-15 | 28 errors (21 `import-untyped`, 7 `no-any-return`), all pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-04-15 | 25+ subcommands enriched; `batch-evaluate` added |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-15 | Includes OAuth credential check in preview mode |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-15 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-15 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| Quickstart docs match quickstart code flow | 2026-04-15 | `--strategy`/`--branch` flags documented; trigger path accurate |
+| Config docs cover all ContextConfig fields | 2026-04-15 | All 15 ContextConfig fields documented (added `commit_analysis_interval`, `topic_granularity`) |
 
 ## Backlog (waiting_approval)
 
@@ -124,6 +124,12 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 - [ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)
 
 ## Changelog
+
+### 2026-04-15
+
+- No new code changes on develop since last run (HEAD unchanged at `a4ee0a9`)
+- All 11 recurring checks pass. CLI docs fresh, ruff clean, mypy 28 pre-existing errors
+- No new backlog approvals found in PR #71-#75 comments
 
 ### 2026-04-13
 
