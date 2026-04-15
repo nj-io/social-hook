@@ -24,6 +24,27 @@ Example: social-hook content combine --topics topic_abc --topics topic_def
 
 ---
 
+### `social-hook content create`
+
+Create content from an idea, bypassing the evaluator.
+
+Constructs a DraftingIntent directly and calls the drafting pipeline.
+Makes LLM calls. Writes decisions and drafts to the database.
+
+Example: social-hook content create --idea "Show the new dashboard feature" --vehicle article --files guide.md
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--idea`, `-i` | string |  | Content idea or topic to create |
+| `--vehicle`, `-v` | string |  | Content vehicle: single, thread, article (default: auto) |
+| `--files`, `-f` | string |  | Reference files for context (per-draft, not persisted) |
+| `--project`, `-p` | string |  | Repository path (default: cwd) |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
 ### `social-hook content dismiss`
 
 Dismiss a content suggestion.

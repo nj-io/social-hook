@@ -102,15 +102,33 @@ Pause a project (skip commit evaluation).
 
 ---
 
+### `social-hook project prompt-docs`
+
+Manage project prompt documentation files.
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--project`, `-p` | string |  | Project ID or path |
+| `--json` | boolean | false | Output as JSON |
+
+---
+
 ### `social-hook project register`
 
 Register a project for social-hook.
+
+Supports both git repos and plain directories. For non-git projects,
+provide --docs to seed project context.
+
+Example: social-hook project register /path/to/project --docs README.md --docs guide.md
 
 **Arguments:**
 
 | Name | Required | Description |
 |------|----------|-------------|
-| `path` | no | Path to repository (default: current directory) |
+| `path` | no | Path to repository or directory (default: current directory) |
 
 **Options:**
 
@@ -118,6 +136,7 @@ Register a project for social-hook.
 |------|------|---------|-------------|
 | `--name`, `-n` | string |  | Project name |
 | `--git-hook`, `--no-git-hook` | boolean | true | Install git post-commit hook |
+| `--docs`, `-d` | string |  | Documentation files to add as project context |
 
 ---
 
