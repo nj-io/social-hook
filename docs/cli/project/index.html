@@ -546,6 +546,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../advisory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    advisory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../arc/" class="md-nav__link">
         
   
@@ -1057,6 +1085,17 @@
     <span class="md-ellipsis">
       
         social-hook project pause
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#social-hook-project-prompt-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        social-hook project prompt-docs
       
     </span>
   </a>
@@ -1713,6 +1752,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#social-hook-project-prompt-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        social-hook project prompt-docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#social-hook-project-register" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1793,7 +1843,7 @@
 
 
 <h1 id="social-hook-project">social-hook project<a class="headerlink" href="#social-hook-project" title="Permanent link">&para;</a></h1>
-<p>Project management.</p>
+<p>Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained.</p>
 <hr />
 <h3 id="social-hook-project-evaluate-recent"><code>social-hook project evaluate-recent</code><a class="headerlink" href="#social-hook-project-evaluate-recent" title="Permanent link">&para;</a></h3>
 <p>Evaluate recent un-evaluated commits through the full pipeline.</p>
@@ -1974,8 +2024,39 @@ Imported commits are NOT evaluated — use retrigger to evaluate them later.</p>
 </tbody>
 </table>
 <hr />
+<h3 id="social-hook-project-prompt-docs"><code>social-hook project prompt-docs</code><a class="headerlink" href="#social-hook-project-prompt-docs" title="Permanent link">&para;</a></h3>
+<p>Manage project prompt documentation files.</p>
+<p><strong>Options:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--project</code>, <code>-p</code></td>
+<td>string</td>
+<td></td>
+<td>Project ID or path</td>
+</tr>
+<tr>
+<td><code>--json</code></td>
+<td>boolean</td>
+<td>false</td>
+<td>Output as JSON</td>
+</tr>
+</tbody>
+</table>
+<hr />
 <h3 id="social-hook-project-register"><code>social-hook project register</code><a class="headerlink" href="#social-hook-project-register" title="Permanent link">&para;</a></h3>
 <p>Register a project for social-hook.</p>
+<p>Supports both git repos and plain directories. For non-git projects,
+provide --docs to seed project context.</p>
+<p>Example: social-hook project register /path/to/project --docs README.md --docs guide.md</p>
 <p><strong>Arguments:</strong></p>
 <table>
 <thead>
@@ -1989,7 +2070,7 @@ Imported commits are NOT evaluated — use retrigger to evaluate them later.</p>
 <tr>
 <td><code>path</code></td>
 <td>no</td>
-<td>Path to repository (default: current directory)</td>
+<td>Path to repository or directory (default: current directory)</td>
 </tr>
 </tbody>
 </table>
@@ -2015,6 +2096,12 @@ Imported commits are NOT evaluated — use retrigger to evaluate them later.</p>
 <td>boolean</td>
 <td>true</td>
 <td>Install git post-commit hook</td>
+</tr>
+<tr>
+<td><code>--docs</code>, <code>-d</code></td>
+<td>string</td>
+<td></td>
+<td>Documentation files to add as project context</td>
 </tr>
 </tbody>
 </table>
@@ -2224,7 +2311,7 @@ Imported commits are NOT evaluated — use retrigger to evaluate them later.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.11.0"}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.12.0"}</script>
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>

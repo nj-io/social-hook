@@ -542,6 +542,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../cli/advisory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    advisory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../cli/arc/" class="md-nav__link">
         
   
@@ -1565,8 +1593,8 @@
   
 
 
-<!-- last_run_commit: eb11c6e861db2c40b665bf84b91dbaaeb0721210 -->
-<!-- last_run_date: 2026-03-31 -->
+<!-- last_run_commit: e0675da9f57694de2e6857eec0784bce5137b864 -->
+<!-- last_run_date: 2026-04-16 -->
 
 <h1 id="documentation-status">Documentation Status<a class="headerlink" href="#documentation-status" title="Permanent link">&para;</a></h1>
 <p>Tracks coverage of external docs against the codebase. Used by the docs maintenance loop to prioritize work.</p>
@@ -1800,6 +1828,51 @@
 <td>ok</td>
 <td>Enriched: resulting status, when to use</td>
 </tr>
+<tr>
+<td><code>advisory *</code></td>
+<td>ok</td>
+<td>New group from content vehicles: list, create, complete, dismiss</td>
+</tr>
+<tr>
+<td><code>arc *</code></td>
+<td>ok</td>
+<td>Group help enriched; list, create, complete, abandon</td>
+</tr>
+<tr>
+<td><code>bot *</code></td>
+<td>ok</td>
+<td>start, stop, status</td>
+</tr>
+<tr>
+<td><code>config *</code></td>
+<td>ok</td>
+<td>show, get, set</td>
+</tr>
+<tr>
+<td><code>journey *</code></td>
+<td>ok</td>
+<td>Group help enriched; on, off, status</td>
+</tr>
+<tr>
+<td><code>media *</code></td>
+<td>ok</td>
+<td>gc subcommand</td>
+</tr>
+<tr>
+<td><code>memory *</code></td>
+<td>ok</td>
+<td>list, add, delete, clear</td>
+</tr>
+<tr>
+<td><code>project *</code></td>
+<td>ok</td>
+<td>Group help enriched; register, unregister, list, evaluate-recent, intro, prompt-docs subgroups</td>
+</tr>
+<tr>
+<td><code>snapshot *</code></td>
+<td>ok</td>
+<td>New group: save, restore, reset, list, delete</td>
+</tr>
 </tbody>
 </table>
 <h2 id="conceptual-docs-site-docsconcepts">Conceptual Docs (site-docs/concepts/)<a class="headerlink" href="#conceptual-docs-site-docsconcepts" title="Permanent link">&para;</a></h2>
@@ -1814,8 +1887,8 @@
 <tbody>
 <tr>
 <td>pipeline.md</td>
-<td>complete</td>
-<td>Rewritten: two-stage eval (analyzer+evaluator), batch evaluation, interval gating, per-strategy decisions, target routing, evaluation cycles, preview mode</td>
+<td>stale</td>
+<td>Two-stage eval accurate; missing content vehicles (single/thread/article), advisory flow, and content create/suggest paths</td>
 </tr>
 <tr>
 <td>narrative-arcs.md</td>
@@ -1920,48 +1993,53 @@
 <tbody>
 <tr>
 <td>CLI docs are fresh (<code>generate_cli_docs.py</code> output matches committed)</td>
-<td>2026-03-31</td>
+<td>2026-04-16</td>
 <td></td>
 </tr>
 <tr>
 <td><code>mkdocs.yml</code> nav entries match files in <code>site-docs/cli/</code></td>
-<td>2026-03-31</td>
+<td>2026-04-16</td>
 <td></td>
 </tr>
 <tr>
 <td>OAuth env vars in config.md use OAuth 2.0 names (<code>X_CLIENT_ID</code>, not <code>CONSUMER_KEY</code>)</td>
-<td>2026-03-31</td>
+<td>2026-04-16</td>
 <td></td>
 </tr>
 <tr>
 <td><code>ruff check src/ tests/</code> passes</td>
-<td>2026-03-31</td>
+<td>2026-04-16</td>
 <td></td>
 </tr>
 <tr>
 <td><code>mypy src/social_hook/</code> has no new errors (only pre-existing library stub issues)</td>
-<td>2026-03-31</td>
-<td>28 errors, all <code>import-untyped</code> or pre-existing</td>
+<td>2026-04-16</td>
+<td>28 errors, all <code>import-untyped</code> or <code>no-any-return</code> pre-existing; fixed new <code>assignment</code> error in <code>brief.py</code></td>
 </tr>
 <tr>
 <td>All CLI commands with poor/partial docstrings have been enriched</td>
-<td>2026-03-31</td>
+<td>2026-04-16</td>
 <td>16 commands across 6 files enriched</td>
 </tr>
 <tr>
 <td><code>pipeline.md</code> accurately describes the two-stage evaluation flow and targets path</td>
-<td>2026-03-31</td>
+<td>2026-04-16</td>
 <td></td>
 </tr>
 <tr>
 <td><code>narrative-arcs.md</code> uses <code>episode_tags</code> (not <code>episode_type</code>) and documents strategy-scoped arcs</td>
-<td>2026-03-31</td>
+<td>2026-04-16</td>
 <td></td>
 </tr>
 <tr>
 <td>All interactive CLI commands (e.g., <code>credentials add</code>) have documented non-interactive equivalents for agent/CI use</td>
-<td>2026-03-31</td>
+<td>2026-04-16</td>
 <td><code>credentials add --set</code>, all destructive commands have <code>--yes</code>; <code>setup</code> wizard → write config.yaml directly</td>
+</tr>
+<tr>
+<td>All CLI command groups have enriched group-level help text (not just terse labels)</td>
+<td>2026-04-16</td>
+<td><code>project</code> and <code>journey</code> enriched this run; all 24 groups now have descriptive help</td>
 </tr>
 </tbody>
 </table>
@@ -1977,6 +2055,7 @@
 <li>[x] ~~Agent-first CLI equivalents~~ (done — <code>credentials add --set</code>, all destructive commands have <code>--yes</code>, <code>setup</code> bypass via direct config.yaml)</li>
 <li>[x] ~~Enrich docstrings for partial/poor CLI commands~~ (done — 16 commands enriched across inspect, decision, manual, draft, strategy, target)</li>
 <li>[ ] config.md expansion — add sections for rate_limits, identities, content_strategies, platform_credentials, accounts, targets, platform_settings, max_targets, logging/LogBus</li>
+<li>[ ] pipeline.md update — add content vehicles (single/thread/article), advisory flow for non-auto-postable vehicles, content create/suggest paths</li>
 <li>[x] ~~pipeline.md rewrite~~ (done — two-stage evaluation, commit analyzer, batch evaluation, interval gating, per-strategy decisions, target routing)</li>
 <li>[ ] Testing guide — unit tests, E2E test suite, snapshots, VCR cassettes, verification scripts (source: docs/E2E_TESTING.md, docs/CLAUDE.md E2E section)</li>
 <li>[ ] E2E test reference — sections, scenarios, three-dimension protocol, --pause mode, harness helpers (source: docs/E2E_TESTING.md, scripts/e2e/)</li>
@@ -2036,7 +2115,7 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.11.0"}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": "0.12.0"}</script>
     
     
       <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
