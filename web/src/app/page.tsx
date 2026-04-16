@@ -9,6 +9,7 @@ import { RateLimitCard } from "@/components/rate-limit-card";
 import { Badge } from "@/components/ui/badge";
 import { WizardModal } from "@/components/wizard/wizard-modal";
 import { QuickstartModal } from "@/components/quickstart-modal";
+import { AddProjectModal } from "@/components/add-project-modal";
 import { useDataEvents } from "@/lib/use-data-events";
 
 export default function DashboardPage() {
@@ -19,6 +20,7 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [showWizard, setShowWizard] = useState(false);
   const [showQuickstart, setShowQuickstart] = useState(false);
+  const [showAddProject, setShowAddProject] = useState(false);
   const [wizardProject, setWizardProject] = useState<{ repoPath: string; projectId: string } | null>(null);
 
   const reload = useCallback(async () => {
@@ -162,6 +164,14 @@ export default function DashboardPage() {
                 </Link>
               );
             })}
+            {/* Add Project card */}
+            <button
+              onClick={() => setShowAddProject(true)}
+              className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border p-4 text-muted-foreground transition-colors hover:border-accent hover:text-foreground"
+            >
+              <span className="text-2xl">+</span>
+              <span className="mt-1 text-sm font-medium">Add Project</span>
+            </button>
           </div>
         )}
       </div>
@@ -242,6 +252,13 @@ export default function DashboardPage() {
           if (project) setWizardProject(project);
           setShowWizard(true);
         }}
+      />
+
+      {/* Add Project modal */}
+      <AddProjectModal
+        open={showAddProject}
+        onClose={() => setShowAddProject(false)}
+        onComplete={reload}
       />
     </div>
   );

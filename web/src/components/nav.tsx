@@ -1,19 +1,39 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ActivityIndicator } from "@/components/activity-indicator";
+import { fetchAdvisoryCount } from "@/lib/api";
+import { useDataEvents } from "@/lib/use-data-events";
 
 const links = [
   { href: "/", label: "Dashboard" },
   { href: "/drafts", label: "Drafts" },
+  { href: "/advisory", label: "Advisory" },
   { href: "/chat", label: "Chat" },
   { href: "/system", label: "System" },
   { href: "/settings", label: "Settings" },
 ];
 
+function useAdvisoryCount(): number {
+  const [count, setCount] = useState(0);
+
+  const load = useCallback(() => {
+    fetchAdvisoryCount({ status: "pending" })
+      .then((d) => setCount(d.count ?? 0))
+      .catch(() => setCount(0));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+  useDataEvents(["advisory"], load);
+
+  return count;
+}
+
 export function Nav() {
   const pathname = usePathname();
+  const advisoryCount = useAdvisoryCount();
 
   return (
     <nav className="relative border-b border-border bg-background sticky top-0 z-50">
@@ -33,13 +53,18 @@ export function Nav() {
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                  className={`relative rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                     active
                       ? "bg-accent text-accent-foreground"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
                 >
                   {link.label}
+                  {link.href === "/advisory" && advisoryCount > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                      {advisoryCount > 99 ? "99+" : advisoryCount}
+                    </span>
+                  )}
                 </Link>
               );
             })}

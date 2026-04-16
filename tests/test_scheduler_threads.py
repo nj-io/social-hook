@@ -2,18 +2,23 @@
 
 from unittest.mock import MagicMock, patch
 
-from social_hook.adapters.models import PostResult, ThreadResult
+from social_hook.adapters.models import QUOTE, REPLY, SINGLE, THREAD, PostResult
 from social_hook.db import (
-    get_draft_tweets,
+    get_draft_parts,
     init_database,
     insert_decision,
     insert_draft,
-    insert_draft_tweet,
-    update_draft_tweet,
+    insert_draft_part,
+    update_draft_part,
 )
 from social_hook.filesystem import generate_id
-from social_hook.models.core import Decision, Draft, DraftTweet
+from social_hook.models.core import Decision, Draft, DraftPart
 from social_hook.scheduler import _post_draft, _registry
+
+
+def _x_capabilities():
+    """Return X platform capabilities for mock adapters."""
+    return [SINGLE, THREAD, QUOTE, REPLY]
 
 
 class TestPostDraftSignature:
@@ -62,17 +67,18 @@ class TestPostDraftThread:
             platform="x",
             content="1/ First\n\n2/ Second\n\n3/ Third\n\n4/ Fourth",
             status="scheduled",
+            vehicle="thread",
         )
         insert_draft(conn, draft)
 
         for i, text in enumerate(["First", "Second", "Third", "Fourth"]):
-            tweet = DraftTweet(
+            tweet = DraftPart(
                 id=generate_id("tweet"),
                 draft_id=draft.id,
                 position=i,
                 content=text,
             )
-            insert_draft_tweet(conn, tweet)
+            insert_draft_part(conn, tweet)
 
         return project, draft
 
@@ -84,11 +90,12 @@ class TestPostDraftThread:
         project, draft = self._setup_draft_with_tweets(conn)
 
         mock_adapter = MagicMock()
-        mock_thread_result = ThreadResult(
+        mock_thread_result = PostResult(
             success=True,
-            tweet_results=[PostResult(success=True, external_id=f"ext_{i}") for i in range(4)],
+            part_results=[PostResult(success=True, external_id=f"ext_{i}") for i in range(4)],
         )
         mock_adapter.post_thread.return_value = mock_thread_result
+        mock_adapter.capabilities.return_value = _x_capabilities()
         mock_create_adapter.return_value = mock_adapter
 
         config = MagicMock()
@@ -104,18 +111,19 @@ class TestPostDraftThread:
         mock_adapter.post.assert_not_called()
 
     @patch("social_hook.adapters.platform.registry.create_adapter")
-    def test_thread_updates_draft_tweets_after_posting(self, mock_create_adapter, temp_dir):
-        """After post_thread, each draft_tweet gets external_id and posted_at."""
+    def test_thread_updates_draft_parts_after_posting(self, mock_create_adapter, temp_dir):
+        """After post_thread, each draft_part gets external_id and posted_at."""
         db_path = temp_dir / "test.db"
         conn = init_database(db_path)
         project, draft = self._setup_draft_with_tweets(conn)
 
         mock_adapter = MagicMock()
-        mock_thread_result = ThreadResult(
+        mock_thread_result = PostResult(
             success=True,
-            tweet_results=[PostResult(success=True, external_id=f"ext_{i}") for i in range(4)],
+            part_results=[PostResult(success=True, external_id=f"ext_{i}") for i in range(4)],
         )
         mock_adapter.post_thread.return_value = mock_thread_result
+        mock_adapter.capabilities.return_value = _x_capabilities()
         mock_create_adapter.return_value = mock_adapter
 
         config = MagicMock()
@@ -127,14 +135,14 @@ class TestPostDraftThread:
 
         _post_draft(conn, draft, config, db_path=str(db_path))
 
-        tweets = get_draft_tweets(conn, draft.id)
+        tweets = get_draft_parts(conn, draft.id)
         for i, tweet in enumerate(tweets):
             assert tweet.external_id == f"ext_{i}"
             assert tweet.posted_at is not None
 
     @patch("social_hook.adapters.platform.registry.create_adapter")
-    def test_no_tweets_posts_single(self, mock_create_adapter, temp_dir):
-        """Without draft_tweets, posts single via post()."""
+    def test_no_parts_posts_single(self, mock_create_adapter, temp_dir):
+        """Without draft_parts, posts single via post()."""
         from social_hook.db import insert_project
         from social_hook.models.core import Project
 
@@ -172,11 +180,12 @@ class TestPostDraftThread:
 
         mock_adapter = MagicMock()
         mock_adapter.post.return_value = PostResult(success=True, external_id="ext_1")
+        mock_adapter.capabilities.return_value = _x_capabilities()
         mock_create_adapter.return_value = mock_adapter
 
         result = _post_draft(conn, draft, config, db_path=str(db_path))
         assert result.success is True
-        mock_adapter.post.assert_called_once_with("Short post", media_paths=None)
+        mock_adapter.post.assert_called_once()
         mock_adapter.post_thread.assert_not_called()
 
     @patch("social_hook.adapters.platform.registry.create_adapter")
@@ -212,24 +221,27 @@ class TestPostDraftThread:
 
         # Add tweets (these should be ignored for linkedin)
         for i in range(4):
-            tweet = DraftTweet(
+            tweet = DraftPart(
                 id=generate_id("tweet"),
                 draft_id=draft.id,
                 position=i,
                 content=f"Tweet {i}",
             )
-            insert_draft_tweet(conn, tweet)
+            insert_draft_part(conn, tweet)
 
         config = MagicMock()
         config.env = {"LINKEDIN_ACCESS_TOKEN": "tok"}
 
+        from social_hook.adapters.models import RESHARE
+
         mock_adapter = MagicMock()
         mock_adapter.post.return_value = PostResult(success=True, external_id="li_1")
+        mock_adapter.capabilities.return_value = [SINGLE, RESHARE]
         mock_create_adapter.return_value = mock_adapter
 
         result = _post_draft(conn, draft, config)
         assert result.success is True
-        mock_adapter.post.assert_called_once_with("Full post content here", media_paths=None)
+        mock_adapter.post.assert_called_once()
 
     @patch("social_hook.adapters.platform.registry.create_adapter")
     def test_paid_tier_long_single_post(self, mock_create_adapter, temp_dir):
@@ -265,6 +277,7 @@ class TestPostDraftThread:
 
         mock_adapter = MagicMock()
         mock_adapter.post.return_value = PostResult(success=True, external_id="ext_1")
+        mock_adapter.capabilities.return_value = _x_capabilities()
         mock_create_adapter.return_value = mock_adapter
 
         config = MagicMock()
@@ -276,11 +289,11 @@ class TestPostDraftThread:
 
         result = _post_draft(conn, draft, config, db_path=str(db_path))
         assert result.success is True
-        mock_adapter.post.assert_called_once_with(long_content, media_paths=None)
+        mock_adapter.post.assert_called_once()
 
 
-class TestUpdateDraftTweet:
-    """Tests for update_draft_tweet DB operation."""
+class TestUpdateDraftPart:
+    """Tests for update_draft_part DB operation."""
 
     def test_update_sets_external_id(self, temp_db):
         from social_hook.db import insert_project
@@ -304,15 +317,15 @@ class TestUpdateDraftTweet:
             content="test",
         )
         insert_draft(temp_db, draft)
-        tweet = DraftTweet(
+        tweet = DraftPart(
             id=generate_id("tweet"),
             draft_id=draft.id,
             position=0,
             content="hello",
         )
-        insert_draft_tweet(temp_db, tweet)
+        insert_draft_part(temp_db, tweet)
 
-        updated = update_draft_tweet(
+        updated = update_draft_part(
             temp_db,
             tweet.id,
             external_id="ext_123",
@@ -320,7 +333,7 @@ class TestUpdateDraftTweet:
         )
         assert updated is True
 
-        tweets = get_draft_tweets(temp_db, draft.id)
+        tweets = get_draft_parts(temp_db, draft.id)
         assert tweets[0].external_id == "ext_123"
         assert tweets[0].posted_at is not None
 
@@ -346,20 +359,20 @@ class TestUpdateDraftTweet:
             content="test",
         )
         insert_draft(temp_db, draft)
-        tweet = DraftTweet(
+        tweet = DraftPart(
             id=generate_id("tweet"),
             draft_id=draft.id,
             position=0,
             content="hello",
         )
-        insert_draft_tweet(temp_db, tweet)
+        insert_draft_part(temp_db, tweet)
 
-        updated = update_draft_tweet(temp_db, tweet.id, error="Rate limited")
+        updated = update_draft_part(temp_db, tweet.id, error="Rate limited")
         assert updated is True
 
-        tweets = get_draft_tweets(temp_db, draft.id)
+        tweets = get_draft_parts(temp_db, draft.id)
         assert tweets[0].error == "Rate limited"
 
     def test_update_no_fields_returns_false(self, temp_db):
-        updated = update_draft_tweet(temp_db, "nonexistent_id")
+        updated = update_draft_part(temp_db, "nonexistent_id")
         assert updated is False

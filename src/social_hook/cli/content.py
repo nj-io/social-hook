@@ -274,6 +274,165 @@ def combine(
         conn.close()
 
 
+@app.command()
+def create(
+    ctx: typer.Context,
+    idea: str = typer.Option(..., "--idea", "-i", help="Content idea or topic to create"),
+    vehicle: str | None = typer.Option(
+        None, "--vehicle", "-v", help="Content vehicle: single, thread, article (default: auto)"
+    ),
+    files: list[str] | None = typer.Option(
+        None, "--files", "-f", help="Reference files for context (per-draft, not persisted)"
+    ),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Create content from an idea, bypassing the evaluator.
+
+    Constructs a DraftingIntent directly and calls the drafting pipeline.
+    Makes LLM calls. Writes decisions and drafts to the database.
+
+    Example: social-hook content create --idea "Show the new dashboard feature" --vehicle article --files guide.md
+    """
+    from social_hook.config.platforms import resolve_platform
+    from social_hook.config.project import ProjectConfig, load_project_config
+    from social_hook.config.yaml import load_full_config
+    from social_hook.db import operations as ops
+    from social_hook.drafting import DraftingIntent, PlatformSpec, draft
+    from social_hook.errors import ConfigError
+    from social_hook.filesystem import generate_id
+    from social_hook.llm.dry_run import DryRunContext
+    from social_hook.llm.prompts import assemble_evaluator_context
+    from social_hook.models.core import CommitInfo, Decision
+
+    json_output = json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+    dry_run = (ctx.obj or {}).get("dry_run", False)
+    verbose = (ctx.obj or {}).get("verbose", False)
+
+    # Validate vehicle
+    if vehicle and vehicle not in ("single", "thread", "article"):
+        typer.echo(f"Invalid vehicle: {vehicle}. Must be single, thread, or article.", err=True)
+        raise typer.Exit(1)
+
+    conn = _get_conn()
+    try:
+        proj = _resolve_proj(conn, project_path)
+
+        config_path = ctx.obj.get("config") if ctx.obj else None
+        config = load_full_config(str(config_path) if config_path else None)
+
+        try:
+            project_config = load_project_config(proj.repo_path)
+        except ConfigError:
+            project_config = ProjectConfig(repo_path=proj.repo_path)
+
+        # Build platform specs
+        platform_specs: list[PlatformSpec] = []
+        for pname, pcfg in config.platforms.items():
+            if pcfg.enabled:
+                rpcfg = resolve_platform(pname, pcfg, config.scheduling)
+                platform_specs.append(PlatformSpec(platform=pname, resolved=rpcfg))
+
+        if not platform_specs:
+            msg = "No enabled platforms configured"
+            if json_output:
+                typer.echo(json_mod.dumps({"error": msg}))
+            else:
+                typer.echo(msg, err=True)
+            raise typer.Exit(1)
+
+        # Read reference files if provided
+        assembled_ref_text = ""
+        if files:
+            from social_hook.file_reader import read_files_within_budget
+
+            budget = 40_000 if vehicle == "article" else 10_000
+            assembled_ref_text, _tokens = read_files_within_budget(
+                files,
+                proj.repo_path,
+                max_tokens=budget,
+            )
+
+        # Create Decision + CommitInfo
+        commit = CommitInfo.from_operator_input(idea)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=proj.id,
+            commit_hash=commit.hash,
+            commit_message=idea[:200],
+            decision="draft",
+            reasoning=idea,
+            trigger_source="create",
+        )
+        ops.insert_decision(conn, decision)
+
+        intent = DraftingIntent(
+            decision="draft",
+            vehicle=vehicle,
+            angle=idea,
+            reasoning=idea,
+            include_project_docs=True,
+            decision_id=decision.id,
+            platforms=platform_specs,
+            content_source_context={"reference_files": assembled_ref_text}
+            if assembled_ref_text
+            else None,
+        )
+
+        db = DryRunContext(conn, dry_run=dry_run)
+        context = assemble_evaluator_context(
+            db,
+            proj.id,
+            project_config,
+        )
+
+        if not json_output:
+            typer.echo(f"Creating content for '{proj.name}'...")
+
+        results = draft(
+            intent,
+            config,
+            conn,
+            db,
+            proj,
+            context,
+            commit,
+            project_config=project_config,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+
+        if json_output:
+            typer.echo(
+                json_mod.dumps(
+                    {
+                        "draft_ids": [r.draft.id for r in results],
+                        "count": len(results),
+                        "decision_id": decision.id,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            if results:
+                typer.echo(f"Created {len(results)} draft(s):")
+                for r in results:
+                    typer.echo(f"  {r.draft.id} [{r.draft.platform}] vehicle={r.draft.vehicle}")
+            else:
+                typer.echo("No drafts created.")
+    except Exception as e:
+        if json_output:
+            typer.echo(json_mod.dumps({"error": str(e)}))
+        else:
+            logger.error("Content creation failed: %s", e, exc_info=True)
+            typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(2) from None
+    finally:
+        conn.close()
+
+
 @app.command("hero-launch")
 def hero_launch(
     ctx: typer.Context,

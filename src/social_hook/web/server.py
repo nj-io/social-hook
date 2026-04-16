@@ -395,7 +395,7 @@ def _run_background_task(
             try:
                 import traceback
 
-                error_msg = traceback.format_exc()[-500:]
+                error_msg = traceback.format_exc()
                 conn2.execute(
                     "UPDATE background_tasks SET status='failed', error=?,"
                     " updated_at=datetime('now') WHERE id=?",
@@ -927,11 +927,11 @@ async def api_draft_detail(draft_id: str):
 
         draft = dict(row)
 
-        tweets = conn.execute(
-            "SELECT * FROM draft_tweets WHERE draft_id = ? ORDER BY position ASC",
+        parts = conn.execute(
+            "SELECT * FROM draft_parts WHERE draft_id = ? ORDER BY position ASC",
             (draft_id,),
         ).fetchall()
-        draft["tweets"] = [dict(t) for t in tweets]
+        draft["parts"] = [dict(t) for t in parts]
 
         changes = conn.execute(
             "SELECT * FROM draft_changes WHERE draft_id = ? ORDER BY changed_at DESC",
@@ -947,6 +947,28 @@ async def api_draft_detail(draft_id: str):
             draft["decision"] = dict(decision_row) if decision_row else None
         else:
             draft["decision"] = None
+
+        # Compute draft diagnostics at read time (not stored)
+        import social_hook.draft_diagnostics  # noqa: F401 — side-effect registration
+        from social_hook.draft_diagnostics import draft_diagnostics_registry
+        from social_hook.vehicle import check_auto_postable
+
+        diag_ctx = {
+            "vehicle": draft.get("vehicle", "single"),
+            "status": draft.get("status"),
+            "platform": draft.get("platform"),
+            "auto_postable": check_auto_postable(
+                type(
+                    "_D",
+                    (),
+                    {
+                        "vehicle": draft.get("vehicle", "single"),
+                        "platform": draft.get("platform", ""),
+                    },
+                )()
+            ),
+        }
+        draft["diagnostics"] = [d.to_dict() for d in draft_diagnostics_registry.run(diag_ctx)]
 
         return draft
     finally:
@@ -983,8 +1005,8 @@ async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body
                 id=generate_id("change"),
                 draft_id=draft_id,
                 field="media_spec",
-                old_value=json.dumps(old_spec)[:200] if old_spec else "null",
-                new_value=json.dumps(media_spec)[:200],
+                old_value=json.dumps(old_spec) if old_spec else "null",
+                new_value=json.dumps(media_spec),
                 changed_by="human",
             ),
         )
@@ -1132,8 +1154,8 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
                     id=generate_id("change"),
                     draft_id=draft_id,
                     field="media_spec",
-                    old_value=json.dumps(old_spec)[:200] if old_spec else "null",
-                    new_value=json.dumps(spec)[:200],
+                    old_value=json.dumps(old_spec) if old_spec else "null",
+                    new_value=json.dumps(spec),
                     changed_by="human",
                 ),
             )
@@ -1292,7 +1314,6 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
     if not pcfg or not pcfg.enabled:
         raise HTTPException(status_code=400, detail=f"Platform '{platform}' is not enabled")
 
-    from social_hook.compat import evaluation_from_decision
     from social_hook.config.project import ProjectConfig, load_project_config
     from social_hook.models.core import CommitInfo
 
@@ -1313,12 +1334,14 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
             files_changed=[],
         )
 
-    evaluation = evaluation_from_decision(decision, "draft")
+    from social_hook.drafting_intents import intent_from_decision
+
+    intent = intent_from_decision(decision, config, conn, target_platform=platform)
 
     def _blocking_promote():
         import sqlite3 as _sqlite3
 
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import draft
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
 
@@ -1334,17 +1357,15 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
                 parent_timestamp=getattr(commit, "parent_timestamp", None),
             )
             db.emit_data_event("pipeline", PipelineStage.PROMOTING, draft_id[:8], project.id)
-            results = draft_for_platforms(
+            results = draft(
+                intent,
                 config,
                 conn2,
                 db,
                 project,
-                decision_id=decision.id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit,
+                context,
+                commit,
                 project_config=project_config,
-                target_platform_names=[platform],
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
@@ -1366,7 +1387,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
                 d = ops.get_draft(conn2, did)
                 if d:
                     sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
-                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_tweets=[]))
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_parts=[]))
             if draft_results:
                 from social_hook.notifications import notify_draft_review
 
@@ -1816,7 +1837,7 @@ async def api_summary_draft(project_id: str):
                     project_id=pid,
                     commit_hash="summary",
                     commit_message="Project introduction",
-                    draft_results=[DraftResult(draft=d, schedule=sched, thread_tweets=[])],
+                    draft_results=[DraftResult(draft=d, schedule=sched, thread_parts=[])],
                 )
         except Exception:
             logger.debug("Summary draft notification failed", exc_info=True)
@@ -1936,17 +1957,17 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
     except ConfigError:
         project_config = ProjectConfig(repo_path=project.repo_path)
 
-    from social_hook.compat import evaluation_from_decision
+    from social_hook.drafting_intents import intent_from_decision
     from social_hook.trigger import parse_commit_info
 
     commit = parse_commit_info(decision.commit_hash, project.repo_path)
 
-    evaluation = evaluation_from_decision(decision, "draft")
+    intent = intent_from_decision(decision, config, conn, target_platform=platform)
 
     def _blocking_create_draft():
         import sqlite3 as _sqlite3
 
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import draft
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
 
@@ -1965,17 +1986,15 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
             db.emit_data_event(
                 "pipeline", PipelineStage.DRAFTING, decision.commit_hash[:8], project.id
             )
-            results = draft_for_platforms(
+            results = draft(
+                intent,
                 config,
                 conn2,
                 db,
                 project,
-                decision_id=decision_id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit,
+                context,
+                commit,
                 project_config=project_config,
-                target_platform_names=[platform] if platform else None,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
         finally:
@@ -1994,7 +2013,7 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
                 d = ops.get_draft(conn2, did)
                 if d:
                     sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
-                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_tweets=[]))
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_parts=[]))
             if draft_results:
                 from social_hook.notifications import notify_draft_review
 
@@ -2018,6 +2037,199 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
         fn=_blocking_create_draft,
         on_success=_on_drafts_created,
     )
+
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "status": "processing"},
+    )
+
+
+@app.post("/api/projects/{project_id}/create-content")
+async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
+    """Create content from an operator idea — bypasses evaluator.
+
+    Body: { idea, vehicle, reference_files, target_id }
+    """
+    known_keys = {"idea", "vehicle", "reference_files", "target_id"}
+    check_unknown_keys(body, known_keys, "create_content", strict=True)
+
+    idea = body.get("idea")
+    if not idea or not isinstance(idea, str) or not idea.strip():
+        raise HTTPException(status_code=400, detail="idea is required")
+    idea = idea.strip()
+
+    vehicle = body.get("vehicle")  # None means "auto"
+    reference_files: list[str] = body.get("reference_files") or []
+    target_id = body.get("target_id")
+
+    conn = _get_conn()
+    try:
+        project = ops.get_project(conn, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+    finally:
+        conn.close()
+
+    config = _get_config()
+
+    from social_hook.config.platforms import resolve_platform
+    from social_hook.config.project import ProjectConfig, load_project_config
+    from social_hook.drafting import DraftingIntent, PlatformSpec
+    from social_hook.filesystem import generate_id
+    from social_hook.models.core import CommitInfo, Decision
+
+    try:
+        project_config = load_project_config(project.repo_path)
+    except ConfigError:
+        project_config = ProjectConfig(repo_path=project.repo_path)
+
+    # Build platform spec
+    platform_specs: list[PlatformSpec] = []
+    if target_id:
+        # Resolve from targets config
+        tc = config.targets.get(target_id) if hasattr(config, "targets") else None
+        if tc:
+            pcfg = config.platforms.get(tc.platform)
+            if pcfg and pcfg.enabled:
+                rpcfg = resolve_platform(tc.platform, pcfg, config.scheduling)
+                platform_specs.append(
+                    PlatformSpec(platform=tc.platform, resolved=rpcfg, target_id=target_id)
+                )
+    if not platform_specs:
+        for pname, pcfg in config.platforms.items():
+            if pcfg.enabled:
+                rpcfg = resolve_platform(pname, pcfg, config.scheduling)
+                platform_specs.append(PlatformSpec(platform=pname, resolved=rpcfg))
+
+    if not platform_specs:
+        raise HTTPException(status_code=400, detail="No enabled platforms configured")
+
+    # Create Decision record
+    commit = CommitInfo.from_operator_input(idea)
+    decision = Decision(
+        id=generate_id("decision"),
+        project_id=project_id,
+        commit_hash=commit.hash,
+        commit_message=idea,
+        decision="draft",
+        reasoning=idea,
+        trigger_source="create",
+    )
+
+    conn2 = _get_conn()
+    try:
+        ops.insert_decision(conn2, decision)
+    finally:
+        conn2.close()
+
+    # Read reference files within budget
+    assembled_ref_text = ""
+    if reference_files:
+        from social_hook.file_reader import read_files_within_budget
+
+        budget = 40_000 if vehicle == "article" else 10_000
+        assembled_ref_text, _tokens = read_files_within_budget(
+            reference_files,
+            project.repo_path,
+            max_tokens=budget,
+        )
+
+    intent = DraftingIntent(
+        decision="draft",
+        vehicle=vehicle,
+        angle=idea,
+        reasoning=idea,
+        include_project_docs=True,
+        decision_id=decision.id,
+        platforms=platform_specs,
+        content_source_context={"reference_files": assembled_ref_text}
+        if assembled_ref_text
+        else None,
+    )
+
+    # Mutable holder for task_id inside the closure
+    task_id_holder: list[str | None] = [None]
+
+    def _blocking_create_content():
+        import sqlite3 as _sqlite3
+
+        from social_hook.drafting import draft
+        from social_hook.llm.dry_run import DryRunContext
+        from social_hook.llm.prompts import assemble_evaluator_context
+
+        conn3 = _sqlite3.connect(str(get_db_path()))
+        conn3.execute("PRAGMA busy_timeout = 5000")
+        conn3.row_factory = _sqlite3.Row
+        db = DryRunContext(conn3, dry_run=False)
+        try:
+            context = assemble_evaluator_context(
+                db,
+                project.id,
+                project_config,
+            )
+
+            if task_id_holder[0]:
+                ops.emit_task_stage(
+                    conn3, task_id_holder[0], "drafting", "Creating content...", project_id
+                )
+
+            db.emit_data_event(
+                "pipeline",
+                PipelineStage.DRAFTING,
+                decision.id,
+                project_id,
+            )
+            results = draft(
+                intent,
+                config,
+                conn3,
+                db,
+                project,
+                context,
+                commit,
+                project_config=project_config,
+            )
+            return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
+        finally:
+            conn3.close()
+
+    def _on_content_created(result: dict) -> None:
+        from social_hook.drafting import DraftResult
+
+        conn4 = _get_conn()
+        try:
+            from social_hook.scheduling import calculate_optimal_time
+
+            draft_results = []
+            for did in result["draft_ids"]:
+                d = ops.get_draft(conn4, did)
+                if d:
+                    sched = calculate_optimal_time(conn4, d.project_id, platform=d.platform)
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_parts=[]))
+            if draft_results:
+                from social_hook.notifications import notify_draft_review
+
+                notify_draft_review(
+                    config,
+                    project_name=project.name,
+                    project_id=project.id,
+                    commit_hash=commit.hash,
+                    commit_message=commit.message,
+                    draft_results=draft_results,
+                )
+        except Exception:
+            logger.debug("Content creation notification failed", exc_info=True)
+        finally:
+            conn4.close()
+
+    task_id = _run_background_task(
+        "create_content",
+        ref_id="__create_content__",
+        project_id=project_id,
+        fn=_blocking_create_content,
+        on_success=_on_content_created,
+    )
+    task_id_holder[0] = task_id
 
     return JSONResponse(
         status_code=202,
@@ -2421,15 +2633,15 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
         files_changed=[],
     )
 
-    from social_hook.compat import evaluation_from_decision
+    from social_hook.drafting_intents import intent_from_decision
 
     anchor = decisions[-1]
-    evaluation = evaluation_from_decision(anchor, "draft")
+    intent = intent_from_decision(anchor, config, conn)
 
     def _blocking_consolidate():
         import sqlite3 as _sqlite3
 
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import draft
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.prompts import assemble_evaluator_context
 
@@ -2446,15 +2658,14 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
             db.emit_data_event(
                 "pipeline", PipelineStage.DRAFTING, anchor.commit_hash[:8], project.id
             )
-            results = draft_for_platforms(
+            results = draft(
+                intent,
                 config,
                 conn2,
                 db,
                 project,
-                decision_id=anchor.id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit,
+                context,
+                commit,
                 project_config=project_config,
             )
             return {"draft_ids": [r.draft.id for r in results], "count": len(results)}
@@ -2473,7 +2684,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
                 d = ops.get_draft(conn2, did)
                 if d:
                     sched = calculate_optimal_time(conn2, d.project_id, platform=d.platform)
-                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_tweets=[]))
+                    draft_results.append(DraftResult(draft=d, schedule=sched, thread_parts=[]))
             if draft_results:
                 from social_hook.notifications import notify_draft_review
 
@@ -3782,14 +3993,16 @@ class RegisterProjectBody(BaseModel):
 async def api_register_project(body: RegisterProjectBody):
     """Register a new project from the web UI."""
     from social_hook.db.operations import register_project
-    from social_hook.setup.install import install_git_hook as do_install_git_hook
+    from social_hook.trigger_git import is_git_repo
 
     conn = _get_conn()
     try:
         project, repo_origin = register_project(conn, body.repo_path, body.name)
 
         hook_message = None
-        if body.install_git_hook:
+        if body.install_git_hook and is_git_repo(project.repo_path):
+            from social_hook.setup.install import install_git_hook as do_install_git_hook
+
             _success, hook_message = do_install_git_hook(project.repo_path)
 
         ops.emit_data_event(conn, "project", "created", project.id, project.id)
@@ -3812,7 +4025,7 @@ async def api_register_project(body: RegisterProjectBody):
 @app.delete("/api/projects/{project_id}")
 async def api_delete_project(project_id: str):
     """Unregister a project and delete all its data."""
-    from social_hook.setup.install import uninstall_git_hook
+    from social_hook.trigger_git import is_git_repo
 
     conn = _get_conn()
     try:
@@ -3820,10 +4033,135 @@ async def api_delete_project(project_id: str):
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        uninstall_git_hook(project.repo_path)
+        if is_git_repo(project.repo_path):
+            from social_hook.setup.install import uninstall_git_hook
+
+            uninstall_git_hook(project.repo_path)
         ops.delete_project(conn, project_id)
         ops.emit_data_event(conn, "project", "deleted", project_id, project_id)
         return {"status": "deleted", "project_id": project_id}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/upload-docs")
+async def api_upload_project_docs(project_id: str, files: list[UploadFile]):
+    """Upload documentation files for a project.
+
+    Saves files to .social-hook/docs/ under the project, adds paths to
+    prompt_docs, and triggers brief generation from the uploaded content.
+    """
+    conn = _get_conn()
+    try:
+        project = ops.get_project(conn, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        if not files:
+            raise HTTPException(status_code=400, detail="No files uploaded")
+
+        docs_dir = Path(project.repo_path) / ".social-hook" / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Read existing prompt_docs
+        existing_docs = (
+            safe_json_loads(project.prompt_docs, "project.prompt_docs", default=[])
+            if project.prompt_docs
+            else []
+        )
+
+        new_paths: list[str] = []
+        for f in files:
+            if not f.filename:
+                continue
+            content = await f.read()
+            if not content:
+                continue
+            dest = docs_dir / f.filename
+            dest.write_bytes(content)
+            rel_path = f".social-hook/docs/{f.filename}"
+            if rel_path not in existing_docs:
+                new_paths.append(rel_path)
+
+        if new_paths:
+            all_docs = existing_docs + new_paths
+            ops.update_prompt_docs(conn, project_id, all_docs)
+
+        # Generate brief from docs in background
+        brief_result = None
+        if new_paths or existing_docs:
+            all_paths = (existing_docs + new_paths) if new_paths else existing_docs
+            try:
+                from social_hook.llm.brief import generate_brief_from_docs
+                from social_hook.llm.factory import create_client
+
+                config = _get_config()
+                client = create_client(config.models.drafter, config)
+                brief = generate_brief_from_docs(
+                    all_paths,
+                    project.repo_path,
+                    client,
+                    project_id=project_id,
+                )
+                if brief:
+                    ops.update_project_summary(conn, project_id, brief)
+                    brief_result = "generated"
+            except Exception:
+                logger.debug("Brief generation from uploaded docs failed", exc_info=True)
+                brief_result = "skipped"
+
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {
+            "uploaded": len(new_paths),
+            "prompt_docs": (existing_docs + new_paths) if new_paths else existing_docs,
+            "brief": brief_result,
+        }
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Prompt Docs (operator-manageable file inclusion list)
+# =============================================================================
+
+
+@app.get("/api/projects/{project_id}/prompt-docs")
+async def api_get_prompt_docs(project_id: str):
+    """Get the prompt_docs file list for a project."""
+    conn = _get_conn()
+    try:
+        project = _get_project_or_404(conn, project_id)
+        from social_hook.parsing import safe_json_loads
+
+        docs = (
+            safe_json_loads(project["prompt_docs"], "prompt_docs", default=[])
+            if project["prompt_docs"]
+            else []
+        )
+        return {"prompt_docs": docs}
+    finally:
+        conn.close()
+
+
+@app.put("/api/projects/{project_id}/prompt-docs")
+async def api_update_prompt_docs(project_id: str, body: dict[str, Any] = Body(...)):
+    """Update the prompt_docs file list for a project.
+
+    Body: { "files": ["README.md", "docs/guide.md", ...] }
+    """
+    from social_hook.parsing import check_unknown_keys
+
+    check_unknown_keys(body, {"files"}, "prompt_docs", strict=True)
+    files = body.get("files", [])
+    if not isinstance(files, list):
+        raise HTTPException(status_code=400, detail="files must be a list of strings")
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        ops.update_prompt_docs(conn, project_id, files)
+        ops.emit_data_event(conn, "project", "updated", project_id, project_id)
+        return {"prompt_docs": files}
     finally:
         conn.close()
 
@@ -5512,16 +5850,26 @@ async def api_approve_all_cycle_drafts(project_id: str, cycle_id: str):
         if not approvable:
             return {"status": "no_drafts", "approved_count": 0}
 
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        config = _get_config()
         approved_ids = []
+        advisory_ids = []
         for draft in approvable:
-            ops.update_draft(conn, draft.id, status="approved")
-            ops.emit_data_event(conn, "draft", "updated", draft.id, project_id)
-            approved_ids.append(draft.id)
+            if not check_auto_postable(draft):
+                handle_advisory_approval(conn, draft, config)
+                advisory_ids.append(draft.id)
+            else:
+                ops.update_draft(conn, draft.id, status="approved")
+                ops.emit_data_event(conn, "draft", "approved", draft.id, project_id)
+                approved_ids.append(draft.id)
 
         return {
             "status": "approved",
             "approved_count": len(approved_ids),
+            "advisory_count": len(advisory_ids),
             "draft_ids": approved_ids,
+            "advisory_ids": advisory_ids,
         }
     finally:
         conn.close()
@@ -5728,3 +6076,201 @@ async def api_update_platform_settings(platform: str, body: dict[str, Any] = Bod
         raise HTTPException(status_code=400, detail=str(e)) from None
     _invalidate_config()
     return {"status": "updated", "platform": platform}
+
+
+# =============================================================================
+# Advisory Items
+# =============================================================================
+
+
+def _advisory_to_api(item) -> dict[str, Any]:
+    """Convert AdvisoryItem to API response dict with Z-suffixed timestamps."""
+    d: dict[str, Any] = item.to_dict()
+    for key in ("created_at", "completed_at", "due_date"):
+        if d.get(key) and isinstance(d[key], str) and not d[key].endswith("Z"):
+            d[key] = d[key] + "Z"
+    return d
+
+
+@app.get("/api/advisory")
+async def api_advisory_list(
+    project_id: str | None = Query(None),
+    status: str | None = Query(None),
+    category: str | None = Query(None),
+    urgency: str | None = Query(None),
+):
+    """List advisory items globally, with optional filters."""
+    conn = _get_conn()
+    try:
+        items = ops.get_advisory_items(
+            conn,
+            project_id=project_id,
+            status=status,
+            category=category,
+            urgency=urgency,
+        )
+        return {"advisory_items": [_advisory_to_api(i) for i in items]}
+    finally:
+        conn.close()
+
+
+@app.get("/api/advisory/count")
+async def api_advisory_count(
+    project_id: str | None = Query(None),
+    status: str | None = Query(None),
+):
+    """Count advisory items with optional filters."""
+    conn = _get_conn()
+    try:
+        count = ops.count_advisory_items(conn, project_id=project_id, status=status)
+        return {"count": count}
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{project_id}/advisory")
+async def api_project_advisory_list(
+    project_id: str,
+    status: str | None = Query(None),
+    category: str | None = Query(None),
+    urgency: str | None = Query(None),
+):
+    """List advisory items for a specific project."""
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+        items = ops.get_advisory_items(
+            conn,
+            project_id=project_id,
+            status=status,
+            category=category,
+            urgency=urgency,
+        )
+        return {"advisory_items": [_advisory_to_api(i) for i in items]}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/{project_id}/advisory")
+async def api_create_advisory(project_id: str, body: dict[str, Any] = Body(...)):
+    """Create an operator-initiated advisory item."""
+    from social_hook.filesystem import generate_id
+    from social_hook.models.infra import AdvisoryItem
+
+    known_keys = {
+        "category",
+        "title",
+        "description",
+        "urgency",
+        "linked_entity_type",
+        "linked_entity_id",
+        "due_date",
+        "verification_method",
+    }
+    try:
+        check_unknown_keys(body, known_keys, "advisory", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    if not body.get("title"):
+        raise HTTPException(status_code=400, detail="title is required")
+    if not body.get("category"):
+        raise HTTPException(status_code=400, detail="category is required")
+
+    conn = _get_conn()
+    try:
+        _get_project_or_404(conn, project_id)
+
+        item = AdvisoryItem(
+            id=generate_id("advisory"),
+            project_id=project_id,
+            category=body["category"],
+            title=body["title"],
+            description=body.get("description"),
+            urgency=body.get("urgency", "normal"),
+            created_by="operator",
+            linked_entity_type=body.get("linked_entity_type"),
+            linked_entity_id=body.get("linked_entity_id"),
+            due_date=body.get("due_date"),
+            verification_method=body.get("verification_method"),
+        )
+        ops.insert_advisory_item(conn, item)
+        ops.emit_data_event(
+            conn, "advisory", "created", item.id, project_id, extra={"title": item.title}
+        )
+        return {"advisory_id": item.id, "status": "created"}
+    finally:
+        conn.close()
+
+
+@app.put("/api/advisory/{item_id}")
+async def api_update_advisory(item_id: str, body: dict[str, Any] = Body(...)):
+    """Update an advisory item (complete, dismiss, edit)."""
+    known_keys = {
+        "status",
+        "title",
+        "description",
+        "urgency",
+        "category",
+        "dismissed_reason",
+        "due_date",
+    }
+    try:
+        check_unknown_keys(body, known_keys, "advisory", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    conn = _get_conn()
+    try:
+        existing = ops.get_advisory_item(conn, item_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Advisory item not found")
+
+        updates: dict[str, Any] = {}
+        for key in known_keys:
+            if key in body:
+                updates[key] = body[key]
+
+        # Auto-set completed_at when status changes to completed
+        if updates.get("status") == "completed" and not existing.completed_at:
+            from datetime import datetime, timezone
+
+            updates["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+        if not ops.update_advisory_item(conn, item_id, **updates):
+            raise HTTPException(status_code=404, detail="Advisory item not found")
+
+        ops.emit_data_event(
+            conn,
+            "advisory",
+            "updated",
+            item_id,
+            existing.project_id,
+            extra={"title": existing.title},
+        )
+        return {"status": "updated", "advisory_id": item_id}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/advisory/{item_id}")
+async def api_delete_advisory(item_id: str):
+    """Delete an advisory item."""
+    conn = _get_conn()
+    try:
+        existing = ops.get_advisory_item(conn, item_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Advisory item not found")
+
+        ops.delete_advisory_item(conn, item_id)
+        ops.emit_data_event(
+            conn,
+            "advisory",
+            "deleted",
+            item_id,
+            existing.project_id,
+            extra={"title": existing.title},
+        )
+        return {"status": "deleted", "advisory_id": item_id}
+    finally:
+        conn.close()

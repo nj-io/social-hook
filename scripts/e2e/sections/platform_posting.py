@@ -375,17 +375,17 @@ def _exercise_thread(adapter, plat, runner, harness, live, pause):
                 dry_run=not live,
             )
             assert thread_result.success, f"Thread failed: {thread_result.error}"
-            assert len(thread_result.tweet_results) >= 2, (
-                f"Expected >=2 results, got {len(thread_result.tweet_results)}"
+            assert len(thread_result.part_results) >= 2, (
+                f"Expected >=2 results, got {len(thread_result.part_results)}"
             )
-            for i, tr in enumerate(thread_result.tweet_results):
+            for i, tr in enumerate(thread_result.part_results):
                 assert tr.external_id, f"Tweet {i + 1} missing external_id"
 
             # Log and review
-            head = thread_result.tweet_results[0]
-            urls = [tr.external_url for tr in thread_result.tweet_results if tr.external_url]
+            head = thread_result.part_results[0]
+            urls = [tr.external_url for tr in thread_result.part_results if tr.external_url]
             with open(log_path, "a") as f:
-                for tr in thread_result.tweet_results:
+                for tr in thread_result.part_results:
                     f.write(f"{plat}\t{tr.external_id}\t{tr.external_url}\n")
 
             runner.add_review_item(
@@ -399,7 +399,7 @@ def _exercise_thread(adapter, plat, runner, harness, live, pause):
                 _pause_before_delete(pause, head.external_url)
                 _safe_delete(adapter, head.external_id, label="thread head")
 
-            return f"Thread: {len(thread_result.tweet_results)} tweets"
+            return f"Thread: {len(thread_result.part_results)} tweets"
 
     runner.run_scenario(
         f"U-{plat}-thread",
@@ -717,7 +717,7 @@ def run(harness, runner, live=False, pause=False, headless=False):
 
         # Consistency check for all capabilities
         for cap in plat_adapter.capabilities():
-            if cap.name == "single_post":
+            if cap.name == "single":
                 continue
 
             def u_capability(plat=platform, adapter=plat_adapter, capability=cap):

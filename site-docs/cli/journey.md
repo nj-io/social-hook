@@ -1,6 +1,6 @@
 # social-hook journey
 
-Development Journey capture.
+Control Development Journey capture. When enabled, Claude Code hooks record session narratives that feed into the evaluation pipeline as rich development context.
 
 ---
 

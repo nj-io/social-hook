@@ -15,7 +15,6 @@ from social_hook.models.enums import (
     DraftStatus,
     LifecyclePhase,
     PostCategory,
-    PostFormat,
     is_draftable,
     is_held,
 )
@@ -49,13 +48,6 @@ class TestEnums:
         assert DecisionType.SKIP.value == "skip"
         assert DecisionType.IMPORTED.value == "imported"
         assert DecisionType.DEFERRED_EVAL.value == "deferred_eval"
-
-    def test_post_format_values(self):
-        """PostFormat values are correct."""
-        assert PostFormat.SINGLE.value == "single"
-        assert PostFormat.THREAD.value == "thread"
-        assert PostFormat.QUOTE.value == "quote"
-        assert PostFormat.REPLY.value == "reply"
 
     def test_arc_statuses_frozenset(self):
         """ARC_STATUSES matches ArcStatus enum values."""
@@ -509,9 +501,9 @@ class TestDraftNewFields:
     """Tests for evaluator rework Draft fields."""
 
     def test_draft_to_row_column_count(self):
-        """Draft.to_row() returns 26-element tuple."""
+        """Draft.to_row() returns 28-element tuple (includes vehicle and reference_files)."""
         d = Draft(id="test", project_id="p", decision_id="d", platform="x", content="hello")
-        assert len(d.to_row()) == 26
+        assert len(d.to_row()) == 28
 
     def test_draft_intro_flag(self):
         """is_intro flag serializes correctly."""
@@ -522,18 +514,17 @@ class TestDraftNewFields:
         row = d.to_row()
         assert row[16] == 1  # is_intro position
 
-    def test_draft_post_format(self):
-        """post_format field round-trips."""
+    def test_draft_reference_type(self):
+        """reference_type field round-trips."""
         d = Draft(
             id="t",
             project_id="p",
             decision_id="d",
             platform="x",
             content="hi",
-            post_format="thread",
+            reference_type="quote",
         )
-        assert d.to_dict()["post_format"] == "thread"
-        assert d.to_row()[17] == "thread"
+        assert d.to_dict()["reference_type"] == "quote"
 
     def test_draft_from_dict_new_fields(self):
         """Draft.from_dict() parses new fields."""
@@ -544,12 +535,12 @@ class TestDraftNewFields:
             "platform": "x",
             "content": "hi",
             "is_intro": 1,
-            "post_format": "reply",
+            "reference_type": "reply",
             "reference_post_id": "post_abc",
         }
         d = Draft.from_dict(d_dict)
         assert d.is_intro is True
-        assert d.post_format == "reply"
+        assert d.reference_type == "reply"
         assert d.reference_post_id == "post_abc"
 
 
@@ -676,7 +667,7 @@ class TestStatusGroups:
 
     def test_terminal_statuses_values(self):
         """TERMINAL_STATUSES contains exactly the expected values."""
-        assert {"posted", "rejected", "cancelled", "superseded"} == TERMINAL_STATUSES
+        assert {"posted", "rejected", "cancelled", "superseded", "advisory"} == TERMINAL_STATUSES
 
     def test_pending_statuses_values(self):
         """PENDING_STATUSES contains exactly the expected values."""

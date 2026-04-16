@@ -418,6 +418,7 @@ class E2EHarness:
             project_id=project_id,
             decision_id=decision.id,
             platform=kwargs.pop("platform", "x"),
+            vehicle=kwargs.pop("vehicle", "single"),
             content=kwargs.pop("content", "E2E test draft content for social media."),
             status=status,
             media_paths=kwargs.pop("media_paths", []),
@@ -467,7 +468,7 @@ class E2EHarness:
             "SELECT id FROM drafts WHERE project_id = ?", (self.project_id,)
         ).fetchall():
             self.conn.execute("DELETE FROM draft_changes WHERE draft_id = ?", (draft_row[0],))
-            self.conn.execute("DELETE FROM draft_tweets WHERE draft_id = ?", (draft_row[0],))
+            self.conn.execute("DELETE FROM draft_parts WHERE draft_id = ?", (draft_row[0],))
         self.conn.execute("DELETE FROM posts WHERE project_id = ?", (self.project_id,))
         self.conn.execute("DELETE FROM drafts WHERE project_id = ?", (self.project_id,))
         self.conn.execute("DELETE FROM decisions WHERE project_id = ?", (self.project_id,))

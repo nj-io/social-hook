@@ -1,4 +1,4 @@
-"""Core pipeline models — Project, Decision, Draft, DraftTweet, DraftChange, Post, CommitInfo."""
+"""Core pipeline models — Project, Decision, Draft, DraftPart, DraftChange, Post, CommitInfo."""
 
 from __future__ import annotations
 
@@ -233,6 +233,18 @@ class Decision:
         )
 
 
+def _parse_reference_files(raw: Any) -> list[str] | None:
+    """Parse reference_files from DB (JSON string) or dict (list/None)."""
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        result = safe_json_loads(raw, "Draft.reference_files", default=None)
+        return result if isinstance(result, list) else None
+    return None
+
+
 @dataclass
 class Draft:
     """A content draft for posting."""
@@ -254,7 +266,9 @@ class Draft:
     retry_count: int = 0
     last_error: str | None = None
     is_intro: bool = False
-    post_format: str | None = None
+    vehicle: str = "single"
+    reference_type: str | None = None
+    reference_files: list[str] | None = None
     reference_post_id: str | None = None
     target_id: str | None = None
     evaluation_cycle_id: str | None = None
@@ -290,7 +304,9 @@ class Draft:
             "retry_count": self.retry_count,
             "last_error": self.last_error,
             "is_intro": self.is_intro,
-            "post_format": self.post_format,
+            "vehicle": self.vehicle,
+            "reference_type": self.reference_type,
+            "reference_files": self.reference_files,
             "reference_post_id": self.reference_post_id,
             "target_id": self.target_id,
             "evaluation_cycle_id": self.evaluation_cycle_id,
@@ -338,7 +354,9 @@ class Draft:
             retry_count=d.get("retry_count", 0),
             last_error=d.get("last_error"),
             is_intro=bool(d.get("is_intro", False)),
-            post_format=d.get("post_format"),
+            vehicle=d.get("vehicle", "single"),
+            reference_type=d.get("reference_type"),
+            reference_files=_parse_reference_files(d.get("reference_files")),
             reference_post_id=d.get("reference_post_id"),
             target_id=d.get("target_id"),
             evaluation_cycle_id=d.get("evaluation_cycle_id"),
@@ -352,7 +370,7 @@ class Draft:
         )
 
     def to_row(self) -> tuple:
-        """Return tuple for INSERT (26 columns)."""
+        """Return tuple for INSERT (28 columns)."""
         import json
 
         return (
@@ -373,7 +391,9 @@ class Draft:
             self.retry_count,
             self.last_error,
             1 if self.is_intro else 0,
-            self.post_format,
+            self.vehicle,
+            self.reference_type,
+            json.dumps(self.reference_files) if self.reference_files is not None else None,
             self.reference_post_id,
             self.target_id,
             self.evaluation_cycle_id,
@@ -386,7 +406,7 @@ class Draft:
 
 
 @dataclass
-class DraftTweet:
+class DraftPart:
     """Individual tweet in a thread."""
 
     id: str
@@ -411,10 +431,10 @@ class DraftTweet:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> DraftTweet:
+    def from_dict(cls, d: dict[str, Any]) -> DraftPart:
         media_paths = d.get("media_paths", [])
         if isinstance(media_paths, str):
-            media_paths = safe_json_loads(media_paths, "DraftTweet.media_paths", default=[])
+            media_paths = safe_json_loads(media_paths, "DraftPart.media_paths", default=[])
         return cls(
             id=d["id"],
             draft_id=d["draft_id"],
@@ -588,3 +608,26 @@ class CommitInfo:
     deletions: int = 0
     timestamp: str | None = None  # ISO 8601 author date of this commit
     parent_timestamp: str | None = None  # ISO 8601 author date of parent commit
+
+    @classmethod
+    def from_operator_input(
+        cls,
+        idea: str,
+        reference_context: str = "",
+        trigger_id: str | None = None,
+    ) -> CommitInfo:
+        """Factory for non-git (operator-initiated) content creation.
+
+        Each call produces a unique hash for the UNIQUE(project_id, commit_hash)
+        constraint. Replaces scattered synthetic CommitInfo patterns.
+        """
+        from social_hook.filesystem import generate_id
+
+        return cls(
+            hash=trigger_id or generate_id("op"),
+            message=idea,
+            diff=reference_context,
+            files_changed=[],
+            insertions=0,
+            deletions=0,
+        )

@@ -37,9 +37,9 @@ def run_summary_trigger(
 
     Returns draft info dict or None on failure.
     """
-    from social_hook.compat import make_eval_compat
     from social_hook.config.project import load_project_config
-    from social_hook.drafting import draft_for_platforms
+    from social_hook.drafting import draft
+    from social_hook.drafting_intents import intent_from_platforms
 
     project_config = load_project_config(repo_path)
 
@@ -83,7 +83,7 @@ def run_summary_trigger(
             ),
         },
     )
-    eval_compat = make_eval_compat(evaluation, "draft")
+    intent = intent_from_platforms(evaluation, decision.id, config)
 
     # Draft
     db.emit_data_event("pipeline", PipelineStage.DRAFTING, "summary", project.id)
@@ -96,15 +96,14 @@ def run_summary_trigger(
     )
 
     try:
-        draft_results = draft_for_platforms(
-            config=config,
-            conn=conn,
-            db=db,
-            project=project,
-            decision_id=decision.id,
-            evaluation=eval_compat,
-            context=context,
-            commit=commit,
+        draft_results = draft(
+            intent,
+            config,
+            conn,
+            db,
+            project,
+            context,
+            commit,
             project_config=project_config,
             verbose=verbose,
         )

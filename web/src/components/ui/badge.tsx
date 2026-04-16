@@ -7,6 +7,7 @@ const variantStyles: Record<string, Record<string, string>> = {
     rejected: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
     failed: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
     cancelled: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+    advisory: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
   },
   decision: {
     draft: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",

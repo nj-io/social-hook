@@ -963,7 +963,11 @@ from social_hook.cli.setup import app as setup_app
 from social_hook.cli.test_cmd import app as test_app
 
 # Project commands: register, unregister, list
-app.add_typer(project_app, name="project", help="Project management.")
+app.add_typer(
+    project_app,
+    name="project",
+    help="Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained.",
+)
 
 # Inspection commands: log, pending, usage
 app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
@@ -978,7 +982,11 @@ app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
 app.add_typer(test_app, name="test", help="Test commit evaluation.")
 
 # Journey capture commands: on, off, status
-app.add_typer(journey_app, name="journey", help="Development Journey capture.")
+app.add_typer(
+    journey_app,
+    name="journey",
+    help="Control Development Journey capture. When enabled, Claude Code hooks record session narratives that feed into the evaluation pipeline as rich development context.",
+)
 
 # Config commands: show, get, set
 app.add_typer(config_app, name="config", help="View and modify configuration.")
@@ -1009,6 +1017,7 @@ from social_hook.cli.snapshot import app as snapshot_app
 app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
 
 from social_hook.cli.account import app as account_app
+from social_hook.cli.advisory import app as advisory_app
 from social_hook.cli.brief import app as brief_app
 from social_hook.cli.content import app as content_app
 from social_hook.cli.credentials import app as credentials_app
@@ -1058,6 +1067,13 @@ app.add_typer(
     brief_app,
     name="brief",
     help="View and edit the project brief used by the evaluator and drafter.",
+)
+
+# Advisory items: list, complete, dismiss, create
+app.add_typer(
+    advisory_app,
+    name="advisory",
+    help="Manage advisory items — operator action items for manual tasks.",
 )
 
 # Content suggestions: suggest, list, dismiss, combine, hero-launch

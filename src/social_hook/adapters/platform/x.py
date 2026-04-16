@@ -11,7 +11,6 @@ from social_hook.adapters.models import (
     PostReference,
     PostResult,
     ReferenceType,
-    ThreadResult,
 )
 from social_hook.adapters.platform.base import PlatformAdapter
 from social_hook.adapters.rate_limit import RateLimitState, handle_rate_limit
@@ -147,7 +146,7 @@ class XAdapter(PlatformAdapter):
 
         return self._post_tweet(body)
 
-    def post_thread(self, tweets: list[dict], dry_run: bool = False) -> ThreadResult:
+    def post_thread(self, tweets: list[dict], dry_run: bool = False) -> PostResult:
         """Post a thread of connected tweets.
 
         Uses atomic failure: stops on first error, returns partial results.
@@ -157,7 +156,7 @@ class XAdapter(PlatformAdapter):
             dry_run: If True, return simulated success
 
         Returns:
-            ThreadResult with per-tweet results
+            PostResult with part_results for per-tweet results
 
         Raises:
             ValueError: If tweets list is empty
@@ -183,9 +182,9 @@ class XAdapter(PlatformAdapter):
                         error=f"Tweet {i + 1} exceeds {X_CHAR_LIMIT} characters",
                     )
                 )
-                return ThreadResult(
+                return PostResult(
                     success=False,
-                    tweet_results=results,
+                    part_results=results,
                     error=f"Tweet {i + 1} failed: content too long",
                 )
 
@@ -203,15 +202,15 @@ class XAdapter(PlatformAdapter):
 
             if not result.success:
                 # Atomic failure: stop and return
-                return ThreadResult(
+                return PostResult(
                     success=False,
-                    tweet_results=results,
+                    part_results=results,
                     error=f"Tweet {i + 1} failed: {result.error}",
                 )
 
             reply_to_id = result.external_id
 
-        return ThreadResult(success=True, tweet_results=results)
+        return PostResult(success=True, part_results=results)
 
     def post_with_reference(
         self,
@@ -259,9 +258,9 @@ class XAdapter(PlatformAdapter):
         return ref_type in (ReferenceType.REPLY, ReferenceType.QUOTE, ReferenceType.LINK)
 
     def capabilities(self) -> list[PostCapability]:
-        from social_hook.adapters.models import QUOTE, REPLY, SINGLE_POST, THREAD
+        from social_hook.adapters.models import ARTICLE, QUOTE, REPLY, SINGLE, THREAD
 
-        return [SINGLE_POST, THREAD, QUOTE, REPLY]
+        return [SINGLE, THREAD, ARTICLE, QUOTE, REPLY]
 
     def supports_threads(self) -> bool:
         return True

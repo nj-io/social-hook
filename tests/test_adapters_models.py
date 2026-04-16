@@ -12,8 +12,8 @@ from social_hook.adapters.models import (
     QUOTE,
     REPLY,
     RESHARE,
+    SINGLE,
     SINGLE_IMAGE,
-    SINGLE_POST,
     THREAD,
     VIDEO,
     MediaMode,
@@ -22,7 +22,6 @@ from social_hook.adapters.models import (
     PostReference,
     PostResult,
     ReferenceType,
-    ThreadResult,
 )
 from social_hook.adapters.platform.base import PlatformAdapter
 
@@ -47,7 +46,7 @@ class TestPlatformAdapterABC:
                 return PostResult(success=True)
 
             def post_thread(self, tweets, dry_run=False):
-                return ThreadResult(success=True)
+                return PostResult(success=True)
 
             def delete(self, external_id):
                 return True
@@ -81,7 +80,7 @@ class TestPlatformAdapterABC:
                 return PostResult(success=True, external_id="123")
 
             def post_thread(self, tweets, dry_run=False):
-                return ThreadResult(success=True)
+                return PostResult(success=True)
 
             def delete(self, external_id):
                 return True
@@ -97,14 +96,14 @@ class TestPlatformAdapterABC:
         assert isinstance(result, PostResult)
 
     def test_post_thread_signature(self):
-        """post_thread() accepts tweets list and returns ThreadResult."""
+        """post_thread() accepts tweets list and returns PostResult."""
 
         class FakeAdapter(PlatformAdapter):
             def post(self, content, media_paths=None, dry_run=False):
                 return PostResult(success=True)
 
             def post_thread(self, tweets, dry_run=False):
-                return ThreadResult(success=True, tweet_results=[])
+                return PostResult(success=True, part_results=[])
 
             def delete(self, external_id):
                 return True
@@ -117,7 +116,7 @@ class TestPlatformAdapterABC:
 
         adapter = FakeAdapter()
         result = adapter.post_thread([{"content": "test"}])
-        assert isinstance(result, ThreadResult)
+        assert isinstance(result, PostResult)
 
     def test_get_rate_limit_status_returns_dict(self):
         """get_rate_limit_status() returns dict with rate info."""
@@ -127,7 +126,7 @@ class TestPlatformAdapterABC:
                 return PostResult(success=True)
 
             def post_thread(self, tweets, dry_run=False):
-                return ThreadResult(success=True)
+                return PostResult(success=True)
 
             def delete(self, external_id):
                 return True
@@ -150,7 +149,7 @@ class TestPlatformAdapterABC:
                 return PostResult(success=True)
 
             def post_thread(self, tweets, dry_run=False):
-                return ThreadResult(success=True)
+                return PostResult(success=True)
 
             def delete(self, external_id):
                 return True
@@ -216,7 +215,7 @@ class TestMediaAdapterABC:
 
 
 class TestDataclasses:
-    """PostResult, ThreadResult, MediaResult field access."""
+    """PostResult and MediaResult field access."""
 
     def test_post_result_defaults(self):
         """PostResult optional fields default to None."""
@@ -243,16 +242,16 @@ class TestDataclasses:
         assert pr.error == "Content too long"
 
     def test_thread_result_with_tweets(self):
-        """ThreadResult stores list of PostResults."""
+        """PostResult stores list of PostResults."""
         tweets = [PostResult(success=True, external_id=str(i)) for i in range(4)]
-        tr = ThreadResult(success=True, tweet_results=tweets)
-        assert len(tr.tweet_results) == 4
-        assert tr.tweet_results[0].external_id == "0"
+        tr = PostResult(success=True, part_results=tweets)
+        assert len(tr.part_results) == 4
+        assert tr.part_results[0].external_id == "0"
 
-    def test_thread_result_default_empty_list(self):
-        """ThreadResult tweet_results defaults to empty list."""
-        tr = ThreadResult(success=False, error="Failed")
-        assert tr.tweet_results == []
+    def test_thread_result_default_none(self):
+        """PostResult part_results defaults to None."""
+        tr = PostResult(success=False, error="Failed")
+        assert tr.part_results is None
 
     def test_media_result_with_path(self):
         """MediaResult stores file_path."""
@@ -321,7 +320,7 @@ class TestPlatformAdapterLinkFallback:
                 return PostResult(success=True, external_id="base_post")
 
             def post_thread(self, tweets, dry_run=False):
-                return ThreadResult(success=True)
+                return PostResult(success=True)
 
             def delete(self, external_id):
                 return True
@@ -407,8 +406,8 @@ class TestPostCapability:
 
     def test_post_capability_equality(self):
         """Two PostCapability instances with same values are equal."""
-        a = PostCapability("single_post", (SINGLE_IMAGE,))
-        b = PostCapability("single_post", (SINGLE_IMAGE,))
+        a = PostCapability("single", (SINGLE_IMAGE,))
+        b = PostCapability("single", (SINGLE_IMAGE,))
         assert a == b
 
     def test_single_image_identity(self):
@@ -423,15 +422,15 @@ class TestPostCapability:
         assert GIF is not None
         assert VIDEO is not None
         # Capabilities
-        assert SINGLE_POST is not None
+        assert SINGLE is not None
         assert THREAD is not None
         assert QUOTE is not None
         assert REPLY is not None
         assert RESHARE is not None
 
     def test_single_post_media_modes(self):
-        """SINGLE_POST includes SINGLE_IMAGE, MULTI_IMAGE, GIF."""
-        assert SINGLE_POST.media_modes == (SINGLE_IMAGE, MULTI_IMAGE, GIF)
+        """SINGLE includes SINGLE_IMAGE, MULTI_IMAGE, GIF."""
+        assert SINGLE.media_modes == (SINGLE_IMAGE, MULTI_IMAGE, GIF)
 
     def test_thread_media_modes(self):
         """THREAD includes SINGLE_IMAGE, GIF."""

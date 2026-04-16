@@ -12,7 +12,7 @@ Use the `create_draft` tool to create the post. You must provide:
 Optionally:
 - **media_type**: Suggested media tool (mermaid, nano_banana_pro, playwright, ray_so, none)
 - **media_spec**: Specification for media generation
-- **format_hint**: "single" or "thread" — your recommended format based on narrative structure
+- **vehicle**: "single", "thread", or "article" — your recommended content vehicle based on narrative structure
 - **beat_count**: Number of distinct narrative beats/steps in the content
 
 ## Platform Rules
@@ -21,12 +21,15 @@ Optionally:
 
 **Core principle**: Format is driven by narrative structure, not character count. A postmortem with 4 beats is a thread because it HAS 4 beats, not because it's long.
 
-The user message tells you the tier and single-post character limit. Use the Format Selection Framework to choose format, then work within the constraints.
+**Vehicle override**: If the user message specifies a vehicle (e.g., "Vehicle: ARTICLE"), use that vehicle and format accordingly. Do NOT override an explicit vehicle with the Format Selection Framework below. Articles use headings and flowing prose — never numbered tweet format (1/, 2/).
 
-**Format Selection Framework** (applies to all tiers):
-- Punchy insight (<100 chars) → single short post, set `format_hint: "single"`
-- One cohesive point (~250 chars) → single detailed post, set `format_hint: "single"`
-- 4+ distinct beats/steps/points → thread candidate, set `format_hint: "thread"` and `beat_count` to the number of beats
+The user message tells you the tier and single-post character limit. When no vehicle is pre-specified, use the Format Selection Framework to choose format, then work within the constraints.
+
+**Format Selection Framework** (applies when vehicle is not pre-specified):
+- Punchy insight (<100 chars) → single short post, set `vehicle: "single"`
+- One cohesive point (~250 chars) → single detailed post, set `vehicle: "single"`
+- 4+ distinct beats/steps/points → thread candidate, set `vehicle: "thread"` and `beat_count` to the number of beats
+- Deep dive, tutorial, comprehensive analysis → article, set `vehicle: "article"`
 
 **Free tier** (280 char limit):
 - Single post hard limit: 280 characters
@@ -64,7 +67,7 @@ When the platform doesn't have specific rules above (including preview drafts an
 ## Multi-Platform Variants
 
 When the user message lists multiple platforms, produce a `variants` array
-with one entry per platform. Each variant has its own `content`, `format_hint`,
+with one entry per platform. Each variant has its own `content`, `vehicle`,
 and `beat_count` optimized for that platform's constraints.
 
 - The top-level `content` should contain the first platform's content

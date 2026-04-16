@@ -5,7 +5,7 @@ Tests cover:
 - increment_arc_post_count() business logic
 - trigger.py arc creation and post count wiring
 - update_decision arc_id parameter
-- draft_for_platforms() arc_context wiring
+- draft() arc_context wiring
 """
 
 from datetime import datetime
@@ -472,7 +472,7 @@ class TestEvaluatorPromptArcInstructions:
 
 
 class TestDraftingArcContext:
-    """Tests that draft_for_platforms() passes arc_context to drafter."""
+    """Tests that draft() passes arc_context to drafter."""
 
     @patch("social_hook.drafting.calculate_optimal_time")
     def test_arc_context_passed_when_arc_id_set(
@@ -480,9 +480,9 @@ class TestDraftingArcContext:
         mock_schedule,
         temp_db,
     ):
-        """When evaluation has arc_id, arc_context kwarg is passed to drafter."""
+        """When intent has arc_id, arc_context kwarg is passed to drafter."""
         from social_hook.config.yaml import Config
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import DraftingIntent, PlatformSpec, draft
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.schemas import CreateDraftInput
         from social_hook.models.context import ProjectContext
@@ -492,9 +492,6 @@ class TestDraftingArcContext:
         # Set up project and arc
         project = _setup_project(temp_db)
         arc_id = create_arc(temp_db, project.id, "Auth system build")
-
-        # Create evaluation with arc_id
-        evaluation = _make_evaluation(arc_id=arc_id)
 
         # Decision
         decision = Decision(
@@ -506,6 +503,24 @@ class TestDraftingArcContext:
             arc_id=arc_id,
         )
         ops.insert_decision(temp_db, decision)
+
+        # Build DraftingIntent with arc_id
+        resolved = MagicMock()
+        resolved.name = "preview"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        resolved.filter = "all"
+        intent = DraftingIntent(
+            decision_id=decision.id,
+            decision="draft",
+            reasoning="Test",
+            angle="Test angle",
+            arc_id=arc_id,
+            platforms=[PlatformSpec(platform="preview", resolved=resolved)],
+        )
 
         # Commit
         commit = CommitInfo(
@@ -557,15 +572,14 @@ class TestDraftingArcContext:
         ):
             mock_create_client.return_value = MagicMock()
 
-            draft_for_platforms(
+            draft(
+                intent,
                 config,
                 temp_db,
                 db,
                 project,
-                decision_id=decision.id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit,
+                context,
+                commit,
             )
 
             # Verify create_draft was called with arc_context
@@ -586,9 +600,9 @@ class TestDraftingArcContext:
         mock_schedule,
         temp_db,
     ):
-        """When evaluation has no arc_id, arc_context is None."""
+        """When intent has no arc_id, arc_context is None."""
         from social_hook.config.yaml import Config
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import DraftingIntent, PlatformSpec, draft
         from social_hook.llm.dry_run import DryRunContext
         from social_hook.llm.schemas import CreateDraftInput
         from social_hook.models.context import ProjectContext
@@ -596,10 +610,6 @@ class TestDraftingArcContext:
         from social_hook.scheduling import ScheduleResult
 
         project = _setup_project(temp_db)
-        evaluation = _make_evaluation(
-            arc_id=None,
-            post_category="opportunistic",
-        )
 
         decision = Decision(
             id="dec_draft2",
@@ -609,6 +619,24 @@ class TestDraftingArcContext:
             reasoning="Test",
         )
         ops.insert_decision(temp_db, decision)
+
+        resolved = MagicMock()
+        resolved.name = "preview"
+        resolved.account_tier = "free"
+        resolved.max_posts_per_day = 3
+        resolved.min_gap_minutes = 30
+        resolved.optimal_days = []
+        resolved.optimal_hours = []
+        resolved.filter = "all"
+        intent = DraftingIntent(
+            decision_id=decision.id,
+            decision="draft",
+            reasoning="Test",
+            angle="Test angle",
+            arc_id=None,
+            post_category="opportunistic",
+            platforms=[PlatformSpec(platform="preview", resolved=resolved)],
+        )
 
         commit = CommitInfo(
             hash="def456",
@@ -656,15 +684,14 @@ class TestDraftingArcContext:
         ):
             mock_create_client.return_value = MagicMock()
 
-            draft_for_platforms(
+            draft(
+                intent,
                 config,
                 temp_db,
                 db,
                 project,
-                decision_id=decision.id,
-                evaluation=evaluation,
-                context=context,
-                commit=commit,
+                context,
+                commit,
             )
 
             mock_create_draft.assert_called_once()

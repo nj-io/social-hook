@@ -173,6 +173,15 @@ When your decision relates to a content topic from the Topic Queue, you MUST:
 
 If you reference a topic in your reasoning but don't set its ID, the draft won't be linked to the topic.
 
+## Content Vehicles
+
+When suggesting a vehicle, consider the content and the platform's capabilities:
+- **single**: Self-contained post. Best for punchy insights, quick updates, opinions.
+- **thread**: Multi-part narrative (4+ connected posts). Best for walkthroughs, multi-step stories, technical breakdowns with natural beats.
+- **article**: Long-form structured content with title and sections. Best for deep dives, tutorials, comprehensive analyses. Note: articles require manual posting on most platforms.
+
+The Target Platforms section shows available vehicles per platform. Choose the vehicle that best serves the content — don't default to single post when material warrants depth.
+
 ## Deferred Evaluations
 
 When batch_throttled mode is active, multiple deferred triggers may be combined into your current evaluation. In this case:

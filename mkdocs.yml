@@ -68,6 +68,7 @@ nav:
     - Overview: cli/index.md
     - Commands: cli/root-commands.md
     - account: cli/account.md
+    - advisory: cli/advisory.md
     - arc: cli/arc.md
     - bot: cli/bot.md
     - brief: cli/brief.md

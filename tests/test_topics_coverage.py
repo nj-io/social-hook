@@ -314,7 +314,11 @@ class TestForceDraftTopicTargetsPath:
             patch("social_hook.llm.factory.create_client", return_value=MagicMock()),
             patch("social_hook.llm.evaluator.Evaluator", return_value=mock_evaluator),
             patch("social_hook.routing.route_to_targets", return_value=[mock_routed]) as mock_route,
-            patch("social_hook.drafting.draft_for_targets") as mock_draft,
+            patch(
+                "social_hook.drafting_intents.intent_from_routed_targets",
+                return_value=[MagicMock()],
+            ),
+            patch("social_hook.drafting.draft") as mock_draft,
         ):
             result = force_draft_topic(
                 conn=temp_db,

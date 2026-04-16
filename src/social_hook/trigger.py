@@ -580,21 +580,20 @@ def run_trigger(
 
     # 9. If draftable, create drafts per platform
     if is_draftable(decision.decision):
-        from social_hook.compat import make_eval_compat
-        from social_hook.drafting import draft_for_platforms
+        from social_hook.drafting import draft
+        from social_hook.drafting_intents import intent_from_platforms
 
         db.emit_data_event("pipeline", PipelineStage.DRAFTING, commit_hash[:8], project.id)
-        eval_compat = make_eval_compat(evaluation, decision.decision)
+        intent = intent_from_platforms(evaluation, decision.id, config)
 
-        draft_results = draft_for_platforms(
+        draft_results = draft(
+            intent,
             config,
             conn,
             db,
             project,
-            decision_id=decision.id,
-            evaluation=eval_compat,
-            context=context,
-            commit=commit,
+            context,
+            commit,
             project_config=project_config,
             dry_run=dry_run,
             verbose=verbose,
@@ -788,6 +787,7 @@ def _run_targets_path(
         evaluator_client=evaluator_client,
         dry_run=ctx.dry_run,
         verbose=ctx.verbose,
+        analyzer_result=analyzer_result,
     )
 
     # Tag-to-topic matching: increment commit counts and record junction
@@ -1003,7 +1003,8 @@ def _run_targets_path(
     # Route per-strategy decisions to per-target actions and draft
     if is_draftable(decision.decision):
         from social_hook.content_sources import content_sources
-        from social_hook.drafting import draft_for_targets
+        from social_hook.drafting import draft as run_draft
+        from social_hook.drafting_intents import intent_from_routed_targets
         from social_hook.routing import route_to_targets
 
         ctx.db.emit_data_event("pipeline", PipelineStage.DRAFTING, commit_hash[:8], ctx.project.id)
@@ -1014,22 +1015,32 @@ def _run_targets_path(
         draftable_actions = [a for a in target_actions if a.action == "draft"]
 
         if draftable_actions:
-            draft_results = draft_for_targets(
+            intents = intent_from_routed_targets(
                 draftable_actions,
+                decision.id,
+                evaluation,
                 ctx.config,
                 ctx.conn,
-                ctx.db,
-                ctx.project,
-                decision_id=decision.id,
-                evaluation=evaluation,
-                context=context,
-                commit=ctx.commit,
+                project_id=ctx.project.id,
                 content_source_registry=content_sources,
-                project_config=ctx.project_config,
-                dry_run=ctx.dry_run,
-                verbose=ctx.verbose,
                 cycle_id=cycle.id,
             )
+            draft_results = []
+            for _intent in intents:
+                draft_results.extend(
+                    run_draft(
+                        _intent,
+                        ctx.config,
+                        ctx.conn,
+                        ctx.db,
+                        ctx.project,
+                        context,
+                        ctx.commit,
+                        project_config=ctx.project_config,
+                        dry_run=ctx.dry_run,
+                        verbose=ctx.verbose,
+                    )
+                )
 
             # Increment arc post count if drafts were created for an arc
             if draft_results and decision.arc_id:
@@ -1095,8 +1106,6 @@ def _run_targets_path(
 # Backward-compatible re-exports — tests import these from trigger.py
 from social_hook.drafting import (  # noqa: E402, F401
     _generate_media,
-    _needs_thread,
-    _parse_thread_tweets,
 )
 from social_hook.trigger_secondary import (  # noqa: E402, F401
     run_suggestion_trigger,
@@ -1104,6 +1113,5 @@ from social_hook.trigger_secondary import (  # noqa: E402, F401
 )
 from social_hook.trigger_side_effects import (  # noqa: E402, F401
     _build_merge_commit,
-    _build_merge_evaluation,
     _execute_merge_groups,
 )

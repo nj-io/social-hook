@@ -54,37 +54,6 @@ def _get_conn():
     return init_database(get_db_path())
 
 
-def _resync_thread_tweets(conn, draft_id: str, new_content: str) -> None:
-    """Re-split content into draft_tweets if the draft has an existing thread.
-
-    Called after content edits to keep draft_tweets in sync. If the draft
-    has no existing tweets, this is a no-op. Uses _parse_thread_tweets()
-    which is platform-agnostic (string parsing only, no LLM call).
-    """
-    from social_hook.db import operations as ops
-    from social_hook.drafting import _parse_thread_tweets
-    from social_hook.filesystem import generate_id
-    from social_hook.models.core import DraftTweet
-
-    existing = ops.get_draft_tweets(conn, draft_id)
-    if not existing:
-        return
-
-    # Re-parse with thread_min=1 so any split result replaces the old tweets,
-    # even if the new content has fewer parts than the original thread.
-    parts = _parse_thread_tweets(new_content, thread_min=1)
-    new_tweets = [
-        DraftTweet(
-            id=generate_id("tweet"),
-            draft_id=draft_id,
-            position=i,
-            content=part,
-        )
-        for i, part in enumerate(parts)
-    ]
-    ops.replace_draft_tweets(conn, draft_id, new_tweets)
-
-
 def _build_system_snapshot(conn, project_id: str | None, config, arcs=None) -> str:
     """Build a compact system status block for Gatekeeper context.
 
@@ -577,6 +546,13 @@ def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
             )
             return
 
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            handle_advisory_approval(conn, draft, config, scheduled_time=text.strip())
+            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` → advisory (due {text.strip()}).")
+            return
+
         update_draft(conn, draft_id, status="scheduled", scheduled_time=text.strip())
         ops.emit_data_event(conn, "draft", "scheduled", draft_id, draft.project_id)
         _send(adapter, chat_id, f"Draft `{draft_id[:12]}` scheduled for {text.strip()}")
@@ -766,24 +742,49 @@ def _apply_expert_result(
     from social_hook.filesystem import generate_id
     from social_hook.models.core import DraftChange
 
-    if not result.refined_content and not result.refined_media_spec:
+    refined_vehicle = getattr(result, "refined_vehicle", None)
+    if not result.refined_content and not result.refined_media_spec and not refined_vehicle:
         return False
 
     if result.refined_content:
         old_content = draft.content
         update_draft(conn, draft.id, content=result.refined_content)
-        _resync_thread_tweets(conn, draft.id, result.refined_content)
         insert_draft_change(
             conn,
             DraftChange(
                 id=generate_id("change"),
                 draft_id=draft.id,
                 field="content",
-                old_value=old_content[:200],
-                new_value=result.refined_content[:200],
+                old_value=old_content,
+                new_value=result.refined_content,
                 changed_by="expert",
             ),
         )
+
+    if refined_vehicle and refined_vehicle != draft.vehicle:
+        old_vehicle = draft.vehicle
+        update_draft(conn, draft.id, vehicle=refined_vehicle)
+        insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft.id,
+                field="vehicle",
+                old_value=old_vehicle,
+                new_value=refined_vehicle,
+                changed_by="expert",
+            ),
+        )
+
+    # Materialize once at the end with final vehicle + content
+    if result.refined_content or refined_vehicle:
+        from social_hook.db import get_draft as _get_draft
+        from social_hook.vehicle import rematerialize_draft_parts
+
+        # Refresh draft to get final state after updates
+        updated_draft = _get_draft(conn, draft.id) or draft
+        final_content = result.refined_content or draft.content
+        rematerialize_draft_parts(conn, updated_draft, final_content)
 
     if result.refined_media_spec:
         import json as json_mod
@@ -795,8 +796,8 @@ def _apply_expert_result(
                 id=generate_id("change"),
                 draft_id=draft.id,
                 field="media_spec",
-                old_value=json_mod.dumps(draft.media_spec)[:200] if draft.media_spec else "null",
-                new_value=json_mod.dumps(result.refined_media_spec)[:200],
+                old_value=json_mod.dumps(draft.media_spec) if draft.media_spec else "null",
+                new_value=json_mod.dumps(result.refined_media_spec),
                 changed_by="expert",
             ),
         )
@@ -936,14 +937,17 @@ def _save_edit(
 
         old_content = draft.content
         update_draft(conn, draft_id, content=new_content)
-        _resync_thread_tweets(conn, draft_id, new_content)
+
+        from social_hook.vehicle import rematerialize_draft_parts
+
+        rematerialize_draft_parts(conn, draft, new_content)
 
         change = DraftChange(
             id=generate_id("change"),
             draft_id=draft_id,
             field="content",
-            old_value=old_content[:200],
-            new_value=new_content[:200],
+            old_value=old_content,
+            new_value=new_content,
             changed_by=changed_by,
         )
         insert_draft_change(conn, change)
@@ -1410,7 +1414,7 @@ def cmd_review(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
 
     conn = _get_conn()
     try:
-        from social_hook.db import get_decision, get_draft, get_draft_tweets, get_project
+        from social_hook.db import get_decision, get_draft, get_draft_parts, get_project
 
         draft = get_draft(conn, draft_id)
         if not draft:
@@ -1426,9 +1430,9 @@ def cmd_review(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
         commit_hash = decision.commit_hash[:8] if decision else "unknown"
         commit_message = f"[{decision.commit_hash[:8]}]" if decision else ""
 
-        tweets = get_draft_tweets(conn, draft.id)
-        is_thread = bool(tweets)
-        tweet_count = len(tweets) if is_thread else None
+        parts = get_draft_parts(conn, draft.id)
+        is_thread = bool(parts)
+        part_count = len(parts) if is_thread else None
 
         suggested_time_str = None
         if draft.suggested_time:
@@ -1444,10 +1448,11 @@ def cmd_review(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
             draft_id=draft.id,
             char_count=len(draft.content),
             is_thread=is_thread,
-            tweet_count=tweet_count,
+            part_count=part_count,
             post_category=decision.post_category if decision else None,
             angle=decision.angle if decision else None,
             evaluator_reasoning=decision.reasoning if decision else None,
+            vehicle=getattr(draft, "vehicle", None),
         )
         buttons = get_review_buttons_normalized(
             draft.id, platform=draft.platform, preview_mode=draft.preview_mode
@@ -1491,7 +1496,18 @@ def cmd_approve(adapter: MessagingAdapter, chat_id: str, args: str, config: Any)
             _send(adapter, chat_id, f"Cannot approve draft with status: {draft.status}")
             return
 
+        from social_hook.db import operations as ops
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            handle_advisory_approval(conn, draft, config)
+            _send(
+                adapter, chat_id, f"Draft `{draft_id[:12]}` → advisory (requires manual posting)."
+            )
+            return
+
         update_draft(conn, draft_id, status="approved")
+        ops.emit_data_event(conn, "draft", "approved", draft_id, draft.project_id)
         _send(adapter, chat_id, f"Draft `{draft_id[:12]}` approved.")
     finally:
         conn.close()

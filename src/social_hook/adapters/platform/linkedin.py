@@ -12,7 +12,6 @@ from social_hook.adapters.models import (
     PostReference,
     PostResult,
     ReferenceType,
-    ThreadResult,
 )
 from social_hook.adapters.platform.base import PlatformAdapter
 from social_hook.adapters.rate_limit import RateLimitState, handle_rate_limit
@@ -320,7 +319,7 @@ class LinkedInAdapter(PlatformAdapter):
 
         return self._post_to_api(body, "post")
 
-    def post_thread(self, tweets: list[dict], dry_run: bool = False) -> ThreadResult:
+    def post_thread(self, tweets: list[dict], dry_run: bool = False) -> PostResult:
         """LinkedIn does not support threads.
 
         Args:
@@ -328,11 +327,10 @@ class LinkedInAdapter(PlatformAdapter):
             dry_run: If True, return simulated failure
 
         Returns:
-            ThreadResult with error message
+            PostResult with error message
         """
-        return ThreadResult(
+        return PostResult(
             success=False,
-            tweet_results=[],
             error="LinkedIn does not support threads",
         )
 
@@ -398,9 +396,9 @@ class LinkedInAdapter(PlatformAdapter):
         return ref_type in (ReferenceType.QUOTE, ReferenceType.LINK)
 
     def capabilities(self) -> list[PostCapability]:
-        from social_hook.adapters.models import RESHARE, SINGLE_POST
+        from social_hook.adapters.models import ARTICLE, RESHARE, SINGLE
 
-        return [SINGLE_POST, RESHARE]
+        return [SINGLE, ARTICLE, RESHARE]
 
     def supports_threads(self) -> bool:
         return False

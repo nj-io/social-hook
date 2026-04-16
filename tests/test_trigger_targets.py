@@ -373,7 +373,8 @@ class TestTargetsPathIntegration:
 
         with (
             patch("social_hook.routing.route_to_targets", return_value=[mock_routed]),
-            patch("social_hook.drafting.draft_for_targets", return_value=[]),
+            patch("social_hook.drafting_intents.intent_from_routed_targets", return_value=[]),
+            patch("social_hook.drafting.draft", return_value=[]),
             patch("social_hook.db.operations.get_held_decisions", return_value=[]),
         ):
             from social_hook.llm.dry_run import DryRunContext

@@ -48,6 +48,7 @@ class Drafter:
         db: Any,
         platform: str = "x",
         tier: str = "free",
+        vehicle: str | None = None,
         arc_context: dict[str, Any] | None = None,
         config: ContextConfig | None = None,
         platform_config: Optional["ResolvedPlatformConfig"] = None,
@@ -62,8 +63,9 @@ class Drafter:
         first_post_date: str | None = None,
         content_source_context: dict[str, str] | None = None,
         platform_intro_states: dict[str, dict] | None = None,
+        project_docs_text: str | None = None,
     ) -> CreateDraftInput:
-        """Create a draft post for a post-worthy commit.
+        """Create a draft post for a post-worthy commit (1-pass, all vehicles).
 
         Args:
             decision: Evaluation decision (evaluation result)
@@ -72,12 +74,21 @@ class Drafter:
             db: Database context for usage logging
             platform: Target platform (x, linkedin)
             tier: Account tier (free, premium, premium_plus)
+            vehicle: Content vehicle preference ("single", "thread", "article", or None)
             arc_context: Arc metadata + posts (when post_category == 'arc')
             config: Context config for doc inclusion
-            platform_config: Resolved platform configuration (when provided,
-                builds platform-specific instructions from config)
+            platform_config: Resolved platform configuration
+            platform_configs: Multiple platform configs for shared group calls
             media_config: Media generation config (enabled tools)
             media_guidance: Per-tool content guidance
+            referenced_posts: Posts to reference in the draft
+            platform_introduced: Whether this platform has been introduced
+            identity: Resolved IdentityConfig for this platform
+            target_post_count: Posts published on this platform
+            is_first_post: Whether this is the first post
+            first_post_date: Earliest posted_at for this platform
+            content_source_context: Resolved content source context
+            platform_intro_states: Per-platform intro state for shared groups
 
         Returns:
             Validated CreateDraftInput from the LLM
@@ -103,6 +114,7 @@ class Drafter:
             is_first_post=is_first_post,
             first_post_date=first_post_date,
             content_source_context=content_source_context,
+            project_docs_text=project_docs_text,
         )
 
         # Build narrative-aware user message
@@ -133,6 +145,28 @@ class Drafter:
                 "project documentation in the system prompt for context.\n"
             )
 
+        # Vehicle-specific instructions injected into user message
+        vehicle_instruction = ""
+        if vehicle == "thread":
+            vehicle_instruction = (
+                "\nVehicle: THREAD. Write as a thread (minimum 4 parts, numbered 1/, 2/, etc.). "
+                "Each part must be ≤280 characters. One beat per part. Structure for visual separation.\n"
+            )
+        elif vehicle == "article":
+            vehicle_instruction = (
+                "\nVehicle: ARTICLE. Write long-form structured content. "
+                "Use headings, sections, and full paragraphs. No character limits. "
+                "Aim for depth and completeness.\n"
+            )
+        else:
+            vehicle_instruction = (
+                "\nChoose the best vehicle for this content and set the `vehicle` field accordingly:\n"
+                "- `single`: Self-contained post. Best for punchy insights, quick updates, opinions.\n"
+                "- `thread`: Multi-part narrative (4+ connected posts, numbered 1/, 2/). Best for walkthroughs, step-by-step, breakdowns.\n"
+                "- `article`: Long-form structured content with sections. Best for deep dives, tutorials, comprehensive analyses.\n"
+                "Note whether the Angle already defines a preference for the desired vehicle.\n"
+            )
+
         if platform_configs:
             # Multi-platform shared group: build user message with all platform constraints
             from social_hook.config.yaml import TIER_CHAR_LIMITS
@@ -159,7 +193,7 @@ class Drafter:
                 platform_blocks.append(block)
 
             user_content = (
-                f"{intro_info}"
+                f"{intro_info}{vehicle_instruction}"
                 f"Create content for this commit across multiple platforms.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
                 f"{angle_info}{episode_info}\n"
@@ -172,7 +206,7 @@ class Drafter:
         elif platform_config and platform_config.name == "preview":
             # Generic preview: no platform constraints
             user_content = (
-                f"{intro_info}"
+                f"{intro_info}{vehicle_instruction}"
                 f"Create a social media post for this commit.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
                 f"{angle_info}{episode_info}\n"
@@ -199,59 +233,66 @@ class Drafter:
                 platform_desc += f"\nContext: {platform_config.description}"
 
             user_content = (
-                f"{intro_info}"
+                f"{intro_info}{vehicle_instruction}"
                 f"Create a {pname} post for this commit.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
                 f"{angle_info}{episode_info}\n"
                 f"{platform_desc}"
             )
 
-            # X free tier specific format guidance
-            if pname == "x" and pc_tier == "free":
-                user_content += (
-                    "\nUse the Format Selection Framework: punchy (<100), detailed (240-280), "
-                    "or set format_hint='thread' if this needs multiple beats (4+). "
-                    "Avoid links in main post."
-                )
-            elif pname == "x":
-                user_content += (
-                    "\nUse the Format Selection Framework. Write at whatever length serves the narrative. "
-                    "Set beat_count for narrative beats. format_hint='thread' for visual separation."
-                )
+            # X free tier specific format guidance (only if no vehicle override)
+            if not vehicle:
+                if pname == "x" and pc_tier == "free":
+                    user_content += (
+                        "\nUse the Format Selection Framework: punchy (<100), detailed (240-280), "
+                        "or set vehicle='thread' if this needs multiple beats (4+). "
+                        "Avoid links in main post."
+                    )
+                elif pname == "x":
+                    user_content += (
+                        "\nUse the Format Selection Framework. Write at whatever length serves the narrative. "
+                        "Set beat_count for narrative beats. vehicle='thread' for visual separation."
+                    )
         elif platform == "x" and tier == "free":
             from social_hook.config.yaml import TIER_CHAR_LIMITS
 
             char_limit = TIER_CHAR_LIMITS[tier]
             user_content = (
-                f"{intro_info}"
+                f"{intro_info}{vehicle_instruction}"
                 f"Create a {platform} post for this commit.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
                 f"{angle_info}"
                 f"{episode_info}\n"
                 f"Platform: X (free tier). Single post limit: {char_limit} chars. "
-                f"Use the Format Selection Framework: punchy (<100), detailed (240-280), "
-                f"or set format_hint='thread' if this needs multiple beats (4+). "
-                f"Avoid links in main post."
             )
+            if not vehicle:
+                user_content += (
+                    "Use the Format Selection Framework: punchy (<100), detailed (240-280), "
+                    "or set vehicle='thread' if this needs multiple beats (4+). "
+                    "Avoid links in main post."
+                )
         elif platform == "x":
             from social_hook.config.yaml import TIER_CHAR_LIMITS
 
             char_limit = TIER_CHAR_LIMITS[tier]
             user_content = (
-                f"{intro_info}"
+                f"{intro_info}{vehicle_instruction}"
                 f"Create a {platform} post for this commit.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
                 f"{angle_info}"
                 f"{episode_info}\n"
                 f"Platform: X ({tier} tier). Single post limit: {char_limit} chars. "
-                f"Use the Format Selection Framework. For multi-beat content, you can write "
-                f"a single flowing post OR set format_hint='thread' for visual beat separation. "
-                f"Set beat_count to indicate how many narrative beats your content has. "
-                f"Write at whatever length serves the narrative."
             )
+            if not vehicle:
+                user_content += (
+                    "Use the Format Selection Framework. For multi-beat content, you can write "
+                    "a single flowing post OR set vehicle='thread' for visual beat separation. "
+                    "Set beat_count to indicate how many narrative beats your content has. "
+                    "Write at whatever length serves the narrative."
+                )
         else:
             user_content = (
-                f"{intro_info}"
+                f"{intro_info}{vehicle_instruction}"
                 f"Create a {platform} post for this commit.\n"
                 f"Commit: {commit.hash[:8]} - {commit.message}\n"
                 f"{angle_info}"
@@ -266,80 +307,6 @@ class Drafter:
         log_usage(
             db,
             "draft",
-            getattr(self.client, "full_id", "unknown"),
-            response.usage,
-            project_context.project.id,
-            commit.hash,
-        )
-
-        tool_input = extract_tool_call(response, "create_draft")
-        return CreateDraftInput.validate(tool_input)
-
-    def create_thread(
-        self,
-        decision: Any,
-        project_context: ProjectContext,
-        commit: CommitInfo,
-        db: Any,
-        platform: str = "x",
-        media_config: Optional["MediaGenerationConfig"] = None,
-        media_guidance: dict[str, "MediaToolGuidance"] | None = None,
-        identity: Any | None = None,
-        target_post_count: int = 0,
-        is_first_post: bool = False,
-        first_post_date: str | None = None,
-    ) -> CreateDraftInput:
-        """Create a thread (>= 4 tweets) for a post-worthy commit.
-
-        Args:
-            decision: Evaluation decision
-            project_context: Assembled project state
-            commit: Git commit information
-            db: Database context for usage logging
-            platform: Target platform
-            media_config: Media generation config (enabled tools)
-            media_guidance: Per-tool content guidance
-            identity: Resolved IdentityConfig for this platform
-            target_post_count: Posts published on this platform
-            is_first_post: Whether this is the first post
-            first_post_date: Earliest posted_at for this platform
-
-        Returns:
-            Validated CreateDraftInput with thread content
-        """
-        prompt = load_prompt("drafter")
-
-        system = assemble_drafter_prompt(
-            prompt,
-            decision,
-            project_context,
-            project_context.recent_posts,
-            commit,
-            media_config=media_config,
-            media_guidance=media_guidance,
-            platform_name=platform,
-            identity=identity,
-            target_post_count=target_post_count,
-            is_first_post=is_first_post,
-            first_post_date=first_post_date,
-        )
-
-        user_content = (
-            f"Create a {platform} thread (minimum 4 tweets, numbered 1/, 2/, etc.) "
-            f"for this commit.\n"
-            f"Commit: {commit.hash[:8]} - {commit.message}\n"
-            f"Each tweet must be ≤280 characters. "
-            f"One beat per tweet. Structure for visual separation."
-        )
-
-        response = self.client.complete(
-            messages=[{"role": "user", "content": user_content}],
-            tools=[CreateDraftInput.to_tool_schema()],
-            system=system,
-        )
-        log_usage(
-            db,
-            "draft_thread",
             getattr(self.client, "full_id", "unknown"),
             response.usage,
             project_context.project.id,
