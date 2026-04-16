@@ -31,12 +31,12 @@ These options can be placed before any command.
 | [`decision`](decision.md) | Decision management. |
 | [`draft`](draft.md) | Draft lifecycle management. |
 | [`inspect`](inspect.md) | Inspect system state. |
-| [`journey`](journey.md) | Development Journey capture. |
+| [`journey`](journey.md) | Control Development Journey capture. When enabled, Claude Code hooks record session narratives that feed into the evaluation pipeline as rich development context. |
 | [`logs`](logs.md) | Log queries, tailing, and health. |
 | [`manual`](manual.md) | Manual operations. |
 | [`media`](media.md) | Media management. |
 | [`memory`](memory.md) | Manage voice memories. |
-| [`project`](project.md) | Project management. |
+| [`project`](project.md) | Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained. |
 | [`snapshot`](snapshot.md) | DB snapshot management. |
 | [`strategy`](strategy.md) | View and customize content strategies (voice, audience, editorial rules). |
 | [`target`](target.md) | Configure where content is distributed (account + destination + strategy). |

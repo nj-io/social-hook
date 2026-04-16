@@ -1,6 +1,6 @@
 # social-hook project
 
-Project management.
+Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained.
 
 ---
 
