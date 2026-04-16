@@ -7,7 +7,7 @@ import yaml
 
 from social_hook.filesystem import get_config_path, get_narratives_path
 
-app = typer.Typer()
+app = typer.Typer(help="Control Development Journey capture. When enabled, Claude Code hooks record session narratives that feed into the evaluation pipeline as rich development context.")
 
 
 @app.command("on")

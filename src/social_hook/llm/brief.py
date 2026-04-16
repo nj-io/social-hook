@@ -363,7 +363,8 @@ def update_brief_from_commit(
                 }
         else:
             # Section unchanged — preserve current content
-            new_sections[key] = current_sections.get(key, llm_value)
+            preserved: str = current_sections.get(key, llm_value)  # type: ignore[assignment]
+            new_sections[key] = preserved
 
     updated_brief = _sections_to_markdown(new_sections)
     return updated_brief, section_metadata, updated_sections_keys
