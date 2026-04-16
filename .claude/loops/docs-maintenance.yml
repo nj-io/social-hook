@@ -8,6 +8,7 @@ setup:
 checks:
   - "python scripts/generate_cli_docs.py && git diff --exit-code site-docs/cli/"
   - "ruff check src/ tests/"
+  - "ruff format --check src/ tests/"
   - "mypy src/social_hook/"
 
 autonomous:
