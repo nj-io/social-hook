@@ -546,6 +546,13 @@ def _save_custom_schedule(adapter, chat_id, draft_id, text, config):
             )
             return
 
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            handle_advisory_approval(conn, draft, config, scheduled_time=text.strip())
+            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` → advisory (due {text.strip()}).")
+            return
+
         update_draft(conn, draft_id, status="scheduled", scheduled_time=text.strip())
         ops.emit_data_event(conn, "draft", "scheduled", draft_id, draft.project_id)
         _send(adapter, chat_id, f"Draft `{draft_id[:12]}` scheduled for {text.strip()}")

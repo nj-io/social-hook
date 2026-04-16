@@ -303,6 +303,18 @@ def btn_schedule_optimal(
             optimal_hours=config.scheduling.optimal_hours if config else None,
         )
         scheduled_str = result.datetime.isoformat()
+
+        # Non-auto-postable vehicles → advisory with due_date
+        from social_hook.vehicle import check_auto_postable, handle_advisory_approval
+
+        if not check_auto_postable(draft):
+            handle_advisory_approval(conn, draft, config, scheduled_time=scheduled_str)
+            _clear_original_buttons(
+                adapter, chat_id, kwargs.get("message_id"), draft_id, "advisory"
+            )
+            _send(adapter, chat_id, f"Draft `{draft_id[:12]}` → advisory (due {scheduled_str}).")
+            return
+
         update_draft(conn, draft_id, status="scheduled", scheduled_time=scheduled_str)
         ops.emit_data_event(conn, "draft", "scheduled", draft_id, draft.project_id)
         _clear_original_buttons(adapter, chat_id, kwargs.get("message_id"), draft_id, "scheduled")
