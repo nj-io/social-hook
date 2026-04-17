@@ -25,20 +25,83 @@ MIGRATIONS_DIR = "src/social_hook/db/migrations/"
 MIGRATION_VERSION = 20260417122744
 
 
+# Snapshot of drafts/draft_parts DDL at the pre-multi-media baseline
+# (content-vehicles + advisory-status). `create_schema()` now ships the
+# post-multi-media shape, so this test rolls the two tables back and clears
+# the multi-media migration's schema_version row so it reapplies — exercising
+# the INSERT ... SELECT path against a populated source table.
+_PRE_MULTI_MEDIA_ROLLBACK = """
+PRAGMA foreign_keys = OFF;
+DROP TABLE IF EXISTS drafts;
+CREATE TABLE drafts (
+    id              TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL REFERENCES projects(id),
+    decision_id     TEXT NOT NULL REFERENCES decisions(id),
+    platform        TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'scheduled', 'posted', 'rejected', 'failed', 'superseded', 'cancelled', 'deferred', 'advisory')),
+    content         TEXT NOT NULL,
+    media_paths     TEXT NOT NULL DEFAULT '[]',
+    media_type      TEXT,
+    media_spec      TEXT DEFAULT '{}',
+    media_spec_used TEXT,
+    suggested_time  TEXT,
+    scheduled_time  TEXT,
+    reasoning       TEXT,
+    superseded_by   TEXT REFERENCES drafts(id),
+    retry_count     INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    is_intro        INTEGER NOT NULL DEFAULT 0,
+    vehicle         TEXT NOT NULL DEFAULT 'single' CHECK (vehicle IN ('single', 'thread', 'article')),
+    reference_type  TEXT DEFAULT NULL CHECK (reference_type IN ('quote', 'reply')),
+    reference_files TEXT DEFAULT NULL,
+    reference_post_id TEXT DEFAULT NULL REFERENCES posts(id),
+    target_id       TEXT,
+    evaluation_cycle_id TEXT,
+    topic_id        TEXT,
+    suggestion_id   TEXT,
+    pattern_id      TEXT,
+    preview_mode    INTEGER NOT NULL DEFAULT 0,
+    arc_id          TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+DROP TABLE IF EXISTS draft_parts;
+CREATE TABLE draft_parts (
+    id          TEXT PRIMARY KEY,
+    draft_id    TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    content     TEXT NOT NULL,
+    media_paths TEXT NOT NULL DEFAULT '[]',
+    external_id TEXT,
+    posted_at   TEXT,
+    error       TEXT,
+    UNIQUE(draft_id, position)
+);
+DROP TABLE IF EXISTS pending_uploads;
+-- Replace the current schema_version rows with the pre-multi-media
+-- baseline (content-vehicles) so apply_sql_migrations only applies the
+-- advisory + multi-media migrations, not every historical migration
+-- since the initial schema.
+DELETE FROM schema_version;
+INSERT INTO schema_version (version, description) VALUES (20260408120000, 'content_vehicles_baseline');
+PRAGMA foreign_keys = ON;
+"""
+
+
 def _build_pre_migration_db(path: str) -> sqlite3.Connection:
     """Build a DB at the pre-multi-media state so the migration has work
     to do on a populated source table.
 
-    ``create_schema()`` seeds ``schema_version`` with the content-vehicles
-    baseline (20260408120000) and stops — later migrations remain unapplied.
-    That leaves ``drafts`` with the singular ``media_type``/``media_spec``/
-    ``media_spec_used`` columns and ``draft_parts`` without the new
-    parallel-array columns, which is exactly what the migration under test
-    expects to rewrite.
+    ``create_schema()`` now ships the post-multi-media shape (SCHEMA_VERSION
+    bumped to 20260417122744). To exercise the migration's ``INSERT ...
+    SELECT`` path we roll ``drafts``/``draft_parts`` back to the content-
+    vehicles snapshot and delete the multi-media ``schema_version`` row so
+    ``apply_sql_migrations`` reapplies the migration under test.
     """
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
+    conn.executescript(_PRE_MULTI_MEDIA_ROLLBACK)
     conn.execute("INSERT INTO projects (id, name, repo_path) VALUES ('p1', 'proj', '/tmp')")
     conn.execute(
         "INSERT INTO decisions (id, project_id, commit_hash, decision, reasoning) "
