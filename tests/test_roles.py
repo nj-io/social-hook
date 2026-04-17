@@ -398,14 +398,22 @@ class TestDrafter:
     def test_create_draft_with_media(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
     ):
+        # Multi-media per-draft: drafter returns a list of spec items, each
+        # keyed by stable id. The singular media_type/media_spec fields are
+        # gone; the list shape supersedes them.
         mock_client.complete.return_value = _mock_response(
             "create_draft",
             {
                 "content": "Auth flow diagram",
                 "platform": "x",
                 "reasoning": "Visual explanation",
-                "media_type": "mermaid",
-                "media_spec": {"diagram": "graph LR; A-->B"},
+                "media_specs": [
+                    {
+                        "id": "media_a1b2c3d4e5f6",
+                        "tool": "mermaid",
+                        "spec": {"diagram": "graph LR; A-->B"},
+                    }
+                ],
             },
         )
 
@@ -432,7 +440,8 @@ class TestDrafter:
                 mock_db,
             )
 
-        assert result.media_type.value == "mermaid"
+        assert len(result.media_specs) == 1
+        assert result.media_specs[0].tool == "mermaid"
 
     def test_create_draft_with_thread_vehicle(
         self, mock_client, mock_db, sample_commit, sample_context, prompts_dir
