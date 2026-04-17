@@ -16,7 +16,7 @@ from social_hook.adapters.models import (
     RESHARE,
     SINGLE,
     SINGLE_IMAGE,
-    SINGLE_LINKEDIN,
+    SINGLE_X,
     THREAD,
     VIDEO,
     MediaMode,
@@ -455,21 +455,26 @@ class TestPostCapability:
         assert VIDEO is not None
         # Capabilities
         assert SINGLE is not None
-        assert SINGLE_LINKEDIN is not None
+        assert SINGLE_X is not None
         assert THREAD is not None
         assert ARTICLE is not None
         assert QUOTE is not None
         assert REPLY is not None
         assert RESHARE is not None
 
-    def test_single_post_media_modes(self):
-        """SINGLE includes SINGLE_IMAGE, MULTI_IMAGE_X, GIF."""
-        assert SINGLE.media_modes == (SINGLE_IMAGE, MULTI_IMAGE_X, GIF)
+    def test_single_is_universal_baseline(self):
+        """SINGLE is the universal baseline: one image, one GIF, no carousel.
 
-    def test_single_linkedin_media_modes(self):
-        """SINGLE_LINKEDIN omits MULTI_IMAGE_X — LinkedIn multi-image descoped."""
-        assert SINGLE_LINKEDIN.media_modes == (SINGLE_IMAGE, GIF)
-        assert max(m.max_count for m in SINGLE_LINKEDIN.media_modes) == 1
+        Platforms that match the baseline (LinkedIn) reuse SINGLE; platforms
+        that extend it declare their own constant (e.g. SINGLE_X).
+        """
+        assert SINGLE.media_modes == (SINGLE_IMAGE, GIF)
+        assert max(m.max_count for m in SINGLE.media_modes) == 1
+
+    def test_single_x_extends_baseline_with_multi_image(self):
+        """SINGLE_X adds MULTI_IMAGE_X (4-image carousels) on top of SINGLE."""
+        assert SINGLE_X.media_modes == (SINGLE_IMAGE, MULTI_IMAGE_X, GIF)
+        assert max(m.max_count for m in SINGLE_X.media_modes) == 4
 
     def test_article_uses_article_media(self):
         assert ARTICLE.media_modes == (ARTICLE_MEDIA,)

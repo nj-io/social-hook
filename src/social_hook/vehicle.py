@@ -79,10 +79,16 @@ def check_auto_postable(draft_or_dict: Any) -> bool:
 def get_max_media_count(vehicle: str, platform: str) -> int:
     """Per-(vehicle, platform) cap computed from declared capabilities.
 
-    Returns ``max(mode.max_count for mode in capability.media_modes)``. When
-    the ``(vehicle, platform)`` pair is not declared in
-    ``PLATFORM_VEHICLE_SUPPORT``, logs a warning and defaults to 1 — a safe,
-    conservative fallback so callers never crash on an unknown combination.
+    Returns ``max(mode.max_count for mode in capability.media_modes)``. Two
+    distinct fallback paths:
+
+    * **Unknown (vehicle, platform) pair** — logs a warning and returns ``1``
+      (the safest non-zero fallback when the caller asks about something
+      we do not know about).
+    * **Capability declared with empty ``media_modes``** (e.g. a future
+      text-only platform declaring ``PostCapability("single", ())``) —
+      returns ``0``. A text-only capability intentionally accepts zero
+      media items; the drafter must not attach media to such posts.
 
     Examples (with stock X/LinkedIn config):
         get_max_media_count("single",  "x")        -> 4
@@ -101,7 +107,7 @@ def get_max_media_count(vehicle: str, platform: str) -> int:
             platform,
         )
         return 1
-    return max((m.max_count for m in cap.media_modes), default=1)
+    return max((m.max_count for m in cap.media_modes), default=0)
 
 
 def handle_advisory_approval(

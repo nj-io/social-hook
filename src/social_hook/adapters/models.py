@@ -80,14 +80,14 @@ VIDEO = MediaMode("video", ("mp4",), 536_870_912, max_count=1)  # 512 MiB
 
 # Common capabilities.
 # Effective max_count per capability = max(mode.max_count for mode in
-# media_modes) — see vehicle.get_max_media_count. X SINGLE advertises both
-# SINGLE_IMAGE (1) and MULTI_IMAGE_X (4), so the resolved cap is 4 while
-# callers that want to declare "this accepts a single image" still can.
-SINGLE = PostCapability("single", (SINGLE_IMAGE, MULTI_IMAGE_X, GIF), "Self-contained post")
-# LinkedIn does not support multi-image uploads (adapter side not implemented;
-# descoped per plan). Exposed as a distinct capability so PLATFORM_VEHICLE_SUPPORT
-# can give LinkedIn a max_count=1 cap without a runtime platform-name branch.
-SINGLE_LINKEDIN = PostCapability("single", (SINGLE_IMAGE, GIF), "Self-contained post (LinkedIn)")
+# media_modes) — see vehicle.get_max_media_count. SINGLE is the universal
+# baseline (one image, one GIF). Platforms that EXTEND (e.g. X with 4-image
+# carousels) declare their own constant; platforms that RESTRICT (e.g. a
+# hypothetical text-only platform) declare their own too. Default to SINGLE
+# when a platform matches the baseline.
+SINGLE = PostCapability("single", (SINGLE_IMAGE, GIF), "Self-contained post")
+# X extends SINGLE with MULTI_IMAGE_X (up to 4 images per post).
+SINGLE_X = PostCapability("single", (SINGLE_IMAGE, MULTI_IMAGE_X, GIF), "Self-contained post (X)")
 THREAD = PostCapability("thread", (SINGLE_IMAGE, GIF), "Multi-part narrative (4+ connected posts)")
 ARTICLE = PostCapability(
     "article",

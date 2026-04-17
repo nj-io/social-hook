@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from social_hook.adapters.models import ARTICLE, SINGLE, SINGLE_LINKEDIN, THREAD
+from social_hook.adapters.models import ARTICLE, SINGLE, SINGLE_X, THREAD
 from social_hook.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -43,12 +43,13 @@ SMART_DEFAULTS: dict[str, dict[str, dict[str, str]]] = {
 # Platform vehicle support — used at config validation time when adapter
 # instances are unavailable. Must stay in sync with PlatformAdapter.capabilities().
 PLATFORM_VEHICLE_SUPPORT: dict[str, list] = {
-    "x": [SINGLE, THREAD, ARTICLE],
-    # LinkedIn single-image is max 1 until multi-image upload lands on the
-    # LinkedIn adapter (explicitly descoped per plan). SINGLE_LINKEDIN omits
-    # MULTI_IMAGE_X so get_max_media_count("single", "linkedin") returns 1
-    # without requiring any platform-name branching in consumers.
-    "linkedin": [SINGLE_LINKEDIN, ARTICLE],
+    # X extends the baseline with MULTI_IMAGE_X (up to 4-image carousels).
+    "x": [SINGLE_X, THREAD, ARTICLE],
+    # LinkedIn uses the universal SINGLE baseline (one image, one GIF). If
+    # LinkedIn multi-image upload later lands in the adapter, either widen
+    # SINGLE to include MULTI_IMAGE_LINKEDIN or declare a SINGLE_LINKEDIN
+    # constant here — don't branch on platform name.
+    "linkedin": [SINGLE, ARTICLE],
 }
 
 

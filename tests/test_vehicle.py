@@ -330,7 +330,7 @@ class TestCheckAutoPostable:
 
 class TestGetMaxMediaCount:
     def test_x_single_is_four(self):
-        """X SINGLE resolves to MULTI_IMAGE_X.max_count = 4."""
+        """X uses SINGLE_X which extends the baseline with MULTI_IMAGE_X(4)."""
         assert get_max_media_count("single", "x") == 4
 
     def test_x_thread_is_one(self):
@@ -340,7 +340,7 @@ class TestGetMaxMediaCount:
         assert get_max_media_count("article", "x") == 20
 
     def test_linkedin_single_is_one(self):
-        """LinkedIn single is capped at 1 — MULTI_IMAGE_X descoped."""
+        """LinkedIn uses the universal SINGLE baseline (one image, one GIF)."""
         assert get_max_media_count("single", "linkedin") == 1
 
     def test_linkedin_article_is_twenty(self):
@@ -365,3 +365,17 @@ class TestGetMaxMediaCount:
             "Unknown" in rec.getMessage() and "nonexistent" in rec.getMessage()
             for rec in caplog.records
         )
+
+    def test_text_only_capability_returns_zero(self, monkeypatch):
+        """A capability declared with empty media_modes reports zero — a
+        hypothetical text-only platform must not receive generated media.
+
+        This distinct-from-unknown fallback (0 vs 1) keeps the drafter from
+        silently attaching media to a platform that refuses it.
+        """
+        from social_hook.adapters.models import PostCapability
+        from social_hook.config import platforms as plat
+
+        text_only = PostCapability("single", (), "Text-only")
+        monkeypatch.setitem(plat.PLATFORM_VEHICLE_SUPPORT, "textonly", [text_only])
+        assert get_max_media_count("single", "textonly") == 0
