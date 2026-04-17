@@ -287,6 +287,11 @@ def cleanup_orphaned_media(conn, dry_run: bool = False) -> list[str]:
             for upload_dir in sorted(child.iterdir()):
                 if not upload_dir.is_dir():
                     continue
+                if upload_dir.name == "_staging":
+                    # Staging dirs are pruned separately via the
+                    # pending_uploads 24h TTL; skip here to avoid racing
+                    # with in-flight uploads.
+                    continue
                 resolved = str(upload_dir.resolve())
                 if resolved not in referenced and not _dir_has_referenced_file(
                     upload_dir, referenced

@@ -14,8 +14,18 @@ from social_hook.registry import AdapterRegistry
 
 logger = logging.getLogger(__name__)
 
+# Typo-proof metadata key for adapter thread-safety. The parallel media
+# generator (drafting._generate_all_media) reads this to decide whether an
+# adapter can run under a ThreadPoolExecutor without serialization.
+THREAD_SAFE_KEY = "thread_safe"
+
 # Module-level registry for media adapters
 _media_registry = AdapterRegistry("media")
+
+# Public alias for callers outside this module (e.g. drafting.py). The
+# underscored form remains module-private; external callers should use
+# ``media_registry``.
+media_registry = _media_registry
 
 
 def _create_mermaid(**_kw) -> MediaAdapter:
@@ -53,6 +63,7 @@ _media_registry.register(
         "description": "Flowcharts, sequence diagrams, and other Mermaid.js diagrams",
         "class_module": "social_hook.adapters.media.mermaid",
         "class_name": "MermaidAdapter",
+        THREAD_SAFE_KEY: True,
     },
 )
 _media_registry.register(
@@ -63,6 +74,7 @@ _media_registry.register(
         "description": "AI-generated images from text prompts (Gemini)",
         "class_module": "social_hook.adapters.media.nanabananapro",
         "class_name": "NanaBananaAdapter",
+        THREAD_SAFE_KEY: True,
     },
 )
 _media_registry.register(
@@ -73,6 +85,9 @@ _media_registry.register(
         "description": "Beautiful code snippet screenshots via ray.so",
         "class_module": "social_hook.adapters.media.rayso",
         "class_name": "RaySoAdapter",
+        # ray.so wraps Playwright internally, so inherits playwright's
+        # single-threaded constraint.
+        THREAD_SAFE_KEY: False,
     },
 )
 _media_registry.register(
@@ -83,6 +98,8 @@ _media_registry.register(
         "description": "Browser screenshots of any webpage",
         "class_module": "social_hook.adapters.media.playwright",
         "class_name": "PlaywrightAdapter",
+        # sync_playwright() is not thread-safe — parallel calls crash.
+        THREAD_SAFE_KEY: False,
     },
 )
 

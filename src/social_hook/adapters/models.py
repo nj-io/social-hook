@@ -43,11 +43,19 @@ class PostReference:
 
 @dataclass(frozen=True)
 class MediaMode:
-    """Describes a media mode supported by a platform capability."""
+    """Describes a media mode supported by a platform capability.
 
-    name: str  # "single_image", "multi_image", "video", "gif"
+    ``max_count`` caps how many media items one post in this mode may carry
+    (e.g. X SINGLE supports up to 4 images via MULTI_IMAGE_X). The per-
+    (vehicle, platform) cap computed in ``vehicle.get_max_media_count`` is
+    the ``max`` over all modes attached to the capability, so a capability
+    can advertise multiple modes without clobbering the highest one.
+    """
+
+    name: str  # "single_image", "multi_image_x", "article_media", "gif", "video"
     formats: tuple[str, ...]  # ("png", "jpg", "gif")
     max_size: int | None  # bytes, platform limit
+    max_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -60,17 +68,32 @@ class PostCapability:
     auto_postable: bool = True
 
 
-# Common media modes
-SINGLE_IMAGE = MediaMode("single_image", ("png", "jpg", "webp"), 5_242_880)  # 5MB
-MULTI_IMAGE = MediaMode("multi_image", ("png", "jpg", "webp"), 5_242_880)
-GIF = MediaMode("gif", ("gif",), 15_728_640)  # 15MB
-VIDEO = MediaMode("video", ("mp4",), 536_870_912)  # 512MB
+# Common media modes.
+# 5 MiB / 15 MiB size limits are the single source of truth — enforced at
+# every upload ingress point (Web 413, Bot reply, CLI exit-1) and defensively
+# in the drafter.
+SINGLE_IMAGE = MediaMode("single_image", ("png", "jpg", "webp"), 5_242_880, max_count=1)
+MULTI_IMAGE_X = MediaMode("multi_image_x", ("png", "jpg", "webp"), 5_242_880, max_count=4)
+ARTICLE_MEDIA = MediaMode("article_media", ("png", "jpg", "webp"), 5_242_880, max_count=20)
+GIF = MediaMode("gif", ("gif",), 15_728_640, max_count=1)  # 15 MiB
+VIDEO = MediaMode("video", ("mp4",), 536_870_912, max_count=1)  # 512 MiB
 
-# Common capabilities
-SINGLE = PostCapability("single", (SINGLE_IMAGE, MULTI_IMAGE, GIF), "Self-contained post")
+# Common capabilities.
+# Effective max_count per capability = max(mode.max_count for mode in
+# media_modes) — see vehicle.get_max_media_count. X SINGLE advertises both
+# SINGLE_IMAGE (1) and MULTI_IMAGE_X (4), so the resolved cap is 4 while
+# callers that want to declare "this accepts a single image" still can.
+SINGLE = PostCapability("single", (SINGLE_IMAGE, MULTI_IMAGE_X, GIF), "Self-contained post")
+# LinkedIn does not support multi-image uploads (adapter side not implemented;
+# descoped per plan). Exposed as a distinct capability so PLATFORM_VEHICLE_SUPPORT
+# can give LinkedIn a max_count=1 cap without a runtime platform-name branch.
+SINGLE_LINKEDIN = PostCapability("single", (SINGLE_IMAGE, GIF), "Self-contained post (LinkedIn)")
 THREAD = PostCapability("thread", (SINGLE_IMAGE, GIF), "Multi-part narrative (4+ connected posts)")
 ARTICLE = PostCapability(
-    "article", (SINGLE_IMAGE,), "Long-form structured content (manual post)", auto_postable=False
+    "article",
+    (ARTICLE_MEDIA,),
+    "Long-form structured content (manual post)",
+    auto_postable=False,
 )
 QUOTE = PostCapability("quote", (SINGLE_IMAGE, GIF), "Quote an existing post")
 REPLY = PostCapability("reply", (SINGLE_IMAGE, GIF), "Reply to an existing post")

@@ -256,9 +256,9 @@ class Draft:
     content: str
     status: str = "draft"  # DraftStatus value
     media_paths: list[str] = field(default_factory=list)
-    media_type: str | None = None
-    media_spec: dict | None = None
-    media_spec_used: dict | None = None
+    media_specs: list[dict] = field(default_factory=list)
+    media_errors: list[str | None] = field(default_factory=list)
+    media_specs_used: list[dict] = field(default_factory=list)
     suggested_time: datetime | None = None
     scheduled_time: datetime | None = None
     reasoning: str | None = None
@@ -294,9 +294,9 @@ class Draft:
             "status": self.status,
             "content": self.content,
             "media_paths": self.media_paths,
-            "media_type": self.media_type,
-            "media_spec": self.media_spec,
-            "media_spec_used": self.media_spec_used,
+            "media_specs": self.media_specs,
+            "media_errors": self.media_errors,
+            "media_specs_used": self.media_specs_used,
             "suggested_time": _to_iso(self.suggested_time),
             "scheduled_time": _to_iso(self.scheduled_time),
             "reasoning": self.reasoning,
@@ -324,18 +324,17 @@ class Draft:
         media_paths = d.get("media_paths", [])
         if isinstance(media_paths, str):
             media_paths = safe_json_loads(media_paths, "Draft.media_paths", default=[])
-        media_spec_raw = d.get("media_spec")
-        if isinstance(media_spec_raw, str):
-            media_spec = safe_json_loads(media_spec_raw, "Draft.media_spec", default=None)
-        else:
-            media_spec = media_spec_raw
-        media_spec_used_raw = d.get("media_spec_used")
-        if isinstance(media_spec_used_raw, str):
-            media_spec_used = safe_json_loads(
-                media_spec_used_raw, "Draft.media_spec_used", default=None
+        media_specs = d.get("media_specs", [])
+        if isinstance(media_specs, str):
+            media_specs = safe_json_loads(media_specs, "Draft.media_specs", default=[])
+        media_errors = d.get("media_errors", [])
+        if isinstance(media_errors, str):
+            media_errors = safe_json_loads(media_errors, "Draft.media_errors", default=[])
+        media_specs_used = d.get("media_specs_used", [])
+        if isinstance(media_specs_used, str):
+            media_specs_used = safe_json_loads(
+                media_specs_used, "Draft.media_specs_used", default=[]
             )
-        else:
-            media_spec_used = media_spec_used_raw
         return cls(
             id=d["id"],
             project_id=d["project_id"],
@@ -344,9 +343,9 @@ class Draft:
             status=d.get("status", "draft"),
             content=d["content"],
             media_paths=media_paths,
-            media_type=d.get("media_type"),
-            media_spec=media_spec,
-            media_spec_used=media_spec_used,
+            media_specs=media_specs,
+            media_errors=media_errors,
+            media_specs_used=media_specs_used,
             suggested_time=_from_iso(d.get("suggested_time")),
             scheduled_time=_from_iso(d.get("scheduled_time")),
             reasoning=d.get("reasoning"),
@@ -381,9 +380,9 @@ class Draft:
             self.status,
             self.content,
             json.dumps(self.media_paths),
-            self.media_type,
-            json.dumps(self.media_spec) if self.media_spec else None,
-            json.dumps(self.media_spec_used) if self.media_spec_used else None,
+            json.dumps(self.media_specs),
+            json.dumps(self.media_errors),
+            json.dumps(self.media_specs_used),
             _to_iso(self.suggested_time),
             _to_iso(self.scheduled_time),
             self.reasoning,
@@ -414,6 +413,9 @@ class DraftPart:
     position: int
     content: str
     media_paths: list[str] = field(default_factory=list)
+    media_specs: list[dict] = field(default_factory=list)
+    media_errors: list[str | None] = field(default_factory=list)
+    media_specs_used: list[dict] = field(default_factory=list)
     external_id: str | None = None
     posted_at: datetime | None = None
     error: str | None = None
@@ -425,6 +427,9 @@ class DraftPart:
             "position": self.position,
             "content": self.content,
             "media_paths": self.media_paths,
+            "media_specs": self.media_specs,
+            "media_errors": self.media_errors,
+            "media_specs_used": self.media_specs_used,
             "external_id": self.external_id,
             "posted_at": _to_iso(self.posted_at),
             "error": self.error,
@@ -435,12 +440,26 @@ class DraftPart:
         media_paths = d.get("media_paths", [])
         if isinstance(media_paths, str):
             media_paths = safe_json_loads(media_paths, "DraftPart.media_paths", default=[])
+        media_specs = d.get("media_specs", [])
+        if isinstance(media_specs, str):
+            media_specs = safe_json_loads(media_specs, "DraftPart.media_specs", default=[])
+        media_errors = d.get("media_errors", [])
+        if isinstance(media_errors, str):
+            media_errors = safe_json_loads(media_errors, "DraftPart.media_errors", default=[])
+        media_specs_used = d.get("media_specs_used", [])
+        if isinstance(media_specs_used, str):
+            media_specs_used = safe_json_loads(
+                media_specs_used, "DraftPart.media_specs_used", default=[]
+            )
         return cls(
             id=d["id"],
             draft_id=d["draft_id"],
             position=d["position"],
             content=d["content"],
             media_paths=media_paths,
+            media_specs=media_specs,
+            media_errors=media_errors,
+            media_specs_used=media_specs_used,
             external_id=d.get("external_id"),
             posted_at=_from_iso(d.get("posted_at")),
             error=d.get("error"),
@@ -459,6 +478,9 @@ class DraftPart:
             self.external_id,
             _to_iso(self.posted_at),
             self.error,
+            json.dumps(self.media_specs),
+            json.dumps(self.media_errors),
+            json.dumps(self.media_specs_used),
         )
 
 

@@ -7,13 +7,16 @@ import pytest
 
 from social_hook.adapters.media.base import MediaAdapter
 from social_hook.adapters.models import (
+    ARTICLE,
+    ARTICLE_MEDIA,
     GIF,
-    MULTI_IMAGE,
+    MULTI_IMAGE_X,
     QUOTE,
     REPLY,
     RESHARE,
     SINGLE,
     SINGLE_IMAGE,
+    SINGLE_LINKEDIN,
     THREAD,
     VIDEO,
     MediaMode,
@@ -393,6 +396,34 @@ class TestMediaMode:
         assert SINGLE_IMAGE.name == "single_image"
         assert SINGLE_IMAGE.formats == ("png", "jpg", "webp")
         assert SINGLE_IMAGE.max_size == 5_242_880
+        assert SINGLE_IMAGE.max_count == 1
+
+    def test_max_count_defaults_to_one(self):
+        """MediaMode.max_count defaults to 1 when not specified."""
+        m = MediaMode("t", ("png",), 1000)
+        assert m.max_count == 1
+
+    def test_max_count_is_configurable(self):
+        m = MediaMode("t", ("png",), 1000, max_count=10)
+        assert m.max_count == 10
+
+    def test_multi_image_x_cap(self):
+        assert MULTI_IMAGE_X.name == "multi_image_x"
+        assert MULTI_IMAGE_X.max_count == 4
+        assert MULTI_IMAGE_X.max_size == 5_242_880
+
+    def test_article_media_cap(self):
+        assert ARTICLE_MEDIA.name == "article_media"
+        assert ARTICLE_MEDIA.max_count == 20
+
+    def test_gif_cap(self):
+        assert GIF.name == "gif"
+        assert GIF.max_count == 1
+        assert GIF.max_size == 15_728_640
+
+    def test_video_cap(self):
+        assert VIDEO.name == "video"
+        assert VIDEO.max_count == 1
 
 
 class TestPostCapability:
@@ -418,19 +449,32 @@ class TestPostCapability:
         """All module-level media mode and capability constants are defined."""
         # Media modes
         assert SINGLE_IMAGE is not None
-        assert MULTI_IMAGE is not None
+        assert MULTI_IMAGE_X is not None
+        assert ARTICLE_MEDIA is not None
         assert GIF is not None
         assert VIDEO is not None
         # Capabilities
         assert SINGLE is not None
+        assert SINGLE_LINKEDIN is not None
         assert THREAD is not None
+        assert ARTICLE is not None
         assert QUOTE is not None
         assert REPLY is not None
         assert RESHARE is not None
 
     def test_single_post_media_modes(self):
-        """SINGLE includes SINGLE_IMAGE, MULTI_IMAGE, GIF."""
-        assert SINGLE.media_modes == (SINGLE_IMAGE, MULTI_IMAGE, GIF)
+        """SINGLE includes SINGLE_IMAGE, MULTI_IMAGE_X, GIF."""
+        assert SINGLE.media_modes == (SINGLE_IMAGE, MULTI_IMAGE_X, GIF)
+
+    def test_single_linkedin_media_modes(self):
+        """SINGLE_LINKEDIN omits MULTI_IMAGE_X — LinkedIn multi-image descoped."""
+        assert SINGLE_LINKEDIN.media_modes == (SINGLE_IMAGE, GIF)
+        assert max(m.max_count for m in SINGLE_LINKEDIN.media_modes) == 1
+
+    def test_article_uses_article_media(self):
+        assert ARTICLE.media_modes == (ARTICLE_MEDIA,)
+        assert ARTICLE.auto_postable is False
+        assert max(m.max_count for m in ARTICLE.media_modes) == 20
 
     def test_thread_media_modes(self):
         """THREAD includes SINGLE_IMAGE, GIF."""

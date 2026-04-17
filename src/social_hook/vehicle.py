@@ -50,22 +50,58 @@ def resolve_vehicle(
 # ---------------------------------------------------------------------------
 
 
-def check_auto_postable(draft: Any) -> bool:
+def check_auto_postable(draft_or_dict: Any) -> bool:
     """Check if a draft's vehicle is auto-postable on its platform.
 
-    Returns True for auto-postable vehicles (single, thread), False for
-    vehicles that require manual posting (article). Uses the static
-    PLATFORM_VEHICLE_SUPPORT map — no adapter instance needed.
+    Accepts a ``Draft`` dataclass, a dict (e.g. a row returned directly from
+    the DB), or any object with ``vehicle``/``platform`` attributes (such as
+    ``SimpleNamespace``). Returns True for auto-postable vehicles (single,
+    thread), False for vehicles that require manual posting (article). Uses
+    the static ``PLATFORM_VEHICLE_SUPPORT`` map — no adapter instance needed.
     """
     from social_hook.config.platforms import PLATFORM_VEHICLE_SUPPORT
 
-    vehicle = getattr(draft, "vehicle", "single") or "single"
+    if isinstance(draft_or_dict, dict):
+        vehicle = draft_or_dict.get("vehicle") or "single"
+        platform = draft_or_dict.get("platform", "") or ""
+    else:
+        vehicle = getattr(draft_or_dict, "vehicle", "single") or "single"
+        platform = getattr(draft_or_dict, "platform", "") or ""
+
     if vehicle == "single":
         return True
 
-    caps = PLATFORM_VEHICLE_SUPPORT.get(getattr(draft, "platform", ""), [])
+    caps = PLATFORM_VEHICLE_SUPPORT.get(platform, [])
     cap = next((c for c in caps if c.name == vehicle), None)
     return not (cap and not getattr(cap, "auto_postable", True))
+
+
+def get_max_media_count(vehicle: str, platform: str) -> int:
+    """Per-(vehicle, platform) cap computed from declared capabilities.
+
+    Returns ``max(mode.max_count for mode in capability.media_modes)``. When
+    the ``(vehicle, platform)`` pair is not declared in
+    ``PLATFORM_VEHICLE_SUPPORT``, logs a warning and defaults to 1 — a safe,
+    conservative fallback so callers never crash on an unknown combination.
+
+    Examples (with stock X/LinkedIn config):
+        get_max_media_count("single",  "x")        -> 4
+        get_max_media_count("thread",  "x")        -> 1
+        get_max_media_count("article", "x")        -> 20
+        get_max_media_count("single",  "linkedin") -> 1
+    """
+    from social_hook.config.platforms import PLATFORM_VEHICLE_SUPPORT
+
+    caps = PLATFORM_VEHICLE_SUPPORT.get(platform, [])
+    cap = next((c for c in caps if c.name == vehicle), None)
+    if cap is None:
+        logger.warning(
+            "Unknown (vehicle=%s, platform=%s); defaulting max_count=1",
+            vehicle,
+            platform,
+        )
+        return 1
+    return max((m.max_count for m in cap.media_modes), default=1)
 
 
 def handle_advisory_approval(
