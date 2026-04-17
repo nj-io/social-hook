@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.13.0](https://github.com/nj-io/social-hook/compare/v0.12.0...v0.13.0) (2026-04-16)
+
+
+### Features
+
+* ✨ content vehicles, non-git projects, unified drafting pipeline ([0dabd8e](https://github.com/nj-io/social-hook/commit/0dabd8eaffab1ee9582def22adbdc8c34cc836a8))
+* ✨ first-class advisory flow for non-auto-postable vehicles ([6c981c3](https://github.com/nj-io/social-hook/commit/6c981c373a8cf2cbd9595f87c92c415d26bf47d2))
+* ✨ freeform brief editor ([a767184](https://github.com/nj-io/social-hook/commit/a7671849683d16f15bef30f819891ae137a4de94))
+* content vehicles, advisory flow, diagnostics ([e0675da](https://github.com/nj-io/social-hook/commit/e0675da9f57694de2e6857eec0784bce5137b864))
+
+
+### Bug Fixes
+
+* 🐛 add auto_postable check to schedule_optimal and schedule_custom ([ad390d8](https://github.com/nj-io/social-hook/commit/ad390d85f491c402f07afacc89c7414ef61c7117))
+* 🐛 error toast reliability and missing handlers ([45b058a](https://github.com/nj-io/social-hook/commit/45b058a00537d23fccd851d5bf2f20bd4c24ca99))
+* 🐛 resolve 12 mypy errors — type signatures, dict access, return types ([67835e9](https://github.com/nj-io/social-hook/commit/67835e9316008c3d4bbbb592630f7b52b6f415b9))
+* add auto_postable check to schedule_optimal and schedule_custom ([44581bb](https://github.com/nj-io/social-hook/commit/44581bbb5d550ddc7f3647096e300c908cb9d4d8))
+* add ruff format check to docs-maintenance loop config ([ad36ba6](https://github.com/nj-io/social-hook/commit/ad36ba666fbc28d62bf0b957b7a98da60bd775d4))
+* ruff format — long help strings in project, journey, __init__ ([fc8f1f9](https://github.com/nj-io/social-hook/commit/fc8f1f91405d0174971c20de837bd8e05cadaaa2))
+
+
+### Documentation
+
+* 📝 regenerate CLI docs for content vehicles ([68bbe4f](https://github.com/nj-io/social-hook/commit/68bbe4fb683d0c223945cd6b3ae0305f457ad2d9))
+* daily maintenance loop — 2026-04-16 ([615a871](https://github.com/nj-io/social-hook/commit/615a871d519a1f393af7d56c215e2d9e77d3225e))
+* daily maintenance loop — enrich project/journey help, fix mypy, add advisory nav ([550f671](https://github.com/nj-io/social-hook/commit/550f6715dfedba1d40fad19c6aa69071102c2f97))
+
 ## [0.12.0](https://github.com/nj-io/social-hook/compare/v0.11.0...v0.12.0) (2026-04-03)
 
 
