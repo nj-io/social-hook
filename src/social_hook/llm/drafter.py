@@ -1,8 +1,14 @@
 """Drafter agent: creates social media content (T14)."""
 
+import base64
+import logging
+import mimetypes
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from social_hook.adapters.models import SINGLE_IMAGE
 from social_hook.config.project import ContextConfig
+from social_hook.errors import ConfigError
 
 if TYPE_CHECKING:
     from social_hook.config.platforms import ResolvedPlatformConfig
@@ -10,10 +16,27 @@ if TYPE_CHECKING:
     from social_hook.config.yaml import MediaGenerationConfig
 from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.base import LLMClient, extract_tool_call
+from social_hook.llm.catalog import get_model_info
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
-from social_hook.llm.schemas import CreateDraftInput
+from social_hook.llm.schemas import CreateDraftInput  # re-exported types
 from social_hook.models.context import ProjectContext
 from social_hook.models.core import CommitInfo
+
+logger = logging.getLogger(__name__)
+
+# Upload size and allowed image formats — single source of truth is the
+# SINGLE_IMAGE MediaMode. 5 MiB / {png, jpg, jpeg, webp, gif}. BMP/TIFF
+# are re-encoded to PNG before being sent to the LLM.
+_UPLOAD_MAX_SIZE = SINGLE_IMAGE.max_size or 5_242_880
+_UPLOAD_ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp", "gif"}
+_UPLOAD_REENCODE_EXTS = {"bmp", "tiff", "tif"}
+
+# Allowed tool names for the post-LLM strip step. Must match schemas.
+_ALLOWED_TOOLS = {"nano_banana_pro", "mermaid", "ray_so", "playwright", "legacy_upload"}
+
+# Fields every sane spec must carry. Hallucinations missing these get
+# stripped post-validation.
+_REQUIRED_SPEC_FIELDS = {"id", "tool", "spec"}
 
 
 class Drafter:
@@ -64,6 +87,7 @@ class Drafter:
         content_source_context: dict[str, str] | None = None,
         platform_intro_states: dict[str, dict] | None = None,
         project_docs_text: str | None = None,
+        uploads: list[Any] | None = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit (1-pass, all vehicles).
 
@@ -299,8 +323,26 @@ class Drafter:
                 f"{episode_info}"
             )
 
+        # If the operator pre-uploaded reference images, assemble a
+        # content-block message (text + base64 image blocks). Fail LOUDLY
+        # (ConfigError) when the configured drafter model is not vision-
+        # capable — never silently fall through to text-only.
+        if uploads:
+            full_id = getattr(self.client, "full_id", None)
+            info = get_model_info(full_id) if full_id else None
+            if info is None or not info.supports_vision:
+                raise ConfigError(
+                    f"Drafter model {full_id!r} does not support image inputs. "
+                    f"Use a vision-capable model "
+                    f"(e.g. anthropic/claude-sonnet-4-5, claude-cli/sonnet, "
+                    f"openai/gpt-4o) or remove reference images."
+                )
+            message_content: Any = _assemble_vision_content(user_content, uploads)
+        else:
+            message_content = user_content
+
         response = self.client.complete(
-            messages=[{"role": "user", "content": user_content}],
+            messages=[{"role": "user", "content": message_content}],
             tools=[CreateDraftInput.to_tool_schema()],
             system=system,
         )
@@ -314,4 +356,185 @@ class Drafter:
         )
 
         tool_input = extract_tool_call(response, "create_draft")
+        tool_input = _sanitize_media_specs(tool_input, uploads=uploads)
         return CreateDraftInput.validate(tool_input)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _guess_media_type(path: str) -> str:
+    """Infer an ``image/*`` media type from a path. Defaults to image/png."""
+    guess, _ = mimetypes.guess_type(path)
+    if guess and guess.startswith("image/"):
+        return guess
+    return "image/png"
+
+
+def _read_upload_bytes(path_str: str) -> tuple[bytes, str]:
+    """Read an upload, re-encoding BMP/TIFF to PNG via Pillow when needed.
+
+    Returns ``(bytes, media_type)``. Raises ``ValidationError`` from
+    errors.py-compatible ``ConfigError`` for oversize files; re-encode
+    failures surface as ConfigError too.
+    """
+    p = Path(path_str)
+    if not p.is_file():
+        raise ConfigError(f"Upload path does not exist: {path_str}")
+    ext = p.suffix.lstrip(".").lower()
+
+    if p.stat().st_size > _UPLOAD_MAX_SIZE:
+        raise ConfigError(
+            f"Upload {path_str!r} is {p.stat().st_size} bytes; "
+            f"limit is {_UPLOAD_MAX_SIZE} bytes ({_UPLOAD_MAX_SIZE // 1048576} MiB)."
+        )
+
+    if ext in _UPLOAD_REENCODE_EXTS:
+        try:
+            from io import BytesIO
+
+            from PIL import Image
+        except ImportError as exc:  # pragma: no cover — Pillow is a soft dep
+            raise ConfigError(
+                f"Upload {path_str!r} is {ext.upper()}; install Pillow "
+                f"(pip install pillow) to re-encode BMP/TIFF to PNG."
+            ) from exc
+        img = Image.open(p).convert("RGB")
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue(), "image/png"
+
+    if ext not in _UPLOAD_ALLOWED_EXTS:
+        raise ConfigError(
+            f"Upload {path_str!r} has unsupported extension {ext!r}; "
+            f"allowed: {sorted(_UPLOAD_ALLOWED_EXTS)}."
+        )
+    return p.read_bytes(), _guess_media_type(path_str)
+
+
+def _assemble_vision_content(user_text: str, uploads: list[Any]) -> list[dict[str, Any]]:
+    """Interleave operator context text with base64 image blocks.
+
+    Block order: leading text → each upload (optional per-upload context
+    text, then the image) → the main user_text. This puts the reference
+    images in front of the LLM before the task description, matching the
+    common Anthropic vision prompt pattern.
+    """
+    blocks: list[dict[str, Any]] = []
+    if uploads:
+        blocks.append(
+            {
+                "type": "text",
+                "text": (
+                    f"The operator attached {len(uploads)} reference image(s). "
+                    "Build the post around them. Each image has an optional "
+                    "context note above it."
+                ),
+            }
+        )
+        for i, up in enumerate(uploads, 1):
+            path = getattr(up, "path", None) or (up.get("path") if isinstance(up, dict) else None)
+            ctx = getattr(up, "context", "") or (
+                up.get("context", "") if isinstance(up, dict) else ""
+            )
+            if not path:
+                logger.warning("Upload %d missing path; skipping vision block", i)
+                continue
+            data, media_type = _read_upload_bytes(path)
+            if ctx:
+                blocks.append({"type": "text", "text": f"Image {i} context: {ctx}"})
+            blocks.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64.b64encode(data).decode("ascii"),
+                    },
+                }
+            )
+    blocks.append({"type": "text", "text": user_text})
+    return blocks
+
+
+def _sanitize_media_specs(
+    tool_input: dict[str, Any],
+    *,
+    uploads: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Strip semantic errors from the drafter's raw tool call.
+
+    Structural errors (tool call absent, Pydantic type errors) stay hard-
+    fail. Semantic errors are logged + stripped so a single bad spec does
+    not sink the whole draft:
+
+    * duplicate ``id`` across items — keep the last occurrence
+    * ``user_uploaded=True`` with no matching operator upload
+      (hallucination) — strip item
+    * unknown ``tool`` name — strip item
+    * missing required fields (``id``, ``tool``, ``spec``) — strip item
+    """
+    specs = tool_input.get("media_specs")
+    if not isinstance(specs, list) or not specs:
+        return tool_input
+
+    # Collect paths from uploads for hallucination detection. Both
+    # attribute and dict access supported.
+    known_upload_paths: set[str] = set()
+    if uploads:
+        for up in uploads:
+            path = getattr(up, "path", None) or (up.get("path") if isinstance(up, dict) else None)
+            if path:
+                known_upload_paths.add(str(path))
+
+    sanitized: list[dict[str, Any]] = []
+    for i, raw in enumerate(specs):
+        if not isinstance(raw, dict):
+            logger.warning("Media spec %d is not a dict — stripping: %r", i, raw)
+            continue
+        missing = _REQUIRED_SPEC_FIELDS - set(raw.keys())
+        if missing:
+            logger.warning(
+                "Media spec %d missing required fields %s — stripping: %s", i, sorted(missing), raw
+            )
+            continue
+        tool = raw.get("tool")
+        if tool not in _ALLOWED_TOOLS:
+            logger.warning("Media spec %d has unknown tool %r — stripping", i, tool)
+            continue
+        spec_body = raw.get("spec")
+        if not isinstance(spec_body, dict):
+            logger.warning("Media spec %d has non-dict spec body — stripping: %r", i, spec_body)
+            continue
+        if raw.get("user_uploaded") is True:
+            upload_path = spec_body.get("path")
+            if not upload_path or str(upload_path) not in known_upload_paths:
+                logger.warning(
+                    "Media spec %d claims user_uploaded but path %r is not in uploads — stripping",
+                    i,
+                    upload_path,
+                )
+                continue
+        sanitized.append(raw)
+
+    # Dedup on id, keeping the last occurrence so a later spec wins (mirrors
+    # update semantics). Preserve source order of survivors.
+    seen_ids: dict[str, int] = {}
+    for idx, spec in enumerate(sanitized):
+        seen_ids[spec["id"]] = idx  # last-wins
+    deduped: list[dict[str, Any]] = []
+    kept_indexes = set(seen_ids.values())
+    for idx, spec in enumerate(sanitized):
+        if idx in kept_indexes:
+            deduped.append(spec)
+        else:
+            logger.warning(
+                "Duplicate media spec id %r at index %d — stripping earlier occurrence",
+                spec.get("id"),
+                idx,
+            )
+
+    tool_input["media_specs"] = deduped
+    return tool_input

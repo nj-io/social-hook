@@ -10,8 +10,7 @@ Use the `create_draft` tool to create the post. You must provide:
 - **reasoning**: Why you chose this angle/content
 
 Optionally:
-- **media_type**: Suggested media tool (mermaid, nano_banana_pro, playwright, ray_so, none)
-- **media_spec**: Specification for media generation
+- **media_specs**: List of media items (each has `id`, `tool`, `spec`, optional `caption`, optional `user_uploaded`) — see Media Selection below
 - **vehicle**: "single", "thread", or "article" — your recommended content vehicle based on narrative structure
 - **beat_count**: Number of distinct narrative beats/steps in the content
 
@@ -115,9 +114,16 @@ multiple commits, ensure the content cohesively covers all the work.
 
 Refer to the "Media Tool Guide" section below for available tools, usage guidance, and prompt examples. If no Media Tool Guide section is present, use your best judgment.
 
-Choose `media_type: "none"` when text alone is powerful enough. Avoid using the same media tool for 3+ consecutive posts.
+Choose an empty `media_specs: []` when text alone is powerful enough. Avoid using the same media tool for 3+ consecutive posts.
 
-When you select a media tool, you MUST also provide `media_spec` with the tool-specific fields:
+Each item in `media_specs` MUST include:
+- `id`: `"media_" + 12 lowercase hex chars` (e.g., `"media_a1b2c3d4e5f6"`). Match the backend's `generate_id("media")` format exactly. Never reuse an `id` across two items.
+- `tool`: one of `nano_banana_pro`, `mermaid`, `ray_so`, `playwright`, `legacy_upload`.
+- `spec`: tool-specific fields (see below).
+
+Optional per-item:
+- `caption`: brief alt text / figure caption.
+- `user_uploaded`: `true` only for operator-uploaded images passed in via context. Do NOT fabricate these.
 
 ### ray_so (code screenshot)
 - `code` (required): The code snippet to screenshot. Extract the most interesting 5-15 lines from the commit diff.
@@ -133,6 +139,18 @@ When you select a media tool, you MUST also provide `media_spec` with the tool-s
 ### playwright (browser screenshot)
 - `url` (required): URL of the page to screenshot.
 - `selector` (optional): CSS selector to capture a specific element.
+
+## Multi-media for articles and posts
+
+For articles, decide how many images would genuinely improve reader understanding based on content depth, project memory (past article patterns), and operator context. Typical: 1-5 items. Available tools: `nano_banana_pro` (photo-realistic), `mermaid` (diagrams), `ray_so` (code screenshots). Mix tools freely.
+
+For each image, produce a `MediaSpecItem` with a stable `id` using the pattern `media_` + 12 lowercase hex chars (e.g., `media_a1b2c3d4e5f6`). Match the backend's `generate_id("media")` format exactly. Never reuse an `id` across two items.
+
+Reference each image in `content` with `![caption](media:ID)` at the position where it should render.
+
+If operator pre-uploaded images, they appear in your context as items with `user_uploaded=true`. Build content around them — do NOT overwrite or omit them. Each upload has a stable `id`; reference them in content tokens.
+
+For single posts and threads, default to 1 image unless the platform supports more and content benefits. Don't emit inline tokens for non-article vehicles — media attaches at post time.
 
 ## Expert Mode
 

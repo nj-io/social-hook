@@ -4,15 +4,44 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
+from social_hook.adapters.registry import THREAD_SAFE_KEY, media_registry
 from social_hook.config.yaml import TIER_CHAR_LIMITS
 from social_hook.filesystem import generate_id, get_base_path
 from social_hook.models.core import Draft, DraftPart
 from social_hook.scheduling import ScheduleResult, calculate_optimal_time
 
 logger = logging.getLogger(__name__)
+
+
+# Pre-populated at module import to eliminate a defaultdict-race on first
+# access. Keys mirror ``adapters/registry.py`` entries marked
+# ``THREAD_SAFE_KEY: False`` (playwright + ray_so — sync_playwright()
+# asyncio loop cannot be reentered across threads). Adding a new non-
+# thread-safe adapter requires a matching entry here — see
+# docs/CODING_PRACTICES.md.
+_ADAPTER_LOCKS: dict[str, threading.Lock] = {
+    "playwright": threading.Lock(),
+    "ray_so": threading.Lock(),
+}
+
+
+@dataclass
+class MediaUpload:
+    """An operator-uploaded reference image with optional context.
+
+    Flows through ``DraftingIntent.uploads`` into ``Drafter.create_draft``
+    (as vision content blocks) and, when moved into the draft's
+    ``media-cache/uploads/<draft_id>/`` directory, materializes as a
+    ``user_uploaded=True`` media spec that skips generation.
+    """
+
+    path: str
+    context: str = ""
 
 
 @dataclass
@@ -69,6 +98,11 @@ class DraftingIntent:
     decision_id: str = ""
     episode_tags: list[str] | None = None
     cycle_id: str | None = None
+
+    # Operator-uploaded reference images (create-content flow only).
+    # Other builders pass ``uploads=None``. Paths must be at their final
+    # ``media-cache/uploads/<draft_id>/`` location before drafting starts.
+    uploads: list[MediaUpload] | None = None
 
 
 def draft(
@@ -183,11 +217,12 @@ def draft(
         except Exception as e:
             logger.warning("Project docs loading failed (non-fatal): %s", e)
 
-    # Media generation: done once after first successful draft
+    # Media generation is driven by media_specs returned by the LLM. The
+    # 4 parallel arrays (specs, paths, errors, specs_used) are built once
+    # after the first successful draft and shared across platforms.
+    media_specs: list[dict] = []
     media_paths: list[str] = []
-    media_type_str: str | None = None
-    media_spec_dict: dict | None = None
-    media_error: str | None = None
+    media_errors: list[str | None] = []
     media_generated = False
 
     # Shared-group: multi-variant LLM call
@@ -247,15 +282,21 @@ def draft(
             first_post_date=first_post_date,
             content_source_context=intent.content_source_context,
             project_docs_text=project_docs_text,
+            uploads=intent.uploads,
         )
 
         # Override platform
         draft_result.platform = pname
 
-        # Generate media once
+        # Generate media once — parallel across all specs
         if not media_generated:
-            media_paths, media_type_str, media_spec_dict, media_error = _extract_and_generate_media(
-                draft_result, config, dry_run, verbose, project_config
+            media_specs = _normalize_specs_from_draft(draft_result)
+            media_paths, media_errors = _generate_all_media(
+                config,
+                media_specs,
+                dry_run=dry_run,
+                verbose=verbose,
+                project_config=project_config,
             )
             media_generated = True
 
@@ -303,10 +344,9 @@ def draft(
             db=db,
             project=project,
             context=context,
+            media_specs=media_specs,
             media_paths=media_paths,
-            media_type_str=media_type_str,
-            media_spec_dict=media_spec_dict,
-            media_error=media_error,
+            media_errors=media_errors,
             referenced_posts=referenced_posts,
             dry_run=dry_run,
             verbose=verbose,
@@ -399,6 +439,7 @@ def _draft_shared(
             content_source_context=intent.content_source_context,
             platform_intro_states=platform_intro_states,
             project_docs_text=project_docs_text,
+            uploads=intent.uploads,
         )
     except Exception as e:
         logger.error("LLM API error during shared-group drafting: %s", e)
@@ -416,9 +457,14 @@ def _draft_shared(
             "Drafter returned no variants for shared group — using flat content for all platforms"
         )
 
-    # Generate media once
-    media_paths, media_type_str, media_spec_dict, media_error = _extract_and_generate_media(
-        draft_result, config, dry_run, verbose, project_config
+    # Generate media once — parallel across all specs
+    media_specs = _normalize_specs_from_draft(draft_result)
+    media_paths, media_errors = _generate_all_media(
+        config,
+        media_specs,
+        dry_run=dry_run,
+        verbose=verbose,
+        project_config=project_config,
     )
 
     results: list[DraftResult] = []
@@ -478,10 +524,9 @@ def _draft_shared(
                 db=db,
                 project=project,
                 context=context,
+                media_specs=media_specs,
                 media_paths=media_paths,
-                media_type_str=media_type_str,
-                media_spec_dict=media_spec_dict,
-                media_error=media_error,
+                media_errors=media_errors,
                 referenced_posts=referenced_posts,
                 dry_run=dry_run,
                 verbose=verbose,
@@ -509,10 +554,9 @@ def _finalize_draft(
     db: Any,
     project: Any,
     context: Any,
+    media_specs: list[dict],
     media_paths: list[str],
-    media_type_str: str | None,
-    media_spec_dict: dict | None,
-    media_error: str | None,
+    media_errors: list[str | None],
     referenced_posts: list | None,
     dry_run: bool,
     verbose: bool,
@@ -520,7 +564,13 @@ def _finalize_draft(
     """ONE place for post-draft logic: scheduling, Draft construction,
     reference resolution, intro marking, DB insertion,
     materialize_vehicle_artifacts(), event emission, deferred notification.
-    Called once per platform in the drafting loop."""
+    Called once per platform in the drafting loop.
+
+    The 4 parallel media arrays (specs, paths, errors, specs_used) are
+    written atomically via ``insert_draft`` — ``media_specs_used`` mirrors
+    ``media_specs`` at creation time (spec-unchanged invariant), so the
+    regen guard is always satisfied for the initial generation.
+    """
     pname = platform_spec.platform
     rpcfg = platform_spec.resolved
     platform_is_introduced = context.platform_introduced.get(pname, False)
@@ -542,6 +592,16 @@ def _finalize_draft(
     if is_deferred and verbose:
         print(f"Platform {pname}: deferred ({schedule.day_reason})")
 
+    # Compose last_error summary from per-item errors (non-blocking; the
+    # partial_media_failure diagnostic surfaces details at read time).
+    err_summary: str | None = None
+    failed = [e for e in (media_errors or []) if e]
+    if failed:
+        err_summary = (
+            f"Media generation: {len(failed)} of {len(media_errors)} items failed "
+            f"(first: {failed[0]})"
+        )
+
     draft_obj = Draft(
         id=generate_id("draft"),
         project_id=project.id,
@@ -549,16 +609,17 @@ def _finalize_draft(
         platform=pname,
         vehicle=vehicle,
         content=draft_content,
-        media_paths=media_paths,
-        media_type=media_type_str,
-        media_spec=media_spec_dict,
-        media_spec_used=media_spec_dict if media_paths else None,
+        media_specs=list(media_specs),
+        media_paths=list(media_paths),
+        media_errors=list(media_errors),
+        # Mirror specs into specs_used so the spec-unchanged regen guard
+        # holds for the initial state. Regen/edit flows update slots via
+        # ops.update_draft_media.
+        media_specs_used=list(media_specs),
         status="deferred" if is_deferred else "draft",
         suggested_time=None if is_deferred else schedule.datetime,
         reasoning=draft_reasoning,
-        last_error=f"Media generation failed: {media_error}"
-        if media_error and not media_paths
-        else None,
+        last_error=err_summary,
         preview_mode=platform_spec.preview_mode,
         topic_id=intent.topic_id,
         arc_id=intent.arc_id,
@@ -649,109 +710,185 @@ def _finalize_draft(
     return result
 
 
-def _extract_and_generate_media(
-    draft_result: Any,
+def _normalize_specs_from_draft(draft_result: Any) -> list[dict]:
+    """Extract media_specs from a drafter response as a list of plain dicts.
+
+    Pydantic MediaSpecItem models are coerced via ``.model_dump()``. Missing
+    or falsy fields yield ``[]`` so downstream code treats a text-only
+    draft the same as an empty list.
+    """
+    raw = getattr(draft_result, "media_specs", None)
+    if not raw:
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if hasattr(item, "model_dump"):
+            out.append(item.model_dump())
+        elif isinstance(item, dict):
+            out.append(dict(item))
+        else:
+            logger.warning("Unexpected media_specs item type %s — skipping", type(item))
+    return out
+
+
+def _generate_one_media(
     config: Any,
+    spec: dict,
+    tool: str,
     dry_run: bool,
     verbose: bool,
     project_config: Any,
-) -> tuple[list[str], str | None, dict | None, str | None]:
-    """Extract media spec from draft result and generate."""
-    _mt = getattr(draft_result, "media_type", None)
-    if _mt is not None and hasattr(_mt, "value"):
-        _mt = _mt.value
-    _ms = getattr(draft_result, "media_spec", None)
-    if _mt and _mt != "none":
-        if not _ms:
-            logger.warning(
-                "Drafter selected media_type=%s but media_spec is empty — skipping media generation",
-                _mt,
-            )
-            return [], None, None, None
-        return _generate_media(  # type: ignore[no-any-return]
-            config, _mt, _ms, dry_run=dry_run, verbose=verbose, project_config=project_config
-        )
-    return [], None, None, None
+) -> str:
+    """Run a single media adapter and return the output path.
 
-
-def _generate_media(
-    config, media_type_str, media_spec_dict, dry_run=False, verbose=False, project_config=None
-):
-    """Generate media using the drafter's spec.
-
-    Called ONCE after the first successful draft in the per-platform loop.
-    Callers validate that media_spec_dict is non-empty before calling.
-
-    Args:
-        config: Global Config object.
-        media_type_str: Media tool name (e.g., "ray_so", "mermaid").
-        media_spec_dict: Spec dict with tool-specific fields.
-        dry_run: If True, skip real generation.
-        verbose: If True, print details.
-        project_config: Optional ProjectConfig for per-tool overrides.
-
-    Returns:
-        Tuple of (media_paths, media_type_str, media_spec_dict, media_error)
+    Raises the adapter error on failure — ``_generate_all_media`` catches
+    per-item exceptions so one bad spec does not sink the batch.
+    Respects the global ``media_generation.enabled`` toggle plus per-tool
+    global and project-level overrides (same semantics as the old
+    ``_generate_media``).
     """
     if not config.media_generation.enabled:
-        if verbose:
-            print("Media generation disabled globally, skipping")
-        return [], None, None, None
+        raise RuntimeError("Media generation disabled globally")
+    if not tool or tool == "none":
+        raise RuntimeError(f"Invalid tool: {tool!r}")
 
-    if not media_type_str or media_type_str == "none":
-        return [], None, None, None
-
-    # Per-tool check: global toggle (config.yaml)
-    tool_enabled = config.media_generation.tools.get(media_type_str, True)
-    # Project-level override (content-config.yaml) -- can only DISABLE, not re-enable
+    tool_enabled = config.media_generation.tools.get(tool, True)
     if tool_enabled:
-        guidance = project_config.media_guidance.get(media_type_str) if project_config else None
+        guidance = project_config.media_guidance.get(tool) if project_config else None
         if guidance and guidance.enabled is not None:
             tool_enabled = guidance.enabled
     if not tool_enabled:
-        if verbose:
-            print(f"Media tool {media_type_str} is disabled, skipping")
-        return [], None, None, None
+        raise RuntimeError(f"Media tool {tool} disabled")
 
-    # Defense-in-depth: reject empty spec even if caller didn't validate
-    if not media_spec_dict:
-        logger.warning(
-            "media_spec_dict is empty for media_type=%s — skipping media generation",
-            media_type_str,
-        )
-        return [], None, None, None
+    from social_hook.adapters.registry import get_media_adapter
 
-    media_paths = []
-    media_error = None
+    api_key = None
+    if tool == "nano_banana_pro":
+        api_key = config.env.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not set")
 
-    try:
-        from social_hook.adapters.registry import get_media_adapter
+    adapter = get_media_adapter(tool, api_key=api_key)
+    if adapter is None:
+        raise RuntimeError(f"Unknown media adapter: {tool}")
 
-        api_key = None
-        if media_type_str == "nano_banana_pro":
-            api_key = config.env.get("GEMINI_API_KEY")
-            if not api_key:
-                logger.warning("nano_banana_pro requested but GEMINI_API_KEY not set")
-                return [], None, None, "GEMINI_API_KEY not set"
+    # The filesystem directory is keyed on the spec's stable id so
+    # regen + edit flows overwrite in place instead of accumulating
+    # orphan files. Fall back to a fresh id only if the spec somehow
+    # arrived without one (sanitizer should have stripped it).
+    media_id = spec.get("id") or generate_id("media")
+    output_dir = str(get_base_path() / "media-cache" / media_id)
+    spec_body = spec.get("spec", {})
+    result = adapter.generate(spec=spec_body, output_dir=output_dir, dry_run=dry_run)
+    if not result.success or not result.file_path:
+        raise RuntimeError(result.error or "Unknown media generation failure")
+    if verbose:
+        print(f"Media generated ({tool}): {result.file_path}")
+    return str(result.file_path)
 
-        media_adapter = get_media_adapter(media_type_str, api_key=api_key)
-        if media_adapter:
-            media_id = generate_id("media")
-            output_dir = str(get_base_path() / "media-cache" / media_id)
-            result = media_adapter.generate(
-                spec=media_spec_dict,
-                output_dir=output_dir,
-                dry_run=dry_run,
+
+def _generate_one_media_guarded(
+    config: Any,
+    spec: dict,
+    tool: str,
+    dry_run: bool,
+    verbose: bool,
+    project_config: Any,
+) -> str:
+    """Run a single adapter, serializing non-thread-safe tools via per-tool lock.
+
+    Thread-safety is read from the registry metadata
+    (``THREAD_SAFE_KEY: False`` for ``playwright`` and ``ray_so``). The
+    lock table ``_ADAPTER_LOCKS`` is pre-populated at module import so the
+    first parallel call never loses a race to the default-dict pattern.
+    """
+    meta = media_registry.get_metadata(tool) if media_registry.has(tool) else {}
+    if not meta.get(THREAD_SAFE_KEY, True):
+        lock = _ADAPTER_LOCKS.get(tool)
+        if lock is None:
+            logger.warning(
+                "No pre-populated lock for non-thread-safe adapter %s; creating on demand",
+                tool,
             )
-            if result.success and result.file_path:
-                media_paths = [result.file_path]
-                if verbose:
-                    print(f"Media generated: {result.file_path}")
-            else:
-                media_error = result.error or "Unknown media generation failure"
-                logger.warning("Media generation failed: %s", media_error)
-    except Exception as e:
-        media_error = str(e)
-        logger.warning("Media generation error (non-fatal): %s", e)
+            lock = threading.Lock()
+            _ADAPTER_LOCKS[tool] = lock
+        with lock:
+            return _generate_one_media(config, spec, tool, dry_run, verbose, project_config)
+    return _generate_one_media(config, spec, tool, dry_run, verbose, project_config)
 
-    return media_paths, media_type_str, media_spec_dict, media_error
+
+def _generate_all_media(
+    config: Any,
+    specs: list[dict],
+    *,
+    task_id: str | None = None,
+    project_id: str | None = None,
+    db: Any | None = None,
+    dry_run: bool = False,
+    verbose: bool = False,
+    project_config: Any | None = None,
+) -> tuple[list[str], list[str | None]]:
+    """Generate all media items in parallel; return ``(paths, errors)``.
+
+    Guarantees: ``len(paths) == len(errors) == len(specs)`` and index
+    ``i`` in both aligns with ``specs[i]``. For ``user_uploaded=True``
+    items generation is skipped — the path already points to the final
+    upload location set before drafting began.
+
+    When ``task_id`` and ``db`` are provided, a per-item stage event is
+    emitted ("media_{i+1}_of_{n}") via ``db.emit_task_stage`` so the web
+    frontend's ``useBackgroundTasks`` can show per-image progress. Route
+    through ``db`` (DryRunContext-safe) — never call ``ops`` directly.
+    """
+    n = len(specs)
+    paths: list[str] = ["" for _ in range(n)]
+    errors: list[str | None] = [None for _ in range(n)]
+    if n == 0:
+        return paths, errors
+
+    # User-uploaded items bypass the executor — their path is already on disk.
+    for i, spec in enumerate(specs):
+        if spec and spec.get("user_uploaded"):
+            upload_path = (spec.get("spec") or {}).get("path", "")
+            paths[i] = str(upload_path) if upload_path else ""
+            if not upload_path:
+                errors[i] = "user_uploaded spec missing spec.path"
+
+    # Generate everything else in parallel. Non-thread-safe adapters
+    # serialize via _ADAPTER_LOCKS inside _generate_one_media_guarded.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {
+            pool.submit(
+                _generate_one_media_guarded,
+                config,
+                specs[i],
+                (specs[i] or {}).get("tool", ""),
+                dry_run,
+                verbose,
+                project_config,
+            ): i
+            for i in range(n)
+            if specs[i] and not specs[i].get("user_uploaded")
+        }
+        for future in as_completed(futures):
+            i = futures[future]
+            if task_id and db is not None:
+                try:
+                    db.emit_task_stage(
+                        task_id, f"media_{i + 1}_of_{n}", f"Media {i + 1} of {n}", project_id
+                    )
+                except Exception as emit_err:  # noqa: BLE001 — boundary
+                    logger.warning("emit_task_stage failed for item %d: %s", i, emit_err)
+            try:
+                paths[i] = future.result()
+            except Exception as exc:  # noqa: BLE001 — per-item failure tolerated
+                logger.warning(
+                    "Media generation failed for item %d (tool=%s): %s",
+                    i,
+                    (specs[i] or {}).get("tool"),
+                    exc,
+                    exc_info=True,
+                )
+                errors[i] = str(exc)
+
+    return paths, errors

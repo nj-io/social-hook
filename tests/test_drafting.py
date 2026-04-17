@@ -230,8 +230,7 @@ class TestDraftForPlatformsTargetFilter:
         draft_result_mock.reasoning = "Test reasoning"
         draft_result_mock.platform = "linkedin"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         from social_hook.scheduling import ScheduleResult
@@ -296,8 +295,7 @@ class TestDraftForPlatformsProjectConfigNone:
         draft_result_mock.reasoning = "Test reasoning"
         draft_result_mock.platform = "linkedin"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
@@ -363,8 +361,7 @@ class TestDraftResultDecisionId:
         draft_result_mock.reasoning = "Test reasoning"
         draft_result_mock.platform = "x"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
@@ -397,19 +394,24 @@ class TestDraftResultDecisionId:
 
 
 class TestDraftMediaSpecGuards:
-    """Tests for media spec guard logic in draft()."""
+    """Tests for media spec flow through draft() via the new parallel-array pipeline.
+
+    ``_generate_all_media`` is the sole entry into per-item generation now;
+    these tests verify that an empty media_specs list short-circuits and
+    that populated specs are forwarded to the parallel executor.
+    """
 
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
-    @patch("social_hook.drafting._generate_media")
-    def test_empty_spec_skipped_in_caller(
+    @patch("social_hook.drafting._generate_all_media", return_value=([], []))
+    def test_empty_specs_calls_generator_with_empty_list(
         self,
-        mock_gen_media,
+        mock_gen_all,
         mock_schedule,
         mock_create,
         tmp_path,
     ):
-        """When drafter returns media_type but empty media_spec, _generate_media is NOT called."""
+        """When drafter returns an empty media_specs, generator runs with [] and returns ([], [])."""
         db_path = tmp_path / "test.db"
         conn = init_database(db_path)
         project = _make_project(conn)
@@ -426,8 +428,7 @@ class TestDraftMediaSpecGuards:
         draft_result_mock.reasoning = "Test reasoning"
         draft_result_mock.platform = "x"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = "ray_so"
-        draft_result_mock.media_spec = {}  # Empty spec
+        draft_result_mock.media_specs = []  # drafter emitted no media
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         from social_hook.scheduling import ScheduleResult
@@ -453,84 +454,29 @@ class TestDraftMediaSpecGuards:
                 _make_commit(),
             )
 
-        # _generate_media should NOT have been called because media_spec was empty
-        mock_gen_media.assert_not_called()
+        assert mock_gen_all.call_count == 1
+        # Second positional arg is the specs list.
+        assert mock_gen_all.call_args.args[1] == []
         assert len(results) == 1
-        conn.close()
-
-    @patch("social_hook.llm.factory.create_client")
-    @patch("social_hook.drafting.calculate_optimal_time")
-    @patch("social_hook.drafting._generate_media")
-    def test_none_spec_skipped_in_caller(
-        self,
-        mock_gen_media,
-        mock_schedule,
-        mock_create,
-        tmp_path,
-    ):
-        """When drafter returns media_type but None media_spec, _generate_media is NOT called."""
-        db_path = tmp_path / "test.db"
-        conn = init_database(db_path)
-        project = _make_project(conn)
-
-        from social_hook.llm.dry_run import DryRunContext
-
-        db = DryRunContext(conn, dry_run=True)
-
-        config = _make_config(platforms={"x": _make_platform_config("x")})
-
-        mock_drafter_instance = MagicMock()
-        draft_result_mock = MagicMock()
-        draft_result_mock.content = "Test content"
-        draft_result_mock.reasoning = "Test reasoning"
-        draft_result_mock.platform = "x"
-        draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = "ray_so"
-        draft_result_mock.media_spec = None  # None spec
-        mock_drafter_instance.create_draft.return_value = draft_result_mock
-
-        from social_hook.scheduling import ScheduleResult
-
-        mock_schedule.return_value = ScheduleResult(
-            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
-            is_optimal_day=True,
-            day_reason="weekday",
-            time_reason="optimal hour",
-            deferred=False,
-        )
-
-        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
-            intent = _make_intent(decision_id="decision-001")
-
-            results = draft(
-                intent,
-                config,
-                conn,
-                db,
-                project,
-                _make_context(project),
-                _make_commit(),
-            )
-
-        # _generate_media should NOT have been called because media_spec was None
-        mock_gen_media.assert_not_called()
-        assert len(results) == 1
+        assert results[0].draft.media_specs == []
+        assert results[0].draft.media_paths == []
+        assert results[0].draft.media_errors == []
         conn.close()
 
     @patch("social_hook.llm.factory.create_client")
     @patch("social_hook.drafting.calculate_optimal_time")
     @patch(
-        "social_hook.drafting._generate_media",
-        return_value=(["/tmp/media/code.png"], "ray_so", {"code": "x=1"}, None),
+        "social_hook.drafting._generate_all_media",
+        return_value=(["/tmp/media/code.png"], [None]),
     )
-    def test_valid_spec_triggers_media(
+    def test_populated_specs_forwarded_to_generator(
         self,
-        mock_gen_media,
+        mock_gen_all,
         mock_schedule,
         mock_create,
         tmp_path,
     ):
-        """When drafter returns media_type and valid media_spec, _generate_media IS called."""
+        """A populated media_specs list flows into _generate_all_media and back onto the Draft."""
         db_path = tmp_path / "test.db"
         conn = init_database(db_path)
         project = _make_project(conn)
@@ -547,8 +493,8 @@ class TestDraftMediaSpecGuards:
         draft_result_mock.reasoning = "Test reasoning"
         draft_result_mock.platform = "x"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = "ray_so"
-        draft_result_mock.media_spec = {"code": "x=1"}  # Valid spec
+        spec = {"id": "media_abc123def456", "tool": "ray_so", "spec": {"code": "x=1"}}
+        draft_result_mock.media_specs = [spec]
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         from social_hook.scheduling import ScheduleResult
@@ -574,9 +520,89 @@ class TestDraftMediaSpecGuards:
                 _make_commit(),
             )
 
-        # _generate_media SHOULD have been called
-        mock_gen_media.assert_called_once()
+        assert mock_gen_all.call_count == 1
+        forwarded_specs = mock_gen_all.call_args.args[1]
+        assert forwarded_specs == [spec]
         assert len(results) == 1
+        d = results[0].draft
+        assert d.media_specs == [spec]
+        assert d.media_paths == ["/tmp/media/code.png"]
+        assert d.media_errors == [None]
+        # Spec-unchanged invariant at creation time.
+        assert d.media_specs_used == [spec]
+        conn.close()
+
+    @patch("social_hook.llm.factory.create_client")
+    @patch("social_hook.drafting.calculate_optimal_time")
+    @patch(
+        "social_hook.drafting._generate_all_media",
+        return_value=(["/tmp/ok.png", ""], [None, "Gemini timeout"]),
+    )
+    def test_partial_failure_records_errors_and_summary(
+        self,
+        mock_gen_all,
+        mock_schedule,
+        mock_create,
+        tmp_path,
+    ):
+        """Per-item errors are written to the draft and summarized in last_error."""
+        db_path = tmp_path / "test.db"
+        conn = init_database(db_path)
+        project = _make_project(conn)
+
+        from social_hook.llm.dry_run import DryRunContext
+
+        db = DryRunContext(conn, dry_run=True)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+
+        mock_drafter_instance = MagicMock()
+        draft_result_mock = MagicMock()
+        draft_result_mock.content = "Test content"
+        draft_result_mock.reasoning = "Test reasoning"
+        draft_result_mock.platform = "x"
+        draft_result_mock.vehicle = "single"
+        specs = [
+            {"id": "media_aaaaaaaaaaaa", "tool": "mermaid", "spec": {"diagram": "A-->B"}},
+            {
+                "id": "media_bbbbbbbbbbbb",
+                "tool": "nano_banana_pro",
+                "spec": {"prompt": "a cat"},
+            },
+        ]
+        draft_result_mock.media_specs = specs
+        mock_drafter_instance.create_draft.return_value = draft_result_mock
+
+        from social_hook.scheduling import ScheduleResult
+
+        mock_schedule.return_value = ScheduleResult(
+            datetime=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc),
+            is_optimal_day=True,
+            day_reason="weekday",
+            time_reason="optimal hour",
+            deferred=False,
+        )
+
+        with patch("social_hook.llm.drafter.Drafter", return_value=mock_drafter_instance):
+            intent = _make_intent(decision_id="decision-001")
+
+            results = draft(
+                intent,
+                config,
+                conn,
+                db,
+                project,
+                _make_context(project),
+                _make_commit(),
+            )
+
+        assert len(results) == 1
+        d = results[0].draft
+        assert d.media_errors == [None, "Gemini timeout"]
+        assert d.media_paths == ["/tmp/ok.png", ""]
+        assert d.last_error is not None
+        assert "1 of 2" in d.last_error
+        assert "Gemini timeout" in d.last_error
         conn.close()
 
 
@@ -626,8 +652,7 @@ class TestDeferredDraftCreation:
         draft_result_mock.reasoning = "Deferred reasoning"
         draft_result_mock.platform = "x"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         mock_schedule.return_value = ScheduleResult(
@@ -702,8 +727,7 @@ class TestDeferredDraftCreation:
         draft_result_mock.reasoning = "reason"
         draft_result_mock.platform = "x"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         mock_schedule.return_value = ScheduleResult(
@@ -795,8 +819,7 @@ class TestDraftReferencePostResolution:
         draft_result_mock.reasoning = "Continues the thread"
         draft_result_mock.platform = "x"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         mock_schedule.return_value = ScheduleResult(
@@ -866,8 +889,7 @@ class TestDraftReferencePostResolution:
         draft_result_mock.reasoning = "Standalone"
         draft_result_mock.platform = "x"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         mock_schedule.return_value = ScheduleResult(
@@ -960,8 +982,7 @@ class TestDraftReferencePostResolution:
         draft_result_mock.reasoning = "References linkedin post"
         draft_result_mock.platform = "x"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         mock_schedule.return_value = ScheduleResult(
@@ -1040,8 +1061,7 @@ class TestDraftForResolvedPlatforms:
         draft_result_mock.reasoning = "Test reasoning"
         draft_result_mock.platform = "linkedin"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         mock_schedule.return_value = ScheduleResult(
@@ -1103,8 +1123,7 @@ class TestDraftPublicApi:
         draft_result_mock.reasoning = "reasoning"
         draft_result_mock.platform = "x"
         draft_result_mock.vehicle = "single"
-        draft_result_mock.media_type = None
-        draft_result_mock.media_spec = None
+        draft_result_mock.media_specs = []
         mock_drafter_instance.create_draft.return_value = draft_result_mock
 
         mock_schedule.return_value = ScheduleResult(
@@ -1131,3 +1150,197 @@ class TestDraftPublicApi:
         assert len(results) == 1
         assert results[0].draft.platform == "x"
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# _generate_all_media — parallel generator under test
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateAllMedia:
+    """Parallel media generation: happy path, partial failure, user-uploaded passthrough."""
+
+    @patch("social_hook.drafting._generate_one_media_guarded")
+    def test_happy_path_returns_aligned_arrays(self, mock_one, tmp_path):
+        from social_hook.drafting import _generate_all_media
+
+        config = _make_config()
+        config.media_generation.enabled = True
+        specs = [
+            {"id": "media_aaaaaaaaaaaa", "tool": "mermaid", "spec": {"diagram": "A"}},
+            {"id": "media_bbbbbbbbbbbb", "tool": "nano_banana_pro", "spec": {"prompt": "x"}},
+        ]
+        mock_one.side_effect = ["/out/a.png", "/out/b.png"]
+
+        paths, errors = _generate_all_media(config, specs, dry_run=True, verbose=False)
+
+        assert len(paths) == 2
+        assert len(errors) == 2
+        assert errors == [None, None]
+        # Set comparison — ThreadPoolExecutor order is not deterministic.
+        assert set(paths) == {"/out/a.png", "/out/b.png"}
+
+    @patch("social_hook.drafting._generate_one_media_guarded")
+    def test_partial_failure_other_items_still_generated(self, mock_one, tmp_path):
+        from social_hook.drafting import _generate_all_media
+
+        config = _make_config()
+        config.media_generation.enabled = True
+        specs = [
+            {"id": "media_aaaaaaaaaaaa", "tool": "mermaid", "spec": {"diagram": "A"}},
+            {"id": "media_bbbbbbbbbbbb", "tool": "nano_banana_pro", "spec": {"prompt": "x"}},
+        ]
+
+        # Item 1 raises, item 0 succeeds.
+        def side_effect(config_, spec, tool, dry_run, verbose, project_config):
+            if spec["id"] == "media_bbbbbbbbbbbb":
+                raise RuntimeError("Gemini timeout")
+            return "/out/a.png"
+
+        mock_one.side_effect = side_effect
+
+        paths, errors = _generate_all_media(config, specs, dry_run=True, verbose=False)
+
+        assert paths[0] == "/out/a.png"
+        assert paths[1] == ""
+        assert errors[0] is None
+        assert errors[1] == "Gemini timeout"
+
+    def test_user_uploaded_passthrough_no_adapter_call(self, tmp_path):
+        from social_hook.drafting import _generate_all_media
+
+        config = _make_config()
+        config.media_generation.enabled = True
+        upload_path = tmp_path / "ref.png"
+        upload_path.write_bytes(b"\x89PNG")
+        specs = [
+            {
+                "id": "media_upl000000ab",
+                "tool": "legacy_upload",
+                "spec": {"path": str(upload_path)},
+                "user_uploaded": True,
+            },
+        ]
+
+        with patch("social_hook.drafting._generate_one_media_guarded") as mock_one:
+            paths, errors = _generate_all_media(config, specs, dry_run=False, verbose=False)
+
+        assert paths == [str(upload_path)]
+        assert errors == [None]
+        mock_one.assert_not_called()
+
+    @patch("social_hook.drafting._generate_one_media_guarded")
+    def test_empty_specs_returns_empty_arrays(self, mock_one, tmp_path):
+        from social_hook.drafting import _generate_all_media
+
+        config = _make_config()
+        config.media_generation.enabled = True
+        paths, errors = _generate_all_media(config, [], dry_run=True)
+        assert paths == []
+        assert errors == []
+        mock_one.assert_not_called()
+
+    @patch("social_hook.drafting._generate_one_media_guarded")
+    def test_task_stage_emitted_per_item(self, mock_one, tmp_path):
+        """emit_task_stage is called once per item when task_id + db are provided."""
+        from social_hook.drafting import _generate_all_media
+
+        config = _make_config()
+        config.media_generation.enabled = True
+        specs = [
+            {"id": "media_aaaaaaaaaaaa", "tool": "mermaid", "spec": {"diagram": "A"}},
+            {"id": "media_bbbbbbbbbbbb", "tool": "mermaid", "spec": {"diagram": "B"}},
+        ]
+        mock_one.side_effect = ["/out/a.png", "/out/b.png"]
+        fake_db = MagicMock()
+
+        paths, errors = _generate_all_media(
+            config,
+            specs,
+            task_id="task-1",
+            project_id="proj-1",
+            db=fake_db,
+            dry_run=True,
+        )
+
+        assert fake_db.emit_task_stage.call_count == 2
+        # The stage label format is "Media N of M".
+        labels = {c.args[2] for c in fake_db.emit_task_stage.call_args_list}
+        assert labels == {"Media 1 of 2", "Media 2 of 2"}
+
+
+class TestGenerateOneMediaGuarded:
+    """Thread-safety gate: non-thread-safe adapters serialize via _ADAPTER_LOCKS."""
+
+    @patch("social_hook.drafting._generate_one_media")
+    def test_playwright_uses_pre_populated_lock(self, mock_inner):
+        """The lock for ``playwright`` is pre-populated at module import."""
+        from social_hook.drafting import _ADAPTER_LOCKS, _generate_one_media_guarded
+
+        assert "playwright" in _ADAPTER_LOCKS
+        assert "ray_so" in _ADAPTER_LOCKS
+
+        mock_inner.return_value = "/out/a.png"
+        spec = {"id": "media_aaaaaaaaaaaa", "tool": "playwright", "spec": {"url": "https://ex.com"}}
+
+        result = _generate_one_media_guarded(
+            config=MagicMock(),
+            spec=spec,
+            tool="playwright",
+            dry_run=True,
+            verbose=False,
+            project_config=None,
+        )
+        assert result == "/out/a.png"
+        mock_inner.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# DraftingIntent.uploads threads through all 4 builders
+# ---------------------------------------------------------------------------
+
+
+class TestDraftingIntentUploads:
+    """uploads field on DraftingIntent: default None for 3 builders; threaded by intent_from_decision."""
+
+    def test_uploads_default_none_on_drafting_intent(self):
+        from social_hook.drafting import DraftingIntent
+
+        intent = DraftingIntent()
+        assert intent.uploads is None
+
+    def test_intent_from_decision_threads_uploads(self, tmp_path):
+        """intent_from_decision forwards its uploads kwarg onto the returned DraftingIntent."""
+        from social_hook.db.connection import init_database
+        from social_hook.drafting import MediaUpload
+        from social_hook.drafting_intents import intent_from_decision
+
+        db_path = tmp_path / "t.db"
+        conn = init_database(db_path)
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+        decision = MagicMock()
+        decision.id = "d1"
+        decision.decision = "draft"
+        decision.angle = "test"
+        decision.reasoning = "r"
+        decision.post_category = "standalone"
+        decision.targets = {}
+
+        uploads = [MediaUpload(path="/tmp/a.png", context="desk")]
+        intent = intent_from_decision(decision, config, conn, target_platform="x", uploads=uploads)
+        assert intent.uploads == uploads
+        conn.close()
+
+    def test_intent_from_platforms_never_has_uploads(self):
+        """Auto-triggered intents never carry operator uploads."""
+        from social_hook.drafting_intents import intent_from_platforms
+
+        config = _make_config(platforms={"x": _make_platform_config("x")})
+        evaluation = MagicMock()
+        evaluation.strategies = {}
+        evaluation.targets = {}
+        evaluation.commit_analysis = MagicMock()
+        evaluation.commit_analysis.summary = "s"
+        intent = intent_from_platforms(evaluation, "d1", config)
+        assert intent.uploads is None
