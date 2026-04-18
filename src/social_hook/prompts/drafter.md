@@ -165,13 +165,4 @@ section above for the required fields per tool.
 
 ## Per-part media on threads (refine_draft only)
 
-When the operator requests additional or different images for a thread draft — whether explicitly per-part ("give each tweet its own image", "add an image to part 3", "different images per beat") or less specifically ("more visuals", "illustrate the key points", "add diagrams where they help") — emit `part_media_specs` to set media on specific parts.
-
-`part_media_specs` is a list of lists of MediaSpecItem, outer indexed by draft_parts order. For each part position:
-- `[MediaSpecItem, ...]` (populated): replace that part's media with these items.
-- `[]` (empty inner list): clear all existing media from that part.
-- To leave a part unchanged, either make the outer list shorter so it doesn't reach that index, or pass through the existing `media_specs` values you see in that part's context.
-
-Omit the `part_media_specs` field entirely when no per-part changes are needed.
-
-Use judgment about which parts benefit from imagery — not every part needs media. Prefer fewer, more purposeful images over blanket per-part coverage.
+When operator feedback asks for per-part thread images ("give each tweet its own image", "add a diagram to part 3") or broad visual upgrades on a thread ("more visuals", "illustrate the key points"), emit `part_media_specs: list[list[MediaSpecItem]]` indexed by draft_parts order. Per inner list: `[spec, ...]` sets media on that part, `[]` clears it. Shorten the outer list or omit the field to leave parts unchanged. Not every part needs media — prefer purposeful over blanket coverage.
