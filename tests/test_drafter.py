@@ -389,15 +389,16 @@ class TestAutoRepairContentTokens:
         assert "(media:Example)" not in out
         assert "before " in out and " tail" in out
 
-    def test_angle_bracket_placeholder_passes_through(self):
-        """``<id>`` is not a valid TOKEN_RE match (regex excludes <>), so it
-        passes through untouched. It will remain visible in the rendered
-        markdown — that's the correct user-visible signal that the drafter
-        copied a placeholder from the schema example."""
+    def test_angle_bracket_placeholder_dropped(self):
+        """``<id>`` is stripped of angle brackets and matches a literal
+        placeholder, so the entire image is dropped. Under the broad
+        image regex the angle-bracketed variant is caught (unlike the
+        old narrow TOKEN_RE which excluded ``<>``)."""
         content = "before ![x](media:<id>) after"
         specs = [{"id": "media_aaaaaaaaaaaa", "tool": "mermaid", "spec": {}}]
         out = _auto_repair_content_tokens(content, specs)
-        assert out == content  # literal passes through — regex doesn't match
+        assert "(media:<id>)" not in out
+        assert "before " in out and " after" in out
 
     def test_unrecoverable_left_verbatim(self):
         """Tokens that don't match any spec pass through for the diagnostic to catch."""
@@ -458,6 +459,45 @@ class TestAutoRepairContentTokens:
     def test_empty_content_returns_unchanged(self):
         specs = [{"id": "media_aaaaaaaaaaaa", "tool": "mermaid", "spec": {}}]
         assert _auto_repair_content_tokens("", specs) == ""
+
+    def test_repairs_missing_colon_delimiter(self):
+        """``(media_abc...)`` with no colon gets normalized to ``(media:media_abc...)``.
+
+        New drift mode from E2E run 8: LLM emits the spec id as a plain
+        markdown image URL (no ``media:`` prefix, just the full id).
+        The broad regex catches it; exact-spec-id branch normalizes it.
+        """
+        content = "intro ![flow](media_a1b2c3d4e5f6) outro"
+        specs = [{"id": "media_a1b2c3d4e5f6", "tool": "mermaid", "spec": {"diagram": "A-->B"}}]
+        out = _auto_repair_content_tokens(content, specs)
+        assert "![flow](media:media_a1b2c3d4e5f6)" in out
+        assert "(media_a1b2c3d4e5f6)" not in out.replace("(media:media_a1b2c3d4e5f6)", "")
+
+    def test_repairs_plain_tail_only(self):
+        """URL is just the 12-hex tail (neither ``media:`` nor ``media_``)
+        but matches a unique tail index entry — rewrite with full id."""
+        content = "body ![c](a1b2c3d4e5f6) tail"
+        specs = [{"id": "media_a1b2c3d4e5f6", "tool": "mermaid", "spec": {}}]
+        out = _auto_repair_content_tokens(content, specs)
+        assert "![c](media:media_a1b2c3d4e5f6)" in out
+        assert "(a1b2c3d4e5f6)" not in out.replace("(media:media_a1b2c3d4e5f6)", "")
+
+    def test_preserves_real_url_unchanged(self):
+        """Real HTTPS URL that does not resolve to any spec id stays verbatim.
+
+        Defensive regression test — the broad regex must not rewrite
+        markdown images whose URLs are genuine external references.
+        """
+        content = (
+            "See the screenshot: ![docs](https://example.com/img.png) — also "
+            "![flow](media:media_aaaaaaaaaaaa) at the end."
+        )
+        specs = [{"id": "media_aaaaaaaaaaaa", "tool": "mermaid", "spec": {"diagram": "A"}}]
+        out = _auto_repair_content_tokens(content, specs)
+        # Real URL passed through untouched.
+        assert "![docs](https://example.com/img.png)" in out
+        # Canonical spec-id image pass-through.
+        assert "![flow](media:media_aaaaaaaaaaaa)" in out
 
 
 class TestUploadPreseedAndReconcile:

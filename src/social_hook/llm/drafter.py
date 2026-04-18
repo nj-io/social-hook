@@ -5,6 +5,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -22,7 +23,6 @@ from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.catalog import get_model_info
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
 from social_hook.llm.schemas import CreateDraftInput  # re-exported types
-from social_hook.media_tokens import TOKEN_RE
 from social_hook.models.context import ProjectContext
 from social_hook.models.core import CommitInfo
 
@@ -43,16 +43,10 @@ _ALLOWED_TOOLS = {"nano_banana_pro", "mermaid", "ray_so", "playwright", "legacy_
 _REQUIRED_SPEC_FIELDS = {"id", "tool", "spec"}
 
 # Literal placeholder strings the drafter sometimes copies verbatim from
-# schema/prompt examples. Any content token whose id matches one of these
-# is dropped outright — there is no spec id it could possibly refer to.
-# Case-insensitive match.
-#
-# Note: angle-bracketed variants like ``<id>`` are NOT listed because the
-# token regex (media_tokens.TOKEN_RE) excludes ``<`` and ``>`` from the
-# id character class, so ``(media:<id>)`` never registers as a token
-# and passes through the repair step untouched. It will remain visible
-# in the rendered markdown, but that's the correct user-visible signal
-# that the drafter copied a placeholder.
+# schema/prompt examples. Any markdown-image candidate whose URL — after
+# optional ``media:`` prefix stripping and ``<>`` trim — matches one of
+# these is dropped outright. There is no spec id it could possibly
+# refer to. Case-insensitive match.
 _LITERAL_PLACEHOLDER_IDS = {
     "id",
     "media_id",
@@ -62,6 +56,13 @@ _LITERAL_PLACEHOLDER_IDS = {
     "xxx",
     "xyz",
 }
+
+# Broad markdown image regex — matches ``![caption](url)`` for any URL,
+# not just ``media:`` tokens. The auto-repair pass uses this so it can
+# catch LLM drift modes that drop the ``media:`` delimiter entirely
+# (e.g. ``![x](media_abc...)`` or ``![x](abc...)``). Real URLs that do
+# not resolve to a spec id pass through untouched.
+_BROAD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 
 class Drafter:
@@ -717,25 +718,30 @@ def _sanitize_media_specs(
 
 
 def _auto_repair_content_tokens(content: str, specs: list[dict[str, Any]]) -> str:
-    """Repair `![caption](media:<id>)` tokens against the spec list.
+    """Normalize and repair markdown image references against the spec list.
 
-    Three observed LLM drift modes, handled here as defense-in-depth:
+    Scans every ``![caption](url)`` in ``content``. For each one:
 
-    * **Missing ``media_`` prefix** — token id is the 12-hex tail of a
-      real spec id; rewrite to the full id. Example:
-      ``![x](media:a1b2c3d4e5f6)`` with a spec ``{"id":
-      "media_a1b2c3d4e5f6"}`` rewrites to
-      ``![x](media:media_a1b2c3d4e5f6)``.
-    * **Literal placeholder id** — token id matches one of
-      ``_LITERAL_PLACEHOLDER_IDS`` (``id``, ``<id>``, ``media_id``, etc.);
-      drop the token entirely so the orphan-reference diagnostic does
-      not fire on LLM template copying.
-    * **Unrecoverable** — token id fuzzy-matches nothing; leave verbatim
-      so the ``broken_media_reference`` diagnostic surfaces it at read
-      time.
+    * **Canonical** — ``url`` is exactly ``media:<spec_id>``: pass through.
+    * **Missing ``media:`` delimiter** — ``url`` is a bare spec id (e.g.
+      ``media_abc...``): rewrite to ``media:<spec_id>``.
+    * **Missing ``media_`` prefix** — ``url`` is the 12-hex tail of a
+      real spec id (optionally prefixed with ``media:``), and that tail
+      is unique across all specs: rewrite to the full id form
+      ``media:<full_spec_id>``.
+    * **Literal placeholder** — ``url`` (after stripping an optional
+      ``media:`` prefix and any ``<>`` angle brackets, case-insensitive)
+      matches one of ``_LITERAL_PLACEHOLDER_IDS``: drop the entire
+      image. Prevents orphan-reference diagnostics firing on LLM
+      template copying.
+    * **Real URL / unknown id** — URL does not resolve to any known
+      spec id: pass through untouched. A real HTTPS URL or markdown
+      image with a non-spec URL stays intact; a ``media:foo`` token
+      with no matching spec is preserved so the
+      ``broken_media_reference`` diagnostic surfaces it at read time.
 
-    Structural token matches that already map 1-to-1 to a spec id pass
-    through unchanged.
+    Repair warnings are logged so operators can see drift rates in
+    production.
     """
     if not content:
         return content
@@ -760,24 +766,42 @@ def _auto_repair_content_tokens(content: str, specs: list[dict[str, Any]]) -> st
 
     def _repair(match: "Any") -> str:
         caption = match.group(1)
-        raw_id = match.group(2)
-        # 1. Exact match — no repair needed.
-        if raw_id in spec_ids:
-            return str(match.group(0))
-        # 2. Literal placeholder — drop the whole token.
-        if raw_id.lower().strip("<>") in _LITERAL_PLACEHOLDER_IDS:
-            logger.warning("Dropping content token with literal placeholder id %r", raw_id)
+        url = match.group(2)
+        # Strip the optional ``media:`` prefix for id resolution; remember
+        # whether it was present for the "missing delimiter" log message.
+        had_media_prefix = url.startswith("media:")
+        candidate = url[len("media:") :] if had_media_prefix else url
+
+        # 1. Literal placeholder — drop the whole image.
+        if candidate.lower().strip("<>") in _LITERAL_PLACEHOLDER_IDS:
+            logger.warning("Dropping content image with literal placeholder url %r", url)
             return ""
+
+        # 2. Exact spec-id match — normalize to canonical ``media:<id>`` form.
+        #    (Handles both canonical input and the "missing ``media:``
+        #    delimiter" drift mode in one branch.)
+        if candidate in spec_ids:
+            canonical = f"![{caption}](media:{candidate})"
+            if not had_media_prefix:
+                logger.warning(
+                    "Normalized content image: %r -> %r (missing 'media:' delimiter)",
+                    url,
+                    f"media:{candidate}",
+                )
+            return canonical
+
         # 3. Prefix-strip repair — unique tail maps back to a real id.
-        if raw_id in tail_index:
-            repaired_id = tail_index[raw_id]
+        if candidate in tail_index:
+            repaired_id = tail_index[candidate]
             logger.warning(
-                "Repaired content token: media:%s -> media:%s (missing 'media_' prefix)",
-                raw_id,
-                repaired_id,
+                "Repaired content image: %r -> %r (missing 'media_' prefix)",
+                url,
+                f"media:{repaired_id}",
             )
             return f"![{caption}](media:{repaired_id})"
-        # 4. Unrecoverable — diagnostic surfaces it at read time.
+
+        # 4. Unknown URL — not a spec id. Could be a real HTTPS URL or a
+        #    broken media: token; leave verbatim so the diagnostic catches it.
         return str(match.group(0))
 
-    return TOKEN_RE.sub(_repair, content)
+    return _BROAD_IMAGE_RE.sub(_repair, content)
