@@ -528,11 +528,13 @@ def run(harness, runner, adapter):
     # V12: Per-item regen background task (structural)
     def v12():
         media_id = "media_v12xxxxxx"
+        # Mermaid requires a diagram-type prefix (``graph TD`` etc.); the
+        # adapter renders via mermaid.ink which 400s on bare edge syntax.
         specs = [
             {
                 "id": media_id,
                 "tool": "mermaid",
-                "spec": {"diagram": "A-->B"},
+                "spec": {"diagram": "graph TD;\n  A-->B"},
                 "caption": None,
                 "user_uploaded": False,
             },
@@ -551,7 +553,7 @@ def run(harness, runner, adapter):
         from social_hook.web.server import app
 
         client = TestClient(app)
-        new_spec = {"tool": "mermaid", "spec": {"diagram": "X-->Y"}}
+        new_spec = {"tool": "mermaid", "spec": {"diagram": "graph LR;\n  X-->Y"}}
         res = client.put(f"/api/drafts/{draft.id}/media/{media_id}", json=new_spec)
         assert res.status_code in (200, 202), f"PUT failed: {res.status_code} {res.text}"
         body = res.json()
@@ -563,8 +565,12 @@ def run(harness, runner, adapter):
 
         updated = ops.get_draft(harness.conn, draft.id)
         idx = next(i for i, s in enumerate(updated.media_specs) if s["id"] == media_id)
-        assert updated.media_paths[idx], f"media_paths[{idx}] empty after regen"
-        assert updated.media_specs_used[idx]["spec"]["diagram"] == "X-->Y", (
+        # Path must have CHANGED from the seeded value (truthy isn't enough —
+        # the seed was ``/tmp/initial.png``; success writes a real output path).
+        assert updated.media_paths[idx] and updated.media_paths[idx] != "/tmp/initial.png", (
+            f"media_paths[{idx}] didn't change from seed: {updated.media_paths[idx]}"
+        )
+        assert "X-->Y" in updated.media_specs_used[idx]["spec"]["diagram"], (
             f"media_specs_used not updated: {updated.media_specs_used[idx]}"
         )
 
@@ -739,11 +745,12 @@ def run(harness, runner, adapter):
         from social_hook.cli import app as cli_app
 
         media_id = "media_v15_aaaa"
+        # Mermaid requires a diagram-type prefix; see V12.
         specs = [
             {
                 "id": media_id,
                 "tool": "mermaid",
-                "spec": {"diagram": "A-->B"},
+                "spec": {"diagram": "graph TD;\n  A-->B"},
                 "caption": None,
                 "user_uploaded": False,
             },
@@ -783,9 +790,13 @@ def run(harness, runner, adapter):
         # CLI regen runs synchronously (per `draft media regen --help`:
         # "LLM-bearing — runs adapter generation synchronously in CLI context").
         # Response shape is ``{draft_id, count, regenerated: [{id, ...}, ...]}``,
-        # not 202 + task_id. Assert the sync-shape fields instead.
+        # not 202 + task_id. Assert structure AND that at least one item
+        # actually succeeded — a regen that returns only items with ``error``
+        # entries is a failure masquerading as success.
         assert "regenerated" in payload, f"regen output missing 'regenerated': {payload}"
         assert payload.get("count", 0) >= 1, f"regen count < 1: {payload}"
+        succeeded = [r for r in payload["regenerated"] if not r.get("error")]
+        assert succeeded, f"regen produced no successful items — all entries have errors: {payload}"
 
         # --index must be rejected (ID-only addressing)
         reject = cli.invoke(
