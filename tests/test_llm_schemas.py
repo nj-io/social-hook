@@ -3,7 +3,7 @@
 import pytest
 
 from social_hook.errors import MalformedResponseError
-from social_hook.llm.schemas import CreateDraftInput, MediaSpecItem
+from social_hook.llm.schemas import CreateDraftInput, ExpertResponseInput, MediaSpecItem
 
 
 class TestMediaSpecItemValidation:
@@ -104,3 +104,78 @@ class TestToolSchema:
     def test_media_specs_has_default_empty_array(self):
         schema = CreateDraftInput.to_tool_schema()
         assert schema["input_schema"]["properties"]["media_specs"]["default"] == []
+
+
+class TestExpertResponsePartMediaSpecs:
+    """ExpertResponseInput.part_media_specs — per-part media for change-angle flow."""
+
+    def test_absent_validates(self):
+        """Omitting part_media_specs is fine — default None leaves per-part media untouched."""
+        result = ExpertResponseInput.validate(
+            {
+                "action": "refine_draft",
+                "reasoning": "Tighten the angle",
+                "refined_content": "New thread content",
+            }
+        )
+        assert result.part_media_specs is None
+
+    def test_present_validates_with_specs_per_part(self):
+        """A list-of-lists of MediaSpecItem parses cleanly; indexes map to draft parts."""
+        result = ExpertResponseInput.validate(
+            {
+                "action": "refine_draft",
+                "reasoning": "Give each tweet its own image",
+                "refined_content": "1/ foo\n\n2/ bar\n\n3/ baz\n\n4/ qux",
+                "part_media_specs": [
+                    [
+                        {
+                            "id": "media_aaaaaaaaaaaa",
+                            "tool": "mermaid",
+                            "spec": {"diagram": "A-->B"},
+                        }
+                    ],
+                    [],
+                    [
+                        {
+                            "id": "media_cccccccccccc",
+                            "tool": "ray_so",
+                            "spec": {"code": "x = 1"},
+                        }
+                    ],
+                    [],
+                ],
+            }
+        )
+        assert result.part_media_specs is not None
+        assert len(result.part_media_specs) == 4
+        assert len(result.part_media_specs[0]) == 1
+        assert result.part_media_specs[0][0].tool == "mermaid"
+        assert result.part_media_specs[1] == []
+        assert result.part_media_specs[2][0].tool == "ray_so"
+
+    def test_unknown_tool_in_part_media_specs_fails(self):
+        """Invalid tool inside part_media_specs bubbles up as MalformedResponseError."""
+        with pytest.raises(MalformedResponseError):
+            ExpertResponseInput.validate(
+                {
+                    "action": "refine_draft",
+                    "reasoning": "Test",
+                    "part_media_specs": [
+                        [{"id": "media_000000000001", "tool": "dalle", "spec": {}}],
+                    ],
+                }
+            )
+
+    def test_to_tool_schema_includes_part_media_specs(self):
+        """JSON schema exposes part_media_specs with correct item shape."""
+        schema = ExpertResponseInput.to_tool_schema()
+        props = schema["input_schema"]["properties"]
+        assert "part_media_specs" in props
+        outer = props["part_media_specs"]
+        assert outer["type"] == "array"
+        inner = outer["items"]
+        assert inner["type"] == "array"
+        spec_item = inner["items"]
+        assert spec_item["required"] == ["id", "tool", "spec"]
+        assert spec_item["additionalProperties"] is False

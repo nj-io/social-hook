@@ -658,6 +658,12 @@ class ExpertResponseInput(BaseModel):
     refined_content: str | None = None
     refined_media_spec: dict[str, Any] | None = None
     refined_vehicle: str | None = None
+    # Per-part media for thread vehicles. Outer list indexes draft_parts
+    # (one entry per part); inner list is that part's media_specs (same
+    # shape as Draft.media_specs). None leaves existing per-part media
+    # untouched. Used by the change-angle flow ("give each tweet its own
+    # image") — see bot/commands.py::_apply_expert_result.
+    part_media_specs: list[list[MediaSpecItem]] | None = None
     answer: str | None = None
     context_note: str | None = None
 
@@ -695,6 +701,47 @@ class ExpertResponseInput(BaseModel):
                             "For refine_draft: change the content vehicle. "
                             "Use when the user asks to reformat as a thread, single post, or article."
                         ),
+                    },
+                    "part_media_specs": {
+                        "type": "array",
+                        "description": (
+                            "For refine_draft on thread vehicles: per-part media. "
+                            "Outer array indexes draft_parts (one entry per part); "
+                            "each inner array is that part's media_specs (same shape "
+                            "as the top-level media_specs on create_draft). Use when "
+                            "the user asks to give each tweet in a thread its own "
+                            "image. Omit to leave per-part media unchanged."
+                        ),
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["id", "tool", "spec"],
+                                "additionalProperties": False,
+                                "properties": {
+                                    "id": {
+                                        "type": "string",
+                                        "pattern": "^media_[a-f0-9]{12}$",
+                                    },
+                                    "tool": {
+                                        "type": "string",
+                                        "enum": [
+                                            "nano_banana_pro",
+                                            "mermaid",
+                                            "ray_so",
+                                            "playwright",
+                                            "legacy_upload",
+                                        ],
+                                    },
+                                    "spec": {"type": "object"},
+                                    "caption": {"type": ["string", "null"]},
+                                    "user_uploaded": {
+                                        "type": "boolean",
+                                        "default": False,
+                                    },
+                                },
+                            },
+                        },
                     },
                     "answer": {
                         "type": "string",
