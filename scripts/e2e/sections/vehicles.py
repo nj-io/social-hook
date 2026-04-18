@@ -649,7 +649,11 @@ def run(harness, runner, adapter):
         from social_hook.filesystem import generate_id
         from social_hook.models.core import DraftPart
 
-        # Seed an X thread draft with 4 parts
+        # Expert drives per-part image generation; match V8/V9 by turning on
+        # media_generation so the adapter isn't short-circuited.
+        harness.update_config({"media_generation": {"enabled": True}})
+
+        # Seed an X thread draft with 4 parts.
         draft = harness.seed_draft(
             harness.project_id,
             vehicle="thread",
@@ -685,18 +689,33 @@ def run(harness, runner, adapter):
         from social_hook.web.server import app
 
         client = TestClient(app)
-        res = client.post(
+
+        # Two-step edit_angle flow:
+        #   1. POST /api/callback {action: edit_angle, payload: draft_id}
+        #      — non-LLM callback; arms a pending-reply with type=edit_angle.
+        #   2. POST /api/message {text: ...} — resolved as the pending reply,
+        #      dispatches the Expert LLM via _run_background_task; returns
+        #      202 + task_id for wait_for_task to poll.
+        cb = client.post(
             "/api/callback",
-            json={
-                "action": "expert",
-                "payload": draft.id,
-                "text": "give each tweet its own image",
-            },
+            json={"action": "edit_angle", "payload": draft.id},
         )
-        assert res.status_code in (200, 202), f"callback failed: {res.status_code} {res.text}"
-        task_id = res.json().get("task_id") if res.json() else None
-        if task_id:
-            harness.wait_for_task(task_id, timeout=180.0)
+        assert cb.status_code == 200, f"edit_angle callback failed: {cb.status_code} {cb.text}"
+
+        msg = client.post(
+            "/api/message",
+            json={"text": "give each tweet its own image"},
+        )
+        assert msg.status_code == 202, (
+            f"/api/message expected 202, got {msg.status_code} {msg.text}"
+        )
+        task_id = msg.json().get("task_id")
+        assert task_id, f"/api/message response missing task_id: {msg.json()}"
+
+        final = harness.wait_for_task(task_id, timeout=180.0)
+        assert final.get("status") == "completed", (
+            f"expert task ended in {final.get('status')}: {final.get('error')}"
+        )
 
         parts = ops.get_draft_parts(harness.conn, draft.id)
         assert len(parts) == 4, f"expected 4 parts, got {len(parts)}"
@@ -728,6 +747,8 @@ def run(harness, runner, adapter):
                 "part_media": [{"part_id": p.id, "media_paths": p.media_paths} for p in populated],
             },
         )
+
+        harness.update_config({"media_generation": {"enabled": False}})
         return f"Thread with per-part media: {len(populated)}/4 parts populated"
 
     runner.run_scenario(
