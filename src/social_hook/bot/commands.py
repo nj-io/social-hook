@@ -851,39 +851,52 @@ def _apply_expert_result(
 
     if result.refined_media_spec:
         # Apply to the first media slot on the draft (multi-media surface).
-        # No-op + log when draft has no media slot — the drafter should have
-        # created one; we don't silently synthesize one here.
+        # If the draft has no slot yet, create one so the refine flow still
+        # lands — tool defaults to nano_banana_pro.
+        target_id: str | None = None
         if draft.media_specs and isinstance(draft.media_specs[0], dict):
             target_id = draft.media_specs[0].get("id")
-            if target_id:
-                existing = dict(draft.media_specs[0])
-                existing["spec"] = result.refined_media_spec
-                ops.update_draft_media(conn, draft.id, target_id, spec=existing)
-                insert_draft_change(
-                    conn,
-                    DraftChange(
-                        id=generate_id("change"),
-                        draft_id=draft.id,
-                        field=f"media_spec:{target_id}",
-                        old_value="",
-                        new_value="refined",
-                        changed_by="expert",
-                    ),
-                )
-                # Auto-regen via the per-item path so media_paths + spec_used update.
-                if config:
-                    try:
-                        from social_hook.bot.buttons import _regen_one_media
-                        from social_hook.db import get_draft as _get_draft
-
-                        refreshed = _get_draft(conn, draft.id) or draft
-                        _regen_one_media(refreshed, target_id, config, enforce_spec_change=False)
-                    except Exception as e:
-                        logger.warning("Auto-regeneration after expert refine failed: %s", e)
-        else:
-            logger.warning(
-                "Expert refined_media_spec but draft %s has no media slot; ignoring.", draft.id
+        if not target_id:
+            target_id = ops.append_draft_media(
+                conn,
+                draft.id,
+                {"tool": "nano_banana_pro", "spec": {}, "user_uploaded": False},
             )
+        if target_id:
+            # Fetch current (may have just been appended) to preserve tool.
+            d2 = ops.get_draft(conn, draft.id) or draft
+            current = next(
+                (
+                    s
+                    for s in (d2.media_specs or [])
+                    if isinstance(s, dict) and s.get("id") == target_id
+                ),
+                {"id": target_id, "tool": "nano_banana_pro", "user_uploaded": False},
+            )
+            new_item = dict(current)
+            new_item["spec"] = result.refined_media_spec
+            ops.update_draft_media(conn, draft.id, target_id, spec=new_item)
+            insert_draft_change(
+                conn,
+                DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft.id,
+                    field=f"media_spec:{target_id}",
+                    old_value="",
+                    new_value="refined",
+                    changed_by="expert",
+                ),
+            )
+            # Auto-regen via the per-item path so media_paths + spec_used update.
+            if config:
+                try:
+                    from social_hook.bot.buttons import _regen_one_media
+                    from social_hook.db import get_draft as _get_draft
+
+                    refreshed = _get_draft(conn, draft.id) or draft
+                    _regen_one_media(refreshed, target_id, config, enforce_spec_change=False)
+                except Exception as e:
+                    logger.warning("Auto-regeneration after expert refine failed: %s", e)
 
     if part_media_specs and isinstance(part_media_specs, list):
         parts = ops.get_draft_parts(conn, draft.id)
@@ -908,12 +921,13 @@ def _apply_expert_result(
 
             # Persist spec list first (with empty paths/errors).
             ops.update_draft_part(
+                conn,
                 part.id,
                 media_specs=normalized,
                 media_specs_used=[{} for _ in normalized],
                 media_paths=["" for _ in normalized],
                 media_errors=[None for _ in normalized],
-            ) if hasattr(ops, "update_draft_part") else None
+            )
 
             # Generate per-item (sequential — bot handler path is already in a
             # background task; parallel thread pool lives in drafting._generate_all_media).
@@ -940,13 +954,13 @@ def _apply_expert_result(
                     new_paths.append("")
                     new_errors.append(str(e))
 
-            if hasattr(ops, "update_draft_part"):
-                ops.update_draft_part(
-                    part.id,
-                    media_paths=new_paths,
-                    media_errors=new_errors,
-                    media_specs_used=normalized,
-                )
+            ops.update_draft_part(
+                conn,
+                part.id,
+                media_paths=new_paths,
+                media_errors=new_errors,
+                media_specs_used=normalized,
+            )
 
             insert_draft_change(
                 conn,

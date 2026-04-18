@@ -747,11 +747,18 @@ def btn_edit_media(
     adapter: MessagingAdapter,
     chat_id: str,
     callback_id: str,
-    draft_id: str,
+    payload: str,
     config: Any | None,
     **kwargs: Any,
 ) -> None:
-    """Show current media and action buttons, or offer to add media if none exists."""
+    """Show current media and per-item action buttons, or offer to add if none.
+
+    Payload is the draft_id from the top-level Edit submenu. One preview +
+    action row is shown per existing media item with 3-part payloads
+    ``action:draft_id:media_id``. Bulk actions (Add, Regen all, Replan
+    specs) sit above the per-item rows.
+    """
+    draft_id = payload
     _answer_callback(adapter, callback_id, "Loading media...")
     conn = _get_conn()
     try:
@@ -767,53 +774,81 @@ def btn_edit_media(
         if not _guard_draft_editable(adapter, chat_id, draft):
             return
 
-        if draft.media_paths:
-            # Send current media via adapter
-            caps = adapter.get_capabilities()
-            if caps.supports_media:
-                for path in draft.media_paths:
-                    _send_media(
-                        adapter,
-                        chat_id,
-                        path,
-                        caption=f"Current media for `{draft_id[:12]}`",
-                    )
-            # Show action buttons including switch tool
-            buttons = [
-                ButtonRow(
-                    buttons=[
-                        Button(label="Regenerate", action="media_regen", payload=draft_id),
-                        Button(label="Retry", action="media_retry", payload=draft_id),
-                    ]
-                ),
-                ButtonRow(
-                    buttons=[
-                        Button(label="Switch tool", action="media_pick_tool", payload=draft_id),
-                        Button(label="Remove media", action="media_remove", payload=draft_id),
-                    ]
-                ),
-            ]
-            _send_with_buttons(
-                adapter,
-                chat_id,
-                f"Media for `{draft_id[:12]}` ({draft.media_type or 'unknown'}):",
-                buttons,
-            )
-        else:
-            # No media — offer to add
-            buttons = [
-                ButtonRow(
-                    buttons=[
-                        Button(label="Add media", action="media_pick_tool", payload=draft_id),
-                        Button(label="Upload file", action="media_upload", payload=draft_id),
-                    ]
-                ),
-            ]
+        specs = draft.media_specs or []
+        paths = draft.media_paths or []
+        errors = draft.media_errors or []
+        caps = adapter.get_capabilities()
+
+        if not specs:
+            # No media yet — offer to add a new slot or upload.
             _send_with_buttons(
                 adapter,
                 chat_id,
                 f"No media on `{draft_id[:12]}`. Add some?",
-                buttons,
+                [
+                    ButtonRow(
+                        buttons=[
+                            Button(label="Add media", action="media_add", payload=draft_id),
+                            Button(label="Upload file", action="media_upload", payload=draft_id),
+                        ]
+                    ),
+                ],
+            )
+            return
+
+        # Header row: batch operations across all items.
+        _send_with_buttons(
+            adapter,
+            chat_id,
+            f"Media for `{draft_id[:12]}` ({len(specs)} item(s)):",
+            [
+                ButtonRow(
+                    buttons=[
+                        Button(label="Add", action="media_add", payload=draft_id),
+                        Button(label="Regen all", action="media_regen_all", payload=draft_id),
+                        Button(label="Replan", action="media_replan_specs", payload=draft_id),
+                    ]
+                ),
+            ],
+        )
+
+        for i, spec in enumerate(specs):
+            if not isinstance(spec, dict):
+                continue
+            mid = spec.get("id")
+            if not mid:
+                continue
+            pay = f"{draft_id}:{mid}"
+            tool = spec.get("tool") or "?"
+            path = paths[i] if i < len(paths) else ""
+            err = errors[i] if i < len(errors) else None
+
+            if path and caps.supports_media:
+                _send_media(adapter, chat_id, path, caption=f"Media {i + 1} ({tool})")
+            elif err:
+                _send(adapter, chat_id, f"Media {i + 1} ({tool}) failed: {err}")
+            else:
+                _send(adapter, chat_id, f"Media {i + 1} ({tool}) — pending generation.")
+
+            _send_with_buttons(
+                adapter,
+                chat_id,
+                f"`{mid}`",
+                [
+                    ButtonRow(
+                        buttons=[
+                            Button(label="Regen", action="media_regen", payload=pay),
+                            Button(label="Retry", action="media_retry", payload=pay),
+                            Button(label="Edit spec", action="media_gen_spec", payload=pay),
+                        ]
+                    ),
+                    ButtonRow(
+                        buttons=[
+                            Button(label="Preview", action="media_preview", payload=pay),
+                            Button(label="Remove", action="media_remove", payload=pay),
+                        ]
+                    ),
+                ],
             )
     finally:
         conn.close()

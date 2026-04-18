@@ -23,15 +23,28 @@ from social_hook.messaging.base import PlatformCapabilities, SendResult
 
 @dataclass
 class FakeDraft:
-    """Minimal draft stand-in for tests."""
+    """Minimal draft stand-in for tests.
+
+    Multi-media: new surface is the parallel arrays
+    (`media_specs`, `media_paths`, `media_errors`, `media_specs_used`).
+    """
 
     id: str = "draft_test123456"
     project_id: str = "proj_abc"
     status: str = "draft"
     media_paths: list = field(default_factory=list)
-    media_type: str | None = "mermaid"
-    media_spec: dict | None = field(default_factory=lambda: {"type": "flowchart", "code": "A->B"})
-    media_spec_used: dict | None = None
+    media_specs: list = field(
+        default_factory=lambda: [
+            {
+                "id": "media_abc123def456",
+                "tool": "mermaid",
+                "spec": {"type": "flowchart", "code": "A->B"},
+                "user_uploaded": False,
+            }
+        ]
+    )
+    media_errors: list = field(default_factory=lambda: [None])
+    media_specs_used: list = field(default_factory=list)
     content: str = "test content"
 
 
@@ -148,11 +161,28 @@ class TestMediaRetry:
     @patch("social_hook.bot.buttons._get_conn")
     @patch("social_hook.bot.buttons._send")
     def test_retry_bypasses_spec_guard_and_generates(self, mock_send, mock_conn):
-        """media_retry should NOT check spec==spec_used, and should call generate()."""
+        """media_retry should NOT check spec==spec_used, and should call generate().
+
+        Legacy 2-part payload operates on ``media_specs[0]``.
+        """
         draft = FakeDraft(
             status="draft",
-            media_spec={"type": "flowchart", "code": "A->B"},
-            media_spec_used={"type": "flowchart", "code": "A->B"},  # same as spec
+            media_specs=[
+                {
+                    "id": "media_abc123def456",
+                    "tool": "mermaid",
+                    "spec": {"type": "flowchart", "code": "A->B"},
+                    "user_uploaded": False,
+                }
+            ],
+            media_specs_used=[
+                {
+                    "id": "media_abc123def456",
+                    "tool": "mermaid",
+                    "spec": {"type": "flowchart", "code": "A->B"},  # same → spec-unchanged
+                    "user_uploaded": False,
+                }
+            ],
             media_paths=["/old/img.png"],
         )
         conn = MagicMock()
@@ -165,8 +195,9 @@ class TestMediaRetry:
 
         with (
             patch("social_hook.db.get_draft", return_value=draft),
-            patch("social_hook.db.update_draft"),
+            patch("social_hook.db.operations.update_draft_media"),
             patch("social_hook.db.operations.insert_draft_change"),
+            patch("social_hook.db.operations.emit_data_event"),
             patch(
                 "social_hook.adapters.registry.get_media_adapter",
                 return_value=mock_media_adapter,
@@ -177,7 +208,7 @@ class TestMediaRetry:
                 return_value=MagicMock(
                     __truediv__=MagicMock(
                         return_value=MagicMock(
-                            __truediv__=MagicMock(return_value="/tmp/cache/draft_test")
+                            __truediv__=MagicMock(return_value="/tmp/cache/media_abc123def456")
                         )
                     )
                 ),
@@ -205,7 +236,8 @@ class TestMediaRetry:
     @patch("social_hook.bot.buttons._get_conn")
     @patch("social_hook.bot.buttons._send")
     def test_retry_no_spec(self, mock_send, mock_conn):
-        draft = FakeDraft(status="draft", media_spec=None)
+        """Legacy 2-part payload + no media_specs at all → handler aborts."""
+        draft = FakeDraft(status="draft", media_specs=[])
         conn = MagicMock()
         mock_conn.return_value = conn
 
@@ -213,7 +245,7 @@ class TestMediaRetry:
             adapter = _make_adapter()
             btn_media_retry(adapter, "c1", "cb1", "draft_test123456", None)
 
-        mock_send.assert_any_call(adapter, "c1", "No media spec available for retry.")
+        mock_send.assert_any_call(adapter, "c1", "No media items on this draft.")
 
 
 # ---------------------------------------------------------------------------

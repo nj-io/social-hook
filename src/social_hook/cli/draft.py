@@ -490,27 +490,50 @@ def redraft(
                 )
 
             if result.refined_media_spec:
-                ops.update_draft(conn, draft_id, media_spec=result.refined_media_spec)
-                ops.insert_draft_change(
-                    conn,
-                    DraftChange(
-                        id=generate_id("change"),
-                        draft_id=draft_id,
-                        field="media_spec",
-                        old_value=json_mod.dumps(draft.media_spec)[:200]
-                        if draft.media_spec
-                        else "null",
-                        new_value=json_mod.dumps(result.refined_media_spec)[:200],
-                        changed_by="expert",
-                    ),
-                )
+                # Target the first media slot; create one if none exists.
+                target_id: str | None = None
+                if draft.media_specs and isinstance(draft.media_specs[0], dict):
+                    target_id = draft.media_specs[0].get("id")
+                if not target_id:
+                    target_id = ops.append_draft_media(
+                        conn,
+                        draft_id,
+                        {"tool": "nano_banana_pro", "spec": {}, "user_uploaded": False},
+                    )
+                if target_id:
+                    d2 = ops.get_draft(conn, draft_id) or draft
+                    current = next(
+                        (
+                            s
+                            for s in (d2.media_specs or [])
+                            if isinstance(s, dict) and s.get("id") == target_id
+                        ),
+                        {"id": target_id, "tool": "nano_banana_pro", "user_uploaded": False},
+                    )
+                    new_item = dict(current)
+                    new_item["spec"] = result.refined_media_spec
+                    ops.update_draft_media(conn, draft_id, target_id, spec=new_item)
+                    ops.insert_draft_change(
+                        conn,
+                        DraftChange(
+                            id=generate_id("change"),
+                            draft_id=draft_id,
+                            field=f"media_spec:{target_id}",
+                            old_value="",
+                            new_value=json_mod.dumps(result.refined_media_spec)[:200],
+                            changed_by="expert",
+                        ),
+                    )
 
             ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
             typer.echo(f"Draft {draft_id} redrafted.")
             if result.refined_content:
                 typer.echo(f"\n{result.refined_content[:500]}")
             if result.refined_media_spec:
-                typer.echo("Media spec updated. Run `social-hook draft media-regen` to regenerate.")
+                typer.echo(
+                    "Media spec updated. Run "
+                    "`social-hook draft media regen --draft <id> --id <media_id>`."
+                )
         else:
             typer.echo(f"Expert could not refine: {result.reasoning}")
             raise typer.Exit(1)

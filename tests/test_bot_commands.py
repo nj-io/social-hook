@@ -2244,7 +2244,11 @@ class TestSaveAngle:
             conn2 = get_connection(db_path)
             updated = _get_draft(conn2, draft.id)
             assert updated.content == "New content"
-            assert updated.media_spec == {"code": "print('hi')", "language": "python"}
+            assert updated.media_specs, "refined_media_spec should have created a slot"
+            assert updated.media_specs[0]["spec"] == {
+                "code": "print('hi')",
+                "language": "python",
+            }
             conn2.close()
 
             # Response message mentions media spec
@@ -2284,7 +2288,8 @@ class TestSaveAngle:
             conn2 = get_connection(db_path)
             updated = _get_draft(conn2, draft.id)
             assert updated.content == "Original content"
-            assert updated.media_spec == {"code": "print('hi')"}
+            assert updated.media_specs, "refined_media_spec should have created a slot"
+            assert updated.media_specs[0]["spec"] == {"code": "print('hi')"}
             conn2.close()
 
             msg = mock_adapter.send_message.call_args[0][1]
@@ -2719,11 +2724,16 @@ class TestBtnReopen:
 
 
 class TestApplyExpertResultUnpack:
-    """Test that _apply_expert_result handles 4-tuple from _generate_media."""
+    """_apply_expert_result against the multi-media surface (post feat/multi-media).
+
+    refined_media_spec now targets the draft's first media slot (or creates
+    one if absent) via ops.update_draft_media, rather than writing to the
+    dropped singular media_spec column.
+    """
 
     @patch("social_hook.bot.commands._get_conn")
-    def test_no_value_error_on_4_tuple(self, mock_conn, mock_adapter, temp_dir):
-        """_generate_media returns 4 values; _apply_expert_result should not crash."""
+    def test_refined_media_spec_creates_slot_when_missing(self, mock_conn, mock_adapter, temp_dir):
+        """When the draft has no media slot, refined_media_spec creates one."""
         from social_hook.bot.commands import _apply_expert_result
         from social_hook.db import get_draft, insert_decision
         from social_hook.models.core import Decision
@@ -2749,7 +2759,6 @@ class TestApplyExpertResultUnpack:
             platform="x",
             content="Original",
             status="draft",
-            media_type="test",
         )
         insert_draft(conn, draft)
 
@@ -2759,20 +2768,16 @@ class TestApplyExpertResultUnpack:
         result.refined_content = None
         result.refined_media_spec = {"some": "spec"}
         result.refined_vehicle = None
+        result.part_media_specs = None
 
-        config = MagicMock()
-
-        with patch(
-            "social_hook.drafting._generate_media",
-            return_value=(["path.png"], "image", {"key": "val"}, None),
-        ):
-            # Should not raise ValueError: not enough values to unpack
-            applied = _apply_expert_result(conn, draft_obj, result, config=config)
-            assert applied is True
+        # No config → auto-regen skipped; we only verify the spec update.
+        applied = _apply_expert_result(conn, draft_obj, result, config=None)
+        assert applied is True
 
         conn2 = get_connection(db_path)
         updated = get_draft(conn2, draft.id)
-        assert updated.media_spec == {"some": "spec"}
+        assert updated.media_specs, "slot should have been created"
+        assert updated.media_specs[0]["spec"] == {"some": "spec"}
         conn2.close()
 
 

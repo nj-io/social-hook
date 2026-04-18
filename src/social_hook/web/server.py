@@ -1541,7 +1541,23 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
         # Capture values for the closure (conn can't be shared across threads)
         draft_content = draft.content
         draft_project_id = draft.project_id
-        old_spec = draft.media_spec
+        # Multi-media: target the first media slot (legacy single-media surface)
+        # or create a fresh one if none exists. generate-spec is retained for
+        # backward compat with the existing frontend spec-generation button —
+        # per-item edits should go through PUT /api/drafts/{id}/media/{media_id}.
+        existing_specs = draft.media_specs or []
+        if existing_specs and isinstance(existing_specs[0], dict):
+            target_media_id = existing_specs[0].get("id")
+            old_spec = existing_specs[0].get("spec")
+        else:
+            target_media_id = ops.append_draft_media(
+                conn,
+                draft_id,
+                {"tool": tool_name, "spec": {}, "user_uploaded": False},
+            )
+            old_spec = None
+        if not target_media_id:
+            raise HTTPException(status_code=500, detail="Could not resolve target media slot")
     finally:
         conn.close()
 
@@ -1570,16 +1586,31 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
         )
         spec = extract_tool_call(response, "generate_media_spec")
 
-        # Persist to DB
+        # Persist the new spec onto the target media slot via the per-item op.
         conn2 = _get_conn()
         try:
-            ops.update_draft(conn2, draft_id, media_spec=spec, media_type=tool_name)
+            d2 = ops.get_draft(conn2, draft_id)
+            if d2 is None:
+                return {"error": "draft_not_found"}
+            current = next(
+                (
+                    s
+                    for s in (d2.media_specs or [])
+                    if isinstance(s, dict) and s.get("id") == target_media_id
+                ),
+                {"id": target_media_id, "tool": tool_name, "user_uploaded": False},
+            )
+            new_item = dict(current)
+            new_item["tool"] = tool_name
+            new_item["spec"] = spec
+            ops.update_draft_media(conn2, draft_id, target_media_id, spec=new_item)
+
             ops.insert_draft_change(
                 conn2,
                 DraftChange(
                     id=generate_id("change"),
                     draft_id=draft_id,
-                    field="media_spec",
+                    field=f"media_spec:{target_media_id}",
                     old_value=json.dumps(old_spec) if old_spec else "null",
                     new_value=json.dumps(spec),
                     changed_by="human",
@@ -1589,7 +1620,7 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
         finally:
             conn2.close()
 
-        return {"spec": spec, "tool_name": tool_name}
+        return {"spec": spec, "tool_name": tool_name, "media_id": target_media_id}
 
     task_id = _run_background_task(
         "generate_spec",
