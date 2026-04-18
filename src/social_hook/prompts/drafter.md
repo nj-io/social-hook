@@ -146,7 +146,7 @@ For articles, decide how many images would genuinely improve reader understandin
 
 For each image, produce a `MediaSpecItem` with a stable `id` using the pattern `media_` + 12 lowercase hex chars (e.g., `media_a1b2c3d4e5f6`). Match the backend's `generate_id("media")` format exactly. Never reuse an `id` across two items.
 
-Reference each image in `content` with `![caption](media:ID)` at the position where it should render.
+Reference each image in `content` with `![caption](media:<id>)` at the position where it should render, where `<id>` is the EXACT `id` value from the spec item — including the `media_` prefix. Example: if the spec item has `id: "media_a1b2c3d4e5f6"`, the content token is `![diagram of the flow](media:media_a1b2c3d4e5f6)`. Copy the full id verbatim; do NOT strip the `media_` prefix. The value after the colon must match an `id` from `media_specs` exactly — never emit a placeholder string.
 
 If operator pre-uploaded images, they appear in your context as items with `user_uploaded=true`. Build content around them — do NOT overwrite or omit them. Each upload has a stable `id`; reference them in content tokens.
 
