@@ -539,32 +539,45 @@ class E2EHarness:
         return res.json()
 
     def wait_for_task(self, task_id: str, *, timeout: float = 60.0, poll: float = 0.5) -> dict:
-        """Poll ``GET /api/tasks/{task_id}`` until ``status != 'running'``.
+        """Poll the ``background_tasks`` DB row for ``task_id`` until terminal.
 
-        Returns the final task dict on terminal state. Raises ``TimeoutError``
-        when the deadline elapses while the task is still running.
+        Reads directly from ``self.conn`` rather than HTTP, which is (a) faster
+        (no TestClient app re-init), (b) immune to the fact that the web
+        surface exposes ``/api/tasks`` (list only) rather than
+        ``/api/tasks/{id}``, and (c) aligned with how the backend persists
+        task state. Returns the same dict shape the HTTP endpoint would, so
+        callers don't need to change.
+
+        Raises ``RuntimeError`` if the task row never appears (likely a
+        synchronous handler that didn't touch ``background_tasks``).
+        ``TimeoutError`` when the deadline elapses while the task is still
+        running.
         """
         import time
 
-        from fastapi.testclient import TestClient
-
-        from social_hook.web.server import app
-
-        client = TestClient(app)
         deadline = time.monotonic() + timeout
+        row = None
         while True:
-            res = client.get(f"/api/tasks/{task_id}")
-            if res.status_code == 404:
-                raise RuntimeError(f"Task {task_id} not found")
-            if res.status_code >= 400:
-                raise RuntimeError(f"wait_for_task failed: {res.status_code} {res.text}")
-            task = res.json()
-            if task.get("status") != "running":
-                return task
+            if self.conn is not None:
+                cur = self.conn.execute(
+                    "SELECT id, type, ref_id, project_id, status, result, error, "
+                    "created_at, updated_at FROM background_tasks WHERE id = ?",
+                    (task_id,),
+                )
+                fetched = cur.fetchone()
+                if fetched is not None:
+                    # sqlite3.Row supports dict() conversion
+                    row = dict(fetched)
+                    if row.get("status") != "running":
+                        return row
             if time.monotonic() >= deadline:
+                if row is None:
+                    raise RuntimeError(
+                        f"Task {task_id} never appeared in background_tasks "
+                        f"after {timeout}s — handler may be synchronous"
+                    )
                 raise TimeoutError(
-                    f"Task {task_id} still running after {timeout}s "
-                    f"(last stage: {task.get('current_stage')})"
+                    f"Task {task_id} still running after {timeout}s (status: {row.get('status')})"
                 )
             time.sleep(poll)
 

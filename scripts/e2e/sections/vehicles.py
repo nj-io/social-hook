@@ -779,7 +779,12 @@ def run(harness, runner, adapter):
         import json as _j
 
         payload = _j.loads(result.stdout)
-        assert "task_id" in payload, f"regen output missing task_id: {payload}"
+        # CLI regen runs synchronously (per `draft media regen --help`:
+        # "LLM-bearing — runs adapter generation synchronously in CLI context").
+        # Response shape is ``{draft_id, count, regenerated: [{id, ...}, ...]}``,
+        # not 202 + task_id. Assert the sync-shape fields instead.
+        assert "regenerated" in payload, f"regen output missing 'regenerated': {payload}"
+        assert payload.get("count", 0) >= 1, f"regen count < 1: {payload}"
 
         # --index must be rejected (ID-only addressing)
         reject = cli.invoke(
