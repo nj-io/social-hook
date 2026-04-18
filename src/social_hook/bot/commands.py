@@ -1399,10 +1399,6 @@ def cmd_help(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) ->
     _send(adapter, chat_id, text)
 
 
-_UPLOAD_MAX_BYTES = 5 * 1024 * 1024  # SINGLE_IMAGE.max_size
-_UPLOAD_ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp", "gif"}
-
-
 def cmd_upload(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
     """Attach an image to the active draft as a new media slot.
 
@@ -1445,14 +1441,20 @@ def cmd_upload(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) 
 
 
 def _validate_upload_bytes(filename: str, size: int) -> tuple[bool, str]:
-    """Mirror of the web upload guards for bot-attached files."""
+    """Validate a bot-attached file's size + format.
+
+    Delegates to ``social_hook.uploads.validate_upload`` so all four upload
+    ingress points share one cap and one format allowlist.
+    """
+    from social_hook.errors import ConfigError
+    from social_hook.uploads import validate_upload
+
     if not filename:
         return False, "no filename"
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in _UPLOAD_ALLOWED_EXTS:
-        return False, f"format .{ext} not allowed (png/jpg/webp/gif only)"
-    if size > _UPLOAD_MAX_BYTES:
-        return False, f"too large ({size} bytes; max {_UPLOAD_MAX_BYTES})"
+    try:
+        validate_upload(size_bytes=size, filename=filename)
+    except ConfigError as e:
+        return False, str(e)
     return True, ""
 
 

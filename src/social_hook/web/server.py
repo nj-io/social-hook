@@ -987,38 +987,43 @@ async def api_draft_detail(draft_id: str):
 #   - POST /api/drafts/{id}/media/replan    for full drafter re-plan
 
 
-_ALLOWED_UPLOAD_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
-_MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5 MiB — matches SINGLE_IMAGE.max_size
-
-
 @app.post("/api/drafts/{draft_id}/media-upload")
 async def api_upload_draft_media(draft_id: str, file: UploadFile):
     """Upload a media file and APPEND it to a draft as a new media slot.
 
     Multi-media mode: never overwrites media_paths. Creates a
     ``user_uploaded=True`` / ``tool='legacy_upload'`` slot via
-    ``ops.append_draft_media`` and seeds the path on it. 5 MiB + png/jpg/
-    jpeg/webp/gif guards (shared with POST /api/projects/{id}/uploads).
+    ``ops.append_draft_media`` and seeds the path on it. Size + format
+    guards come from ``social_hook.uploads.validate_upload`` — single
+    source of truth for the 5 MiB cap and the png/jpg/jpeg/webp/gif
+    allowlist.
     """
     from social_hook.filesystem import generate_id, get_base_path
     from social_hook.models.core import DraftChange
+    from social_hook.uploads import ALLOWED_FORMATS, MAX_BYTES, parse_violation, validate_upload
+
+    content = await file.read()
+    try:
+        validate_upload(data=content, filename=file.filename)
+    except ConfigError as e:
+        kind, _detail = parse_violation(str(e))
+        if kind == "file_too_large":
+            raise HTTPException(
+                status_code=413,
+                detail={
+                    "error": "file_too_large",
+                    "limit_bytes": MAX_BYTES,
+                    "received_bytes": len(content),
+                },
+            ) from None
+        raise HTTPException(
+            status_code=415,
+            detail={"error": "unsupported_format", "allowed": sorted(ALLOWED_FORMATS)},
+        ) from None
 
     ext = ""
     if file.filename and "." in file.filename:
         ext = file.filename.rsplit(".", 1)[-1].lower()
-    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
-        raise HTTPException(status_code=415, detail=f"Invalid file type: .{ext}")
-
-    content = await file.read()
-    if len(content) > _MAX_UPLOAD_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail={
-                "error": "file_too_large",
-                "limit_bytes": _MAX_UPLOAD_SIZE,
-                "received_bytes": len(content),
-            },
-        )
 
     conn = _get_conn()
     try:
@@ -2827,30 +2832,39 @@ async def api_stage_upload(
     import os as _os
 
     from social_hook.filesystem import get_base_path
+    from social_hook.uploads import ALLOWED_FORMATS, MAX_BYTES, parse_violation, validate_upload
 
-    ext = ""
-    if file.filename and "." in file.filename:
-        ext = file.filename.rsplit(".", 1)[-1].lower()
-    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+    content = await file.read()
+    try:
+        validate_upload(data=content, filename=file.filename)
+    except ConfigError as e:
+        kind, _detail = parse_violation(str(e))
+        if kind == "file_too_large":
+            raise HTTPException(
+                status_code=413,
+                detail={
+                    "error": "file_too_large",
+                    "limit_bytes": MAX_BYTES,
+                    "received_bytes": len(content),
+                },
+            ) from None
+        ext_for_msg = (
+            file.filename.rsplit(".", 1)[-1].lower()
+            if file.filename and "." in file.filename
+            else ""
+        )
         raise HTTPException(
             status_code=415,
             detail={
                 "error": "unsupported_format",
-                "allowed": sorted(_ALLOWED_UPLOAD_EXTENSIONS),
-                "received": ext,
+                "allowed": sorted(ALLOWED_FORMATS),
+                "received": ext_for_msg,
             },
-        )
+        ) from None
 
-    content = await file.read()
-    if len(content) > _MAX_UPLOAD_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail={
-                "error": "file_too_large",
-                "limit_bytes": _MAX_UPLOAD_SIZE,
-                "received_bytes": len(content),
-            },
-        )
+    ext = ""
+    if file.filename and "." in file.filename:
+        ext = file.filename.rsplit(".", 1)[-1].lower()
 
     conn = _get_conn()
     try:

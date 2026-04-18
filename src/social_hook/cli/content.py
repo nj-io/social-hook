@@ -274,29 +274,26 @@ def combine(
         conn.close()
 
 
-_UPLOAD_MAX_BYTES = 5 * 1024 * 1024  # SINGLE_IMAGE.max_size — single source of truth.
-_UPLOAD_ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp", "gif"}
-
-
 def _validate_upload_file(path: str) -> tuple[bool, str]:
     """Return (ok, error) for a single upload path.
 
-    Mirrors the web `POST /api/projects/{id}/uploads` guards: 5 MiB + format
-    allowlist. Catches the operator early so the server never sees a bad
-    upload.
+    Delegates size + format enforcement to ``social_hook.uploads.validate_upload``
+    (single source of truth). Adds the CLI-only check that ``path`` actually
+    resolves to a file on disk.
     """
     import os
+
+    from social_hook.errors import ConfigError
+    from social_hook.uploads import validate_upload
 
     if not path:
         return False, "empty path"
     if not os.path.isfile(path):
         return False, f"not a file: {path}"
-    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-    if ext not in _UPLOAD_ALLOWED_EXTS:
-        return False, f"unsupported format .{ext} — allowed: {sorted(_UPLOAD_ALLOWED_EXTS)}"
-    size = os.path.getsize(path)
-    if size > _UPLOAD_MAX_BYTES:
-        return False, f"file too large ({size} bytes; max {_UPLOAD_MAX_BYTES})"
+    try:
+        validate_upload(size_bytes=os.path.getsize(path), filename=os.path.basename(path))
+    except ConfigError as e:
+        return False, str(e)
     return True, ""
 
 
