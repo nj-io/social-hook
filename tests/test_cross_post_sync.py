@@ -162,6 +162,12 @@ class TestGetSisterDrafts:
 
 class TestSyncMediaToDrafts:
     def _setup_db(self):
+        """Inline drafts table at the current multi-media shape.
+
+        sync_media_to_drafts now propagates all four parallel arrays
+        (media_specs / media_paths / media_errors / media_specs_used) to
+        sister drafts — the inline CREATE TABLE must match.
+        """
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
         conn.execute("""
@@ -172,10 +178,10 @@ class TestSyncMediaToDrafts:
                 platform TEXT,
                 status TEXT DEFAULT 'draft',
                 content TEXT DEFAULT '',
-                media_paths TEXT DEFAULT '[]',
-                media_type TEXT,
-                media_spec TEXT,
-                media_spec_used TEXT,
+                media_paths TEXT NOT NULL DEFAULT '[]',
+                media_specs TEXT NOT NULL DEFAULT '[]',
+                media_errors TEXT NOT NULL DEFAULT '[]',
+                media_specs_used TEXT NOT NULL DEFAULT '[]',
                 suggested_time TEXT,
                 scheduled_time TEXT,
                 reasoning TEXT,
@@ -194,9 +200,29 @@ class TestSyncMediaToDrafts:
 
     def test_sync_copies_media(self):
         conn = self._setup_db()
+        specs = [
+            {
+                "id": "media_aaa111bbb222",
+                "tool": "mermaid",
+                "spec": {"diagram": "A-->B"},
+                "caption": None,
+                "user_uploaded": False,
+            }
+        ]
         conn.execute(
-            "INSERT INTO drafts (id, project_id, decision_id, platform, media_type, media_spec, media_paths) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("src", "p", "d", "x", "mermaid", '{"diagram": "A-->B"}', '["img.png"]'),
+            "INSERT INTO drafts (id, project_id, decision_id, platform, "
+            "media_paths, media_specs, media_errors, media_specs_used) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "src",
+                "p",
+                "d",
+                "x",
+                '["img.png"]',
+                json.dumps(specs),
+                "[null]",
+                json.dumps(specs),
+            ),
         )
         conn.execute(
             "INSERT INTO drafts (id, project_id, decision_id, platform) VALUES (?, ?, ?, ?)",
@@ -208,11 +234,13 @@ class TestSyncMediaToDrafts:
         assert count == 1
 
         row = conn.execute(
-            "SELECT media_type, media_spec, media_paths FROM drafts WHERE id = 'tgt'"
+            "SELECT media_paths, media_specs, media_errors, media_specs_used "
+            "FROM drafts WHERE id = 'tgt'"
         ).fetchone()
-        assert row["media_type"] == "mermaid"
-        assert json.loads(row["media_spec"]) == {"diagram": "A-->B"}
         assert json.loads(row["media_paths"]) == ["img.png"]
+        assert json.loads(row["media_specs"]) == specs
+        assert json.loads(row["media_errors"]) == [None]
+        assert json.loads(row["media_specs_used"]) == specs
 
     def test_sync_nonexistent_source(self):
         conn = self._setup_db()

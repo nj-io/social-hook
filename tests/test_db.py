@@ -91,7 +91,7 @@ class TestDatabaseInitialization:
         assert result[0] == 1
 
     def test_all_tables_exist(self, temp_db):
-        """Verify all 25 tables exist."""
+        """Verify all expected tables exist."""
         tables = temp_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
@@ -123,6 +123,9 @@ class TestDatabaseInitialization:
             "system_errors",
             "topic_commits",
             "advisory_items",
+            # Added by the multi-media migration: operator-uploaded reference
+            # images staged before a draft is created (scheduler prunes 24h+).
+            "pending_uploads",
         }
 
         assert table_names == expected_tables
@@ -1238,8 +1241,15 @@ class TestProjectPausedField:
 # =============================================================================
 
 
-class TestDraftMediaFields:
-    """Tests for media_type, media_spec, and media_paths update_draft support."""
+class TestDraftMultiMedia:
+    """Tests for the parallel-array media fields on ``Draft``.
+
+    Singular ``media_type``/``media_spec``/``media_spec_used`` were replaced
+    by three list columns (``media_specs``, ``media_errors``,
+    ``media_specs_used``) indexed in lockstep with ``media_paths``. Each
+    ``media_specs`` entry is a ``MediaSpecItem``-shaped dict carrying its
+    own ``tool`` and stable ``id``.
+    """
 
     def _create_draft(self, temp_db):
         """Helper to create a project + decision + draft for media tests."""
@@ -1276,25 +1286,51 @@ class TestDraftMediaFields:
         loaded = get_draft(temp_db, draft.id)
         assert loaded.media_paths == paths
 
-    def test_update_draft_media_type_and_spec(self, temp_db):
-        """media_type and media_spec persist via update_draft."""
+    def test_update_draft_media_specs_list(self, temp_db):
+        """media_specs persists as a JSON list via update_draft."""
         draft = self._create_draft(temp_db)
 
-        spec = {"prompt": "A diagram of the architecture", "style": "technical"}
+        specs = [
+            {
+                "id": "media_abc123def456",
+                "tool": "mermaid",
+                "spec": {"diagram": "A-->B"},
+                "caption": None,
+                "user_uploaded": False,
+            },
+            {
+                "id": "media_def456abc123",
+                "tool": "nano_banana_pro",
+                "spec": {"prompt": "A diagram of the architecture"},
+                "caption": "Architecture",
+                "user_uploaded": False,
+            },
+        ]
         result = update_draft(
             temp_db,
             draft.id,
-            media_type="image",
-            media_spec=spec,
+            media_specs=specs,
+            media_errors=[None, None],
+            media_specs_used=specs,
         )
         assert result is True
 
         loaded = get_draft(temp_db, draft.id)
-        assert loaded.media_type == "image"
-        assert loaded.media_spec == spec
+        assert loaded.media_specs == specs
+        assert loaded.media_errors == [None, None]
+        assert loaded.media_specs_used == specs
 
-    def test_draft_serialization_with_media_fields(self, temp_db):
-        """Draft.to_row()/from_dict() round-trip with media fields."""
+    def test_draft_serialization_with_multi_media(self, temp_db):
+        """Draft.to_row()/from_dict() round-trip with multi-media fields."""
+        specs = [
+            {
+                "id": "media_0123456789ab",
+                "tool": "nano_banana_pro",
+                "spec": {"prompt": "test prompt", "width": 1024},
+                "caption": None,
+                "user_uploaded": False,
+            }
+        ]
         draft = Draft(
             id="draft-media-test",
             project_id="proj-1",
@@ -1302,45 +1338,58 @@ class TestDraftMediaFields:
             platform="x",
             content="media test",
             media_paths=["/tmp/pic.png"],
-            media_type="image",
-            media_spec={"prompt": "test prompt", "width": 1024},
+            media_specs=specs,
+            media_errors=[None],
+            media_specs_used=specs,
         )
 
-        # Verify to_row returns exactly 26 elements
+        # to_row returns 28 elements matching the drafts INSERT column list.
         row = draft.to_row()
         assert len(row) == 28
 
-        # Verify round-trip via to_dict/from_dict
+        # Round-trip via to_dict/from_dict
         d = draft.to_dict()
-        assert d["media_type"] == "image"
-        assert d["media_spec"] == {"prompt": "test prompt", "width": 1024}
+        assert d["media_specs"] == specs
+        assert d["media_errors"] == [None]
+        assert d["media_specs_used"] == specs
 
         restored = Draft.from_dict(d)
-        assert restored.media_type == "image"
-        assert restored.media_spec == {"prompt": "test prompt", "width": 1024}
+        assert restored.media_specs == specs
+        assert restored.media_errors == [None]
+        assert restored.media_specs_used == specs
         assert restored.media_paths == ["/tmp/pic.png"]
 
-    def test_draft_from_dict_media_spec_string(self):
-        """from_dict handles media_spec as a JSON string (from DB row)."""
+    def test_draft_from_dict_media_specs_string(self):
+        """from_dict handles media_specs as a JSON string (from DB row)."""
         d = {
             "id": "d1",
             "project_id": "p1",
             "decision_id": "dec1",
             "platform": "x",
             "content": "test",
-            "media_spec": '{"prompt": "hello"}',
-            "media_type": "image",
+            # DB rows return JSON-encoded strings for the four list columns;
+            # from_dict must decode them via safe_json_loads.
+            "media_paths": '["/tmp/a.png"]',
+            "media_specs": '[{"id":"media_xyz","tool":"mermaid","spec":{"diagram":"A"}}]',
+            "media_errors": "[null]",
+            "media_specs_used": "[]",
         }
         draft = Draft.from_dict(d)
-        assert draft.media_spec == {"prompt": "hello"}
-        assert draft.media_type == "image"
+        assert draft.media_paths == ["/tmp/a.png"]
+        assert draft.media_specs == [
+            {"id": "media_xyz", "tool": "mermaid", "spec": {"diagram": "A"}}
+        ]
+        assert draft.media_errors == [None]
+        assert draft.media_specs_used == []
 
-    def test_draft_defaults_media_fields_none(self, temp_db):
-        """Drafts without media fields default to None."""
+    def test_draft_defaults_media_fields_empty_lists(self, temp_db):
+        """Drafts without media default to empty lists across all four arrays."""
         draft = self._create_draft(temp_db)
         loaded = get_draft(temp_db, draft.id)
-        assert loaded.media_type is None
-        assert loaded.media_spec is None
+        assert loaded.media_paths == []
+        assert loaded.media_specs == []
+        assert loaded.media_errors == []
+        assert loaded.media_specs_used == []
 
 
 class TestTriggerBranch:

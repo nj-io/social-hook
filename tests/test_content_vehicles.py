@@ -184,9 +184,12 @@ class TestDraftPart:
         assert d["draft_id"] == "d1"
 
     def test_draft_part_to_row(self):
+        # Multi-media added 3 parallel-array columns to draft_parts
+        # (media_specs, media_errors, media_specs_used) alongside the
+        # existing media_paths — so to_row now returns 11 elements.
         part = DraftPart(id="p1", draft_id="d1", position=1, content="hello")
         row = part.to_row()
-        assert len(row) == 8
+        assert len(row) == 11
 
 
 # =============================================================================
@@ -537,15 +540,20 @@ class TestPostCapability:
         assert "manual" in ARTICLE.description.lower() or "long-form" in ARTICLE.description.lower()
 
     def test_platform_vehicle_support(self):
-        from social_hook.adapters.models import ARTICLE, SINGLE, THREAD
+        # Multi-media Option 4 naming: SINGLE is the universal baseline
+        # (one image, one GIF); SINGLE_X extends it with MULTI_IMAGE_X for
+        # X's 4-image carousels. LinkedIn uses the baseline SINGLE.
+        from social_hook.adapters.models import ARTICLE, SINGLE, SINGLE_X, THREAD
         from social_hook.config.platforms import PLATFORM_VEHICLE_SUPPORT
 
-        assert SINGLE in PLATFORM_VEHICLE_SUPPORT["x"]
+        assert SINGLE_X in PLATFORM_VEHICLE_SUPPORT["x"]
         assert THREAD in PLATFORM_VEHICLE_SUPPORT["x"]
         assert ARTICLE in PLATFORM_VEHICLE_SUPPORT["x"]
         assert SINGLE in PLATFORM_VEHICLE_SUPPORT["linkedin"]
         assert ARTICLE in PLATFORM_VEHICLE_SUPPORT["linkedin"]
         assert THREAD not in PLATFORM_VEHICLE_SUPPORT["linkedin"]
+        # Universal baseline must not carry the X-only carousel mode.
+        assert SINGLE not in PLATFORM_VEHICLE_SUPPORT["x"]
 
 
 # =============================================================================
@@ -564,4 +572,7 @@ class TestSchemaDDL:
         assert "draft_tweets" not in SCHEMA_DDL
 
     def test_schema_version_updated(self):
-        assert SCHEMA_VERSION == 20260408120000
+        # Bumped when the multi-media migration landed — schema.py now
+        # ships the parallel-array drafts/draft_parts + pending_uploads
+        # tables, so fresh DBs skip the multi-media migration at startup.
+        assert SCHEMA_VERSION == 20260417122744
