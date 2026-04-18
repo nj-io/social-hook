@@ -216,7 +216,6 @@ def run(harness, runner, adapter):
         client = TestClient(app)
         body = {
             "vehicle": "article",
-            "platform": "x",
             "idea": (
                 "Walk through how the multi-media drafter assembles inline article images "
                 "alongside narrative prose, with a diagram of the generation pipeline and "
@@ -306,9 +305,9 @@ def run(harness, runner, adapter):
         from social_hook.llm.catalog import get_model_info
         from social_hook.media_tokens import extract_tokens
 
-        drafter_model = config.content.models.get("drafter") if hasattr(config, "content") else None
-        if drafter_model is None:
-            drafter_model = (getattr(config, "models", {}) or {}).get("drafter")
+        # Config.models is a typed ModelsConfig dataclass with .drafter attribute,
+        # not a dict; access via getattr to stay defensive if the shape shifts.
+        drafter_model = getattr(getattr(config, "models", None), "drafter", None)
         info = get_model_info(drafter_model) if drafter_model else None
         if info is None or not info.supports_vision:
             # Skip cleanly
@@ -348,7 +347,6 @@ def run(harness, runner, adapter):
         client = TestClient(app)
         body = {
             "vehicle": "article",
-            "platform": "x",
             "idea": (
                 "Write an article that builds on the attached hero image, then add a second "
                 "generated visual to illustrate the main flow."
@@ -760,13 +758,16 @@ def run(harness, runner, adapter):
 
         cli = CliRunner()
 
-        # Regen with JSON output + explicit project path
+        # Regen with JSON output + explicit project path. CLI signature:
+        # ``draft media regen --draft DRAFT_ID --id MEDIA_ID --project PATH [--json]``
         result = cli.invoke(
             cli_app,
             [
                 "draft",
                 "media",
                 "regen",
+                "--draft",
+                draft.id,
                 "--id",
                 media_id,
                 "--project",
@@ -787,6 +788,8 @@ def run(harness, runner, adapter):
                 "draft",
                 "media",
                 "regen",
+                "--draft",
+                draft.id,
                 "--index",
                 "0",
                 "--project",
@@ -802,6 +805,8 @@ def run(harness, runner, adapter):
                 "draft",
                 "media",
                 "remove",
+                "--draft",
+                draft.id,
                 "--id",
                 media_id,
                 "--project",
