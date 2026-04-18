@@ -41,14 +41,20 @@ def tmp_env(tmp_path):
             content TEXT,
             status TEXT DEFAULT 'draft',
             media_paths TEXT DEFAULT '[]',
-            media_type TEXT,
-            media_spec TEXT DEFAULT '{}',
+            media_specs TEXT NOT NULL DEFAULT '[]',
+            media_errors TEXT NOT NULL DEFAULT '[]',
+            media_specs_used TEXT NOT NULL DEFAULT '[]',
             suggested_time TEXT,
             scheduled_time TEXT,
             reasoning TEXT,
             superseded_by TEXT,
             retry_count INTEGER DEFAULT 0,
             last_error TEXT,
+            is_intro INTEGER DEFAULT 0,
+            vehicle TEXT DEFAULT 'single',
+            reference_type TEXT,
+            reference_files TEXT,
+            reference_post_id TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
@@ -369,52 +375,204 @@ class TestCreateDraftFromDecision:
 
 
 # ---------------------------------------------------------------------------
-# Media spec editing: PUT /api/drafts/{id}/media-spec
+# Per-item media endpoints (replace the deleted PUT /api/drafts/{id}/media-spec).
+#
+# The legacy singular endpoint was removed in feat/multi-media because it wrote
+# to the dropped media_spec/media_type columns. The replacements:
+#   POST   /api/drafts/{id}/media                    — append new slot (202)
+#   PUT    /api/drafts/{id}/media/{media_id}         — edit one slot (202)
+#   DELETE /api/drafts/{id}/media/{media_id}         — splice one slot
+# Tests below cover behavior + strict body validation.
 # ---------------------------------------------------------------------------
 
 
-class TestUpdateDraftMediaSpec:
-    def test_update_media_spec(self, client, tmp_env):
-        """PUT /api/drafts/{id}/media-spec updates the media_spec field."""
-        # Seed a draft
-        conn = sqlite3.connect(str(tmp_env["db_path"]))
-        conn.execute(
-            "INSERT INTO drafts (id, project_id, decision_id, platform, content, media_spec) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("draft_1", "proj_1", "dec_1", "x", "Hello", "{}"),
+def _seed_draft_no_media(db_path, draft_id="draft_1", project_id="proj_1"):
+    """Seed a project + decision + draft with no media slots."""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT OR IGNORE INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+        (project_id, "Test", "/tmp/test"),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO decisions (id, project_id, commit_hash, commit_message, decision, reasoning)"
+        " VALUES ('dec_1', ?, 'abc123', 'feat: test', 'draft', 'seed')",
+        (project_id,),
+    )
+    conn.execute(
+        "INSERT INTO drafts (id, project_id, decision_id, platform, content)"
+        " VALUES (?, ?, 'dec_1', 'x', 'Hello')",
+        (draft_id, project_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+class TestAddDraftMedia:
+    """POST /api/drafts/{id}/media — append a new slot, return 202 with task_id + media_id."""
+
+    def test_add_media_returns_202_and_persists_slot(self, client, tmp_env):
+        _seed_draft_no_media(tmp_env["db_path"])
+        resp = client.post(
+            "/api/drafts/draft_1/media",
+            json={"tool": "nano_banana_pro", "spec": {"prompt": "hero shot"}},
         )
-        conn.commit()
-        conn.close()
+        assert resp.status_code == 202
+        body = resp.json()
+        assert "task_id" in body
+        assert body["status"] == "processing"
+        assert body["media_id"].startswith("media_")
 
-        new_spec = {"tool": "nano_banana_pro", "prompt": "A developer coding"}
-        resp = client.put("/api/drafts/draft_1/media-spec", json={"media_spec": new_spec})
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "updated"
-
-        # Verify in DB
         conn = sqlite3.connect(str(tmp_env["db_path"]))
-        row = conn.execute("SELECT media_spec FROM drafts WHERE id = 'draft_1'").fetchone()
+        row = conn.execute("SELECT media_specs FROM drafts WHERE id = 'draft_1'").fetchone()
         conn.close()
-        assert json.loads(row[0]) == new_spec
+        specs = json.loads(row[0])
+        assert len(specs) == 1
+        assert specs[0]["tool"] == "nano_banana_pro"
+        assert specs[0]["spec"] == {"prompt": "hero shot"}
+        assert specs[0]["id"] == body["media_id"]
 
-    def test_update_media_spec_not_found(self, client, tmp_env):
-        """PUT /api/drafts/{id}/media-spec returns 404 for unknown draft."""
-        resp = client.put("/api/drafts/nonexistent/media-spec", json={"media_spec": {}})
+    def test_add_media_legacy_upload_skips_generation(self, client, tmp_env):
+        """legacy_upload tool creates a slot but returns 200 sync (no generation needed)."""
+        _seed_draft_no_media(tmp_env["db_path"])
+        resp = client.post(
+            "/api/drafts/draft_1/media",
+            json={"tool": "legacy_upload", "spec": {"path": "/tmp/img.png"}},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "created"
+        assert body["media_id"].startswith("media_")
+
+    def test_add_media_rejects_unknown_body_keys(self, client, tmp_env):
+        """check_unknown_keys(strict=True) returns 422 for unknown keys."""
+        _seed_draft_no_media(tmp_env["db_path"])
+        resp = client.post(
+            "/api/drafts/draft_1/media",
+            json={"tool": "mermaid", "spec": {}, "bogus_key": 1},
+        )
+        assert resp.status_code == 422
+
+    def test_add_media_draft_not_found(self, client, tmp_env):
+        resp = client.post("/api/drafts/nonexistent/media", json={"tool": "mermaid", "spec": {}})
         assert resp.status_code == 404
 
-    def test_update_media_spec_missing_field(self, client, tmp_env):
-        """PUT /api/drafts/{id}/media-spec rejects missing media_spec."""
+    def test_add_media_rejects_missing_tool(self, client, tmp_env):
+        _seed_draft_no_media(tmp_env["db_path"])
+        resp = client.post("/api/drafts/draft_1/media", json={"spec": {}})
+        assert resp.status_code == 400
+
+
+class TestEditDraftMedia:
+    """PUT /api/drafts/{id}/media/{media_id} — edit spec + regen, 202 with task_id."""
+
+    def test_edit_media_updates_spec_and_returns_202(self, client, tmp_env):
+        _seed_draft_no_media(tmp_env["db_path"])
+        # Seed an existing media slot directly.
         conn = sqlite3.connect(str(tmp_env["db_path"]))
+        existing = [
+            {
+                "id": "media_abc123def456",
+                "tool": "mermaid",
+                "spec": {"diagram": "graph TD; A-->B"},
+                "user_uploaded": False,
+            }
+        ]
         conn.execute(
-            "INSERT INTO drafts (id, project_id, decision_id, platform, content) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("draft_1", "proj_1", "dec_1", "x", "Hello"),
+            "UPDATE drafts SET media_specs = ? WHERE id = 'draft_1'",
+            (json.dumps(existing),),
         )
         conn.commit()
         conn.close()
 
-        resp = client.put("/api/drafts/draft_1/media-spec", json={"wrong_field": {}})
-        assert resp.status_code == 400
+        new_spec = {"diagram": "graph LR; X-->Y"}
+        resp = client.put(
+            "/api/drafts/draft_1/media/media_abc123def456",
+            json={"spec": new_spec},
+        )
+        assert resp.status_code == 202
+        body = resp.json()
+        assert "task_id" in body
+        assert body["media_id"] == "media_abc123def456"
+
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        row = conn.execute("SELECT media_specs FROM drafts WHERE id = 'draft_1'").fetchone()
+        conn.close()
+        specs = json.loads(row[0])
+        assert specs[0]["spec"] == new_spec
+
+    def test_edit_media_media_id_not_found(self, client, tmp_env):
+        _seed_draft_no_media(tmp_env["db_path"])
+        resp = client.put(
+            "/api/drafts/draft_1/media/media_missing", json={"spec": {"diagram": "x"}}
+        )
+        assert resp.status_code == 404
+
+    def test_edit_media_rejects_unknown_keys(self, client, tmp_env):
+        _seed_draft_no_media(tmp_env["db_path"])
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        existing = [{"id": "media_x", "tool": "mermaid", "spec": {}, "user_uploaded": False}]
+        conn.execute(
+            "UPDATE drafts SET media_specs = ? WHERE id = 'draft_1'",
+            (json.dumps(existing),),
+        )
+        conn.commit()
+        conn.close()
+
+        resp = client.put(
+            "/api/drafts/draft_1/media/media_x",
+            json={"spec": {"diagram": "y"}, "bogus": True},
+        )
+        assert resp.status_code == 422
+
+
+class TestDeleteDraftMedia:
+    """DELETE /api/drafts/{id}/media/{media_id} — splice one slot (sync)."""
+
+    def test_delete_media_splices_slot(self, client, tmp_env):
+        _seed_draft_no_media(tmp_env["db_path"])
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        existing = [
+            {"id": "media_a", "tool": "mermaid", "spec": {}, "user_uploaded": False},
+            {"id": "media_b", "tool": "ray_so", "spec": {}, "user_uploaded": False},
+        ]
+        conn.execute(
+            "UPDATE drafts SET media_specs = ?, media_paths = ?, media_errors = ? WHERE id = 'draft_1'",
+            (
+                json.dumps(existing),
+                json.dumps(["/tmp/a.png", "/tmp/b.png"]),
+                json.dumps([None, None]),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        resp = client.delete("/api/drafts/draft_1/media/media_a")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "removed"
+        assert resp.json()["media_id"] == "media_a"
+
+        conn = sqlite3.connect(str(tmp_env["db_path"]))
+        row = conn.execute(
+            "SELECT media_specs, media_paths, media_errors FROM drafts WHERE id = 'draft_1'"
+        ).fetchone()
+        conn.close()
+        specs = json.loads(row[0])
+        paths = json.loads(row[1])
+        errors = json.loads(row[2])
+        # Slot media_a removed from all three parallel arrays.
+        assert len(specs) == 1
+        assert specs[0]["id"] == "media_b"
+        assert paths == ["/tmp/b.png"]
+        assert errors == [None]
+
+    def test_delete_media_media_id_not_found(self, client, tmp_env):
+        _seed_draft_no_media(tmp_env["db_path"])
+        resp = client.delete("/api/drafts/draft_1/media/media_missing")
+        assert resp.status_code == 404
+
+    def test_delete_media_draft_not_found(self, client, tmp_env):
+        resp = client.delete("/api/drafts/nonexistent/media/media_x")
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
