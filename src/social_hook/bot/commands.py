@@ -801,8 +801,8 @@ def _apply_expert_result(
     from social_hook.filesystem import generate_id
     from social_hook.models.core import DraftChange
 
-    refined_vehicle = getattr(result, "refined_vehicle", None)
-    part_media_specs = getattr(result, "part_media_specs", None)
+    refined_vehicle = result.refined_vehicle
+    part_media_specs = result.part_media_specs
     if (
         not result.refined_content
         and not result.refined_media_spec
