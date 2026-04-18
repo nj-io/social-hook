@@ -46,7 +46,7 @@ class MediaSpecItem(BaseModel):
     The drafter emits a list of these; index i in ``draft.media_specs``
     references the same item as index i in ``media_paths``,
     ``media_errors``, and ``media_specs_used``. ``id`` is stable across
-    splices — content tokens ``![caption](media:ID)`` reference it.
+    splices — content tokens ``![caption](media:<id>)`` reference it.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -396,9 +396,10 @@ class CreateDraftInput(BaseModel):
                         "description": (
                             "Media items attached to this draft. For articles, each item "
                             "must be referenced in 'content' via a markdown token like "
-                            "![caption](media:ID) positioned where the image should render. "
-                            "For non-article vehicles, media items are appended to the post "
-                            "— do NOT emit tokens in content."
+                            "![caption](media:<id>) positioned where the image should render, "
+                            "where <id> is the exact id of the spec item (including the "
+                            "'media_' prefix). For non-article vehicles, media items are "
+                            "appended to the post — do NOT emit tokens in content."
                         ),
                         "items": {
                             "type": "object",
@@ -410,7 +411,8 @@ class CreateDraftInput(BaseModel):
                                     "pattern": "^media_[a-f0-9]{12}$",
                                     "description": (
                                         "'media_' + 12 lowercase hex chars. "
-                                        "Referenced by ![](media:ID) tokens."
+                                        "Referenced by ![](media:<id>) tokens — "
+                                        "the full id including the 'media_' prefix."
                                     ),
                                 },
                                 "tool": {

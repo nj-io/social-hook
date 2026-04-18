@@ -19,6 +19,7 @@ from social_hook.llm.base import LLMClient, extract_tool_call
 from social_hook.llm.catalog import get_model_info
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
 from social_hook.llm.schemas import CreateDraftInput  # re-exported types
+from social_hook.media_tokens import TOKEN_RE
 from social_hook.models.context import ProjectContext
 from social_hook.models.core import CommitInfo
 
@@ -37,6 +38,27 @@ _ALLOWED_TOOLS = {"nano_banana_pro", "mermaid", "ray_so", "playwright", "legacy_
 # Fields every sane spec must carry. Hallucinations missing these get
 # stripped post-validation.
 _REQUIRED_SPEC_FIELDS = {"id", "tool", "spec"}
+
+# Literal placeholder strings the drafter sometimes copies verbatim from
+# schema/prompt examples. Any content token whose id matches one of these
+# is dropped outright — there is no spec id it could possibly refer to.
+# Case-insensitive match.
+#
+# Note: angle-bracketed variants like ``<id>`` are NOT listed because the
+# token regex (media_tokens.TOKEN_RE) excludes ``<`` and ``>`` from the
+# id character class, so ``(media:<id>)`` never registers as a token
+# and passes through the repair step untouched. It will remain visible
+# in the rendered markdown, but that's the correct user-visible signal
+# that the drafter copied a placeholder.
+_LITERAL_PLACEHOLDER_IDS = {
+    "id",
+    "media_id",
+    "media",
+    "example",
+    "placeholder",
+    "xxx",
+    "xyz",
+}
 
 
 class Drafter:
@@ -357,6 +379,14 @@ class Drafter:
 
         tool_input = extract_tool_call(response, "create_draft")
         tool_input = _sanitize_media_specs(tool_input, uploads=uploads)
+        # Defense-in-depth: auto-repair content tokens against the (already
+        # sanitized) spec list. Handles two observed LLM drift modes —
+        # stripped 'media_' prefix and literal placeholder ids from
+        # schema/prompt examples. Runs AFTER spec sanitization so fuzzy
+        # matching only considers ids that survived validation.
+        content = tool_input.get("content")
+        if isinstance(content, str) and tool_input.get("media_specs"):
+            tool_input["content"] = _auto_repair_content_tokens(content, tool_input["media_specs"])
         return CreateDraftInput.validate(tool_input)
 
 
@@ -538,3 +568,70 @@ def _sanitize_media_specs(
 
     tool_input["media_specs"] = deduped
     return tool_input
+
+
+def _auto_repair_content_tokens(content: str, specs: list[dict[str, Any]]) -> str:
+    """Repair `![caption](media:<id>)` tokens against the spec list.
+
+    Three observed LLM drift modes, handled here as defense-in-depth:
+
+    * **Missing ``media_`` prefix** — token id is the 12-hex tail of a
+      real spec id; rewrite to the full id. Example:
+      ``![x](media:a1b2c3d4e5f6)`` with a spec ``{"id":
+      "media_a1b2c3d4e5f6"}`` rewrites to
+      ``![x](media:media_a1b2c3d4e5f6)``.
+    * **Literal placeholder id** — token id matches one of
+      ``_LITERAL_PLACEHOLDER_IDS`` (``id``, ``<id>``, ``media_id``, etc.);
+      drop the token entirely so the orphan-reference diagnostic does
+      not fire on LLM template copying.
+    * **Unrecoverable** — token id fuzzy-matches nothing; leave verbatim
+      so the ``broken_media_reference`` diagnostic surfaces it at read
+      time.
+
+    Structural token matches that already map 1-to-1 to a spec id pass
+    through unchanged.
+    """
+    if not content:
+        return content
+    spec_ids: set[str] = {str(s.get("id")) for s in specs if isinstance(s, dict) and s.get("id")}
+    if not spec_ids:
+        return content
+
+    # Build a tail-to-full-id index for prefix-strip repair. Only tails
+    # that are unique across all specs are eligible — ambiguous tails
+    # stay as-is so we never silently mis-route.
+    tail_index: dict[str, str] = {}
+    ambiguous_tails: set[str] = set()
+    for full_id in spec_ids:
+        if full_id.startswith("media_"):
+            tail = full_id[len("media_") :]
+            if tail in tail_index:
+                ambiguous_tails.add(tail)
+            else:
+                tail_index[tail] = full_id
+    for tail in ambiguous_tails:
+        tail_index.pop(tail, None)
+
+    def _repair(match: "Any") -> str:
+        caption = match.group(1)
+        raw_id = match.group(2)
+        # 1. Exact match — no repair needed.
+        if raw_id in spec_ids:
+            return str(match.group(0))
+        # 2. Literal placeholder — drop the whole token.
+        if raw_id.lower().strip("<>") in _LITERAL_PLACEHOLDER_IDS:
+            logger.warning("Dropping content token with literal placeholder id %r", raw_id)
+            return ""
+        # 3. Prefix-strip repair — unique tail maps back to a real id.
+        if raw_id in tail_index:
+            repaired_id = tail_index[raw_id]
+            logger.warning(
+                "Repaired content token: media:%s -> media:%s (missing 'media_' prefix)",
+                raw_id,
+                repaired_id,
+            )
+            return f"![{caption}](media:{repaired_id})"
+        # 4. Unrecoverable — diagnostic surfaces it at read time.
+        return str(match.group(0))
+
+    return TOKEN_RE.sub(_repair, content)
