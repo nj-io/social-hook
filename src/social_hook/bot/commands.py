@@ -932,11 +932,19 @@ def _apply_expert_result(
                 continue
 
             # Normalize to list of dicts + assign ids where missing.
+            # Expert.handle runs its tool_input through
+            # ``ExpertResponseInput.validate``, which coerces each inner
+            # item into a ``MediaSpecItem`` pydantic model — NOT a dict.
+            # Accept both shapes: pydantic via ``model_dump()``, plain
+            # dict via ``dict()``.
             normalized: list[dict] = []
             for s in specs_for_part:
-                if not isinstance(s, dict):
+                if hasattr(s, "model_dump"):
+                    item = s.model_dump()
+                elif isinstance(s, dict):
+                    item = dict(s)
+                else:
                     continue
-                item = dict(s)
                 if not item.get("id"):
                     item["id"] = generate_id("media")
                 normalized.append(item)

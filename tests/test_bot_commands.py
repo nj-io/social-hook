@@ -2924,6 +2924,100 @@ class TestApplyExpertResultUnpack:
         assert change_fields[f"draft_part.media_specs:{part_ids[3]}"].new_value == "1"
         conn2.close()
 
+    @patch("social_hook.bot.commands._get_conn")
+    def test_apply_expert_result_accepts_pydantic_media_spec_items(
+        self, mock_conn, mock_adapter, temp_dir
+    ):
+        """V14 real-Expert shape: Pydantic-validated ExpertResponseInput must
+        land per-part media on draft_parts.
+
+        ``Expert.handle`` runs its tool_input through
+        ``ExpertResponseInput.validate``, which coerces each inner item of
+        ``part_media_specs`` into a ``MediaSpecItem`` pydantic model — NOT
+        a dict. Earlier versions of ``_apply_expert_result`` skipped each
+        item with ``if not isinstance(s, dict): continue``, which dropped
+        every Expert-provided spec on the floor (V14 failure mode).
+        """
+        from social_hook.bot.commands import _apply_expert_result
+        from social_hook.db import insert_decision
+        from social_hook.db.operations import get_draft_parts, insert_draft_part
+        from social_hook.llm.schemas import ExpertResponseInput
+        from social_hook.models.core import Decision, DraftPart
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="v14", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="seed",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="1/ a\n2/ b\n3/ c\n4/ d",
+            status="draft",
+            vehicle="thread",
+        )
+        insert_draft(conn, draft)
+        for i in range(4):
+            insert_draft_part(
+                conn,
+                DraftPart(
+                    id=generate_id("tweet"),
+                    draft_id=draft.id,
+                    position=i,
+                    content=f"t{i}",
+                ),
+            )
+
+        # Build the same shape Expert.handle returns: pass raw tool-input
+        # through Pydantic validation so the inner items become
+        # MediaSpecItem instances, not dicts.
+        tool_input = {
+            "action": "refine_draft",
+            "reasoning": "per-part media",
+            "refined_content": None,
+            "part_media_specs": [
+                [
+                    {
+                        "id": f"media_v14pyd{i:03d}",
+                        "tool": "nano_banana_pro",
+                        "spec": {"prompt": f"p{i}"},
+                        "caption": None,
+                        "user_uploaded": False,
+                    }
+                ]
+                for i in range(4)
+            ],
+        }
+        result = ExpertResponseInput.validate(tool_input)
+        # Sanity: inner items are pydantic models, NOT dicts.
+        assert not isinstance(result.part_media_specs[0][0], dict)
+        assert hasattr(result.part_media_specs[0][0], "model_dump")
+
+        applied = _apply_expert_result(conn, draft, result, config=None)
+        assert applied is True
+
+        conn2 = get_connection(db_path)
+        parts = get_draft_parts(conn2, draft.id)
+        assert len(parts) == 4
+        for i, p in enumerate(sorted(parts, key=lambda x: x.position)):
+            assert p.media_specs, f"part {i} media_specs empty — Pydantic items dropped"
+            assert p.media_specs[0]["spec"] == {"prompt": f"p{i}"}, (
+                f"part {i} spec mismatch: {p.media_specs[0]}"
+            )
+            assert p.media_specs[0]["id"] == f"media_v14pyd{i:03d}"
+        conn2.close()
+
 
 class TestButtonRestoration:
     """Tests that buttons are restored on failure/completion paths."""
