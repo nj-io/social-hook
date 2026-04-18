@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { sendCallback } from "@/lib/api";
+import { AsyncButton } from "./async-button";
 import { useToast } from "@/lib/toast-context";
+import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { regenAllMedia, replanMediaSpecs } from "@/lib/api";
+import type { BackgroundTask } from "@/lib/api";
 import type { Draft } from "@/lib/types";
 
 interface MediaActionBarProps {
@@ -10,64 +12,99 @@ interface MediaActionBarProps {
   onUpdate: () => void;
 }
 
-const REGEN_ACTIONS = new Set(["media_regen", "media_retry"]);
-
+/**
+ * Batch action bar for the MediaSection. Two LLM-bearing actions:
+ *
+ * * **Regen All** — re-runs each existing spec through its adapter.
+ * * **Replan Specs** — LLM re-plans the full spec list for this draft.
+ *
+ * Both dispatch via ``_run_background_task`` server-side and return 202 +
+ * task_id; the hook picks up per-item stage events. Per-item actions
+ * (edit/regen/remove) are on ``MediaToolHeader`` — not this component.
+ */
 export function MediaActionBar({ draft, onUpdate }: MediaActionBarProps) {
-  const [pending, setPending] = useState("");
   const { addToast } = useToast();
 
-  // Only show for editable drafts with media
-  if (!["draft", "deferred"].includes(draft.status)) return null;
-  if (!draft.media_paths) return null;
+  const refRegen = `media_regen_all:${draft.id}`;
+  const refReplan = `media_replan:${draft.id}`;
 
-  async function handleAction(action: string) {
-    setPending(action);
-    if (REGEN_ACTIONS.has(action)) {
-      addToast("Regenerating...");
-    }
+  const { trackTask, isRunning, getTask } = useBackgroundTasks(
+    draft.project_id,
+    (task: BackgroundTask) => {
+      if (task.ref_id !== refRegen && task.ref_id !== refReplan) return;
+      if (task.status === "failed") {
+        addToast(
+          task.ref_id === refRegen ? "Regen All failed" : "Replan failed",
+          { variant: "error", detail: task.error ?? undefined },
+        );
+      } else if (task.status === "completed") {
+        addToast(
+          task.ref_id === refRegen ? "All media regenerated" : "Specs replanned",
+          { variant: "success" },
+        );
+        onUpdate();
+      }
+    },
+  );
+
+  const regenLoading = isRunning(refRegen);
+  const replanLoading = isRunning(refReplan);
+  const regenTask = getTask(refRegen);
+  const replanTask = getTask(refReplan);
+  const busy = regenLoading || replanLoading;
+
+  // Hide when not editable (mirrors the previous per-item bar behavior)
+  if (!["draft", "deferred"].includes(draft.status)) return null;
+
+  const count = draft.media_specs?.length ?? 0;
+
+  async function handleRegenAll() {
     try {
-      await sendCallback(action, draft.id);
-      onUpdate();
-      if (REGEN_ACTIONS.has(action)) {
-        addToast("Media regenerated", { variant: "success" });
-      }
+      const res = await regenAllMedia(draft.id);
+      trackTask(res.task_id, refRegen, "media_regen_all");
     } catch (e) {
-      if (REGEN_ACTIONS.has(action)) {
-        const msg = e instanceof Error ? e.message : "Unknown error";
-        addToast(`Regeneration failed: ${msg}`, { variant: "error" });
-      }
-    } finally {
-      setPending("");
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      addToast("Regen All request failed", { variant: "error", detail: msg });
     }
   }
 
-  const specChanged = draft.media_spec !== draft.media_spec_used;
+  async function handleReplan() {
+    try {
+      const res = await replanMediaSpecs(draft.id);
+      trackTask(res.task_id, refReplan, "media_replan");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      addToast("Replan request failed", { variant: "error", detail: msg });
+    }
+  }
 
   return (
-    <div className="flex flex-wrap gap-2">
-      <button
-        onClick={() => handleAction("media_regen")}
-        disabled={!!pending || !specChanged}
-        title={!specChanged ? "Spec unchanged — edit spec first or use Retry" : "Regenerate media from current spec"}
-        className="rounded-md border border-border px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-      >
-        {pending === "media_regen" ? "..." : "Regenerate"}
-      </button>
-      <button
-        onClick={() => handleAction("media_retry")}
-        disabled={!!pending}
-        title="Retry media generation with current spec"
-        className="rounded-md border border-border px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-      >
-        {pending === "media_retry" ? "..." : "Retry"}
-      </button>
-      <button
-        onClick={() => handleAction("media_remove")}
-        disabled={!!pending}
-        className="rounded-md border border-red-300 px-3 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
-      >
-        {pending === "media_remove" ? "..." : "Remove"}
-      </button>
+    <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+      <span className="text-xs text-muted-foreground">
+        {count} item{count === 1 ? "" : "s"}
+      </span>
+      <div className="ml-auto flex gap-2">
+        <AsyncButton
+          loading={regenLoading}
+          startTime={regenTask?.created_at}
+          loadingText={regenTask?.stage_label ?? "Regenerating all"}
+          onClick={handleRegenAll}
+          disabled={busy || count === 0}
+          className="rounded-md border border-border px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+        >
+          Regen All
+        </AsyncButton>
+        <AsyncButton
+          loading={replanLoading}
+          startTime={replanTask?.created_at}
+          loadingText={replanTask?.stage_label ?? "Replanning"}
+          onClick={handleReplan}
+          disabled={busy}
+          className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-foreground transition-colors hover:bg-accent/80 disabled:opacity-50"
+        >
+          Replan Specs
+        </AsyncButton>
+      </div>
     </div>
   );
 }

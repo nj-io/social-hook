@@ -1,19 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import type { Draft } from "@/lib/types";
+import type { Draft, MediaSpecItem } from "@/lib/types";
 import { TOOL_SCHEMAS } from "@/lib/media-tool-schemas";
 import { useSyncedSpec } from "@/lib/use-synced-spec";
-import { updateDraftMediaSpec } from "@/lib/api";
+import { updateMediaItem } from "@/lib/api";
 
 interface FormProps {
   draft: Draft;
+  mediaItem: MediaSpecItem;
   onUpdate: () => void;
 }
 
-export function PlaywrightForm({ draft, onUpdate }: FormProps) {
+export function PlaywrightForm({ draft, mediaItem, onUpdate }: FormProps) {
   const schema = TOOL_SCHEMAS.playwright;
-  const [spec, setSpec] = useSyncedSpec(draft.media_spec);
+  const [spec, setSpec] = useSyncedSpec(mediaItem.spec);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
@@ -28,7 +29,7 @@ export function PlaywrightForm({ draft, onUpdate }: FormProps) {
 
     setSaving(true);
     try {
-      await updateDraftMediaSpec(draft.id, spec);
+      await updateMediaItem(draft.id, mediaItem.id, { tool: mediaItem.tool, spec });
       onUpdate();
     } finally {
       setSaving(false);

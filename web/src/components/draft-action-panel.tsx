@@ -18,6 +18,22 @@ interface DraftActionPanelProps {
 type Submenu = "schedule" | "edit" | "reject" | "promote" | null;
 type TextPrompt = "edit_text" | "edit_angle" | "reject_note" | "schedule_custom" | null;
 
+/**
+ * Aggregate spec-unchanged guard for the Regenerate-media button.
+ *
+ * Returns true when any ``media_specs[i]`` differs from its
+ * ``media_specs_used[i]`` snapshot. Used to disable the batch regen button
+ * when everything is already in sync — avoids wasting adapter calls. The
+ * per-item regen guard lives on ``MediaToolHeader`` and fires per-tab.
+ */
+function hasMediaSpecChanges(draft: Draft): boolean {
+  const specs = draft.media_specs ?? [];
+  const used = draft.media_specs_used ?? [];
+  if (specs.length === 0) return false;
+  if (specs.length !== used.length) return true;
+  return specs.some((s, i) => JSON.stringify(s.spec) !== JSON.stringify(used[i]?.spec));
+}
+
 export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshPlatforms }: DraftActionPanelProps) {
   const [actionPending, setActionPending] = useState("");
   const [submenu, setSubmenu] = useState<Submenu>(null);
@@ -335,7 +351,7 @@ export function DraftActionPanel({ draft, onUpdate, enabledPlatforms, onRefreshP
                 label="Regenerate media"
                 action="media_regen"
                 pending={actionPending}
-                disabled={isDisabled || draft.media_spec === draft.media_spec_used}
+                disabled={isDisabled || !hasMediaSpecChanges(draft)}
                 onClick={handleAction}
                 variant="neutral-outline"
               />
