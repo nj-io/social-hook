@@ -1660,18 +1660,151 @@ def btn_media_replan_specs(
     config: Any | None,
     **kwargs: Any,
 ) -> None:
-    """Ack a replan request. Full drafter-driven replan lives in the web
-    endpoint ``POST /api/drafts/{id}/media/replan``. On Telegram we keep
-    things simple: ack and point the operator at per-item controls.
+    """Re-plan every non-uploaded media slot's spec via the drafter LLM.
+
+    Iterates the draft's current non-uploaded slots and regenerates each
+    slot's ``spec`` using the drafter + ``generate_media_spec`` tool (same
+    shape the per-item Edit Spec button uses). Each slot update fires a
+    ``DraftChange`` row with ``field=f"media_spec:{media_id}"`` — per-item,
+    never aggregated. Per-slot ``replan_{i+1}_of_{n}`` stage events emit via
+    ``task_id`` in kwargs (the daemon's ``/api/callback`` wrapper provides
+    it). Replan only updates specs — operator clicks Regen All afterwards
+    to materialize paths. Mirrors the web endpoint
+    ``POST /api/drafts/{id}/media/replan`` contract so the bot surface has
+    parity with the frontend.
     """
-    _answer_callback(adapter, callback_id, "Replan request acknowledged.")
+    _answer_callback(adapter, callback_id, "Replanning specs...")
     draft_id = payload
+    task_id = kwargs.get("task_id")
+
+    conn = _get_conn()
+    try:
+        from social_hook.db import get_draft
+
+        draft = get_draft(conn, draft_id)
+        if not draft:
+            _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
+            return
+        if not _guard_draft_editable(adapter, chat_id, draft):
+            return
+
+        target_specs = [
+            s
+            for s in (draft.media_specs or [])
+            if isinstance(s, dict) and s.get("id") and not s.get("user_uploaded")
+        ]
+        if not target_specs:
+            _send(adapter, chat_id, "No media items to replan.")
+            return
+
+        slot_info = [(s["id"], s.get("tool") or "nano_banana_pro") for s in target_specs]
+        draft_content = draft.content
+        project_id = draft.project_id
+    finally:
+        conn.close()
+
+    if config is None:
+        _send(adapter, chat_id, "Drafter config unavailable; cannot replan.")
+        return
+
+    from social_hook.adapters.registry import get_tool_spec_schema
+    from social_hook.db import operations as ops
+    from social_hook.filesystem import generate_id
+    from social_hook.llm.base import extract_tool_call
+    from social_hook.llm.factory import create_client
+    from social_hook.llm.prompts import (
+        assemble_spec_generation_prompt,
+        build_spec_generation_tool,
+    )
+    from social_hook.models.core import DraftChange
+
+    try:
+        client = create_client(config.models.drafter, config)
+    except Exception as e:
+        logger.warning("Replan could not create drafter client: %s", e, exc_info=True)
+        _send(adapter, chat_id, f"Replan failed: {e}")
+        return
+
+    n = len(slot_info)
+    updated = 0
+    failed = 0
+    for i, (media_id, tool_name) in enumerate(slot_info):
+        if task_id:
+            conn_stage = _get_conn()
+            try:
+                ops.emit_task_stage(
+                    conn_stage,
+                    task_id,
+                    f"replan_{i + 1}_of_{n}",
+                    f"Replanning {i + 1} of {n}",
+                    project_id,
+                )
+            finally:
+                conn_stage.close()
+
+        try:
+            schema = get_tool_spec_schema(tool_name)
+            prompt = assemble_spec_generation_prompt(
+                tool_name=tool_name, schema=schema, draft_content=draft_content
+            )
+            spec_tool = build_spec_generation_tool(tool_name, schema)
+            response = client.complete(
+                messages=[{"role": "user", "content": prompt}], tools=[spec_tool]
+            )
+            new_payload = extract_tool_call(response, "generate_media_spec")
+        except Exception as e:
+            logger.warning("Replan spec for %s failed: %s", media_id, e, exc_info=True)
+            failed += 1
+            continue
+
+        conn_slot = _get_conn()
+        try:
+            refreshed = ops.get_draft(conn_slot, draft_id)
+            if refreshed is None:
+                break
+            current = next(
+                (
+                    s
+                    for s in (refreshed.media_specs or [])
+                    if isinstance(s, dict) and s.get("id") == media_id
+                ),
+                None,
+            )
+            if current is None:
+                continue
+            new_spec = dict(current)
+            new_spec["spec"] = new_payload
+            new_spec["tool"] = tool_name
+            ops.update_draft_media(conn_slot, draft_id, media_id, spec=new_spec)
+            ops.insert_draft_change(
+                conn_slot,
+                DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft_id,
+                    field=f"media_spec:{media_id}",
+                    old_value="",
+                    new_value="replanned",
+                    changed_by="expert",
+                ),
+            )
+            updated += 1
+        finally:
+            conn_slot.close()
+
+    conn_event = _get_conn()
+    try:
+        ops.emit_data_event(conn_event, "draft", "updated", draft_id, project_id)
+    finally:
+        conn_event.close()
+
     _send(
         adapter,
         chat_id,
-        f"Replan queued for `{draft_id[:12]}`. The full drafter replan runs via the web "
-        "endpoint (`POST /api/drafts/{id}/media/replan`). From Telegram, use per-item "
-        "Edit / Regen buttons to adjust individual items.",
+        (
+            f"Replan finished on `{draft_id[:12]}`: {updated} of {n} specs updated"
+            + (f", {failed} failed" if failed else "")
+            + ". Run Regen all to materialize new paths."
+        ),
     )
 
 
