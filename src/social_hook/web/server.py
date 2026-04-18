@@ -948,25 +948,31 @@ async def api_draft_detail(draft_id: str):
         else:
             draft["decision"] = None
 
-        # Compute draft diagnostics at read time (not stored)
+        # Compute draft diagnostics at read time (not stored). check_auto_postable
+        # now accepts a dict directly — no synthetic class hack needed.
         import social_hook.draft_diagnostics  # noqa: F401 — side-effect registration
         from social_hook.draft_diagnostics import draft_diagnostics_registry
         from social_hook.vehicle import check_auto_postable
 
-        diag_ctx = {
+        parsed_media_specs = safe_json_loads(
+            draft.get("media_specs", "[]") or "[]", "drafts.media_specs", default=[]
+        )
+        parsed_media_errors = safe_json_loads(
+            draft.get("media_errors", "[]") or "[]", "drafts.media_errors", default=[]
+        )
+        parsed_media_paths = safe_json_loads(
+            draft.get("media_paths", "[]") or "[]", "drafts.media_paths", default=[]
+        )
+
+        diag_ctx: dict[str, Any] = {
             "vehicle": draft.get("vehicle", "single"),
             "status": draft.get("status"),
             "platform": draft.get("platform"),
-            "auto_postable": check_auto_postable(
-                type(
-                    "_D",
-                    (),
-                    {
-                        "vehicle": draft.get("vehicle", "single"),
-                        "platform": draft.get("platform", ""),
-                    },
-                )()
-            ),
+            "auto_postable": check_auto_postable(draft),
+            "content": draft.get("content", ""),
+            "media_specs": parsed_media_specs,
+            "media_errors": parsed_media_errors,
+            "media_paths": parsed_media_paths,
         }
         draft["diagnostics"] = [d.to_dict() for d in draft_diagnostics_registry.run(diag_ctx)]
 
@@ -975,74 +981,43 @@ async def api_draft_detail(draft_id: str):
         conn.close()
 
 
-@app.put("/api/drafts/{draft_id}/media-spec")
-async def api_update_draft_media_spec(draft_id: str, body: dict[str, Any] = Body(...)):
-    """Update media_spec and optionally media_type on a draft."""
-    media_spec = body.get("media_spec")
-    media_type = body.get("media_type")
-    if media_spec is None:
-        raise HTTPException(status_code=400, detail="media_spec is required")
-    conn = _get_conn()
-    try:
-        # Get old spec for audit trail
-        draft = ops.get_draft(conn, draft_id)
-        if not draft:
-            raise HTTPException(status_code=404, detail="Draft not found")
-        old_spec = draft.media_spec
-
-        update_kwargs: dict[str, Any] = {"media_spec": media_spec}
-        if media_type is not None:
-            update_kwargs["media_type"] = media_type
-        ops.update_draft(conn, draft_id, **update_kwargs)
-
-        # Audit: create DraftChange record
-        from social_hook.filesystem import generate_id
-        from social_hook.models.core import DraftChange
-
-        ops.insert_draft_change(
-            conn,
-            DraftChange(
-                id=generate_id("change"),
-                draft_id=draft_id,
-                field="media_spec",
-                old_value=json.dumps(old_spec) if old_spec else "null",
-                new_value=json.dumps(media_spec),
-                changed_by="human",
-            ),
-        )
-
-        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
-        return {"status": "updated"}
-    finally:
-        conn.close()
+# NOTE: `PUT /api/drafts/{draft_id}/media-spec` was removed in feat/multi-media
+# (it wrote to the dropped singular columns media_spec/media_type). Replaced by:
+#   - PUT /api/drafts/{id}/media/{media_id} for per-item spec edits
+#   - POST /api/drafts/{id}/media/replan    for full drafter re-plan
 
 
-_ALLOWED_UPLOAD_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "svg"}
-_MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+_ALLOWED_UPLOAD_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+_MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5 MiB — matches SINGLE_IMAGE.max_size
 
 
 @app.post("/api/drafts/{draft_id}/media-upload")
 async def api_upload_draft_media(draft_id: str, file: UploadFile):
-    """Upload a media file and attach it to a draft.
+    """Upload a media file and APPEND it to a draft as a new media slot.
 
-    Accepts multipart/form-data with a 'file' field.
+    Multi-media mode: never overwrites media_paths. Creates a
+    ``user_uploaded=True`` / ``tool='legacy_upload'`` slot via
+    ``ops.append_draft_media`` and seeds the path on it. 5 MiB + png/jpg/
+    jpeg/webp/gif guards (shared with POST /api/projects/{id}/uploads).
     """
     from social_hook.filesystem import generate_id, get_base_path
     from social_hook.models.core import DraftChange
 
-    # Validate extension
     ext = ""
     if file.filename and "." in file.filename:
         ext = file.filename.rsplit(".", 1)[-1].lower()
     if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"Invalid file type: .{ext}")
+        raise HTTPException(status_code=415, detail=f"Invalid file type: .{ext}")
 
-    # Read and validate size
     content = await file.read()
     if len(content) > _MAX_UPLOAD_SIZE:
         raise HTTPException(
-            status_code=400,
-            detail=f"File too large ({len(content)} bytes). Max {_MAX_UPLOAD_SIZE} bytes.",
+            status_code=413,
+            detail={
+                "error": "file_too_large",
+                "limit_bytes": _MAX_UPLOAD_SIZE,
+                "received_bytes": len(content),
+            },
         )
 
     conn = _get_conn()
@@ -1052,38 +1027,489 @@ async def api_upload_draft_media(draft_id: str, file: UploadFile):
             raise HTTPException(status_code=404, detail="Draft not found")
         if draft.status not in EDITABLE_STATUSES:
             raise HTTPException(
-                status_code=409,
-                detail=f"Cannot upload media — draft is {draft.status}",
+                status_code=409, detail=f"Cannot upload media — draft is {draft.status}"
             )
 
-        # Save uploaded file with UUID filename
         upload_dir = get_base_path() / "media-cache" / "uploads" / draft_id
         upload_dir.mkdir(parents=True, exist_ok=True)
-
         filename = f"{_uuid.uuid4()}.{ext}"
         dest = upload_dir / filename
         dest.write_bytes(content)
-
         file_path = str(dest)
-        old_paths = draft.media_paths
 
-        ops.update_draft(conn, draft_id, media_paths=[file_path], media_type="custom")
+        new_spec = {
+            "tool": "legacy_upload",
+            "spec": {"path": file_path},
+            "caption": None,
+            "user_uploaded": True,
+        }
+        new_id = ops.append_draft_media(conn, draft_id, new_spec)
+        if new_id is None:
+            raise HTTPException(status_code=500, detail="Could not append media slot")
+        ops.update_draft_media(conn, draft_id, new_id, path=file_path, spec_used=new_spec)
+
         ops.insert_draft_change(
             conn,
             DraftChange(
                 id=generate_id("change"),
                 draft_id=draft_id,
-                field="media_paths",
-                old_value=json.dumps(old_paths),
-                new_value=json.dumps([file_path]),
+                field=f"media_spec:{new_id}",
+                old_value="null",
+                new_value=file_path,
                 changed_by="human",
             ),
         )
-        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
 
-        return {"status": "uploaded", "file_path": file_path}
+        return {"status": "uploaded", "media_id": new_id, "file_path": file_path}
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Per-item media endpoints.
+#
+# All LLM/adapter-bearing endpoints below return 202 via `_run_background_task`
+# so the HTTP round-trip is fast. Stage events ("media_N_of_M") stream via
+# the existing WebSocket gateway and the frontend's `useBackgroundTasks`.
+#
+# POST  /api/drafts/{id}/media                    — append new slot (spec-first)
+# PUT   /api/drafts/{id}/media/{media_id}         — edit spec + regen one item
+# DELETE /api/drafts/{id}/media/{media_id}        — remove one item (splice)
+# POST  /api/drafts/{id}/media/regen-all          — regen every non-uploaded item
+# POST  /api/drafts/{id}/media/replan             — LLM re-plans the full list
+# ---------------------------------------------------------------------------
+
+
+def _spec_for_adapter(spec: dict) -> dict:
+    """Read the adapter payload out of a MediaSpecItem dict."""
+    inner = spec.get("spec") if isinstance(spec, dict) else None
+    return inner if isinstance(inner, dict) else {}
+
+
+def _regen_media_item_blocking(draft_id: str, media_id: str, project_id: str) -> dict:
+    """Blocking per-item regen used by the web endpoints.
+
+    Reads the draft row fresh, resolves the tool, runs the adapter, writes
+    path/error via `ops.update_draft_media`, inserts one `DraftChange`
+    with `field=f"media_spec:{media_id}"`, and emits a `draft updated`
+    event. Returns ``{path}`` on success or ``{error}`` on failure.
+    """
+    from social_hook.adapters.registry import get_media_adapter
+    from social_hook.filesystem import generate_id, get_base_path
+    from social_hook.models.core import DraftChange
+
+    conn5 = _get_conn()
+    try:
+        draft = ops.get_draft(conn5, draft_id)
+        if not draft:
+            return {"error": "draft_not_found"}
+        spec = next(
+            (
+                s
+                for s in (draft.media_specs or [])
+                if isinstance(s, dict) and s.get("id") == media_id
+            ),
+            None,
+        )
+        if spec is None:
+            return {"error": f"media_{media_id}_not_found"}
+        if spec.get("user_uploaded"):
+            return {"error": "cannot_regen_user_upload"}
+
+        tool_name = spec.get("tool") or ""
+        api_key = None
+        if tool_name == "nano_banana_pro":
+            cfg = _get_config()
+            api_key = cfg.env.get("GEMINI_API_KEY") if cfg else None
+            if not api_key:
+                ops.update_draft_media(
+                    conn5, draft_id, media_id, error="GEMINI_API_KEY not configured"
+                )
+                return {"error": "GEMINI_API_KEY not configured"}
+
+        try:
+            adapter = get_media_adapter(tool_name, api_key=api_key)
+        except ValueError as e:
+            ops.update_draft_media(conn5, draft_id, media_id, error=str(e))
+            return {"error": str(e)}
+        if adapter is None:
+            msg = f"Media adapter '{tool_name}' not available"
+            ops.update_draft_media(conn5, draft_id, media_id, error=msg)
+            return {"error": msg}
+
+        output_dir = str(get_base_path() / "media-cache" / media_id)
+        result = adapter.generate(spec=_spec_for_adapter(spec), output_dir=output_dir)
+        if result.success and result.file_path:
+            ops.update_draft_media(
+                conn5, draft_id, media_id, path=result.file_path, spec_used=spec, error=""
+            )
+            ops.insert_draft_change(
+                conn5,
+                DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft_id,
+                    field=f"media_spec:{media_id}",
+                    old_value="",
+                    new_value=result.file_path,
+                    changed_by="human",
+                ),
+            )
+            ops.emit_data_event(conn5, "draft", "updated", draft_id, project_id)
+            return {"path": result.file_path}
+        msg = result.error or "generation_failed"
+        ops.update_draft_media(conn5, draft_id, media_id, error=msg)
+        ops.emit_data_event(conn5, "draft", "updated", draft_id, project_id)
+        return {"error": msg}
+    finally:
+        conn5.close()
+
+
+@app.post("/api/drafts/{draft_id}/media")
+async def api_add_draft_media(draft_id: str, body: dict[str, Any] = Body(...)):
+    """Append a new media slot and trigger generation (202)."""
+    try:
+        check_unknown_keys(body, {"tool", "spec", "caption"}, "media.add", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    tool = body.get("tool")
+    if not tool or not isinstance(tool, str):
+        raise HTTPException(status_code=400, detail="tool is required")
+    spec_payload = body.get("spec") or {}
+    if not isinstance(spec_payload, dict):
+        raise HTTPException(status_code=400, detail="spec must be an object")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.status not in EDITABLE_STATUSES:
+            raise HTTPException(
+                status_code=409, detail=f"Cannot add media — draft is {draft.status}"
+            )
+
+        from social_hook.vehicle import get_max_media_count
+
+        cap = get_max_media_count(draft.vehicle or "single", draft.platform)
+        current = len(draft.media_specs or [])
+        if current >= cap:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"max_count {cap} reached for vehicle={draft.vehicle}/"
+                    f"platform={draft.platform} (currently {current})"
+                ),
+            )
+
+        new_spec = {
+            "tool": tool,
+            "spec": spec_payload,
+            "caption": body.get("caption"),
+            "user_uploaded": tool == "legacy_upload",
+        }
+        media_id = ops.append_draft_media(conn, draft_id, new_spec)
+        if media_id is None:
+            raise HTTPException(status_code=500, detail="Could not append media slot")
+        project_id = draft.project_id
+    finally:
+        conn.close()
+
+    if new_spec["user_uploaded"]:
+        return {"media_id": media_id, "status": "created"}
+
+    task_id_holder: list[str | None] = [None]
+
+    def _blocking_add_media():
+        conn6 = _get_conn()
+        try:
+            if task_id_holder[0]:
+                ops.emit_task_stage(
+                    conn6, task_id_holder[0], "media_1_of_1", "Media 1 of 1", project_id
+                )
+        finally:
+            conn6.close()
+        return _regen_media_item_blocking(draft_id, media_id, project_id)
+
+    task_id = _run_background_task(
+        "media_regen", ref_id=draft_id, project_id=project_id, fn=_blocking_add_media
+    )
+    task_id_holder[0] = task_id
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "media_id": media_id, "status": "processing"},
+    )
+
+
+@app.put("/api/drafts/{draft_id}/media/{media_id}")
+async def api_edit_draft_media(draft_id: str, media_id: str, body: dict[str, Any] = Body(...)):
+    """Edit a media slot's spec and regenerate in the background (202)."""
+    try:
+        check_unknown_keys(body, {"spec", "caption", "tool"}, "media.edit", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    new_spec_payload = body.get("spec")
+    if not isinstance(new_spec_payload, dict):
+        raise HTTPException(status_code=400, detail="spec must be an object")
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.status not in EDITABLE_STATUSES:
+            raise HTTPException(
+                status_code=409, detail=f"Cannot edit media — draft is {draft.status}"
+            )
+        target = next(
+            (
+                s
+                for s in (draft.media_specs or [])
+                if isinstance(s, dict) and s.get("id") == media_id
+            ),
+            None,
+        )
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Media {media_id} not found on draft")
+
+        updated = dict(target)
+        updated["spec"] = new_spec_payload
+        if "caption" in body:
+            updated["caption"] = body["caption"]
+        if "tool" in body and isinstance(body["tool"], str):
+            updated["tool"] = body["tool"]
+        ops.update_draft_media(conn, draft_id, media_id, spec=updated)
+        project_id = draft.project_id
+    finally:
+        conn.close()
+
+    task_id_holder: list[str | None] = [None]
+
+    def _blocking_edit():
+        conn6 = _get_conn()
+        try:
+            if task_id_holder[0]:
+                ops.emit_task_stage(
+                    conn6, task_id_holder[0], "media_1_of_1", "Media 1 of 1", project_id
+                )
+        finally:
+            conn6.close()
+        return _regen_media_item_blocking(draft_id, media_id, project_id)
+
+    task_id = _run_background_task(
+        "media_regen", ref_id=draft_id, project_id=project_id, fn=_blocking_edit
+    )
+    task_id_holder[0] = task_id
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "media_id": media_id, "status": "processing"},
+    )
+
+
+@app.delete("/api/drafts/{draft_id}/media/{media_id}")
+async def api_delete_draft_media(draft_id: str, media_id: str):
+    """Remove a media item from the draft (splice all four parallel arrays)."""
+    from social_hook.filesystem import generate_id
+    from social_hook.models.core import DraftChange
+
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.status not in EDITABLE_STATUSES:
+            raise HTTPException(
+                status_code=409, detail=f"Cannot remove media — draft is {draft.status}"
+            )
+        if not ops.remove_draft_media(conn, draft_id, media_id):
+            raise HTTPException(status_code=404, detail=f"Media {media_id} not found on draft")
+        ops.insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft_id,
+                field=f"media_spec:{media_id}",
+                old_value=media_id,
+                new_value="null",
+                changed_by="human",
+            ),
+        )
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+        return {"status": "removed", "media_id": media_id}
+    finally:
+        conn.close()
+
+
+@app.post("/api/drafts/{draft_id}/media/regen-all")
+async def api_regen_all_draft_media(draft_id: str):
+    """Regenerate every non-uploaded media item on the draft (202).
+
+    Emits per-item `media_{i+1}_of_{n}` stage events so the frontend's
+    useBackgroundTasks picks up per-image progress.
+    """
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.status not in EDITABLE_STATUSES:
+            raise HTTPException(
+                status_code=409, detail=f"Cannot regen media — draft is {draft.status}"
+            )
+        target_specs = [
+            s
+            for s in (draft.media_specs or [])
+            if isinstance(s, dict) and s.get("id") and not s.get("user_uploaded")
+        ]
+        if not target_specs:
+            raise HTTPException(status_code=400, detail="No generatable media items on draft")
+        media_ids = [s["id"] for s in target_specs]
+        project_id = draft.project_id
+    finally:
+        conn.close()
+
+    task_id_holder: list[str | None] = [None]
+
+    def _blocking_regen_all() -> dict:
+        n = len(media_ids)
+        results: list[dict] = []
+        for i, mid in enumerate(media_ids):
+            if task_id_holder[0]:
+                conn6 = _get_conn()
+                try:
+                    ops.emit_task_stage(
+                        conn6,
+                        task_id_holder[0],
+                        f"media_{i + 1}_of_{n}",
+                        f"Media {i + 1} of {n}",
+                        project_id,
+                    )
+                finally:
+                    conn6.close()
+            results.append(_regen_media_item_blocking(draft_id, mid, project_id))
+        return {"items": results, "count": n}
+
+    task_id = _run_background_task(
+        "media_regen", ref_id=draft_id, project_id=project_id, fn=_blocking_regen_all
+    )
+    task_id_holder[0] = task_id
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "count": len(media_ids), "status": "processing"},
+    )
+
+
+@app.post("/api/drafts/{draft_id}/media/replan")
+async def api_replan_draft_media(draft_id: str):
+    """Re-plan each media slot's spec via the drafter LLM (202).
+
+    Iterates existing non-uploaded slots and regenerates a fresh spec per
+    slot using the same `generate_media_spec` tool used during initial
+    drafting. Updates each via `ops.update_draft_media(spec=...)`. Does
+    NOT materialize new paths — operator clicks Regen All afterwards.
+    """
+    conn = _get_conn()
+    try:
+        draft = ops.get_draft(conn, draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        if draft.status not in EDITABLE_STATUSES:
+            raise HTTPException(
+                status_code=409, detail=f"Cannot replan media — draft is {draft.status}"
+            )
+        target_specs = [
+            s
+            for s in (draft.media_specs or [])
+            if isinstance(s, dict) and s.get("id") and not s.get("user_uploaded")
+        ]
+        if not target_specs:
+            raise HTTPException(status_code=400, detail="No media items to replan")
+        project_id = draft.project_id
+        draft_content = draft.content
+        slot_info = [(s["id"], s.get("tool", "nano_banana_pro")) for s in target_specs]
+    finally:
+        conn.close()
+
+    task_id_holder: list[str | None] = [None]
+
+    def _blocking_replan() -> dict:
+        from social_hook.adapters.registry import get_tool_spec_schema
+        from social_hook.config.yaml import load_full_config
+        from social_hook.llm.base import extract_tool_call
+        from social_hook.llm.factory import create_client
+        from social_hook.llm.prompts import (
+            assemble_spec_generation_prompt,
+            build_spec_generation_tool,
+        )
+
+        cfg = load_full_config()
+        client = create_client(cfg.models.drafter, cfg)
+        n = len(slot_info)
+        updated = 0
+        for i, (media_id, tool_name) in enumerate(slot_info):
+            if task_id_holder[0]:
+                conn6 = _get_conn()
+                try:
+                    ops.emit_task_stage(
+                        conn6,
+                        task_id_holder[0],
+                        f"replan_{i + 1}_of_{n}",
+                        f"Replanning {i + 1} of {n}",
+                        project_id,
+                    )
+                finally:
+                    conn6.close()
+            try:
+                schema = get_tool_spec_schema(tool_name)
+                prompt = assemble_spec_generation_prompt(
+                    tool_name=tool_name, schema=schema, draft_content=draft_content
+                )
+                spec_tool = build_spec_generation_tool(tool_name, schema)
+                response = client.complete(
+                    messages=[{"role": "user", "content": prompt}], tools=[spec_tool]
+                )
+                new_payload = extract_tool_call(response, "generate_media_spec")
+            except Exception as e:
+                logger.warning("Replan spec for %s failed: %s", media_id, e)
+                continue
+            conn7 = _get_conn()
+            try:
+                d2 = ops.get_draft(conn7, draft_id)
+                if not d2:
+                    break
+                current = next(
+                    (
+                        s
+                        for s in (d2.media_specs or [])
+                        if isinstance(s, dict) and s.get("id") == media_id
+                    ),
+                    None,
+                )
+                if current is None:
+                    continue
+                new_spec = dict(current)
+                new_spec["spec"] = new_payload
+                new_spec["tool"] = tool_name
+                ops.update_draft_media(conn7, draft_id, media_id, spec=new_spec)
+                updated += 1
+            finally:
+                conn7.close()
+        conn8 = _get_conn()
+        try:
+            ops.emit_data_event(conn8, "draft", "updated", draft_id, project_id)
+        finally:
+            conn8.close()
+        return {"updated": updated, "count": n}
+
+    task_id = _run_background_task(
+        "media_replan", ref_id=draft_id, project_id=project_id, fn=_blocking_replan
+    )
+    task_id_holder[0] = task_id
+    return JSONResponse(
+        status_code=202,
+        content={"task_id": task_id, "count": len(slot_info), "status": "processing"},
+    )
 
 
 @app.post("/api/drafts/{draft_id}/generate-spec")
@@ -2048,10 +2474,30 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
 async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
     """Create content from an operator idea — bypasses evaluator.
 
-    Body: { idea, vehicle, reference_files, target_id }
+    Body: {
+        idea: str,
+        vehicle: "single"|"thread"|"article"|null,
+        reference_files: list[str] | null,
+        target_id: str | null,
+        upload_ids: list[str] | null,   # pending_uploads ids for reference
+                                        # images (from POST .../uploads)
+    }
+
+    Upload handling (multi-media plan): resolves each ``upload_id`` to its
+    staging path + context, passes them to ``DraftingIntent.uploads`` as
+    ``MediaUpload`` entries so the drafter sees them as vision content
+    blocks. After successful draft creation in the background task, the
+    staging files are moved atomically to ``uploads/{draft_id}/``, the
+    corresponding user-uploaded media slots' paths are rewritten, and the
+    ``pending_uploads`` rows are deleted. Partial-failure moves are rolled
+    back (best-effort) and the per-item error is surfaced via
+    ``media_errors``.
     """
-    known_keys = {"idea", "vehicle", "reference_files", "target_id"}
-    check_unknown_keys(body, known_keys, "create_content", strict=True)
+    known_keys = {"idea", "vehicle", "reference_files", "target_id", "upload_ids"}
+    try:
+        check_unknown_keys(body, known_keys, "create_content", strict=True)
+    except ConfigError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
 
     idea = body.get("idea")
     if not idea or not isinstance(idea, str) or not idea.strip():
@@ -2061,12 +2507,29 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
     vehicle = body.get("vehicle")  # None means "auto"
     reference_files: list[str] = body.get("reference_files") or []
     target_id = body.get("target_id")
+    upload_ids: list[str] = body.get("upload_ids") or []
 
     conn = _get_conn()
     try:
         project = ops.get_project(conn, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+
+        # Resolve upload_ids to staging paths + context BEFORE any work begins.
+        # Rejection here returns 400 (client error).
+        upload_entries: list[dict] = []
+        for uid in upload_ids:
+            row = ops.get_pending_upload(conn, uid)
+            if row is None:
+                raise HTTPException(status_code=400, detail=f"Unknown upload_id: {uid}")
+            if row.get("project_id") != project_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"upload_id {uid} does not belong to project {project_id}",
+                )
+            upload_entries.append(
+                {"upload_id": uid, "path": row["path"], "context": row.get("context") or ""}
+            )
     finally:
         conn.close()
 
@@ -2074,7 +2537,7 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
 
     from social_hook.config.platforms import resolve_platform
     from social_hook.config.project import ProjectConfig, load_project_config
-    from social_hook.drafting import DraftingIntent, PlatformSpec
+    from social_hook.drafting import DraftingIntent, MediaUpload, PlatformSpec
     from social_hook.filesystem import generate_id
     from social_hook.models.core import CommitInfo, Decision
 
@@ -2086,7 +2549,6 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
     # Build platform spec
     platform_specs: list[PlatformSpec] = []
     if target_id:
-        # Resolve from targets config
         tc = config.targets.get(target_id) if hasattr(config, "targets") else None
         if tc:
             pcfg = config.platforms.get(tc.platform)
@@ -2122,17 +2584,20 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
     finally:
         conn2.close()
 
-    # Read reference files within budget
     assembled_ref_text = ""
     if reference_files:
         from social_hook.file_reader import read_files_within_budget
 
         budget = 40_000 if vehicle == "article" else 10_000
         assembled_ref_text, _tokens = read_files_within_budget(
-            reference_files,
-            project.repo_path,
-            max_tokens=budget,
+            reference_files, project.repo_path, max_tokens=budget
         )
+
+    media_uploads: list[MediaUpload] | None = (
+        [MediaUpload(path=e["path"], context=e["context"]) for e in upload_entries]
+        if upload_entries
+        else None
+    )
 
     intent = DraftingIntent(
         decision="draft",
@@ -2145,6 +2610,7 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
         content_source_context={"reference_files": assembled_ref_text}
         if assembled_ref_text
         else None,
+        uploads=media_uploads,
     )
 
     # Mutable holder for task_id inside the closure
@@ -2193,15 +2659,84 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
         finally:
             conn3.close()
 
+    def _move_uploads_to_drafts(conn4, draft_ids: list[str]) -> None:
+        """Atomically move staged uploads from `_staging/{upload_id}/` to
+        `uploads/{draft_id}/` for each draft that consumed them.
+
+        We match user_uploaded slots by spec.path == staging_path. Matching
+        slots get their spec.path + media_paths[i] rewritten to the post-move
+        location via `ops.update_draft_media`. Pending_uploads rows for
+        successfully consumed ids are deleted. Partial failures are logged
+        and leave the files in staging — the 24h TTL prune catches them.
+        """
+        import os
+
+        from social_hook.filesystem import get_base_path
+
+        if not upload_entries:
+            return
+
+        consumed: set[str] = set()
+        staging_to_entry = {e["path"]: e for e in upload_entries}
+
+        for did in draft_ids:
+            draft = ops.get_draft(conn4, did)
+            if not draft:
+                continue
+            dest_dir = get_base_path() / "media-cache" / "uploads" / did
+            dest_dir.mkdir(parents=True, exist_ok=True)
+
+            for i, spec in enumerate(list(draft.media_specs or [])):
+                if not isinstance(spec, dict):
+                    continue
+                if not spec.get("user_uploaded"):
+                    continue
+                src_path = (spec.get("spec") or {}).get("path", "")
+                entry = staging_to_entry.get(src_path)
+                if not entry:
+                    continue
+                filename = os.path.basename(src_path) or f"upload_{i}"
+                dest_path = str(dest_dir / filename)
+                try:
+                    os.replace(src_path, dest_path)
+                except OSError as e:
+                    logger.warning(
+                        "Upload move failed for draft %s / %s: %s; leaving in staging",
+                        did,
+                        src_path,
+                        e,
+                    )
+                    ops.update_draft_media(conn4, did, spec["id"], error=f"upload_move_failed: {e}")
+                    continue
+                new_spec = dict(spec)
+                new_spec["spec"] = dict(new_spec.get("spec") or {})
+                new_spec["spec"]["path"] = dest_path
+                ops.update_draft_media(
+                    conn4, did, spec["id"], spec=new_spec, path=dest_path, spec_used=new_spec
+                )
+                consumed.add(entry["upload_id"])
+
+        for upload_id in consumed:
+            ops.delete_pending_upload(conn4, upload_id)
+
     def _on_content_created(result: dict) -> None:
         from social_hook.drafting import DraftResult
 
         conn4 = _get_conn()
         try:
+            draft_ids = result.get("draft_ids") or []
+            # Move staging → uploads AFTER draft creation. Must run before
+            # notification so the review rendering picks up the final paths.
+            if upload_entries and draft_ids:
+                try:
+                    _move_uploads_to_drafts(conn4, draft_ids)
+                except Exception:
+                    logger.debug("Post-creation upload move failed", exc_info=True)
+
             from social_hook.scheduling import calculate_optimal_time
 
             draft_results = []
-            for did in result["draft_ids"]:
+            for did in draft_ids:
                 d = ops.get_draft(conn4, did)
                 if d:
                     sched = calculate_optimal_time(conn4, d.project_id, platform=d.platform)
@@ -2235,6 +2770,83 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
         status_code=202,
         content={"task_id": task_id, "status": "processing"},
     )
+
+
+@app.post("/api/projects/{project_id}/uploads")
+async def api_stage_upload(
+    project_id: str,
+    file: UploadFile,
+    context: str = "",
+):
+    """Stage a reference image for later consumption by `create-content`.
+
+    Multipart/form-data:
+      * `file` — the image bytes (png/jpg/jpeg/webp/gif, ≤5 MiB)
+      * `context` — optional text string describing what the image shows,
+        passed through to the drafter as `MediaUpload.context`
+
+    On accept: creates a `pending_uploads` row (id = `upl_<12hex>`), saves
+    the file to `.social-hook/media-cache/uploads/_staging/{upload_id}/{filename}`,
+    returns `{upload_id, path, context}`. Staging rows + files older than
+    24h are pruned by the scheduler tick.
+
+    Size/format violations return HTTP 413 / 415 with structured JSON
+    errors; no pending_uploads row is created on rejection.
+    """
+    import os as _os
+
+    from social_hook.filesystem import get_base_path
+
+    ext = ""
+    if file.filename and "." in file.filename:
+        ext = file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail={
+                "error": "unsupported_format",
+                "allowed": sorted(_ALLOWED_UPLOAD_EXTENSIONS),
+                "received": ext,
+            },
+        )
+
+    content = await file.read()
+    if len(content) > _MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error": "file_too_large",
+                "limit_bytes": _MAX_UPLOAD_SIZE,
+                "received_bytes": len(content),
+            },
+        )
+
+    conn = _get_conn()
+    try:
+        if not ops.get_project(conn, project_id):
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        from social_hook.filesystem import generate_id
+
+        upload_id = generate_id("upl")
+        staging_dir = get_base_path() / "media-cache" / "uploads" / "_staging" / upload_id
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = _os.path.basename(file.filename or f"upload.{ext}")
+        dest = staging_dir / safe_name
+        dest.write_bytes(content)
+        path = str(dest)
+
+        # Record directly so the upload_id matches the staging directory
+        # name (consumed later by create-content's staging→uploads move).
+        conn.execute(
+            "INSERT INTO pending_uploads (id, project_id, path, context) VALUES (?, ?, ?, ?)",
+            (upload_id, project_id, path, context or ""),
+        )
+        conn.commit()
+
+        return {"upload_id": upload_id, "path": path, "context": context or ""}
+    finally:
+        conn.close()
 
 
 @app.delete("/api/decisions/{decision_id}")
@@ -6199,6 +6811,96 @@ async def api_create_advisory(project_id: str, body: dict[str, Any] = Body(...))
             conn, "advisory", "created", item.id, project_id, extra={"title": item.title}
         )
         return {"advisory_id": item.id, "status": "created"}
+    finally:
+        conn.close()
+
+
+@app.get("/api/advisory/{item_id}")
+async def api_get_advisory(item_id: str):
+    """Fetch a single advisory item with rendered article content.
+
+    Multi-media articles carry inline ``![caption](media:ID)`` tokens in
+    their draft content. When the advisory links to a draft with
+    ``vehicle='article'``, this endpoint resolves those tokens against
+    the draft's ``media_specs``/``media_paths`` parallel arrays via
+    ``resolve_tokens`` and returns ``rendered_content`` alongside the
+    advisory fields. Also inlines the draft's diagnostics so the
+    advisory UI can surface the same warnings the draft page shows.
+    """
+    conn = _get_conn()
+    try:
+        item = ops.get_advisory_item(conn, item_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Advisory item not found")
+
+        payload: dict[str, Any] = _advisory_to_api(item)
+
+        # Article token rendering: only for draft-linked advisories where
+        # the underlying draft vehicle == 'article'.
+        linked_type = getattr(item, "linked_entity_type", None)
+        linked_id = getattr(item, "linked_entity_id", None)
+        if linked_type == "draft" and linked_id:
+            draft_row = conn.execute("SELECT * FROM drafts WHERE id = ?", (linked_id,)).fetchone()
+            if draft_row is not None:
+                draft = dict(draft_row)
+                if draft.get("vehicle") == "article":
+                    from social_hook.media_tokens import resolve_tokens
+
+                    specs = safe_json_loads(
+                        draft.get("media_specs", "[]") or "[]",
+                        "drafts.media_specs",
+                        default=[],
+                    )
+                    paths = safe_json_loads(
+                        draft.get("media_paths", "[]") or "[]",
+                        "drafts.media_paths",
+                        default=[],
+                    )
+                    specs_by_id: dict[str, str] = {}
+                    for i, spec in enumerate(specs):
+                        if not isinstance(spec, dict):
+                            continue
+                        sid = spec.get("id")
+                        path = paths[i] if i < len(paths) else ""
+                        if sid and path:
+                            specs_by_id[sid] = path
+                    payload["rendered_content"] = resolve_tokens(
+                        draft.get("content", "") or "", specs_by_id
+                    )
+
+                # Inline draft diagnostics so the advisory page surfaces
+                # partial_media_failure / orphaned_media_spec / etc.
+                import social_hook.draft_diagnostics  # noqa: F401 — registration
+                from social_hook.draft_diagnostics import draft_diagnostics_registry
+                from social_hook.vehicle import check_auto_postable
+
+                diag_ctx: dict[str, Any] = {
+                    "vehicle": draft.get("vehicle", "single"),
+                    "status": draft.get("status"),
+                    "platform": draft.get("platform"),
+                    "auto_postable": check_auto_postable(draft),
+                    "content": draft.get("content", ""),
+                    "media_specs": safe_json_loads(
+                        draft.get("media_specs", "[]") or "[]",
+                        "drafts.media_specs",
+                        default=[],
+                    ),
+                    "media_errors": safe_json_loads(
+                        draft.get("media_errors", "[]") or "[]",
+                        "drafts.media_errors",
+                        default=[],
+                    ),
+                    "media_paths": safe_json_loads(
+                        draft.get("media_paths", "[]") or "[]",
+                        "drafts.media_paths",
+                        default=[],
+                    ),
+                }
+                diags = draft_diagnostics_registry.run(diag_ctx)
+                if diags:
+                    payload["diagnostics"] = [d.to_dict() for d in diags]
+
+        return payload
     finally:
         conn.close()
 
