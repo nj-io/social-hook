@@ -904,7 +904,31 @@ def _apply_expert_result(
             if idx >= len(part_media_specs):
                 continue
             specs_for_part = part_media_specs[idx]
-            if not isinstance(specs_for_part, list) or not specs_for_part:
+            if not isinstance(specs_for_part, list):
+                continue
+            if not specs_for_part:
+                # Empty inner list — CLEAR media on this part (Option B).
+                # Matches Expert's intent when the user asks to drop a tweet's
+                # image entirely ("the second tweet shouldn't have media").
+                ops.update_draft_part(
+                    conn,
+                    part.id,
+                    media_specs=[],
+                    media_specs_used=[],
+                    media_paths=[],
+                    media_errors=[],
+                )
+                insert_draft_change(
+                    conn,
+                    DraftChange(
+                        id=generate_id("change"),
+                        draft_id=draft.id,
+                        field=f"draft_part.media_specs:{part.id}",
+                        old_value="",
+                        new_value="cleared",
+                        changed_by="expert",
+                    ),
+                )
                 continue
 
             # Normalize to list of dicts + assign ids where missing.

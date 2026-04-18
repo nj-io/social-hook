@@ -2780,6 +2780,150 @@ class TestApplyExpertResultUnpack:
         assert updated.media_specs[0]["spec"] == {"some": "spec"}
         conn2.close()
 
+    @patch("social_hook.bot.commands._get_conn")
+    def test_apply_expert_result_empty_inner_list_clears_part_media(
+        self, mock_conn, mock_adapter, temp_dir
+    ):
+        """Option B: `part_media_specs[i] == []` CLEARS media on part i.
+
+        Mixed input `[[new], [], [], [spec2]]` against a 4-part thread with
+        pre-existing media on every part must land:
+        * part 0 → replaced with `[new]` (set-branch)
+        * part 1 → cleared (empty-inner clear-branch)
+        * part 2 → cleared
+        * part 3 → replaced with `[spec2]`
+
+        Each affected part must emit one DraftChange row with
+        ``field=f"draft_part.media_specs:{part_id}"`` — per-part, never
+        aggregated. Clear rows have ``new_value="cleared"``; set rows have
+        ``new_value=str(len(normalized))``.
+        """
+        from social_hook.bot.commands import _apply_expert_result
+        from social_hook.db import insert_decision
+        from social_hook.db.operations import (
+            get_draft_changes,
+            get_draft_parts,
+            insert_draft_part,
+        )
+        from social_hook.models.core import Decision, DraftPart
+
+        db_path = temp_dir / "test.db"
+        conn = init_database(db_path)
+        mock_conn.return_value = conn
+
+        project = Project(id=generate_id("project"), name="thread", repo_path="/tmp/test")
+        insert_project(conn, project)
+        decision = Decision(
+            id=generate_id("decision"),
+            project_id=project.id,
+            commit_hash="abc",
+            decision="draft",
+            reasoning="thread seed",
+        )
+        insert_decision(conn, decision)
+        draft = Draft(
+            id=generate_id("draft"),
+            project_id=project.id,
+            decision_id=decision.id,
+            platform="x",
+            content="1/ hook\n2/ context\n3/ detail\n4/ cta",
+            status="draft",
+            vehicle="thread",
+        )
+        insert_draft(conn, draft)
+
+        # Seed 4 parts, each with one pre-existing media slot so we can verify
+        # clear vs replace.
+        part_ids = []
+        for i in range(4):
+            part_id = generate_id("tweet")
+            existing_spec = {
+                "id": f"media_pre{i:03d}0000",
+                "tool": "mermaid",
+                "spec": {"diagram": f"P{i}"},
+                "caption": None,
+                "user_uploaded": False,
+            }
+            insert_draft_part(
+                conn,
+                DraftPart(
+                    id=part_id,
+                    draft_id=draft.id,
+                    position=i,
+                    content=f"tweet {i}",
+                    media_specs=[existing_spec],
+                    media_paths=[f"/tmp/pre{i}.png"],
+                    media_errors=[None],
+                    media_specs_used=[existing_spec],
+                ),
+            )
+            part_ids.append(part_id)
+
+        new_part0 = {
+            "id": "media_new00000000",
+            "tool": "mermaid",
+            "spec": {"diagram": "NEW0"},
+            "user_uploaded": False,
+        }
+        new_part3 = {
+            "id": "media_new30000000",
+            "tool": "mermaid",
+            "spec": {"diagram": "NEW3"},
+            "user_uploaded": False,
+        }
+        result = MagicMock()
+        result.refined_content = None
+        result.refined_media_spec = None
+        result.refined_vehicle = None
+        result.part_media_specs = [[new_part0], [], [], [new_part3]]
+
+        applied = _apply_expert_result(conn, draft, result, config=None)
+        assert applied is True
+
+        conn2 = get_connection(db_path)
+        parts = get_draft_parts(conn2, draft.id)
+        assert len(parts) == 4
+        parts_by_pos = {p.position: p for p in parts}
+
+        # Part 0: replaced with [new_part0]
+        p0 = parts_by_pos[0]
+        assert len(p0.media_specs) == 1
+        assert p0.media_specs[0]["spec"] == {"diagram": "NEW0"}
+
+        # Part 1: cleared — all 4 arrays empty
+        p1 = parts_by_pos[1]
+        assert p1.media_specs == []
+        assert p1.media_paths == []
+        assert p1.media_errors == []
+        assert p1.media_specs_used == []
+
+        # Part 2: cleared
+        p2 = parts_by_pos[2]
+        assert p2.media_specs == []
+        assert p2.media_paths == []
+        assert p2.media_errors == []
+        assert p2.media_specs_used == []
+
+        # Part 3: replaced with [new_part3]
+        p3 = parts_by_pos[3]
+        assert len(p3.media_specs) == 1
+        assert p3.media_specs[0]["spec"] == {"diagram": "NEW3"}
+
+        # DraftChange per part, never aggregated.
+        changes = get_draft_changes(conn2, draft.id)
+        change_fields = {c.field: c for c in changes}
+        for pid in part_ids:
+            field = f"draft_part.media_specs:{pid}"
+            assert field in change_fields, (
+                f"missing DraftChange for {pid}; got fields: {list(change_fields)}"
+            )
+        # Clear rows have new_value="cleared"; set rows have str(count).
+        assert change_fields[f"draft_part.media_specs:{part_ids[0]}"].new_value == "1"
+        assert change_fields[f"draft_part.media_specs:{part_ids[1]}"].new_value == "cleared"
+        assert change_fields[f"draft_part.media_specs:{part_ids[2]}"].new_value == "cleared"
+        assert change_fields[f"draft_part.media_specs:{part_ids[3]}"].new_value == "1"
+        conn2.close()
+
 
 class TestButtonRestoration:
     """Tests that buttons are restored on failure/completion paths."""
