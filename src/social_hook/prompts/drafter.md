@@ -148,7 +148,7 @@ For each image, produce a `MediaSpecItem` with a stable `id` using the pattern `
 
 Reference each image in `content` with `![caption](media:<id>)` at the position where it should render, where `<id>` is the exact `id` from the spec item (including the `media_` prefix).
 
-If operator pre-uploaded images, they appear in your context as items with `user_uploaded=true`. Build content around them — do NOT overwrite or omit them. Each upload has a stable `id`; reference them in content tokens.
+If operator pre-uploaded images, they appear as pre-seeded items with `user_uploaded=true` in a JSON block inside your context. Your `media_specs` output MUST include every pre-seeded upload verbatim (same `id`, `tool: "legacy_upload"`, `spec.path`, `user_uploaded: true`) and reference each one in `content` using its `id` via the `![caption](media:<id>)` token convention. Don't fabricate new entries for the uploaded images, and don't invent upload paths — only paths from the pre-seeded block are valid.
 
 For single posts and threads, default to 1 image unless the platform supports more and content benefits. Don't emit inline tokens for non-article vehicles — media attaches at post time.
 

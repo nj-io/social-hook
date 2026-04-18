@@ -1,6 +1,7 @@
 """Drafter agent: creates social media content (T14)."""
 
 import base64
+import json
 import logging
 import mimetypes
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from social_hook.adapters.models import SINGLE_IMAGE
 from social_hook.config.project import ContextConfig
 from social_hook.errors import ConfigError
+from social_hook.filesystem import generate_id
 
 if TYPE_CHECKING:
     from social_hook.config.platforms import ResolvedPlatformConfig
@@ -349,6 +351,12 @@ class Drafter:
         # content-block message (text + base64 image blocks). Fail LOUDLY
         # (ConfigError) when the configured drafter model is not vision-
         # capable — never silently fall through to text-only.
+        #
+        # Pre-seed a user_uploaded MediaSpecItem per upload so the LLM sees
+        # them as structured input and understands each one must appear in
+        # the output media_specs (with matching id in a content token).
+        # Post-LLM reconciliation re-injects any the drafter dropped.
+        preseeded_specs: list[dict[str, Any]] = []
         if uploads:
             full_id = getattr(self.client, "full_id", None)
             info = get_model_info(full_id) if full_id else None
@@ -359,7 +367,8 @@ class Drafter:
                     f"(e.g. anthropic/claude-sonnet-4-5, claude-cli/sonnet, "
                     f"openai/gpt-4o) or remove reference images."
                 )
-            message_content: Any = _assemble_vision_content(user_content, uploads)
+            preseeded_specs = _preseed_upload_specs(uploads)
+            message_content: Any = _assemble_vision_content(user_content, uploads, preseeded_specs)
         else:
             message_content = user_content
 
@@ -379,9 +388,15 @@ class Drafter:
 
         tool_input = extract_tool_call(response, "create_draft")
         tool_input = _sanitize_media_specs(tool_input, uploads=uploads)
+        # Upload reconciliation: every pre-seeded upload must appear in
+        # the final media_specs. Drafter may modify caption/spec extras
+        # but id + path + user_uploaded=True are ground truth — never
+        # trust the LLM to invent upload paths.
+        if preseeded_specs:
+            tool_input = _reconcile_uploads(tool_input, preseeded_specs)
         # Defense-in-depth: auto-repair content tokens against the (already
-        # sanitized) spec list. Handles two observed LLM drift modes —
-        # stripped 'media_' prefix and literal placeholder ids from
+        # sanitized + reconciled) spec list. Handles two observed LLM drift
+        # modes — stripped 'media_' prefix and literal placeholder ids from
         # schema/prompt examples. Runs AFTER spec sanitization so fuzzy
         # matching only considers ids that survived validation.
         content = tool_input.get("content")
@@ -444,26 +459,142 @@ def _read_upload_bytes(path_str: str) -> tuple[bytes, str]:
     return p.read_bytes(), _guess_media_type(path_str)
 
 
-def _assemble_vision_content(user_text: str, uploads: list[Any]) -> list[dict[str, Any]]:
+def _preseed_upload_specs(uploads: list[Any]) -> list[dict[str, Any]]:
+    """Build pre-seeded ``user_uploaded=True`` MediaSpecItem dicts from uploads.
+
+    One MediaSpecItem per upload, id generated via ``generate_id("media")``
+    (same format the drafter is asked to produce for generated items).
+    These pre-seeded entries are shown to the LLM and reconciled post-call
+    so uploads never vanish from the final ``media_specs`` list.
+
+    Skips uploads with no path (logged; never raises).
+    """
+    out: list[dict[str, Any]] = []
+    for i, up in enumerate(uploads, 1):
+        path = getattr(up, "path", None) or (up.get("path") if isinstance(up, dict) else None)
+        if not path:
+            logger.warning("Upload %d missing path; skipping pre-seed spec", i)
+            continue
+        ctx = getattr(up, "context", "") or (up.get("context", "") if isinstance(up, dict) else "")
+        out.append(
+            {
+                "id": generate_id("media"),
+                "tool": "legacy_upload",
+                "spec": {"path": str(path), "context": str(ctx)},
+                "caption": None,
+                "user_uploaded": True,
+            }
+        )
+    return out
+
+
+def _reconcile_uploads(
+    tool_input: dict[str, Any], preseeded: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Reconcile the drafter's media_specs against the pre-seeded uploads.
+
+    Invariants enforced:
+
+    * Every pre-seeded upload (identified by ``spec.path``) appears in the
+      final ``media_specs``. Drops by the LLM are re-injected.
+    * For a matched upload, the LLM may set ``caption`` and may append
+      extra non-path fields to ``spec``, but ``id``, ``spec.path``,
+      ``tool = 'legacy_upload'``, and ``user_uploaded = True`` are ground
+      truth — overwritten from the pre-seed.
+
+    The path is the stable identity (id is generated locally; the LLM may
+    substitute or omit its own id). Uploads are re-injected at the end of
+    the list in their original pre-seed order, preserving any other
+    media_specs the drafter emitted in between.
+    """
+    specs = tool_input.get("media_specs")
+    if not isinstance(specs, list):
+        specs = []
+
+    # Index pre-seeded by path for fast lookup.
+    preseed_by_path: dict[str, dict[str, Any]] = {
+        str(p["spec"].get("path", "")): p for p in preseeded
+    }
+    matched_paths: set[str] = set()
+
+    reconciled: list[dict[str, Any]] = []
+    for raw in specs:
+        if not isinstance(raw, dict):
+            reconciled.append(raw)  # let sanitize/validate reject below
+            continue
+        if raw.get("user_uploaded") is not True:
+            reconciled.append(raw)
+            continue
+        raw_path = str((raw.get("spec") or {}).get("path", ""))
+        preseed = preseed_by_path.get(raw_path)
+        if preseed is None:
+            # user_uploaded with a path not in preseeded — let sanitize
+            # strip it as a hallucination. (Reached only if sanitize
+            # ran with uploads=None, but keep the defensive branch.)
+            reconciled.append(raw)
+            continue
+        # Accept LLM modifications to caption and any extra spec keys
+        # that aren't "path", but overwrite the ground-truth fields
+        # from the pre-seed so id and user_uploaded can never drift.
+        merged = dict(raw)
+        merged_spec = dict(raw.get("spec") or {})
+        merged_spec["path"] = preseed["spec"]["path"]
+        # Re-thread the operator's context note from the pre-seed; the
+        # LLM has no authoritative source for it.
+        if "context" in preseed["spec"]:
+            merged_spec.setdefault("context", preseed["spec"]["context"])
+        merged["spec"] = merged_spec
+        merged["id"] = preseed["id"]
+        merged["tool"] = "legacy_upload"
+        merged["user_uploaded"] = True
+        reconciled.append(merged)
+        matched_paths.add(raw_path)
+
+    # Re-inject any pre-seeded uploads the drafter dropped.
+    for preseed in preseeded:
+        path = str(preseed["spec"].get("path", ""))
+        if path and path not in matched_paths:
+            logger.warning("Drafter dropped pre-seeded upload %r — re-injecting", path)
+            reconciled.append(dict(preseed))
+
+    tool_input["media_specs"] = reconciled
+    return tool_input
+
+
+def _assemble_vision_content(
+    user_text: str,
+    uploads: list[Any],
+    preseeded_specs: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Interleave operator context text with base64 image blocks.
 
-    Block order: leading text → each upload (optional per-upload context
-    text, then the image) → the main user_text. This puts the reference
-    images in front of the LLM before the task description, matching the
-    common Anthropic vision prompt pattern.
+    Block order: leading text → (optional JSON-serialized pre-seeded
+    media_specs block so the LLM sees each upload's id) → each upload
+    (optional per-upload context text, then the image) → the main
+    user_text. This puts the reference images in front of the LLM
+    before the task description, matching the common Anthropic vision
+    prompt pattern.
     """
     blocks: list[dict[str, Any]] = []
     if uploads:
-        blocks.append(
-            {
-                "type": "text",
-                "text": (
-                    f"The operator attached {len(uploads)} reference image(s). "
-                    "Build the post around them. Each image has an optional "
-                    "context note above it."
-                ),
-            }
+        intro = (
+            f"The operator attached {len(uploads)} reference image(s). "
+            "Build the post around them. Each image has an optional "
+            "context note above it."
         )
+        if preseeded_specs:
+            intro += (
+                "\n\nThese uploads already have stable ids (listed below). "
+                "Your `media_specs` output MUST include every one of these "
+                "items verbatim (same `id`, `tool`, `spec.path`, "
+                "`user_uploaded: true`). Reference each one in `content` "
+                "using its `id` via the `![caption](media:<id>)` token "
+                "convention — do not fabricate new entries for the "
+                "uploaded images.\n\n"
+                "Pre-seeded uploads (JSON):\n"
+                f"```json\n{json.dumps(preseeded_specs, indent=2)}\n```"
+            )
+        blocks.append({"type": "text", "text": intro})
         for i, up in enumerate(uploads, 1):
             path = getattr(up, "path", None) or (up.get("path") if isinstance(up, dict) else None)
             ctx = getattr(up, "context", "") or (

@@ -9,6 +9,8 @@ from social_hook.errors import ConfigError
 from social_hook.llm.drafter import (
     Drafter,
     _auto_repair_content_tokens,
+    _preseed_upload_specs,
+    _reconcile_uploads,
     _sanitize_media_specs,
 )
 from social_hook.models.core import CommitInfo
@@ -456,3 +458,232 @@ class TestAutoRepairContentTokens:
     def test_empty_content_returns_unchanged(self):
         specs = [{"id": "media_aaaaaaaaaaaa", "tool": "mermaid", "spec": {}}]
         assert _auto_repair_content_tokens("", specs) == ""
+
+
+class TestUploadPreseedAndReconcile:
+    """Pre-seeding uploads into media_specs + reconciling the drafter's output."""
+
+    def _upload(self, path: str, context: str = ""):
+        up = MagicMock()
+        up.path = path
+        up.context = context
+        return up
+
+    def test_preseed_builds_one_spec_per_upload(self):
+        uploads = [self._upload("/tmp/a.png", "desk"), self._upload("/tmp/b.png")]
+        specs = _preseed_upload_specs(uploads)
+        assert len(specs) == 2
+        for spec, src in zip(specs, uploads, strict=True):
+            assert spec["tool"] == "legacy_upload"
+            assert spec["user_uploaded"] is True
+            assert spec["spec"]["path"] == src.path
+            assert spec["spec"]["context"] == src.context
+            # id must match backend format: media_<12hex>
+            assert spec["id"].startswith("media_") and len(spec["id"]) == len("media_") + 12
+        # Ids are unique across uploads.
+        assert specs[0]["id"] != specs[1]["id"]
+
+    def test_preseed_skips_path_missing(self):
+        """Uploads without a path are skipped (logged) rather than raising."""
+        bad = MagicMock()
+        bad.path = None
+        bad.context = "whatever"
+        out = _preseed_upload_specs([bad, self._upload("/tmp/ok.png")])
+        assert len(out) == 1
+        assert out[0]["spec"]["path"] == "/tmp/ok.png"
+
+    def test_reconcile_preserves_upload_when_llm_kept_it(self):
+        """LLM returned the pre-seeded upload as-is — merged output preserves id + path."""
+        preseeded = _preseed_upload_specs([self._upload("/tmp/ref.png", "desk")])
+        llm_out = {
+            "media_specs": [
+                {
+                    "id": preseeded[0]["id"],
+                    "tool": "legacy_upload",
+                    "spec": {"path": "/tmp/ref.png"},
+                    "caption": "a nice desk",
+                    "user_uploaded": True,
+                }
+            ]
+        }
+        out = _reconcile_uploads(llm_out, preseeded)
+        assert len(out["media_specs"]) == 1
+        item = out["media_specs"][0]
+        assert item["id"] == preseeded[0]["id"]
+        assert item["spec"]["path"] == "/tmp/ref.png"
+        assert item["user_uploaded"] is True
+        assert item["caption"] == "a nice desk"  # LLM caption accepted
+
+    def test_reconcile_reinjects_dropped_upload(self):
+        """LLM dropped a pre-seeded upload — reconciliation re-adds it at the end."""
+        up_a = self._upload("/tmp/a.png", "first")
+        up_b = self._upload("/tmp/b.png", "second")
+        preseeded = _preseed_upload_specs([up_a, up_b])
+        llm_out = {
+            "media_specs": [
+                # LLM kept only the first upload.
+                {
+                    "id": preseeded[0]["id"],
+                    "tool": "legacy_upload",
+                    "spec": {"path": "/tmp/a.png"},
+                    "caption": None,
+                    "user_uploaded": True,
+                },
+                # Plus a generated spec unrelated to uploads.
+                {
+                    "id": "media_gennnnn12345",
+                    "tool": "mermaid",
+                    "spec": {"diagram": "A-->B"},
+                    "caption": None,
+                    "user_uploaded": False,
+                },
+            ]
+        }
+        out = _reconcile_uploads(llm_out, preseeded)
+        paths = [s["spec"].get("path") for s in out["media_specs"] if s.get("user_uploaded")]
+        assert set(paths) == {"/tmp/a.png", "/tmp/b.png"}
+        # Re-injected entry uses the original pre-seed id.
+        reinjected = next(s for s in out["media_specs"] if s["spec"].get("path") == "/tmp/b.png")
+        assert reinjected["id"] == preseeded[1]["id"]
+        assert reinjected["spec"]["context"] == "second"
+        # Non-upload specs pass through unchanged.
+        gen_spec = next(s for s in out["media_specs"] if s.get("user_uploaded") is False)
+        assert gen_spec["id"] == "media_gennnnn12345"
+
+    def test_reconcile_overwrites_llm_modified_id_with_preseed(self):
+        """LLM changed id + caption but path matches — id is overwritten, caption kept."""
+        preseeded = _preseed_upload_specs([self._upload("/tmp/ref.png", "original")])
+        real_id = preseeded[0]["id"]
+        llm_out = {
+            "media_specs": [
+                {
+                    "id": "media_llmmadeupid0",  # LLM tried to invent a new id
+                    "tool": "legacy_upload",
+                    "spec": {"path": "/tmp/ref.png"},
+                    "caption": "better caption",
+                    "user_uploaded": True,
+                }
+            ]
+        }
+        out = _reconcile_uploads(llm_out, preseeded)
+        item = out["media_specs"][0]
+        assert item["id"] == real_id  # preseed id wins
+        assert item["caption"] == "better caption"  # LLM caption preserved
+        assert item["spec"]["path"] == "/tmp/ref.png"
+
+    def test_reconcile_hallucinated_upload_not_matched(self):
+        """LLM emitted user_uploaded with a path not in pre-seeded — left as-is for sanitize to strip.
+
+        The sanitize step (run before reconcile in the real call chain)
+        already removes hallucinated uploads. Reconcile does NOT silently
+        accept or modify such entries — it just passes them through. We
+        verify sanitize → reconcile composes correctly in the integration
+        flow below.
+        """
+        preseeded = _preseed_upload_specs([self._upload("/tmp/ref.png")])
+        # Sanitize with real upload would have stripped the hallucination
+        # already. We directly test reconcile's defensive branch.
+        llm_out = {
+            "media_specs": [
+                {
+                    "id": "media_hallucinate",
+                    "tool": "legacy_upload",
+                    "spec": {"path": "/tmp/never_uploaded.png"},
+                    "caption": None,
+                    "user_uploaded": True,
+                }
+            ]
+        }
+        out = _reconcile_uploads(llm_out, preseeded)
+        # Hallucinated entry passes through (sanitize handles it upstream).
+        paths = [s["spec"].get("path") for s in out["media_specs"] if s.get("user_uploaded")]
+        # Real pre-seeded /tmp/ref.png is re-injected (LLM dropped it).
+        assert "/tmp/ref.png" in paths
+
+    def test_reconcile_with_no_media_specs_field(self):
+        """LLM returned no media_specs at all — all pre-seeded uploads re-injected."""
+        preseeded = _preseed_upload_specs(
+            [self._upload("/tmp/a.png", "ctx a"), self._upload("/tmp/b.png")]
+        )
+        out = _reconcile_uploads({"content": "hi"}, preseeded)
+        paths = [s["spec"]["path"] for s in out["media_specs"]]
+        assert paths == ["/tmp/a.png", "/tmp/b.png"]
+
+    def test_integration_sanitize_then_reconcile_strips_hallucination_reinjects_real(self):
+        """End-to-end: sanitize strips hallucinated user_uploaded; reconcile re-injects real ones."""
+        preseeded = _preseed_upload_specs([self._upload("/tmp/ref.png")])
+        uploads = [self._upload("/tmp/ref.png")]
+        llm_out = {
+            "content": "ok",
+            "media_specs": [
+                # Real upload preserved by LLM.
+                {
+                    "id": preseeded[0]["id"],
+                    "tool": "legacy_upload",
+                    "spec": {"path": "/tmp/ref.png"},
+                    "caption": None,
+                    "user_uploaded": True,
+                },
+                # Hallucinated upload — not in uploads list.
+                {
+                    "id": "media_hallucinate",
+                    "tool": "legacy_upload",
+                    "spec": {"path": "/tmp/fake.png"},
+                    "caption": None,
+                    "user_uploaded": True,
+                },
+            ],
+        }
+        sanitized = _sanitize_media_specs(llm_out, uploads=uploads)
+        reconciled = _reconcile_uploads(sanitized, preseeded)
+        paths = [s["spec"].get("path") for s in reconciled["media_specs"]]
+        assert "/tmp/ref.png" in paths
+        assert "/tmp/fake.png" not in paths  # stripped by sanitize
+
+    def test_empty_uploads_no_preseed(self):
+        """intent.uploads=None or [] → no pre-seeding; existing flow intact."""
+        assert _preseed_upload_specs([]) == []
+
+    def test_create_draft_preseeds_and_reconciles(self, tmp_path):
+        """End-to-end: create_draft with uploads pre-seeds, drafter drops one, reconciliation re-injects.
+
+        Vision-capable model (sonnet) exercises the full path.
+        """
+        client, commit, ctx, decision, db = _make_drafter_mocks()
+        client.full_id = "anthropic/claude-sonnet-4-5"
+
+        # Give the LLM-returned tool_input an empty media_specs so
+        # reconciliation MUST re-inject all pre-seeded uploads.
+        tool_content = MagicMock()
+        tool_content.type = "tool_use"
+        tool_content.name = "create_draft"
+        tool_content.input = {
+            "content": "Post body",
+            "platform": "x",
+            "reasoning": "vision with uploads",
+            "media_specs": [],
+        }
+        response = MagicMock()
+        response.content = [tool_content]
+        client.complete.return_value = response
+
+        img = tmp_path / "ref.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        up = MagicMock()
+        up.path = str(img)
+        up.context = "desk"
+
+        drafter = Drafter(client)
+        with patch("social_hook.llm.drafter.load_prompt", return_value="drafter prompt"):
+            result = drafter.create_draft(
+                decision, ctx, commit, db, platform="x", tier="free", uploads=[up]
+            )
+
+        # Pre-seeded upload survived the empty-LLM-output round-trip.
+        assert len(result.media_specs) == 1
+        item = result.media_specs[0]
+        assert item.tool == "legacy_upload"
+        assert item.user_uploaded is True
+        assert item.spec["path"] == str(img)
+        # Id is backend-generated, not LLM-invented.
+        assert item.id.startswith("media_") and len(item.id) == len("media_") + 12
