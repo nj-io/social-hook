@@ -4,7 +4,6 @@ import base64
 import json
 import logging
 import mimetypes
-import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -389,20 +388,6 @@ class Drafter:
         )
 
         tool_input = extract_tool_call(response, "create_draft")
-        # TEMP: env-gated raw-tool-call trace for E2E V8/V14 diagnosis.
-        # Reverted after root-cause fixes land.
-        _trace_dir = os.environ.get("SOCIAL_HOOK_LLM_TRACE_DIR")
-        if _trace_dir:
-            try:
-                import time as _t
-
-                Path(_trace_dir).mkdir(parents=True, exist_ok=True)
-                _ts = f"{_t.time():.6f}"
-                Path(_trace_dir, f"{_ts}-drafter-raw.json").write_text(
-                    json.dumps({"tool_input": tool_input}, indent=2, default=str)
-                )
-            except Exception:
-                pass  # trace must never break the real call
         tool_input = _sanitize_media_specs(tool_input, uploads=uploads)
         # Upload reconciliation: every pre-seeded upload must appear in
         # the final media_specs. Drafter may modify caption/spec extras
