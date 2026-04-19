@@ -331,7 +331,7 @@ def _run_background_task(
     task_type: str,
     ref_id: str,
     project_id: str,
-    fn: Callable[[], Any],
+    fn: Callable[[str], Any],
     *,
     on_success: Callable[[Any], None] | None = None,
 ) -> str:
@@ -350,7 +350,7 @@ def _run_background_task(
             task_type when multiple task types target the same entity
             (e.g. ``f"summary:{project_id}"`` vs bare ``project_id``).
         project_id: Project this task belongs to.
-        fn: Zero-arg callable that returns a JSON-serialisable result dict.
+        fn: Callable taking task_id that returns a JSON-serialisable result dict.
         on_success: Optional callback receiving ``fn``'s return value,
             called *after* the task row is marked completed.
 
@@ -375,7 +375,7 @@ def _run_background_task(
 
     def _worker() -> None:
         try:
-            result = fn()
+            result = fn(task_id)
             conn2 = _get_conn()
             try:
                 conn2.execute(
@@ -559,18 +559,15 @@ def _dispatch_chat_message(msg: InboundMessage, adapter, config, chat_id: str) -
     ctx = get_chat_draft_context(chat_id)
     project_id = ctx[1] if ctx else ""
 
-    _task_holder: list[str | None] = [None]
+    def _blocking(task_id: str):
+        handle_message(msg, adapter, config, task_id=task_id)
 
-    def _blocking():
-        handle_message(msg, adapter, config, task_id=_task_holder[0])
-
-    _task_holder[0] = _run_background_task(
+    return _run_background_task(
         "chat_message",
         ref_id=f"msg-{generate_id('msg')}",
         project_id=project_id,
         fn=_blocking,
     )
-    return _task_holder[0]  # type: ignore[return-value]  # always set by _run_background_task
 
 
 @app.post("/api/callback")
@@ -597,10 +594,8 @@ async def api_callback(body: CallbackRequest, x_session_id: str = Header("web"))
         # Background task path for LLM callbacks
         from social_hook.filesystem import generate_id
 
-        _task_holder: list[str | None] = [None]
-
-        def _blocking_callback():
-            handle_callback(event, adapter, config, task_id=_task_holder[0])
+        def _blocking_callback(task_id: str):
+            handle_callback(event, adapter, config, task_id=task_id)
             # emit_data_event inside background task (after LLM completes)
             cb_conn = _get_conn()
             try:
@@ -608,7 +603,7 @@ async def api_callback(body: CallbackRequest, x_session_id: str = Header("web"))
             finally:
                 cb_conn.close()
 
-        _task_holder[0] = _run_background_task(
+        task_id = _run_background_task(
             "chat_callback",
             ref_id=f"cb-{generate_id('cb')}",
             project_id="",
@@ -616,7 +611,7 @@ async def api_callback(body: CallbackRequest, x_session_id: str = Header("web"))
         )
         return JSONResponse(
             status_code=202,
-            content={"task_id": _task_holder[0], "status": "processing"},
+            content={"task_id": task_id, "status": "processing"},
         )
     else:
         # Synchronous path for non-LLM callbacks (approve, reject, schedule, etc.)
@@ -1224,15 +1219,10 @@ async def api_add_draft_media(draft_id: str, body: dict[str, Any] = Body(...)):
     if new_spec["user_uploaded"]:
         return {"media_id": media_id, "status": "created"}
 
-    task_id_holder: list[str | None] = [None]
-
-    def _blocking_add_media():
+    def _blocking_add_media(task_id: str):
         conn6 = _get_conn()
         try:
-            if task_id_holder[0]:
-                ops.emit_task_stage(
-                    conn6, task_id_holder[0], "media_1_of_1", "Media 1 of 1", project_id
-                )
+            ops.emit_task_stage(conn6, task_id, "media_1_of_1", "Media 1 of 1", project_id)
         finally:
             conn6.close()
         return _regen_media_item_blocking(draft_id, media_id, project_id)
@@ -1240,7 +1230,6 @@ async def api_add_draft_media(draft_id: str, body: dict[str, Any] = Body(...)):
     task_id = _run_background_task(
         "media_regen", ref_id=draft_id, project_id=project_id, fn=_blocking_add_media
     )
-    task_id_holder[0] = task_id
     return JSONResponse(
         status_code=202,
         content={"task_id": task_id, "media_id": media_id, "status": "processing"},
@@ -1289,15 +1278,10 @@ async def api_edit_draft_media(draft_id: str, media_id: str, body: dict[str, Any
     finally:
         conn.close()
 
-    task_id_holder: list[str | None] = [None]
-
-    def _blocking_edit():
+    def _blocking_edit(task_id: str):
         conn6 = _get_conn()
         try:
-            if task_id_holder[0]:
-                ops.emit_task_stage(
-                    conn6, task_id_holder[0], "media_1_of_1", "Media 1 of 1", project_id
-                )
+            ops.emit_task_stage(conn6, task_id, "media_1_of_1", "Media 1 of 1", project_id)
         finally:
             conn6.close()
         return _regen_media_item_blocking(draft_id, media_id, project_id)
@@ -1305,7 +1289,6 @@ async def api_edit_draft_media(draft_id: str, media_id: str, body: dict[str, Any
     task_id = _run_background_task(
         "media_regen", ref_id=draft_id, project_id=project_id, fn=_blocking_edit
     )
-    task_id_holder[0] = task_id
     return JSONResponse(
         status_code=202,
         content={"task_id": task_id, "media_id": media_id, "status": "processing"},
@@ -1374,31 +1357,27 @@ async def api_regen_all_draft_media(draft_id: str):
     finally:
         conn.close()
 
-    task_id_holder: list[str | None] = [None]
-
-    def _blocking_regen_all() -> dict:
+    def _blocking_regen_all(task_id: str) -> dict:
         n = len(media_ids)
         results: list[dict] = []
         for i, mid in enumerate(media_ids):
-            if task_id_holder[0]:
-                conn6 = _get_conn()
-                try:
-                    ops.emit_task_stage(
-                        conn6,
-                        task_id_holder[0],
-                        f"media_{i + 1}_of_{n}",
-                        f"Media {i + 1} of {n}",
-                        project_id,
-                    )
-                finally:
-                    conn6.close()
+            conn6 = _get_conn()
+            try:
+                ops.emit_task_stage(
+                    conn6,
+                    task_id,
+                    f"media_{i + 1}_of_{n}",
+                    f"Media {i + 1} of {n}",
+                    project_id,
+                )
+            finally:
+                conn6.close()
             results.append(_regen_media_item_blocking(draft_id, mid, project_id))
         return {"items": results, "count": n}
 
     task_id = _run_background_task(
         "media_regen", ref_id=draft_id, project_id=project_id, fn=_blocking_regen_all
     )
-    task_id_holder[0] = task_id
     return JSONResponse(
         status_code=202,
         content={"task_id": task_id, "count": len(media_ids), "status": "processing"},
@@ -1436,9 +1415,7 @@ async def api_replan_draft_media(draft_id: str):
     finally:
         conn.close()
 
-    task_id_holder: list[str | None] = [None]
-
-    def _blocking_replan() -> dict:
+    def _blocking_replan(task_id: str) -> dict:
         from social_hook.adapters.registry import get_tool_spec_schema
         from social_hook.config.yaml import load_full_config
         from social_hook.llm.base import extract_tool_call
@@ -1453,18 +1430,17 @@ async def api_replan_draft_media(draft_id: str):
         n = len(slot_info)
         updated = 0
         for i, (media_id, tool_name) in enumerate(slot_info):
-            if task_id_holder[0]:
-                conn6 = _get_conn()
-                try:
-                    ops.emit_task_stage(
-                        conn6,
-                        task_id_holder[0],
-                        f"replan_{i + 1}_of_{n}",
-                        f"Replanning {i + 1} of {n}",
-                        project_id,
-                    )
-                finally:
-                    conn6.close()
+            conn6 = _get_conn()
+            try:
+                ops.emit_task_stage(
+                    conn6,
+                    task_id,
+                    f"replan_{i + 1}_of_{n}",
+                    f"Replanning {i + 1} of {n}",
+                    project_id,
+                )
+            finally:
+                conn6.close()
             try:
                 schema = get_tool_spec_schema(tool_name)
                 prompt = assemble_spec_generation_prompt(
@@ -1510,7 +1486,6 @@ async def api_replan_draft_media(draft_id: str):
     task_id = _run_background_task(
         "media_replan", ref_id=draft_id, project_id=project_id, fn=_blocking_replan
     )
-    task_id_holder[0] = task_id
     return JSONResponse(
         status_code=202,
         content={"task_id": task_id, "count": len(slot_info), "status": "processing"},
@@ -1566,7 +1541,7 @@ async def api_generate_spec(draft_id: str, body: dict[str, Any] = Body(...)):
     finally:
         conn.close()
 
-    def _blocking_generate_spec() -> dict:
+    def _blocking_generate_spec(_task_id: str) -> dict:
         from social_hook.config.yaml import load_full_config
         from social_hook.filesystem import generate_id
         from social_hook.llm.base import extract_tool_call
@@ -1800,7 +1775,7 @@ async def api_promote_draft(draft_id: str, body: dict[str, Any] = Body(...)):
 
     intent = intent_from_decision(decision, config, conn, target_platform=platform)
 
-    def _blocking_promote():
+    def _blocking_promote(_task_id: str):
         import sqlite3 as _sqlite3
 
         from social_hook.drafting import draft
@@ -2170,7 +2145,7 @@ async def api_import_commits(project_id: str, body: dict[str, Any] = Body(defaul
     repo_path = project["repo_path"]
     pid = project["id"]
 
-    def _blocking_import():
+    def _blocking_import(_task_id: str):
         from social_hook.import_commits import import_project_commits
 
         conn2 = _get_conn()
@@ -2220,7 +2195,7 @@ async def api_summary_draft(project_id: str):
 
     config = _get_config()
 
-    def _blocking_summary_draft():
+    def _blocking_summary_draft(_task_id: str):
         import sqlite3 as _sqlite3
 
         from social_hook.llm.dry_run import DryRunContext
@@ -2426,7 +2401,7 @@ async def api_create_draft_from_decision(decision_id: str, body: dict[str, Any] 
 
     intent = intent_from_decision(decision, config, conn, target_platform=platform)
 
-    def _blocking_create_draft():
+    def _blocking_create_draft(_task_id: str):
         import sqlite3 as _sqlite3
 
         from social_hook.drafting import draft
@@ -2649,10 +2624,7 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
         uploads=media_uploads,
     )
 
-    # Mutable holder for task_id inside the closure
-    task_id_holder: list[str | None] = [None]
-
-    def _blocking_create_content():
+    def _blocking_create_content(task_id: str):
         import sqlite3 as _sqlite3
 
         from social_hook.drafting import draft
@@ -2670,10 +2642,7 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
                 project_config,
             )
 
-            if task_id_holder[0]:
-                ops.emit_task_stage(
-                    conn3, task_id_holder[0], "drafting", "Creating content...", project_id
-                )
+            ops.emit_task_stage(conn3, task_id, "drafting", "Creating content...", project_id)
 
             db.emit_data_event(
                 "pipeline",
@@ -2800,7 +2769,6 @@ async def api_create_content(project_id: str, body: dict[str, Any] = Body(...)):
         fn=_blocking_create_content,
         on_success=_on_content_created,
     )
-    task_id_holder[0] = task_id
 
     return JSONResponse(
         status_code=202,
@@ -2952,9 +2920,7 @@ async def api_retrigger_decision(decision_id: str):
     finally:
         conn.close()
 
-    _retrigger_task_id: list[str | None] = [None]
-
-    def _blocking_retrigger():
+    def _blocking_retrigger(task_id: str):
         from social_hook.trigger import run_trigger
 
         exit_code = run_trigger(
@@ -2963,7 +2929,7 @@ async def api_retrigger_decision(decision_id: str):
             trigger_source="manual",
             existing_decision_id=decision_id,
             current_branch=decision_branch,
-            task_id=_retrigger_task_id[0],
+            task_id=task_id,
         )
         return {"status": "retriggered" if exit_code == 0 else "failed", "exit_code": exit_code}
 
@@ -2973,7 +2939,6 @@ async def api_retrigger_decision(decision_id: str):
         project_id=project_id,
         fn=_blocking_retrigger,
     )
-    _retrigger_task_id[0] = task_id
     return JSONResponse(
         status_code=202,
         content={"task_id": task_id, "status": "processing"},
@@ -3053,9 +3018,7 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
     finally:
         conn.close()
 
-    _task_id_holder: list[str | None] = [None]
-
-    def _blocking_batch_evaluate():
+    def _blocking_batch_evaluate(task_id: str):
         import sqlite3 as _sqlite3
 
         from social_hook.config.project import ProjectConfig, load_project_config
@@ -3114,7 +3077,7 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
                 verbose=False,
                 show_prompt=False,
                 existing_decision_id=last_decision.id,
-                task_id=_task_id_holder[0],
+                task_id=task_id,
             )
 
             # Re-fetch decisions from fresh connection as Decision objects
@@ -3171,7 +3134,6 @@ async def api_batch_evaluate(body: dict[str, Any] = Body(...)):
         project_id=project_id,
         fn=_blocking_batch_evaluate,
     )
-    _task_id_holder[0] = task_id
     return JSONResponse(
         status_code=202,
         content={"task_id": task_id, "status": "processing"},
@@ -3295,7 +3257,7 @@ async def api_consolidate_decisions(body: dict[str, Any] = Body(...)):
     anchor = decisions[-1]
     intent = intent_from_decision(anchor, config, conn)
 
-    def _blocking_consolidate():
+    def _blocking_consolidate(_task_id: str):
         import sqlite3 as _sqlite3
 
         from social_hook.drafting import draft
@@ -5900,7 +5862,7 @@ async def api_draft_now_topic(project_id: str, topic_id: str):
     strategy = topic.strategy
     t_id = topic_id
 
-    def _blocking_draft_topic():
+    def _blocking_draft_topic(_task_id: str):
         from social_hook.config.yaml import load_full_config
         from social_hook.topics import force_draft_topic
 
@@ -6055,7 +6017,7 @@ async def api_create_suggestion(project_id: str, body: dict[str, Any] = Body(...
             pid = project_id
             sid = suggestion.id
 
-            def _blocking_evaluate():
+            def _blocking_evaluate(_task_id: str):
                 from social_hook.trigger import run_suggestion_trigger
 
                 return {"exit_code": run_suggestion_trigger(sid, pid)}
@@ -6131,7 +6093,7 @@ async def api_accept_suggestion(project_id: str, suggestion_id: str):
 
     sid = suggestion_id
 
-    def _blocking_evaluate():
+    def _blocking_evaluate(_task_id: str):
         from social_hook.trigger import run_suggestion_trigger
 
         return {"exit_code": run_suggestion_trigger(sid, pid)}
@@ -6171,7 +6133,7 @@ async def api_combine_topics(project_id: str, body: dict[str, Any] = Body(...)):
 
     t_ids = topic_ids
 
-    def _blocking_combine():
+    def _blocking_combine(_task_id: str):
         from social_hook.config.yaml import load_full_config
         from social_hook.content.operations import combine_candidates
 
@@ -6212,7 +6174,7 @@ async def api_hero_launch(project_id: str):
     finally:
         conn.close()
 
-    def _blocking_hero_launch():
+    def _blocking_hero_launch(_task_id: str):
         from social_hook.config.yaml import load_full_config
         from social_hook.content.operations import trigger_hero_launch
 
