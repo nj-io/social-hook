@@ -8,10 +8,10 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from social_hook.adapters.models import SINGLE_IMAGE
 from social_hook.config.project import ContextConfig
 from social_hook.errors import ConfigError
 from social_hook.filesystem import generate_id
+from social_hook.uploads import validate_upload
 
 if TYPE_CHECKING:
     from social_hook.config.platforms import ResolvedPlatformConfig
@@ -27,11 +27,9 @@ from social_hook.models.core import CommitInfo
 
 logger = logging.getLogger(__name__)
 
-# Upload size and allowed image formats — single source of truth is the
-# SINGLE_IMAGE MediaMode. 5 MiB / {png, jpg, jpeg, webp, gif}. BMP/TIFF
-# are re-encoded to PNG before being sent to the LLM.
-_UPLOAD_MAX_SIZE = SINGLE_IMAGE.max_size or 5_242_880
-_UPLOAD_ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp", "gif"}
+# BMP/TIFF are re-encoded to PNG before being sent to the LLM; size + format
+# guards for the post-reencode bytes flow through ``uploads.validate_upload``
+# (single source of truth — SINGLE_IMAGE.max_size + SINGLE_IMAGE/GIF formats).
 _UPLOAD_REENCODE_EXTS = {"bmp", "tiff", "tif"}
 
 # Allowed tool names for the post-LLM strip step. Must match schemas.
@@ -422,20 +420,15 @@ def _guess_media_type(path: str) -> str:
 def _read_upload_bytes(path_str: str) -> tuple[bytes, str]:
     """Read an upload, re-encoding BMP/TIFF to PNG via Pillow when needed.
 
-    Returns ``(bytes, media_type)``. Raises ``ValidationError`` from
-    errors.py-compatible ``ConfigError`` for oversize files; re-encode
-    failures surface as ConfigError too.
+    Returns ``(bytes, media_type)``. Size + format guards delegate to
+    ``uploads.validate_upload`` (the single source of truth for ingress).
+    BMP/TIFF short-circuit through Pillow re-encoding before the allowlist
+    check since the shared validator rejects them outright.
     """
     p = Path(path_str)
     if not p.is_file():
         raise ConfigError(f"Upload path does not exist: {path_str}")
     ext = p.suffix.lstrip(".").lower()
-
-    if p.stat().st_size > _UPLOAD_MAX_SIZE:
-        raise ConfigError(
-            f"Upload {path_str!r} is {p.stat().st_size} bytes; "
-            f"limit is {_UPLOAD_MAX_SIZE} bytes ({_UPLOAD_MAX_SIZE // 1048576} MiB)."
-        )
 
     if ext in _UPLOAD_REENCODE_EXTS:
         try:
@@ -452,11 +445,10 @@ def _read_upload_bytes(path_str: str) -> tuple[bytes, str]:
         img.save(buf, format="PNG")
         return buf.getvalue(), "image/png"
 
-    if ext not in _UPLOAD_ALLOWED_EXTS:
-        raise ConfigError(
-            f"Upload {path_str!r} has unsupported extension {ext!r}; "
-            f"allowed: {sorted(_UPLOAD_ALLOWED_EXTS)}."
-        )
+    # Shared validator raises ConfigError with ``unsupported_format`` /
+    # ``file_too_large`` prefixes — already the exception type this
+    # function raises, so re-raise as-is for consistency.
+    validate_upload(size_bytes=p.stat().st_size, filename=path_str)
     return p.read_bytes(), _guess_media_type(path_str)
 
 

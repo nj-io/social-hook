@@ -760,17 +760,15 @@ def _generate_one_media(
     if not tool_enabled:
         raise RuntimeError(f"Media tool {tool} disabled")
 
-    from social_hook.adapters.registry import get_media_adapter
+    from social_hook.adapters.registry import resolve_media_adapter
+    from social_hook.errors import ConfigError as _ConfigError
 
-    api_key = None
-    if tool == "nano_banana_pro":
-        api_key = config.env.get("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not set")
-
-    adapter = get_media_adapter(tool, api_key=api_key)
-    if adapter is None:
-        raise RuntimeError(f"Unknown media adapter: {tool}")
+    try:
+        adapter = resolve_media_adapter(tool, config)
+    except _ConfigError as exc:
+        # _generate_all_media catches RuntimeError per-item; keep that
+        # contract so one bad adapter never sinks the batch.
+        raise RuntimeError(str(exc)) from exc
 
     # The filesystem directory is keyed on the spec's stable id so
     # regen + edit flows overwrite in place instead of accumulating

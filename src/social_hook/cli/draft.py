@@ -869,11 +869,8 @@ def media_regen(
         typer.echo("Provide exactly one of --id MEDIA_ID or --all.", err=True)
         raise typer.Exit(1)
 
-    from social_hook.adapters.registry import get_media_adapter
     from social_hook.config.yaml import load_full_config
-    from social_hook.db import operations as ops
-    from social_hook.filesystem import generate_id, get_base_path
-    from social_hook.models.core import DraftChange
+    from social_hook.media_regen import regen_media_item
 
     json_output = _merge_json_flag(ctx, json_output)
     conn = _get_conn()
@@ -909,58 +906,11 @@ def media_regen(
                 results.append({"id": spec.get("id"), "skipped": "no_generator"})
                 continue
 
-            api_key = None
-            if tool_name == "nano_banana_pro":
-                api_key = config.env.get("GEMINI_API_KEY") if config else None
-                if not api_key:
-                    msg = "GEMINI_API_KEY not configured"
-                    ops.update_draft_media(conn, draft_id, spec["id"], error=msg)
-                    results.append({"id": spec["id"], "error": msg})
-                    continue
-
-            try:
-                adapter = get_media_adapter(tool_name, api_key=api_key)
-            except ValueError as e:
-                ops.update_draft_media(conn, draft_id, spec["id"], error=str(e))
-                results.append({"id": spec["id"], "error": str(e)})
-                continue
-            if adapter is None:
-                msg = f"Media adapter '{tool_name}' not available"
-                ops.update_draft_media(conn, draft_id, spec["id"], error=msg)
-                results.append({"id": spec["id"], "error": msg})
-                continue
-
-            output_dir = str(get_base_path() / "media-cache" / spec["id"])
-            result = adapter.generate(spec=spec.get("spec", {}), output_dir=output_dir)
-
-            if result.success and result.file_path:
-                old_paths = draft.media_paths
-                ops.update_draft_media(
-                    conn,
-                    draft_id,
-                    spec["id"],
-                    path=result.file_path,
-                    spec_used=spec,
-                    error="",
-                )
-                ops.insert_draft_change(
-                    conn,
-                    DraftChange(
-                        id=generate_id("change"),
-                        draft_id=draft_id,
-                        field=f"media_spec:{spec['id']}",
-                        old_value=json_mod.dumps(old_paths),
-                        new_value=json_mod.dumps(result.file_path),
-                        changed_by="human",
-                    ),
-                )
-                results.append({"id": spec["id"], "path": result.file_path})
+            outcome = regen_media_item(conn, draft_id, spec["id"], config, changed_by="human")
+            if outcome.success:
+                results.append({"id": spec["id"], "path": outcome.path})
             else:
-                msg = result.error or "unknown generation failure"
-                ops.update_draft_media(conn, draft_id, spec["id"], error=msg)
-                results.append({"id": spec["id"], "error": msg})
-
-        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+                results.append({"id": spec["id"], "error": outcome.error})
 
         if json_output:
             typer.echo(

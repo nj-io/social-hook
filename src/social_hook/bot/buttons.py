@@ -866,21 +866,20 @@ def btn_edit_media(
 def _generate_for_media_item(config: Any, spec: dict, output_dir: str):
     """Shared adapter lookup + generate for one media spec. Raises ValueError
     when the tool is missing / misconfigured so the caller can render a
-    concise error string.
+    concise error string. Used by bot/commands.py for per-part generation
+    after the Expert rewrites specs (draft-regen flows use
+    ``media_regen.regen_media_item`` which owns its own adapter call).
     """
-    from social_hook.adapters.registry import get_media_adapter
+    from social_hook.adapters.registry import resolve_media_adapter
+    from social_hook.errors import ConfigError as _ConfigError
 
     tool_name = spec.get("tool", "")
-    if not tool_name or tool_name == "legacy_upload":
-        raise ValueError(f"Tool {tool_name!r} has no generator")
-    api_key = None
-    if tool_name == "nano_banana_pro":
-        api_key = config.env.get("GEMINI_API_KEY") if config else None
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not configured")
-    media_adapter = get_media_adapter(tool_name, api_key=api_key)
-    if media_adapter is None:
-        raise ValueError(f"Media adapter '{tool_name}' not available")
+    if not tool_name:
+        raise ValueError("Tool '' has no generator")
+    try:
+        media_adapter = resolve_media_adapter(tool_name, config)
+    except _ConfigError as exc:
+        raise ValueError(str(exc)) from exc
     return media_adapter.generate(spec=spec.get("spec", {}), output_dir=output_dir)
 
 
@@ -891,66 +890,28 @@ def _regen_one_media(
     *,
     enforce_spec_change: bool,
 ) -> tuple[bool, str | None]:
-    """Regenerate one media item by id. Writes via update_draft_media and
-    inserts a DraftChange with ``field=f"media_spec:{media_id}"``. Returns
-    ``(success, path_or_error)``.
+    """Thin wrapper over ``media_regen.regen_media_item`` for Telegram flow.
+
+    Keeps the ``(success, path_or_error)`` tuple signature the button
+    handlers already render; the shared helper owns the DB writes.
     """
-    from social_hook.db import operations as ops
-    from social_hook.filesystem import generate_id, get_base_path
-    from social_hook.models.core import DraftChange
+    from social_hook.media_regen import regen_media_item
 
-    specs = draft.media_specs or []
-    idx = next(
-        (i for i, s in enumerate(specs) if isinstance(s, dict) and s.get("id") == media_id), None
-    )
-    if idx is None:
-        return False, f"Media id {media_id} not found on this draft."
-    spec = specs[idx]
-    if spec.get("user_uploaded"):
-        return False, f"Cannot regenerate user-uploaded media {media_id}."
-
-    if enforce_spec_change:
-        used = draft.media_specs_used or []
-        prior = used[idx] if idx < len(used) else None
-        if isinstance(prior, dict) and prior.get("spec") == spec.get("spec"):
-            return False, "Media spec unchanged — edit the spec first, or use Retry."
-
-    output_dir = str(get_base_path() / "media-cache" / media_id)
     conn = _get_conn()
     try:
-        try:
-            result = _generate_for_media_item(config, spec, output_dir)
-        except ValueError as e:
-            ops.update_draft_media(conn, draft.id, media_id, error=str(e))
-            return False, str(e)
-        if result.success and result.file_path:
-            old_path = (draft.media_paths[idx] if idx < len(draft.media_paths) else "") or ""
-            ops.update_draft_media(
-                conn,
-                draft.id,
-                media_id,
-                path=result.file_path,
-                spec_used=spec,
-                error="",
-            )
-            ops.insert_draft_change(
-                conn,
-                DraftChange(
-                    id=generate_id("change"),
-                    draft_id=draft.id,
-                    field=f"media_spec:{media_id}",
-                    old_value=old_path,
-                    new_value=result.file_path,
-                    changed_by="human",
-                ),
-            )
-            ops.emit_data_event(conn, "draft", "updated", draft.id, draft.project_id)
-            return True, result.file_path
-        msg = result.error or "generation failed"
-        ops.update_draft_media(conn, draft.id, media_id, error=msg)
-        return False, msg
+        result = regen_media_item(
+            conn,
+            draft.id,
+            media_id,
+            config,
+            changed_by="human",
+            enforce_spec_change=enforce_spec_change,
+        )
     finally:
         conn.close()
+    if result.success:
+        return True, result.path
+    return False, result.error
 
 
 def btn_media_regen(

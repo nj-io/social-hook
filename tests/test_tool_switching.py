@@ -253,17 +253,18 @@ class TestMediaConfirmGen:
 
         with (
             patch("social_hook.db.get_draft", return_value=draft),
-            patch("social_hook.db.operations.update_draft_media"),
-            patch("social_hook.db.operations.insert_draft_change"),
-            patch("social_hook.db.operations.emit_data_event"),
+            patch("social_hook.media_regen.ops.get_draft", return_value=draft),
+            patch("social_hook.media_regen.ops.update_draft_media"),
+            patch("social_hook.media_regen.ops.insert_draft_change"),
+            patch("social_hook.media_regen.ops.emit_data_event"),
             patch("social_hook.db.operations.get_sister_drafts", return_value=[]),
             patch(
                 "social_hook.adapters.registry.get_media_adapter",
                 return_value=mock_media_adapter,
             ),
-            patch("social_hook.filesystem.generate_id", return_value="change_abc"),
+            patch("social_hook.media_regen.generate_id", return_value="change_abc"),
             patch(
-                "social_hook.filesystem.get_base_path",
+                "social_hook.media_regen.get_base_path",
                 return_value=MagicMock(
                     __truediv__=MagicMock(
                         return_value=MagicMock(__truediv__=MagicMock(return_value="/tmp/cache"))

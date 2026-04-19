@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 from social_hook.adapters.media.base import MediaAdapter
+from social_hook.errors import ConfigError
 from social_hook.registry import AdapterRegistry
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,46 @@ def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | N
 
     result: MediaAdapter = _media_registry.get_or_create(name, api_key=api_key)
     return result
+
+
+def resolve_media_adapter(tool: str, config: Any) -> MediaAdapter:
+    """Resolve a media adapter by tool name with credential injection.
+
+    Centralizes the ``nano_banana_pro``/``GEMINI_API_KEY`` lookup pattern
+    duplicated across bot, web, cli, and drafting surfaces. Raises
+    ``ConfigError`` on missing credentials, uploads that cannot be
+    regenerated, and unknown tool names — callers translate to a
+    surface-appropriate response (HTTP 400, Telegram reply, CLI exit 1).
+
+    Args:
+        tool: Adapter name (e.g. ``"nano_banana_pro"``, ``"mermaid"``).
+        config: Full config object exposing ``config.env`` dict.
+
+    Returns:
+        A ready-to-use ``MediaAdapter`` instance.
+
+    Raises:
+        ConfigError: ``GEMINI_API_KEY`` not configured, ``legacy_upload``
+            requested (uploads have no generator), or unknown tool name.
+    """
+    if tool == "legacy_upload":
+        raise ConfigError("legacy_upload items cannot be regenerated")
+
+    api_key: str | None = None
+    if tool == "nano_banana_pro":
+        api_key = config.env.get("GEMINI_API_KEY") if config else None
+        if not api_key:
+            raise ConfigError("GEMINI_API_KEY not configured")
+
+    try:
+        adapter = get_media_adapter(tool, api_key=api_key)
+    except ValueError as exc:
+        # nano_banana_pro raises ValueError if api_key is missing — we
+        # guarded above, but keep the translation for defense in depth.
+        raise ConfigError(str(exc)) from exc
+    if adapter is None:
+        raise ConfigError(f"Unknown media adapter: {tool!r}")
+    return adapter
 
 
 def clear_adapter_cache() -> None:

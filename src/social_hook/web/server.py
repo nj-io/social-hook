@@ -1081,88 +1081,30 @@ async def api_upload_draft_media(draft_id: str, file: UploadFile):
 # ---------------------------------------------------------------------------
 
 
-def _spec_for_adapter(spec: dict) -> dict:
-    """Read the adapter payload out of a MediaSpecItem dict."""
-    inner = spec.get("spec") if isinstance(spec, dict) else None
-    return inner if isinstance(inner, dict) else {}
-
-
 def _regen_media_item_blocking(draft_id: str, media_id: str, project_id: str) -> dict:
     """Blocking per-item regen used by the web endpoints.
 
-    Reads the draft row fresh, resolves the tool, runs the adapter, writes
-    path/error via `ops.update_draft_media`, inserts one `DraftChange`
-    with `field=f"media_spec:{media_id}"`, and emits a `draft updated`
-    event. Returns ``{path}`` on success or ``{error}`` on failure.
+    Thin wrapper over ``media_regen.regen_media_item`` — the shared helper
+    owns the find-spec → resolve-adapter → generate → write path. Returns
+    ``{"path": ...}`` on success or ``{"error": ...}`` on failure to match
+    the existing web response shape.
     """
-    from social_hook.adapters.registry import get_media_adapter
-    from social_hook.filesystem import generate_id, get_base_path
-    from social_hook.models.core import DraftChange
+    from social_hook.media_regen import regen_media_item
 
     conn5 = _get_conn()
     try:
-        draft = ops.get_draft(conn5, draft_id)
-        if not draft:
-            return {"error": "draft_not_found"}
-        spec = next(
-            (
-                s
-                for s in (draft.media_specs or [])
-                if isinstance(s, dict) and s.get("id") == media_id
-            ),
-            None,
+        result = regen_media_item(
+            conn5,
+            draft_id,
+            media_id,
+            _get_config(),
+            changed_by="human",
         )
-        if spec is None:
-            return {"error": f"media_{media_id}_not_found"}
-        if spec.get("user_uploaded"):
-            return {"error": "cannot_regen_user_upload"}
-
-        tool_name = spec.get("tool") or ""
-        api_key = None
-        if tool_name == "nano_banana_pro":
-            cfg = _get_config()
-            api_key = cfg.env.get("GEMINI_API_KEY") if cfg else None
-            if not api_key:
-                ops.update_draft_media(
-                    conn5, draft_id, media_id, error="GEMINI_API_KEY not configured"
-                )
-                return {"error": "GEMINI_API_KEY not configured"}
-
-        try:
-            adapter = get_media_adapter(tool_name, api_key=api_key)
-        except ValueError as e:
-            ops.update_draft_media(conn5, draft_id, media_id, error=str(e))
-            return {"error": str(e)}
-        if adapter is None:
-            msg = f"Media adapter '{tool_name}' not available"
-            ops.update_draft_media(conn5, draft_id, media_id, error=msg)
-            return {"error": msg}
-
-        output_dir = str(get_base_path() / "media-cache" / media_id)
-        result = adapter.generate(spec=_spec_for_adapter(spec), output_dir=output_dir)
-        if result.success and result.file_path:
-            ops.update_draft_media(
-                conn5, draft_id, media_id, path=result.file_path, spec_used=spec, error=""
-            )
-            ops.insert_draft_change(
-                conn5,
-                DraftChange(
-                    id=generate_id("change"),
-                    draft_id=draft_id,
-                    field=f"media_spec:{media_id}",
-                    old_value="",
-                    new_value=result.file_path,
-                    changed_by="human",
-                ),
-            )
-            ops.emit_data_event(conn5, "draft", "updated", draft_id, project_id)
-            return {"path": result.file_path}
-        msg = result.error or "generation_failed"
-        ops.update_draft_media(conn5, draft_id, media_id, error=msg)
-        ops.emit_data_event(conn5, "draft", "updated", draft_id, project_id)
-        return {"error": msg}
     finally:
         conn5.close()
+    if result.success:
+        return {"path": result.path}
+    return {"error": result.error}
 
 
 @app.post("/api/drafts/{draft_id}/media")
