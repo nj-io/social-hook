@@ -1300,22 +1300,35 @@ async def api_regen_all_draft_media(draft_id: str):
         conn.close()
 
     def _blocking_regen_all(task_id: str) -> dict:
+        from social_hook.media_regen import regen_all_media_items
+
         n = len(media_ids)
-        results: list[dict] = []
-        for i, mid in enumerate(media_ids):
+
+        def _emit_stage(idx: int, total: int) -> None:
             conn6 = _get_conn()
             try:
                 ops.emit_task_stage(
                     conn6,
                     task_id,
-                    f"media_{i + 1}_of_{n}",
-                    f"Media {i + 1} of {n}",
+                    f"media_{idx + 1}_of_{total}",
+                    f"Media {idx + 1} of {total}",
                     project_id,
                 )
             finally:
                 conn6.close()
-            results.append(_regen_media_item_blocking(draft_id, mid, project_id))
-        return {"items": results, "count": n}
+
+        regen_results = regen_all_media_items(
+            _get_conn,
+            draft_id,
+            media_ids,
+            _get_config(),
+            task_id=task_id,
+            project_id=project_id,
+            changed_by="human",
+            on_stage=_emit_stage,
+        )
+        items = [{"path": r.path} if r.success else {"error": r.error} for r in regen_results]
+        return {"items": items, "count": n}
 
     task_id = _run_background_task(
         "media_regen", ref_id=draft_id, project_id=project_id, fn=_blocking_regen_all
@@ -1358,43 +1371,49 @@ async def api_replan_draft_media(draft_id: str):
         conn.close()
 
     def _blocking_replan(task_id: str) -> dict:
-        from social_hook.adapters.registry import get_tool_spec_schema
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         from social_hook.config.yaml import load_full_config
-        from social_hook.llm.base import extract_tool_call
-        from social_hook.llm.factory import create_client
-        from social_hook.llm.prompts import (
-            assemble_spec_generation_prompt,
-            build_spec_generation_tool,
-        )
+        from social_hook.media_regen import REGEN_MAX_WORKERS, replan_media_spec
 
         cfg = load_full_config()
-        client = create_client(cfg.models.drafter, cfg)
         n = len(slot_info)
+        # Parallelize LLM calls (slow, per-slot independent). DB writes stay
+        # sequential on the calling thread so DraftChange ordering + stage
+        # emission keep their per-surface semantics.
+        payloads: dict[str, dict] = {}
+        done_count = 0
+        with ThreadPoolExecutor(max_workers=REGEN_MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(replan_media_spec, cfg, draft_content, tool_name): (
+                    media_id,
+                    tool_name,
+                )
+                for media_id, tool_name in slot_info
+            }
+            for future in as_completed(futures):
+                media_id, tool_name = futures[future]
+                done_count += 1
+                conn6 = _get_conn()
+                try:
+                    ops.emit_task_stage(
+                        conn6,
+                        task_id,
+                        f"replan_{done_count}_of_{n}",
+                        f"Replanning {done_count} of {n}",
+                        project_id,
+                    )
+                finally:
+                    conn6.close()
+                try:
+                    payloads[media_id] = future.result()
+                except Exception as e:  # noqa: BLE001 — per-slot failure tolerated
+                    logger.warning("Replan spec for %s failed: %s", media_id, e)
+
         updated = 0
-        for i, (media_id, tool_name) in enumerate(slot_info):
-            conn6 = _get_conn()
-            try:
-                ops.emit_task_stage(
-                    conn6,
-                    task_id,
-                    f"replan_{i + 1}_of_{n}",
-                    f"Replanning {i + 1} of {n}",
-                    project_id,
-                )
-            finally:
-                conn6.close()
-            try:
-                schema = get_tool_spec_schema(tool_name)
-                prompt = assemble_spec_generation_prompt(
-                    tool_name=tool_name, schema=schema, draft_content=draft_content
-                )
-                spec_tool = build_spec_generation_tool(tool_name, schema)
-                response = client.complete(
-                    messages=[{"role": "user", "content": prompt}], tools=[spec_tool]
-                )
-                new_payload = extract_tool_call(response, "generate_media_spec")
-            except Exception as e:
-                logger.warning("Replan spec for %s failed: %s", media_id, e)
+        for media_id, tool_name in slot_info:
+            new_payload = payloads.get(media_id)
+            if new_payload is None:
                 continue
             conn7 = _get_conn()
             try:

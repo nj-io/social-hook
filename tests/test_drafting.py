@@ -1270,12 +1270,13 @@ class TestGenerateAllMedia:
 
 
 class TestGenerateOneMediaGuarded:
-    """Thread-safety gate: non-thread-safe adapters serialize via _ADAPTER_LOCKS."""
+    """Thread-safety gate: non-thread-safe adapters serialize via with_adapter_lock."""
 
     @patch("social_hook.drafting._generate_one_media")
     def test_playwright_uses_pre_populated_lock(self, mock_inner):
         """The lock for ``playwright`` is pre-populated at module import."""
-        from social_hook.drafting import _ADAPTER_LOCKS, _generate_one_media_guarded
+        from social_hook.adapters.registry import _ADAPTER_LOCKS
+        from social_hook.drafting import _generate_one_media_guarded
 
         assert "playwright" in _ADAPTER_LOCKS
         assert "ray_so" in _ADAPTER_LOCKS

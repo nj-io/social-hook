@@ -5,8 +5,10 @@ Each media tool is registered with its factory, metadata, and
 class location for schema introspection.
 """
 
+import contextlib
 import importlib
 import logging
+import threading
 from typing import Any
 
 from social_hook.adapters.media.base import MediaAdapter
@@ -15,10 +17,46 @@ from social_hook.registry import AdapterRegistry
 
 logger = logging.getLogger(__name__)
 
-# Typo-proof metadata key for adapter thread-safety. The parallel media
-# generator (drafting._generate_all_media) reads this to decide whether an
-# adapter can run under a ThreadPoolExecutor without serialization.
+# Typo-proof metadata key for adapter thread-safety. Parallel media
+# generators (drafting._generate_all_media, media_regen.regen_all_media_items)
+# read this to decide whether an adapter can run under a ThreadPoolExecutor
+# without serialization.
 THREAD_SAFE_KEY = "thread_safe"
+
+# Pre-populated at module import to eliminate a defaultdict-race on first
+# access. Keys mirror the registrations below marked ``THREAD_SAFE_KEY:
+# False`` (playwright + ray_so — sync_playwright()'s asyncio loop cannot be
+# reentered across threads). Adding a new non-thread-safe adapter requires a
+# matching entry here.
+_ADAPTER_LOCKS: dict[str, threading.Lock] = {
+    "playwright": threading.Lock(),
+    "ray_so": threading.Lock(),
+}
+
+
+@contextlib.contextmanager
+def with_adapter_lock(tool: str):
+    """Serialize non-thread-safe adapters; no-op for thread-safe ones.
+
+    Reads ``THREAD_SAFE_KEY`` from registry metadata. Used by every parallel
+    media caller (drafting batch, regen-all helper) so a single source of
+    truth governs which adapters may run concurrently.
+    """
+    meta = _media_registry.get_metadata(tool) if _media_registry.has(tool) else {}
+    if meta.get(THREAD_SAFE_KEY, True):
+        yield
+        return
+    lock = _ADAPTER_LOCKS.get(tool)
+    if lock is None:
+        logger.warning(
+            "No pre-populated lock for non-thread-safe adapter %s; creating on demand",
+            tool,
+        )
+        lock = threading.Lock()
+        _ADAPTER_LOCKS[tool] = lock
+    with lock:
+        yield
+
 
 # Module-level registry for media adapters
 _media_registry = AdapterRegistry("media")

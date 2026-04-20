@@ -253,3 +253,211 @@ class TestRegenMediaItemGuards:
         assert "GEMINI_API_KEY" in result.error
         reloaded = get_draft(temp_db, draft.id)
         assert "GEMINI_API_KEY" in reloaded.media_errors[0]
+
+
+@pytest.fixture
+def file_db(temp_dir):
+    """File-backed DB + factory that opens fresh conns (thread-safe)."""
+    from social_hook.db import init_database
+    from social_hook.db.connection import get_connection
+
+    db_path = temp_dir / "regen_batch.db"
+    seed = init_database(db_path)
+    try:
+
+        def factory():
+            return get_connection(db_path)
+
+        yield seed, factory
+    finally:
+        seed.close()
+
+
+@pytest.fixture
+def draft_with_batch_media(file_db):
+    """Project + decision + draft with one mermaid slot on a file-backed DB."""
+    seed, factory = file_db
+    project = Project(id=generate_id("project"), name="test", repo_path="/tmp")
+    insert_project(seed, project)
+
+    decision = Decision(
+        id=generate_id("decision"),
+        project_id=project.id,
+        commit_hash="abc123",
+        decision="draft",
+        reasoning="t",
+    )
+    insert_decision(seed, decision)
+
+    first_id = "media_abc123def456"
+    draft = Draft(
+        id=generate_id("draft"),
+        project_id=project.id,
+        decision_id=decision.id,
+        platform="x",
+        content="test",
+        media_specs=[
+            {"id": first_id, "tool": "mermaid", "spec": {"code": "a"}, "user_uploaded": False}
+        ],
+        media_paths=[""],
+        media_errors=[None],
+        media_specs_used=[{}],
+    )
+    insert_draft(seed, draft)
+    return seed, factory, draft, first_id
+
+
+class TestRegenAllMediaItems:
+    """Parallel batch regen: preserves input order, surfaces per-item errors."""
+
+    def test_batch_preserves_input_order_and_fires_stage_callback(
+        self, temp_base, draft_with_batch_media, config
+    ):
+        from social_hook.db import operations as ops
+        from social_hook.media_regen import regen_all_media_items
+
+        seed, factory, draft, first_id = draft_with_batch_media
+        second_id = "media_def456ghi789"
+        third_id = "media_ghi789jkl012"
+        for mid in (second_id, third_id):
+            ops.append_draft_media(
+                seed,
+                draft.id,
+                {
+                    "id": mid,
+                    "tool": "mermaid",
+                    "spec": {"code": "graph TD\nX-->Y"},
+                    "user_uploaded": False,
+                },
+            )
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate.return_value = MediaResult(
+            success=True, file_path="/generated/ok.png"
+        )
+
+        stage_events: list[tuple[int, int]] = []
+
+        def _on_stage(idx: int, total: int) -> None:
+            stage_events.append((idx, total))
+
+        with patch("social_hook.media_regen.resolve_media_adapter", return_value=mock_adapter):
+            results = regen_all_media_items(
+                factory,
+                draft.id,
+                [first_id, second_id, third_id],
+                config,
+                on_stage=_on_stage,
+                max_workers=3,
+            )
+
+        # Order preserved regardless of which worker finishes first.
+        assert [r.media_id for r in results] == [first_id, second_id, third_id]
+        assert all(r.success for r in results)
+
+        # Every item emitted exactly one stage event; total always n.
+        assert len(stage_events) == 3
+        assert {total for _, total in stage_events} == {3}
+        assert {idx for idx, _ in stage_events} == {0, 1, 2}
+
+    def test_partial_failure_does_not_sink_batch(self, temp_base, draft_with_batch_media, config):
+        from social_hook.db import operations as ops
+        from social_hook.media_regen import regen_all_media_items
+
+        seed, factory, draft, first_id = draft_with_batch_media
+        second_id = "media_def456ghi789"
+        ops.append_draft_media(
+            seed,
+            draft.id,
+            {
+                "id": second_id,
+                "tool": "mermaid",
+                "spec": {"code": "graph TD\nX-->Y"},
+                "user_uploaded": False,
+            },
+        )
+
+        def _generate(spec, output_dir):
+            # output_dir is keyed on media_id (media-cache/{id}/).
+            if first_id in output_dir:
+                return MediaResult(success=True, file_path="/generated/ok.png")
+            return MediaResult(success=False, error="mermaid_crashed")
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate.side_effect = _generate
+
+        with patch("social_hook.media_regen.resolve_media_adapter", return_value=mock_adapter):
+            results = regen_all_media_items(
+                factory,
+                draft.id,
+                [first_id, second_id],
+                config,
+                max_workers=1,
+            )
+
+        assert len(results) == 2
+        # Input order preserved regardless of completion order.
+        assert results[0].media_id == first_id
+        assert results[0].success is True
+        assert results[1].media_id == second_id
+        assert results[1].success is False
+        assert results[1].error == "mermaid_crashed"
+
+    def test_empty_media_ids_returns_empty_list(self, file_db, config):
+        from social_hook.media_regen import regen_all_media_items
+
+        _seed, factory = file_db
+        assert regen_all_media_items(factory, "draft_x", [], config) == []
+
+
+class TestReplanMediaSpec:
+    """LLM-only helper: thin wrapper delivering a spec payload per tool_name."""
+
+    def test_returns_tool_payload_from_extract_tool_call(self):
+        from social_hook.media_regen import replan_media_spec
+
+        fake_client = MagicMock()
+        fake_client.complete.return_value = MagicMock()
+        cfg = SimpleNamespace(models=SimpleNamespace(drafter="m"), env={})
+
+        with (
+            patch("social_hook.llm.factory.create_client", return_value=fake_client),
+            patch(
+                "social_hook.adapters.registry.get_tool_spec_schema",
+                return_value={"required": {"code": "string"}, "optional": {}},
+            ),
+            patch(
+                "social_hook.llm.prompts.assemble_spec_generation_prompt",
+                return_value="prompt",
+            ),
+            patch(
+                "social_hook.llm.prompts.build_spec_generation_tool",
+                return_value={"name": "generate_media_spec"},
+            ),
+            patch(
+                "social_hook.llm.base.extract_tool_call",
+                return_value={"code": "graph TD\nA-->B"},
+            ),
+        ):
+            result = replan_media_spec(cfg, "draft content", "mermaid")
+
+        assert result == {"code": "graph TD\nA-->B"}
+        fake_client.complete.assert_called_once()
+
+    def test_non_dict_payload_raises(self):
+        from social_hook.media_regen import replan_media_spec
+
+        fake_client = MagicMock()
+        cfg = SimpleNamespace(models=SimpleNamespace(drafter="m"), env={})
+        with (
+            patch("social_hook.llm.factory.create_client", return_value=fake_client),
+            patch(
+                "social_hook.adapters.registry.get_tool_spec_schema",
+                return_value={"required": {}, "optional": {}},
+            ),
+            patch("social_hook.llm.prompts.assemble_spec_generation_prompt", return_value="p"),
+            patch("social_hook.llm.prompts.build_spec_generation_tool", return_value={}),
+            patch("social_hook.llm.base.extract_tool_call", return_value="not_a_dict"),
+            pytest.raises(RuntimeError, match="non-dict payload"),
+        ):
+            replan_media_spec(cfg, "content", "mermaid")

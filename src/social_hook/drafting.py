@@ -4,30 +4,17 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
-from social_hook.adapters.registry import THREAD_SAFE_KEY, media_registry
+from social_hook.adapters.registry import with_adapter_lock
 from social_hook.config.yaml import TIER_CHAR_LIMITS
 from social_hook.filesystem import generate_id, get_base_path
 from social_hook.models.core import Draft, DraftPart
 from social_hook.scheduling import ScheduleResult, calculate_optimal_time
 
 logger = logging.getLogger(__name__)
-
-
-# Pre-populated at module import to eliminate a defaultdict-race on first
-# access. Keys mirror ``adapters/registry.py`` entries marked
-# ``THREAD_SAFE_KEY: False`` (playwright + ray_so — sync_playwright()
-# asyncio loop cannot be reentered across threads). Adding a new non-
-# thread-safe adapter requires a matching entry here — see
-# docs/CODING_PRACTICES.md.
-_ADAPTER_LOCKS: dict[str, threading.Lock] = {
-    "playwright": threading.Lock(),
-    "ray_so": threading.Lock(),
-}
 
 
 @dataclass
@@ -796,23 +783,11 @@ def _generate_one_media_guarded(
     """Run a single adapter, serializing non-thread-safe tools via per-tool lock.
 
     Thread-safety is read from the registry metadata
-    (``THREAD_SAFE_KEY: False`` for ``playwright`` and ``ray_so``). The
-    lock table ``_ADAPTER_LOCKS`` is pre-populated at module import so the
-    first parallel call never loses a race to the default-dict pattern.
+    (``THREAD_SAFE_KEY: False`` for ``playwright`` and ``ray_so``).
+    ``with_adapter_lock`` is a no-op for thread-safe adapters.
     """
-    meta = media_registry.get_metadata(tool) if media_registry.has(tool) else {}
-    if not meta.get(THREAD_SAFE_KEY, True):
-        lock = _ADAPTER_LOCKS.get(tool)
-        if lock is None:
-            logger.warning(
-                "No pre-populated lock for non-thread-safe adapter %s; creating on demand",
-                tool,
-            )
-            lock = threading.Lock()
-            _ADAPTER_LOCKS[tool] = lock
-        with lock:
-            return _generate_one_media(config, spec, tool, dry_run, verbose, project_config)
-    return _generate_one_media(config, spec, tool, dry_run, verbose, project_config)
+    with with_adapter_lock(tool):
+        return _generate_one_media(config, spec, tool, dry_run, verbose, project_config)
 
 
 def _generate_all_media(
@@ -853,7 +828,7 @@ def _generate_all_media(
                 errors[i] = "user_uploaded spec missing spec.path"
 
     # Generate everything else in parallel. Non-thread-safe adapters
-    # serialize via _ADAPTER_LOCKS inside _generate_one_media_guarded.
+    # serialize via with_adapter_lock inside _generate_one_media_guarded.
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {
             pool.submit(
