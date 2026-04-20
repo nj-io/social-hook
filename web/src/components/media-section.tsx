@@ -1,13 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { Draft, MediaSpecItem } from "@/lib/types";
 import { Note } from "./ui/note";
 import { MediaToolHeader } from "./media-tool-header";
 import { MediaActionBar } from "./media-action-bar";
 import { ToolSpecForm } from "./tool-spec-form";
+import { MediaTasksProvider } from "./media-section-context";
 import { addMediaItem } from "@/lib/api";
+import type { BackgroundTask } from "@/lib/api";
 import { useToast } from "@/lib/toast-context";
+import { useBackgroundTasks } from "@/lib/use-background-tasks";
 import { getAvailableTools, TOOL_SCHEMAS } from "@/lib/media-tool-schemas";
 
 interface MediaSectionProps {
@@ -45,6 +48,55 @@ export function MediaSection({ draft, onUpdate, maxCount }: MediaSectionProps) {
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const { addToast } = useToast();
 
+  const onMediaTaskCompleted = useCallback(
+    (task: BackgroundTask) => {
+      const ref = task.ref_id;
+      const failed = task.status === "failed";
+      if (ref.startsWith("media_regen_all:")) {
+        if (failed) {
+          addToast("Regen All failed", {
+            variant: "error",
+            detail: task.error ?? undefined,
+          });
+        } else if (task.status === "completed") {
+          addToast("All media regenerated", { variant: "success" });
+          onUpdate();
+        }
+      } else if (ref.startsWith("media_replan:")) {
+        if (failed) {
+          addToast("Replan failed", {
+            variant: "error",
+            detail: task.error ?? undefined,
+          });
+        } else if (task.status === "completed") {
+          addToast("Specs replanned", { variant: "success" });
+          onUpdate();
+        }
+      } else if (ref.startsWith("media_regen:")) {
+        if (failed) {
+          addToast("Regeneration failed", {
+            variant: "error",
+            detail: task.error ?? undefined,
+          });
+        } else if (task.status === "completed") {
+          addToast("Media regenerated", { variant: "success" });
+          onUpdate();
+        }
+      }
+    },
+    [addToast, onUpdate],
+  );
+
+  const { trackTask, isRunning, getTask } = useBackgroundTasks(
+    draft.project_id,
+    onMediaTaskCompleted,
+  );
+
+  const mediaTasks = useMemo(
+    () => ({ trackTask, isRunning, getTask }),
+    [trackTask, isRunning, getTask],
+  );
+
   const atCap = typeof maxCount === "number" && count >= maxCount;
 
   async function handleAddItem(tool: string) {
@@ -59,13 +111,11 @@ export function MediaSection({ draft, onUpdate, maxCount }: MediaSectionProps) {
   }
 
   const safeActive = activeIdx >= 0 && activeIdx < count ? activeIdx : -1;
-  const activeItem = safeActive >= 0 ? specs[safeActive] : null;
-  const activePath = safeActive >= 0 ? paths[safeActive] : null;
-  const activeError = safeActive >= 0 ? errors[safeActive] : null;
   const tools = getAvailableTools();
   const defaultTool = tools[0]?.name;
 
   return (
+    <MediaTasksProvider value={mediaTasks}>
     <div className="space-y-3 rounded-lg border border-border p-4">
       {/* Tab strip */}
       <div
@@ -146,46 +196,59 @@ export function MediaSection({ draft, onUpdate, maxCount }: MediaSectionProps) {
         </Note>
       )}
 
-      {activeItem ? (
-        <div className="space-y-3" role="tabpanel">
-          <MediaToolHeader
-            draft={draft}
-            item={activeItem}
-            itemIndex={safeActive}
-            errorText={activeError ?? null}
-            onUpdate={onUpdate}
-            onEditSpec={() => setEditingIdx(safeActive)}
-          />
-
-          {activePath ? (
-            <MediaItemPreview path={activePath} caption={activeItem.caption} />
-          ) : (
-            <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-              No media file rendered yet.
-            </div>
-          )}
-
-          {editingIdx === safeActive && (
-            <ToolSpecForm
-              draft={draft}
-              mediaItem={activeItem}
-              onUpdate={() => {
-                setEditingIdx(null);
-                onUpdate();
-              }}
-              onCancel={() => setEditingIdx(null)}
-            />
-          )}
-        </div>
-      ) : (
+      {count === 0 ? (
         <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
           No media attached. Use + Add above or Replan Specs below to let the
           drafter suggest media items.
         </div>
+      ) : (
+        specs.map((item, i) => {
+          const active = i === safeActive;
+          const path = paths[i];
+          const err = errors[i] ?? null;
+          return (
+            <div
+              key={item.id}
+              role="tabpanel"
+              hidden={!active}
+              className={active ? "space-y-3" : "space-y-3 hidden"}
+            >
+              <MediaToolHeader
+                draft={draft}
+                item={item}
+                itemIndex={i}
+                errorText={err}
+                onUpdate={onUpdate}
+                onEditSpec={() => setEditingIdx(i)}
+              />
+
+              {path ? (
+                <MediaItemPreview path={path} caption={item.caption} />
+              ) : (
+                <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+                  No media file rendered yet.
+                </div>
+              )}
+
+              {editingIdx === i && (
+                <ToolSpecForm
+                  draft={draft}
+                  mediaItem={item}
+                  onUpdate={() => {
+                    setEditingIdx(null);
+                    onUpdate();
+                  }}
+                  onCancel={() => setEditingIdx(null)}
+                />
+              )}
+            </div>
+          );
+        })
       )}
 
-      <MediaActionBar draft={draft} onUpdate={onUpdate} />
+      <MediaActionBar draft={draft} />
     </div>
+    </MediaTasksProvider>
   );
 }
 

@@ -1,15 +1,14 @@
 "use client";
 
+import { useMemo } from "react";
 import { AsyncButton } from "./async-button";
 import { useToast } from "@/lib/toast-context";
-import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { useMediaTasks } from "./media-section-context";
 import { regenAllMedia, replanMediaSpecs } from "@/lib/api";
-import type { BackgroundTask } from "@/lib/api";
 import type { Draft } from "@/lib/types";
 
 interface MediaActionBarProps {
   draft: Draft;
-  onUpdate: () => void;
 }
 
 /**
@@ -19,33 +18,17 @@ interface MediaActionBarProps {
  * * **Replan Specs** — LLM re-plans the full spec list for this draft.
  *
  * Both dispatch via ``_run_background_task`` server-side and return 202 +
- * task_id; the hook picks up per-item stage events. Per-item actions
- * (edit/regen/remove) are on ``MediaToolHeader`` — not this component.
+ * task_id; the MediaSection-scoped subscription picks up per-item stage events
+ * and dispatches toasts. Per-item actions (edit/regen/remove) are on
+ * ``MediaToolHeader`` — not this component.
  */
-export function MediaActionBar({ draft, onUpdate }: MediaActionBarProps) {
+export function MediaActionBar({ draft }: MediaActionBarProps) {
   const { addToast } = useToast();
 
-  const refRegen = `media_regen_all:${draft.id}`;
-  const refReplan = `media_replan:${draft.id}`;
+  const refRegen = useMemo(() => `media_regen_all:${draft.id}`, [draft.id]);
+  const refReplan = useMemo(() => `media_replan:${draft.id}`, [draft.id]);
 
-  const { trackTask, isRunning, getTask } = useBackgroundTasks(
-    draft.project_id,
-    (task: BackgroundTask) => {
-      if (task.ref_id !== refRegen && task.ref_id !== refReplan) return;
-      if (task.status === "failed") {
-        addToast(
-          task.ref_id === refRegen ? "Regen All failed" : "Replan failed",
-          { variant: "error", detail: task.error ?? undefined },
-        );
-      } else if (task.status === "completed") {
-        addToast(
-          task.ref_id === refRegen ? "All media regenerated" : "Specs replanned",
-          { variant: "success" },
-        );
-        onUpdate();
-      }
-    },
-  );
+  const { trackTask, isRunning, getTask } = useMediaTasks();
 
   const regenLoading = isRunning(refRegen);
   const replanLoading = isRunning(refReplan);

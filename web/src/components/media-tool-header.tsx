@@ -1,12 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AsyncButton } from "./async-button";
 import { Modal } from "./ui/modal";
 import { useToast } from "@/lib/toast-context";
-import { useBackgroundTasks } from "@/lib/use-background-tasks";
+import { useMediaTasks } from "./media-section-context";
 import { removeMediaItem, updateMediaItem } from "@/lib/api";
-import type { BackgroundTask } from "@/lib/api";
 import type { Draft, MediaSpecItem } from "@/lib/types";
 import { TOOL_SCHEMAS } from "@/lib/media-tool-schemas";
 
@@ -22,11 +21,11 @@ interface MediaToolHeaderProps {
 /**
  * Per-item header for the tabbed MediaSection. Shows the stable media id
  * (trimmed for readability), the tool name, per-item regen (AsyncButton +
- * useBackgroundTasks), edit, and remove (Modal confirm).
+ * useMediaTasks), edit, and remove (Modal confirm).
  *
- * LLM-bearing actions (``regen``) dispatch through
- * ``updateMediaItem`` which returns 202 + task_id; the hook picks up the
- * stage events automatically. Quick operations (remove) use a simple
+ * LLM-bearing actions (``regen``) dispatch through ``updateMediaItem`` which
+ * returns 202 + task_id; the MediaSection-scoped subscription picks up stage
+ * events and dispatches toasts. Quick operations (remove) use a simple
  * ``disabled:opacity-50`` pattern.
  */
 export function MediaToolHeader({
@@ -38,22 +37,11 @@ export function MediaToolHeader({
   onEditSpec,
 }: MediaToolHeaderProps) {
   const { addToast } = useToast();
-  const refId = `media_regen:${draft.id}:${item.id}`;
-  const { trackTask, isRunning, getTask } = useBackgroundTasks(
-    draft.project_id,
-    (task: BackgroundTask) => {
-      if (task.ref_id !== refId) return;
-      if (task.status === "failed") {
-        addToast("Regeneration failed", {
-          variant: "error",
-          detail: task.error ?? undefined,
-        });
-      } else if (task.status === "completed") {
-        addToast("Media regenerated", { variant: "success" });
-        onUpdate();
-      }
-    },
+  const refId = useMemo(
+    () => `media_regen:${draft.id}:${item.id}`,
+    [draft.id, item.id],
   );
+  const { trackTask, isRunning, getTask } = useMediaTasks();
   const loading = isRunning(refId);
   const task = getTask(refId);
 
