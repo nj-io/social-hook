@@ -260,6 +260,7 @@ def handle_command(
         "resume": cmd_resume,
         "errors": cmd_errors,
         "health": cmd_health,
+        "upload": cmd_upload,
     }
 
     handler = handlers.get(cmd)
@@ -491,7 +492,13 @@ def handle_message(
 
 
 def _handle_pending_reply(adapter, chat_id, pending, text, config, task_id=None):
-    """Dispatch a pending reply to the appropriate handler."""
+    """Dispatch a pending reply to the appropriate handler.
+
+    Multi-media note: ``edit_media_spec`` pending types carry an optional
+    ``:media_id`` suffix on the type string (e.g. ``edit_media_spec:media_abc``)
+    so the reply lands on the correct slot. Legacy ``edit_media_spec`` with
+    no suffix falls back to slot 0 for backward compat.
+    """
     if pending.type == "edit_text":
         _save_edit(adapter, chat_id, pending.draft_id, text)
     elif pending.type == "schedule_custom":
@@ -500,8 +507,12 @@ def _handle_pending_reply(adapter, chat_id, pending, text, config, task_id=None)
         _save_angle(adapter, chat_id, pending.draft_id, text, task_id=task_id)
     elif pending.type == "reject_note":
         _save_rejection_note(adapter, chat_id, pending.draft_id, text, config)
-    elif pending.type == "edit_media_spec":
-        _save_media_spec(adapter, chat_id, pending.draft_id, text, config)
+    elif pending.type.startswith("edit_media_spec"):
+        # pending.type is either "edit_media_spec" or "edit_media_spec:<media_id>"
+        _, _, media_id = pending.type.partition(":")
+        _save_media_spec(
+            adapter, chat_id, pending.draft_id, text, config, media_id=media_id or None
+        )
     elif pending.type == "media_upload":
         _save_media_upload(adapter, chat_id, pending.draft_id, text)
     else:
@@ -627,11 +638,17 @@ def _save_rejection_note(adapter, chat_id, draft_id, text, config=None):
         conn.close()
 
 
-def _save_media_spec(adapter, chat_id, draft_id, text, config):
-    """Parse user-provided JSON spec, update draft, and trigger generation."""
+def _save_media_spec(adapter, chat_id, draft_id, text, config, media_id: str | None = None):
+    """Parse user-provided JSON spec, update the specific media slot, generate.
+
+    ``media_id`` targets a specific item on the draft; when None (legacy),
+    falls back to ``media_specs[0]`` if any exists, else errors out (we no
+    longer create a synthetic single-media spec on the draft root).
+    """
     import json as json_mod
 
-    from social_hook.db import get_draft, update_draft
+    from social_hook.db import get_draft
+    from social_hook.db import operations as ops
 
     conn = _get_conn()
     try:
@@ -639,6 +656,18 @@ def _save_media_spec(adapter, chat_id, draft_id, text, config):
         if not draft:
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
+
+        if media_id is None:
+            first = draft.media_specs[0] if draft.media_specs else None
+            if isinstance(first, dict) and first.get("id"):
+                media_id = first["id"]
+            else:
+                _send(
+                    adapter,
+                    chat_id,
+                    "No media slot on this draft. Use the Edit → Change media flow to add one.",
+                )
+                return
 
         # Parse JSON from the reply (strip markdown code blocks)
         raw = text.strip()
@@ -649,41 +678,55 @@ def _save_media_spec(adapter, chat_id, draft_id, text, config):
             raw = raw.strip()
 
         try:
-            spec = json_mod.loads(raw)
+            payload = json_mod.loads(raw)
         except json_mod.JSONDecodeError as e:
             _send(adapter, chat_id, f"Invalid JSON: {e}\nPlease send valid JSON.")
-            # Re-register pending reply so user can try again
             import time as _time
 
             from social_hook.bot.buttons import PendingReply, _pending_replies
 
             _pending_replies[chat_id] = PendingReply(
-                type="edit_media_spec", draft_id=draft_id, timestamp=_time.time()
+                type=f"edit_media_spec:{media_id}", draft_id=draft_id, timestamp=_time.time()
             )
             return
+        if not isinstance(payload, dict):
+            _send(adapter, chat_id, "Spec must be a JSON object.")
+            return
 
-        update_draft(conn, draft_id, media_spec=spec)
+        # Find the current spec to preserve tool/caption/user_uploaded flags.
+        existing = next(
+            (s for s in draft.media_specs if isinstance(s, dict) and s.get("id") == media_id),
+            None,
+        )
+        if existing is None:
+            _send(adapter, chat_id, f"Media `{media_id}` not found on draft.")
+            return
+        new_item = dict(existing)
+        new_item["spec"] = payload
 
-        # Auto-generate via btn_media_confirm_gen flow
-        from social_hook.bot.buttons import btn_media_confirm_gen
-
-        # Close conn before calling the button handler (it opens its own)
+        ops.update_draft_media(conn, draft_id, media_id, spec=new_item)
         conn.close()
         conn = None
 
-        btn_media_confirm_gen(adapter, chat_id, "", draft_id, config)
+        # Dispatch the same generation path as btn_media_confirm_gen.
+        from social_hook.bot.buttons import btn_media_confirm_gen
+
+        btn_media_confirm_gen(adapter, chat_id, "", f"{draft_id}:{media_id}", config)
     finally:
         if conn:
             conn.close()
 
 
 def _save_media_upload(adapter, chat_id, draft_id, text):
-    """Handle media upload reply — text contains the file path from the adapter."""
-    import json as json_mod
+    """Handle a media-upload reply by APPENDING a new slot (never overwrite).
 
-    from social_hook.db import get_draft, update_draft
+    ``text`` carries the downloaded filesystem path from the adapter's
+    earlier ``download_file()`` call (or the media handler's re-use of it).
+    The new slot is ``user_uploaded=True`` with ``tool='legacy_upload'`` so
+    generation is skipped — the path already points at the uploaded file.
+    """
+    from social_hook.db import get_draft
     from social_hook.db import operations as ops
-    from social_hook.db.operations import insert_draft_change
     from social_hook.filesystem import generate_id
     from social_hook.models.core import DraftChange
 
@@ -694,34 +737,37 @@ def _save_media_upload(adapter, chat_id, draft_id, text):
             _send(adapter, chat_id, f"Draft `{draft_id}` not found.")
             return
 
-        # The text should be a file path from the adapter's file download
         file_path = text.strip()
         if not file_path:
             _send(adapter, chat_id, "No file received. Send a photo or file.")
             return
 
-        old_paths = draft.media_paths
-        update_draft(
-            conn,
-            draft_id,
-            media_paths=[file_path],
-            media_type="upload",
-        )
+        new_spec = {
+            "tool": "legacy_upload",
+            "spec": {"path": file_path},
+            "caption": None,
+            "user_uploaded": True,
+        }
+        new_id = ops.append_draft_media(conn, draft_id, new_spec)
+        if not new_id:
+            _send(adapter, chat_id, "Could not attach media.")
+            return
+        # Path is already on disk; seed it on the new slot so the UI shows it.
+        ops.update_draft_media(conn, draft_id, new_id, path=file_path, spec_used=new_spec)
 
-        insert_draft_change(
+        ops.insert_draft_change(
             conn,
             DraftChange(
                 id=generate_id("change"),
                 draft_id=draft_id,
-                field="media_paths",
-                old_value=json_mod.dumps(old_paths),
-                new_value=json_mod.dumps([file_path]),
+                field=f"media_spec:{new_id}",
+                old_value="null",
+                new_value=file_path,
                 changed_by="human",
             ),
         )
-
-        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
-        _send(adapter, chat_id, f"Media attached to `{draft_id[:12]}`.")
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+        _send(adapter, chat_id, f"Attached {new_id} to `{draft_id[:12]}`.")
     finally:
         conn.close()
 
@@ -732,18 +778,37 @@ def _apply_expert_result(
     result,
     config=None,
 ) -> bool:
-    """Apply Expert refinement result to a draft in the database.
+    """Apply Expert refinement result to a draft.
 
-    Handles content updates, media spec updates, draft change audit trail,
-    and optional auto-media-regeneration. Returns True if any changes were applied.
+    Multi-media aware. Supported refined_* fields on ``result``:
+
+    * ``refined_content`` — replace draft content
+    * ``refined_vehicle`` — change vehicle (with rematerialize)
+    * ``refined_media_spec`` — replace the *first* media slot's spec and
+      regenerate it via ``ops.update_draft_media`` (legacy single-media
+      surface carried through to multi-media mode)
+    * ``part_media_specs: list[list[MediaSpecItem-like dict]] | None`` —
+      per-thread-part media: outer list is indexed by ``DraftPart.position``
+      / draft_parts order; inner list replaces that part's ``media_specs``.
+      When present we call ``ops.update_draft_part`` with ``media_specs``,
+      ``media_specs_used`` and (generated) ``media_paths``. One DraftChange
+      per affected part — never aggregated.
+
+    Returns True if any changes were applied.
     """
     from social_hook.db import insert_draft_change, update_draft
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
     from social_hook.models.core import DraftChange
 
-    refined_vehicle = getattr(result, "refined_vehicle", None)
-    if not result.refined_content and not result.refined_media_spec and not refined_vehicle:
+    refined_vehicle = result.refined_vehicle
+    part_media_specs = result.part_media_specs
+    if (
+        not result.refined_content
+        and not result.refined_media_spec
+        and not refined_vehicle
+        and not part_media_specs
+    ):
         return False
 
     if result.refined_content:
@@ -776,52 +841,170 @@ def _apply_expert_result(
             ),
         )
 
-    # Materialize once at the end with final vehicle + content
     if result.refined_content or refined_vehicle:
         from social_hook.db import get_draft as _get_draft
         from social_hook.vehicle import rematerialize_draft_parts
 
-        # Refresh draft to get final state after updates
         updated_draft = _get_draft(conn, draft.id) or draft
         final_content = result.refined_content or draft.content
         rematerialize_draft_parts(conn, updated_draft, final_content)
 
     if result.refined_media_spec:
-        import json as json_mod
+        # Apply to the first media slot on the draft (multi-media surface).
+        # If the draft has no slot yet, create one so the refine flow still
+        # lands — tool defaults to nano_banana_pro.
+        target_id: str | None = None
+        if draft.media_specs and isinstance(draft.media_specs[0], dict):
+            target_id = draft.media_specs[0].get("id")
+        if not target_id:
+            target_id = ops.append_draft_media(
+                conn,
+                draft.id,
+                {"tool": "nano_banana_pro", "spec": {}, "user_uploaded": False},
+            )
+        if target_id:
+            # Fetch current (may have just been appended) to preserve tool.
+            d2 = ops.get_draft(conn, draft.id) or draft
+            current = next(
+                (
+                    s
+                    for s in (d2.media_specs or [])
+                    if isinstance(s, dict) and s.get("id") == target_id
+                ),
+                {"id": target_id, "tool": "nano_banana_pro", "user_uploaded": False},
+            )
+            new_item = dict(current)
+            new_item["spec"] = result.refined_media_spec
+            ops.update_draft_media(conn, draft.id, target_id, spec=new_item)
+            insert_draft_change(
+                conn,
+                DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft.id,
+                    field=f"media_spec:{target_id}",
+                    old_value="",
+                    new_value="refined",
+                    changed_by="expert",
+                ),
+            )
+            # Auto-regen via the per-item path so media_paths + spec_used update.
+            if config:
+                try:
+                    from social_hook.bot.buttons import _regen_one_media
+                    from social_hook.db import get_draft as _get_draft
 
-        update_draft(conn, draft.id, media_spec=result.refined_media_spec)
-        insert_draft_change(
-            conn,
-            DraftChange(
-                id=generate_id("change"),
-                draft_id=draft.id,
-                field="media_spec",
-                old_value=json_mod.dumps(draft.media_spec) if draft.media_spec else "null",
-                new_value=json_mod.dumps(result.refined_media_spec),
-                changed_by="expert",
-            ),
-        )
+                    refreshed = _get_draft(conn, draft.id) or draft
+                    _regen_one_media(refreshed, target_id, config, enforce_spec_change=False)
+                except Exception as e:
+                    logger.warning("Auto-regeneration after expert refine failed: %s", e)
 
-        # Auto-regenerate media with new spec if config available
-        if config and draft.media_type:
-            try:
-                from social_hook.drafting import _generate_media
-
-                media_paths, _, _, _ = _generate_media(
-                    config,
-                    draft.media_type,
-                    result.refined_media_spec,
-                    project_config=None,
+    if part_media_specs and isinstance(part_media_specs, list):
+        parts = ops.get_draft_parts(conn, draft.id)
+        for idx, part in enumerate(parts):
+            if idx >= len(part_media_specs):
+                continue
+            specs_for_part = part_media_specs[idx]
+            if not isinstance(specs_for_part, list):
+                continue
+            if not specs_for_part:
+                # Empty inner list — CLEAR media on this part (Option B).
+                # Matches Expert's intent when the user asks to drop a tweet's
+                # image entirely ("the second tweet shouldn't have media").
+                ops.update_draft_part(
+                    conn,
+                    part.id,
+                    media_specs=[],
+                    media_specs_used=[],
+                    media_paths=[],
+                    media_errors=[],
                 )
-                if media_paths:
-                    update_draft(
-                        conn,
-                        draft.id,
-                        media_paths=media_paths,
-                        media_spec_used=result.refined_media_spec,
+                insert_draft_change(
+                    conn,
+                    DraftChange(
+                        id=generate_id("change"),
+                        draft_id=draft.id,
+                        field=f"draft_part.media_specs:{part.id}",
+                        old_value="",
+                        new_value="cleared",
+                        changed_by="expert",
+                    ),
+                )
+                continue
+
+            # Normalize to list of dicts + assign ids where missing.
+            # Expert.handle runs its tool_input through
+            # ``ExpertResponseInput.validate``, which coerces each inner
+            # item into a ``MediaSpecItem`` pydantic model — NOT a dict.
+            # Accept both shapes: pydantic via ``model_dump()``, plain
+            # dict via ``dict()``.
+            normalized: list[dict] = []
+            for s in specs_for_part:
+                if hasattr(s, "model_dump"):
+                    item = s.model_dump()
+                elif isinstance(s, dict):
+                    item = dict(s)
+                else:
+                    continue
+                if not item.get("id"):
+                    item["id"] = generate_id("media")
+                normalized.append(item)
+            if not normalized:
+                continue
+
+            # Persist spec list first (with empty paths/errors).
+            ops.update_draft_part(
+                conn,
+                part.id,
+                media_specs=normalized,
+                media_specs_used=[{} for _ in normalized],
+                media_paths=["" for _ in normalized],
+                media_errors=[None for _ in normalized],
+            )
+
+            # Generate per-item (sequential — bot handler path is already in a
+            # background task; parallel thread pool lives in drafting._generate_all_media).
+            from social_hook.filesystem import get_base_path
+
+            new_paths: list[str] = []
+            new_errors: list[str | None] = []
+            for spec in normalized:
+                try:
+                    out_dir = str(get_base_path() / "media-cache" / spec["id"])
+                    from social_hook.bot.buttons import _generate_for_media_item
+
+                    res = _generate_for_media_item(config, spec, out_dir)
+                    if res.success and res.file_path:
+                        new_paths.append(res.file_path)
+                        new_errors.append(None)
+                    else:
+                        new_paths.append("")
+                        new_errors.append(res.error or "unknown")
+                except Exception as e:
+                    logger.warning(
+                        "Part %s media item %s generation failed: %s", part.id, spec.get("id"), e
                     )
-            except Exception as e:
-                logger.warning(f"Auto-regeneration after expert refine failed: {e}")
+                    new_paths.append("")
+                    new_errors.append(str(e))
+
+            ops.update_draft_part(
+                conn,
+                part.id,
+                media_paths=new_paths,
+                media_errors=new_errors,
+                media_specs_used=normalized,
+            )
+
+            insert_draft_change(
+                conn,
+                DraftChange(
+                    id=generate_id("change"),
+                    draft_id=draft.id,
+                    field=f"draft_part.media_specs:{part.id}",
+                    old_value="",
+                    new_value=str(len(normalized)),
+                    changed_by="expert",
+                ),
+            )
 
     ops.emit_data_event(conn, "draft", "edited", draft.id, draft.project_id)
     return True
@@ -1204,6 +1387,12 @@ HELP_DETAILS = {
     "errors": "Show recent system errors (ERROR/CRITICAL, last 24h). Usage: /errors [limit|severity]",
     "health": "Show system health status with error counts from last 24h.",
     "help": "Show help. For details on a command: /help <command>",
+    "upload": (
+        "Attach a reference image to the active draft as a new media slot. "
+        "Send the command in the same message that carries a photo/document "
+        "(png/jpg/webp/gif, ≤5 MiB). Caption becomes the item context. "
+        "Use /review <draft_id> first to set the active draft."
+    ),
 }
 
 
@@ -1234,11 +1423,71 @@ def cmd_help(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) ->
         "/retry <draft\\_id> - Retry a failed draft\n"
         "/pause <project\\_id> - Pause a project\n"
         "/resume <project\\_id> - Resume a project\n"
+        "/upload - Attach reference image to active draft (send with a photo)\n"
         "/errors [limit|severity] - Recent system errors\n"
         "/health - System health status\n"
         "/help [command] - Show this message"
     )
     _send(adapter, chat_id, text)
+
+
+def cmd_upload(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:
+    """Attach an image to the active draft as a new media slot.
+
+    Expects the /upload command to be sent in the same message that carries
+    a photo or document. Caption text on the message becomes the item's
+    context. Enforces 5 MiB + png/jpg/webp/gif allowlist — rejections return
+    a Telegram error message and do NOT create a ``pending_uploads`` row.
+    """
+    # Look up current draft context from chat.
+    ctx = get_chat_draft_context(chat_id)
+    if not ctx:
+        _send(
+            adapter,
+            chat_id,
+            "No active draft. Run /review <draft_id> first, then send /upload with a photo.",
+        )
+        return
+    draft_id, project_id = ctx
+
+    # `args` is the raw msg.text minus the command; the adapter's raw msg is
+    # the only place to look for attached media. We stash it on the handler
+    # invocation via a shim: dispatch path in handle_command doesn't pass the
+    # raw message, so operators should attach the file in this same message.
+    # Pending-reply path (media_upload PendingReply) stays the canonical flow
+    # for file uploads; /upload just arms it so operators don't have to click
+    # the "Upload file" inline button first.
+    from social_hook.bot.buttons import PendingReply, _pending_replies
+
+    _pending_replies[chat_id] = PendingReply(
+        type="media_upload", draft_id=draft_id, timestamp=time.time()
+    )
+    _send(
+        adapter,
+        chat_id,
+        (
+            f"Send a png/jpg/webp/gif (≤5 MiB) to attach to `{draft_id[:12]}` "
+            f"on project `{project_id[:8]}…`. Caption = item context."
+        ),
+    )
+
+
+def _validate_upload_bytes(filename: str, size: int) -> tuple[bool, str]:
+    """Validate a bot-attached file's size + format.
+
+    Delegates to ``social_hook.uploads.validate_upload`` so all four upload
+    ingress points share one cap and one format allowlist.
+    """
+    from social_hook.errors import ConfigError
+    from social_hook.uploads import validate_upload
+
+    if not filename:
+        return False, "no filename"
+    try:
+        validate_upload(size_bytes=size, filename=filename)
+    except ConfigError as e:
+        return False, str(e)
+    return True, ""
 
 
 def cmd_status(adapter: MessagingAdapter, chat_id: str, args: str, config: Any) -> None:

@@ -1,8 +1,17 @@
 """Drafter agent: creates social media content (T14)."""
 
+import base64
+import json
+import logging
+import mimetypes
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from social_hook.config.project import ContextConfig
+from social_hook.errors import ConfigError
+from social_hook.filesystem import generate_id
+from social_hook.uploads import validate_upload
 
 if TYPE_CHECKING:
     from social_hook.config.platforms import ResolvedPlatformConfig
@@ -10,10 +19,39 @@ if TYPE_CHECKING:
     from social_hook.config.yaml import MediaGenerationConfig
 from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.base import LLMClient, extract_tool_call
+from social_hook.llm.catalog import get_model_info
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
-from social_hook.llm.schemas import CreateDraftInput
+from social_hook.llm.schemas import CreateDraftInput  # re-exported types
 from social_hook.models.context import ProjectContext
 from social_hook.models.core import CommitInfo
+
+logger = logging.getLogger(__name__)
+
+# BMP/TIFF are re-encoded to PNG before being sent to the LLM; size + format
+# guards for the post-reencode bytes flow through ``uploads.validate_upload``
+# (single source of truth — SINGLE_IMAGE.max_size + SINGLE_IMAGE/GIF formats).
+_UPLOAD_REENCODE_EXTS = {"bmp", "tiff", "tif"}
+
+# Allowed tool names for the post-LLM strip step. Must match schemas.
+_ALLOWED_TOOLS = {"nano_banana_pro", "mermaid", "ray_so", "playwright", "legacy_upload"}
+
+# Fields every sane spec must carry. Hallucinations missing these get
+# stripped post-validation.
+_REQUIRED_SPEC_FIELDS = {"id", "tool", "spec"}
+
+# Placeholder URLs the drafter copies from prompt examples; see _auto_repair_content_tokens.
+_LITERAL_PLACEHOLDER_IDS = {
+    "id",
+    "media_id",
+    "media",
+    "example",
+    "placeholder",
+    "xxx",
+    "xyz",
+}
+
+# Matches any ``![caption](url)``; see _auto_repair_content_tokens.
+_BROAD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 
 class Drafter:
@@ -64,6 +102,7 @@ class Drafter:
         content_source_context: dict[str, str] | None = None,
         platform_intro_states: dict[str, dict] | None = None,
         project_docs_text: str | None = None,
+        uploads: list[Any] | None = None,
     ) -> CreateDraftInput:
         """Create a draft post for a post-worthy commit (1-pass, all vehicles).
 
@@ -299,8 +338,33 @@ class Drafter:
                 f"{episode_info}"
             )
 
+        # If the operator pre-uploaded reference images, assemble a
+        # content-block message (text + base64 image blocks). Fail LOUDLY
+        # (ConfigError) when the configured drafter model is not vision-
+        # capable — never silently fall through to text-only.
+        #
+        # Pre-seed a user_uploaded MediaSpecItem per upload so the LLM sees
+        # them as structured input and understands each one must appear in
+        # the output media_specs (with matching id in a content token).
+        # Post-LLM reconciliation re-injects any the drafter dropped.
+        preseeded_specs: list[dict[str, Any]] = []
+        if uploads:
+            full_id = getattr(self.client, "full_id", None)
+            info = get_model_info(full_id) if full_id else None
+            if info is None or not info.supports_vision:
+                raise ConfigError(
+                    f"Drafter model {full_id!r} does not support image inputs. "
+                    f"Use a vision-capable model "
+                    f"(e.g. anthropic/claude-sonnet-4-5, claude-cli/sonnet, "
+                    f"openai/gpt-4o) or remove reference images."
+                )
+            preseeded_specs = _preseed_upload_specs(uploads)
+            message_content: Any = _assemble_vision_content(user_content, uploads, preseeded_specs)
+        else:
+            message_content = user_content
+
         response = self.client.complete(
-            messages=[{"role": "user", "content": user_content}],
+            messages=[{"role": "user", "content": message_content}],
             tools=[CreateDraftInput.to_tool_schema()],
             system=system,
         )
@@ -314,4 +378,399 @@ class Drafter:
         )
 
         tool_input = extract_tool_call(response, "create_draft")
+        tool_input = _sanitize_media_specs(tool_input, uploads=uploads)
+        # Upload reconciliation: every pre-seeded upload must appear in
+        # the final media_specs. Drafter may modify caption/spec extras
+        # but id + path + user_uploaded=True are ground truth — never
+        # trust the LLM to invent upload paths.
+        if preseeded_specs:
+            tool_input = _reconcile_uploads(tool_input, preseeded_specs)
+        # Defense-in-depth: auto-repair content tokens against the (already
+        # sanitized + reconciled) spec list. Handles two observed LLM drift
+        # modes — stripped 'media_' prefix and literal placeholder ids from
+        # schema/prompt examples. Runs AFTER spec sanitization so fuzzy
+        # matching only considers ids that survived validation.
+        content = tool_input.get("content")
+        if isinstance(content, str) and tool_input.get("media_specs"):
+            tool_input["content"] = _auto_repair_content_tokens(content, tool_input["media_specs"])
         return CreateDraftInput.validate(tool_input)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _guess_media_type(path: str) -> str:
+    """Infer an ``image/*`` media type from a path. Defaults to image/png."""
+    guess, _ = mimetypes.guess_type(path)
+    if guess and guess.startswith("image/"):
+        return guess
+    return "image/png"
+
+
+def _read_upload_bytes(path_str: str) -> tuple[bytes, str]:
+    """Read an upload, re-encoding BMP/TIFF to PNG via Pillow when needed.
+
+    Returns ``(bytes, media_type)``. Size + format guards delegate to
+    ``uploads.validate_upload`` (the single source of truth for ingress).
+    BMP/TIFF short-circuit through Pillow re-encoding before the allowlist
+    check since the shared validator rejects them outright.
+    """
+    p = Path(path_str)
+    if not p.is_file():
+        raise ConfigError(f"Upload path does not exist: {path_str}")
+    ext = p.suffix.lstrip(".").lower()
+
+    if ext in _UPLOAD_REENCODE_EXTS:
+        try:
+            from io import BytesIO
+
+            from PIL import Image
+        except ImportError as exc:  # pragma: no cover — Pillow is a soft dep
+            raise ConfigError(
+                f"Upload {path_str!r} is {ext.upper()}; install Pillow "
+                f"(pip install pillow) to re-encode BMP/TIFF to PNG."
+            ) from exc
+        img = Image.open(p).convert("RGB")
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue(), "image/png"
+
+    # Shared validator raises ConfigError with ``unsupported_format`` /
+    # ``file_too_large`` prefixes — already the exception type this
+    # function raises, so re-raise as-is for consistency.
+    validate_upload(size_bytes=p.stat().st_size, filename=path_str)
+    return p.read_bytes(), _guess_media_type(path_str)
+
+
+def _preseed_upload_specs(uploads: list[Any]) -> list[dict[str, Any]]:
+    """Build pre-seeded ``user_uploaded=True`` MediaSpecItem dicts from uploads.
+
+    One MediaSpecItem per upload, id generated via ``generate_id("media")``
+    (same format the drafter is asked to produce for generated items).
+    These pre-seeded entries are shown to the LLM and reconciled post-call
+    so uploads never vanish from the final ``media_specs`` list.
+
+    Skips uploads with no path (logged; never raises).
+    """
+    out: list[dict[str, Any]] = []
+    for i, up in enumerate(uploads, 1):
+        path = getattr(up, "path", None) or (up.get("path") if isinstance(up, dict) else None)
+        if not path:
+            logger.warning("Upload %d missing path; skipping pre-seed spec", i)
+            continue
+        ctx = getattr(up, "context", "") or (up.get("context", "") if isinstance(up, dict) else "")
+        out.append(
+            {
+                "id": generate_id("media"),
+                "tool": "legacy_upload",
+                "spec": {"path": str(path), "context": str(ctx)},
+                "caption": None,
+                "user_uploaded": True,
+            }
+        )
+    return out
+
+
+def _reconcile_uploads(
+    tool_input: dict[str, Any], preseeded: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Reconcile the drafter's media_specs against the pre-seeded uploads.
+
+    Invariants enforced:
+
+    * Every pre-seeded upload (identified by ``spec.path``) appears in the
+      final ``media_specs``. Drops by the LLM are re-injected.
+    * For a matched upload, the LLM may set ``caption`` and may append
+      extra non-path fields to ``spec``, but ``id``, ``spec.path``,
+      ``tool = 'legacy_upload'``, and ``user_uploaded = True`` are ground
+      truth — overwritten from the pre-seed.
+
+    The path is the stable identity (id is generated locally; the LLM may
+    substitute or omit its own id). Uploads are re-injected at the end of
+    the list in their original pre-seed order, preserving any other
+    media_specs the drafter emitted in between.
+    """
+    specs = tool_input.get("media_specs")
+    if not isinstance(specs, list):
+        specs = []
+
+    # Index pre-seeded by path for fast lookup.
+    preseed_by_path: dict[str, dict[str, Any]] = {
+        str(p["spec"].get("path", "")): p for p in preseeded
+    }
+    matched_paths: set[str] = set()
+
+    reconciled: list[dict[str, Any]] = []
+    for raw in specs:
+        if not isinstance(raw, dict):
+            reconciled.append(raw)  # let sanitize/validate reject below
+            continue
+        if raw.get("user_uploaded") is not True:
+            reconciled.append(raw)
+            continue
+        raw_path = str((raw.get("spec") or {}).get("path", ""))
+        preseed = preseed_by_path.get(raw_path)
+        if preseed is None:
+            # user_uploaded with a path not in preseeded — let sanitize
+            # strip it as a hallucination. (Reached only if sanitize
+            # ran with uploads=None, but keep the defensive branch.)
+            reconciled.append(raw)
+            continue
+        # Accept LLM modifications to caption and any extra spec keys
+        # that aren't "path", but overwrite the ground-truth fields
+        # from the pre-seed so id and user_uploaded can never drift.
+        merged = dict(raw)
+        merged_spec = dict(raw.get("spec") or {})
+        merged_spec["path"] = preseed["spec"]["path"]
+        # Re-thread the operator's context note from the pre-seed; the
+        # LLM has no authoritative source for it.
+        if "context" in preseed["spec"]:
+            merged_spec.setdefault("context", preseed["spec"]["context"])
+        merged["spec"] = merged_spec
+        merged["id"] = preseed["id"]
+        merged["tool"] = "legacy_upload"
+        merged["user_uploaded"] = True
+        reconciled.append(merged)
+        matched_paths.add(raw_path)
+
+    # Re-inject any pre-seeded uploads the drafter dropped.
+    for preseed in preseeded:
+        path = str(preseed["spec"].get("path", ""))
+        if path and path not in matched_paths:
+            logger.warning("Drafter dropped pre-seeded upload %r — re-injecting", path)
+            reconciled.append(dict(preseed))
+
+    tool_input["media_specs"] = reconciled
+    return tool_input
+
+
+def _assemble_vision_content(
+    user_text: str,
+    uploads: list[Any],
+    preseeded_specs: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Interleave operator context text with base64 image blocks.
+
+    Block order: leading text → (optional JSON-serialized pre-seeded
+    media_specs block so the LLM sees each upload's id) → each upload
+    (optional per-upload context text, then the image) → the main
+    user_text. This puts the reference images in front of the LLM
+    before the task description, matching the common Anthropic vision
+    prompt pattern.
+    """
+    blocks: list[dict[str, Any]] = []
+    if uploads:
+        intro = (
+            f"The operator attached {len(uploads)} reference image(s). "
+            "Build the post around them. Each image has an optional "
+            "context note above it."
+        )
+        if preseeded_specs:
+            intro += (
+                "\n\nThese uploads already have stable ids (listed below). "
+                "Your `media_specs` output MUST include every one of these "
+                "items verbatim (same `id`, `tool`, `spec.path`, "
+                "`user_uploaded: true`). Reference each one in `content` "
+                "using its `id` via the `![caption](media:<id>)` token "
+                "convention — do not fabricate new entries for the "
+                "uploaded images.\n\n"
+                "Pre-seeded uploads (JSON):\n"
+                f"```json\n{json.dumps(preseeded_specs, indent=2)}\n```"
+            )
+        blocks.append({"type": "text", "text": intro})
+        for i, up in enumerate(uploads, 1):
+            path = getattr(up, "path", None) or (up.get("path") if isinstance(up, dict) else None)
+            ctx = getattr(up, "context", "") or (
+                up.get("context", "") if isinstance(up, dict) else ""
+            )
+            if not path:
+                logger.warning("Upload %d missing path; skipping vision block", i)
+                continue
+            data, media_type = _read_upload_bytes(path)
+            if ctx:
+                blocks.append({"type": "text", "text": f"Image {i} context: {ctx}"})
+            blocks.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64.b64encode(data).decode("ascii"),
+                    },
+                }
+            )
+    blocks.append({"type": "text", "text": user_text})
+    return blocks
+
+
+def _sanitize_media_specs(
+    tool_input: dict[str, Any],
+    *,
+    uploads: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Strip semantic errors from the drafter's raw tool call.
+
+    Structural errors (tool call absent, Pydantic type errors) stay hard-
+    fail. Semantic errors are logged + stripped so a single bad spec does
+    not sink the whole draft:
+
+    * duplicate ``id`` across items — keep the last occurrence
+    * ``user_uploaded=True`` with no matching operator upload
+      (hallucination) — strip item
+    * unknown ``tool`` name — strip item
+    * missing required fields (``id``, ``tool``, ``spec``) — strip item
+    """
+    specs = tool_input.get("media_specs")
+    if not isinstance(specs, list) or not specs:
+        return tool_input
+
+    # Collect paths from uploads for hallucination detection. Both
+    # attribute and dict access supported.
+    known_upload_paths: set[str] = set()
+    if uploads:
+        for up in uploads:
+            path = getattr(up, "path", None) or (up.get("path") if isinstance(up, dict) else None)
+            if path:
+                known_upload_paths.add(str(path))
+
+    sanitized: list[dict[str, Any]] = []
+    for i, raw in enumerate(specs):
+        if not isinstance(raw, dict):
+            logger.warning("Media spec %d is not a dict — stripping: %r", i, raw)
+            continue
+        missing = _REQUIRED_SPEC_FIELDS - set(raw.keys())
+        if missing:
+            logger.warning(
+                "Media spec %d missing required fields %s — stripping: %s", i, sorted(missing), raw
+            )
+            continue
+        tool = raw.get("tool")
+        if tool not in _ALLOWED_TOOLS:
+            logger.warning("Media spec %d has unknown tool %r — stripping", i, tool)
+            continue
+        spec_body = raw.get("spec")
+        if not isinstance(spec_body, dict):
+            logger.warning("Media spec %d has non-dict spec body — stripping: %r", i, spec_body)
+            continue
+        if raw.get("user_uploaded") is True:
+            upload_path = spec_body.get("path")
+            if not upload_path or str(upload_path) not in known_upload_paths:
+                logger.warning(
+                    "Media spec %d claims user_uploaded but path %r is not in uploads — stripping",
+                    i,
+                    upload_path,
+                )
+                continue
+        sanitized.append(raw)
+
+    # Dedup on id, keeping the last occurrence so a later spec wins (mirrors
+    # update semantics). Preserve source order of survivors.
+    seen_ids: dict[str, int] = {}
+    for idx, spec in enumerate(sanitized):
+        seen_ids[spec["id"]] = idx  # last-wins
+    deduped: list[dict[str, Any]] = []
+    kept_indexes = set(seen_ids.values())
+    for idx, spec in enumerate(sanitized):
+        if idx in kept_indexes:
+            deduped.append(spec)
+        else:
+            logger.warning(
+                "Duplicate media spec id %r at index %d — stripping earlier occurrence",
+                spec.get("id"),
+                idx,
+            )
+
+    tool_input["media_specs"] = deduped
+    return tool_input
+
+
+def _auto_repair_content_tokens(content: str, specs: list[dict[str, Any]]) -> str:
+    """Normalize and repair markdown image references against the spec list.
+
+    Scans every ``![caption](url)`` in ``content``. For each one:
+
+    * **Canonical** — ``url`` is exactly ``media:<spec_id>``: pass through.
+    * **Missing ``media:`` delimiter** — ``url`` is a bare spec id (e.g.
+      ``media_abc...``): rewrite to ``media:<spec_id>``.
+    * **Missing ``media_`` prefix** — ``url`` is the 12-hex tail of a
+      real spec id (optionally prefixed with ``media:``), and that tail
+      is unique across all specs: rewrite to the full id form
+      ``media:<full_spec_id>``.
+    * **Literal placeholder** — ``url`` (after stripping an optional
+      ``media:`` prefix and any ``<>`` angle brackets, case-insensitive)
+      matches one of ``_LITERAL_PLACEHOLDER_IDS``: drop the entire
+      image. Prevents orphan-reference diagnostics firing on LLM
+      template copying.
+    * **Real URL / unknown id** — URL does not resolve to any known
+      spec id: pass through untouched. A real HTTPS URL or markdown
+      image with a non-spec URL stays intact; a ``media:foo`` token
+      with no matching spec is preserved so the
+      ``broken_media_reference`` diagnostic surfaces it at read time.
+
+    Repair warnings are logged so operators can see drift rates in
+    production.
+    """
+    if not content:
+        return content
+    spec_ids: set[str] = {str(s.get("id")) for s in specs if isinstance(s, dict) and s.get("id")}
+    if not spec_ids:
+        return content
+
+    # Build a tail-to-full-id index for prefix-strip repair. Only tails
+    # that are unique across all specs are eligible — ambiguous tails
+    # stay as-is so we never silently mis-route.
+    tail_index: dict[str, str] = {}
+    ambiguous_tails: set[str] = set()
+    for full_id in spec_ids:
+        if full_id.startswith("media_"):
+            tail = full_id[len("media_") :]
+            if tail in tail_index:
+                ambiguous_tails.add(tail)
+            else:
+                tail_index[tail] = full_id
+    for tail in ambiguous_tails:
+        tail_index.pop(tail, None)
+
+    def _repair(match: "Any") -> str:
+        caption = match.group(1)
+        url = match.group(2)
+        # Strip the optional ``media:`` prefix for id resolution; remember
+        # whether it was present for the "missing delimiter" log message.
+        had_media_prefix = url.startswith("media:")
+        candidate = url[len("media:") :] if had_media_prefix else url
+
+        # 1. Literal placeholder — drop the whole image.
+        if candidate.lower().strip("<>") in _LITERAL_PLACEHOLDER_IDS:
+            logger.warning("Dropping content image with literal placeholder url %r", url)
+            return ""
+
+        # 2. Exact spec-id match — normalize to canonical ``media:<id>`` form.
+        #    (Handles both canonical input and the "missing ``media:``
+        #    delimiter" drift mode in one branch.)
+        if candidate in spec_ids:
+            canonical = f"![{caption}](media:{candidate})"
+            if not had_media_prefix:
+                logger.warning(
+                    "Normalized content image: %r -> %r (missing 'media:' delimiter)",
+                    url,
+                    f"media:{candidate}",
+                )
+            return canonical
+
+        # 3. Prefix-strip repair — unique tail maps back to a real id.
+        if candidate in tail_index:
+            repaired_id = tail_index[candidate]
+            logger.warning(
+                "Repaired content image: %r -> %r (missing 'media_' prefix)",
+                url,
+                f"media:{repaired_id}",
+            )
+            return f"![{caption}](media:{repaired_id})"
+
+        # 4. Unknown URL — not a spec id. Could be a real HTTPS URL or a
+        #    broken media: token; leave verbatim so the diagnostic catches it.
+        return str(match.group(0))
+
+    return _BROAD_IMAGE_RE.sub(_repair, content)

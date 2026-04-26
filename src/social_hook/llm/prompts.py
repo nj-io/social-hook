@@ -1256,12 +1256,16 @@ def assemble_expert_prompt(
         if hasattr(draft, "vehicle") and draft.vehicle:
             sections.append(f"- Vehicle: {draft.vehicle}")
         sections.append(f"- Content: {draft.content}")
-        if hasattr(draft, "media_type") and draft.media_type:
-            sections.append(f"- Media type: {draft.media_type}")
-        if hasattr(draft, "media_spec") and draft.media_spec:
+        media_specs = getattr(draft, "media_specs", None) or []
+        if media_specs:
             import json as _json
 
-            sections.append(f"- Media spec: {_json.dumps(draft.media_spec)}")
+            sections.append(f"- Media items ({len(media_specs)}):")
+            for i, spec in enumerate(media_specs):
+                tool = spec.get("tool", "?") if isinstance(spec, dict) else "?"
+                media_id = spec.get("id", "?") if isinstance(spec, dict) else "?"
+                spec_json = _json.dumps(spec.get("spec", {})) if isinstance(spec, dict) else "{}"
+                sections.append(f"  {i + 1}. {media_id} — tool={tool}, spec={spec_json}")
     elif isinstance(draft, dict):
         for k, v in draft.items():
             if v is not None:

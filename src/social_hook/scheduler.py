@@ -528,6 +528,33 @@ def scheduler_tick(
         except Exception:
             logger.debug("System error pruning failed (non-fatal)", exc_info=True)
 
+        # Prune pending_uploads rows older than 24h + orphan _staging dirs
+        # (feat/multi-media). Staging dirs without a matching DB row are
+        # safe to remove outright; the 24h TTL on the DB side is the sole
+        # source of truth for the freshness window.
+        try:
+            stale = ops.prune_stale_pending_uploads(conn, hours=24)
+            if stale:
+                logger.info("Pruned %d stale pending_upload row(s)", stale)
+            live_ids = {r[0] for r in conn.execute("SELECT id FROM pending_uploads").fetchall()}
+            staging_root = get_base_path() / "media-cache" / "uploads" / "_staging"
+            if staging_root.exists():
+                for child in staging_root.iterdir():
+                    if child.is_dir() and child.name not in live_ids:
+                        try:
+                            for f in child.iterdir():
+                                try:
+                                    f.unlink()
+                                except OSError:
+                                    logger.debug("Could not unlink %s", f, exc_info=True)
+                            child.rmdir()
+                        except OSError:
+                            logger.debug(
+                                "Could not remove orphan staging dir %s", child, exc_info=True
+                            )
+        except Exception:
+            logger.debug("Pending upload pruning failed (non-fatal)", exc_info=True)
+
         try:
             # --- Post-now mode: single draft, no promote/drain ---
             if draft_id:

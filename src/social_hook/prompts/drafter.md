@@ -10,8 +10,7 @@ Use the `create_draft` tool to create the post. You must provide:
 - **reasoning**: Why you chose this angle/content
 
 Optionally:
-- **media_type**: Suggested media tool (mermaid, nano_banana_pro, playwright, ray_so, none)
-- **media_spec**: Specification for media generation
+- **media_specs**: List of media items (each has `id`, `tool`, `spec`, optional `caption`, optional `user_uploaded`) — see Media Selection below
 - **vehicle**: "single", "thread", or "article" — your recommended content vehicle based on narrative structure
 - **beat_count**: Number of distinct narrative beats/steps in the content
 
@@ -115,9 +114,16 @@ multiple commits, ensure the content cohesively covers all the work.
 
 Refer to the "Media Tool Guide" section below for available tools, usage guidance, and prompt examples. If no Media Tool Guide section is present, use your best judgment.
 
-Choose `media_type: "none"` when text alone is powerful enough. Avoid using the same media tool for 3+ consecutive posts.
+Choose an empty `media_specs: []` when text alone is powerful enough. Avoid using the same media tool for 3+ consecutive posts.
 
-When you select a media tool, you MUST also provide `media_spec` with the tool-specific fields:
+Each item in `media_specs` MUST include:
+- `id`: `"media_" + 12 lowercase hex chars` (e.g., `"media_a1b2c3d4e5f6"`). Match the backend's `generate_id("media")` format exactly. Never reuse an `id` across two items.
+- `tool`: one of `nano_banana_pro`, `mermaid`, `ray_so`, `playwright`, `legacy_upload`.
+- `spec`: tool-specific fields (see below).
+
+Optional per-item:
+- `caption`: brief alt text / figure caption.
+- `user_uploaded`: `true` only for operator-uploaded images passed in via context. Do NOT fabricate these.
 
 ### ray_so (code screenshot)
 - `code` (required): The code snippet to screenshot. Extract the most interesting 5-15 lines from the commit diff.
@@ -134,6 +140,18 @@ When you select a media tool, you MUST also provide `media_spec` with the tool-s
 - `url` (required): URL of the page to screenshot.
 - `selector` (optional): CSS selector to capture a specific element.
 
+## Multi-media for articles and posts
+
+For articles, decide how many images would genuinely improve reader understanding based on content depth, project memory (past article patterns), and operator context. Typical: 1-5 items. Available tools: `nano_banana_pro` (photo-realistic), `mermaid` (diagrams), `ray_so` (code screenshots). Mix tools freely.
+
+For each image, produce a `MediaSpecItem` with a stable `id` using the pattern `media_` + 12 lowercase hex chars (e.g., `media_a1b2c3d4e5f6`). Match the backend's `generate_id("media")` format exactly. Never reuse an `id` across two items.
+
+Reference each image in `content` with `![caption](media:<id>)` at the position where it should render, where `<id>` is the exact `id` from the spec item (including the `media_` prefix).
+
+If operator pre-uploaded images, they appear as pre-seeded items with `user_uploaded=true` in a JSON block inside your context. Your `media_specs` output MUST include every pre-seeded upload verbatim (same `id`, `tool: "legacy_upload"`, `spec.path`, `user_uploaded: true`) and reference each one in `content` using its `id` via the `![caption](media:<id>)` token convention. Don't fabricate new entries for the uploaded images, and don't invent upload paths — only paths from the pre-seeded block are valid.
+
+For single posts and threads, default to 1 image unless the platform supports more and content benefits. Don't emit inline tokens for non-article vehicles — media attaches at post time.
+
 ## Expert Mode
 
 When handling escalations from the Gatekeeper, use the `expert_response` tool instead.
@@ -144,3 +162,7 @@ If the user's feedback is about media (e.g., "choose a better code snippet",
 "use a different diagram", "change the image"), update `refined_media_spec` with
 the corrected spec fields for the current media tool. Refer to the Media Selection
 section above for the required fields per tool.
+
+## Per-part media on threads (refine_draft only)
+
+When operator feedback asks for per-part thread images ("give each tweet its own image", "add a diagram to part 3") or broad visual upgrades on a thread ("more visuals", "illustrate the key points"), emit `part_media_specs: list[list[MediaSpecItem]]` indexed by draft_parts order. Per inner list: `[spec, ...]` sets media on that part, `[]` clears it. Shorten the outer list or omit the field to leave parts unchanged. Not every part needs media — prefer purposeful over blanket coverage.

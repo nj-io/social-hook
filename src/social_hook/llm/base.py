@@ -66,7 +66,15 @@ class LLMClient(ABC):
         """Make an LLM API call with tool use.
 
         Args:
-            messages: Conversation messages
+            messages: Conversation messages. Each message's ``content`` may
+                be either a plain string (text-only, backward-compatible)
+                OR a list of content blocks for multi-modal inputs.
+                Text block: ``{"type": "text", "text": "..."}``.
+                Image block: ``{"type": "image", "source": {"type": "base64",
+                "media_type": "image/png", "data": "<base64>"}}`` (Anthropic
+                format). OpenAI-compatible clients translate image blocks
+                into ``{"type": "image_url", "image_url": {"url":
+                "data:image/png;base64,..."}}`` internally.
             tools: Tool definitions for function calling
             system: System prompt
             max_tokens: Maximum output tokens

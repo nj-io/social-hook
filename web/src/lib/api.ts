@@ -1,4 +1,4 @@
-import type { Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent, PlatformCredential, Account, Target, Strategy, Topic, Brief, ContentSuggestion, EvaluationCycle, SystemError, SystemHealth, PlatformSettings } from "./types";
+import type { Advisory, Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PendingUpload, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent, PlatformCredential, Account, Target, Strategy, Topic, Brief, ContentSuggestion, EvaluationCycle, SystemError, SystemHealth, PlatformSettings } from "./types";
 import { getSessionId } from "./session";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -348,21 +348,6 @@ export async function testChannel(channel: string): Promise<{ success: boolean; 
   return apiFetch(`/api/channels/${encodeURIComponent(channel)}/test`, { method: "POST" });
 }
 
-// Draft media spec
-export async function updateDraftMediaSpec(
-  draftId: string,
-  mediaSpec: Record<string, unknown>,
-  mediaType?: string,
-): Promise<{ status: string }> {
-  const body: Record<string, unknown> = { media_spec: mediaSpec };
-  if (mediaType) body.media_type = mediaType;
-  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/media-spec`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
 export async function uploadDraftMedia(
   draftId: string,
   file: File,
@@ -402,6 +387,98 @@ export async function resendDraftNotification(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Multi-media per-item endpoints
+//
+// Addressing is always by stable `media_id` ("media_<12hex>"). Index never
+// crosses the API boundary — it's a backend implementation detail used only
+// for splice operations. Every LLM-bearing call returns 202 + task_id and
+// is tracked via `useBackgroundTasks`.
+// ---------------------------------------------------------------------------
+
+export async function addMediaItem(
+  draftId: string,
+  body: { tool: string; spec?: Record<string, unknown>; caption?: string | null },
+): Promise<{ task_id?: string; media_id: string; status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateMediaItem(
+  draftId: string,
+  mediaId: string,
+  body: { tool?: string; spec?: Record<string, unknown>; caption?: string | null },
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(
+    `/api/drafts/${encodeURIComponent(draftId)}/media/${encodeURIComponent(mediaId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function removeMediaItem(
+  draftId: string,
+  mediaId: string,
+): Promise<{ status: string }> {
+  return apiFetch(
+    `/api/drafts/${encodeURIComponent(draftId)}/media/${encodeURIComponent(mediaId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function regenAllMedia(
+  draftId: string,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/media/regen-all`, {
+    method: "POST",
+  });
+}
+
+export async function replanMediaSpecs(
+  draftId: string,
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(`/api/drafts/${encodeURIComponent(draftId)}/media/replan`, {
+    method: "POST",
+  });
+}
+
+/**
+ * Upload a reference image to a project's staging directory.
+ * Returns a ``PendingUpload`` whose ``upload_id`` must be passed to
+ * ``createContent`` (as ``upload_ids``) to consume the staging file.
+ * Stale staging rows (>24h) are pruned by the scheduler tick.
+ */
+export async function uploadImage(
+  projectId: string,
+  file: File,
+  context: string = "",
+): Promise<PendingUpload> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("context", context);
+  const headers = new Headers();
+  headers.set("X-Session-Id", getSessionId());
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/uploads`,
+    { method: "POST", headers, body: form },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Upload failed ${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+export async function getAdvisory(advisoryId: string): Promise<Advisory> {
+  return apiFetch(`/api/advisory/${encodeURIComponent(advisoryId)}`);
+}
+
 // Decisions
 export async function createDraftFromDecision(
   decisionId: string,
@@ -416,7 +493,15 @@ export async function createDraftFromDecision(
 
 export async function createContent(
   projectId: string,
-  body: { idea: string; vehicle?: string | null; reference_files?: string[]; target_id?: string },
+  body: {
+    idea: string;
+    vehicle?: string | null;
+    reference_files?: string[];
+    target_id?: string;
+    /** Upload IDs from ``uploadImage()`` to attach as reference images. */
+    upload_ids?: string[];
+    platform?: string;
+  },
 ): Promise<{ task_id: string; status: string }> {
   return apiFetch(`/api/projects/${encodeURIComponent(projectId)}/create-content`, {
     method: "POST",

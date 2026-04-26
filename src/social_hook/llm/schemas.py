@@ -1,11 +1,14 @@
 """Pydantic models for LLM tool call validation."""
 
+import logging
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from social_hook.errors import MalformedResponseError
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Schema-specific Enums (str enums for Pydantic JSON serialization)
@@ -28,6 +31,50 @@ class MediaTool(str, Enum):
     playwright = "playwright"
     ray_so = "ray_so"
     none = "none"
+
+
+# Valid tool names for MediaSpecItem. Enum members plus "legacy_upload" (for
+# operator-uploaded items pre-dating the multi-media migration).
+_VALID_MEDIA_TOOL_NAMES = {tool.value for tool in MediaTool if tool != MediaTool.none} | {
+    "legacy_upload"
+}
+
+
+class MediaSpecItem(BaseModel):
+    """One media item attached to a draft.
+
+    The drafter emits a list of these; index i in ``draft.media_specs``
+    references the same item as index i in ``media_paths``,
+    ``media_errors``, and ``media_specs_used``. ``id`` is stable across
+    splices — content tokens ``![caption](media:<id>)`` reference it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(
+        description="Stable ID in the format 'media_' + 12 lowercase hex chars "
+        "(matches generate_id('media'))."
+    )
+    tool: str = Field(
+        description="Generation tool name. Enum members of MediaTool plus 'legacy_upload'."
+    )
+    spec: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Tool-specific spec. nano_banana_pro={prompt}, mermaid={diagram}, "
+        "ray_so={code, language?, title?}, playwright={url, selector?}, "
+        "legacy_upload={path}.",
+    )
+    caption: str | None = None
+    user_uploaded: bool = False
+
+    @field_validator("tool")
+    @classmethod
+    def _validate_tool(cls, v: str) -> str:
+        if v not in _VALID_MEDIA_TOOL_NAMES:
+            raise ValueError(
+                f"Unknown tool {v!r}; must be one of {sorted(_VALID_MEDIA_TOOL_NAMES)}"
+            )
+        return v
 
 
 class RouteAction(str, Enum):
@@ -322,8 +369,7 @@ class CreateDraftInput(BaseModel):
     content: str
     platform: str
     reasoning: str
-    media_type: MediaTool | None = None
-    media_spec: dict[str, Any] | None = None
+    media_specs: list[MediaSpecItem] = Field(default_factory=list)
     vehicle: str | None = None
     beat_count: int | None = None
     variants: list[PlatformVariant] | None = None
@@ -345,18 +391,59 @@ class CreateDraftInput(BaseModel):
                         "type": "string",
                         "description": "Target platform name (e.g., 'x', 'linkedin', 'blog')",
                     },
-                    "media_type": {
-                        "type": "string",
-                        "enum": [e.value for e in MediaTool],
-                    },
-                    "media_spec": {
-                        "type": "object",
+                    "media_specs": {
+                        "type": "array",
                         "description": (
-                            "Specification for media generation. Required when media_type is not 'none'. "
-                            "Fields depend on tool: ray_so needs {code, language?, title?}, "
-                            "mermaid needs {diagram}, nano_banana_pro needs {prompt}, "
-                            "playwright needs {url, selector?}."
+                            "Media items attached to this draft. For articles, each item "
+                            "must be referenced in 'content' via a markdown token like "
+                            "![caption](media:<id>) positioned where the image should render, "
+                            "where <id> is the exact id of the spec item (including the "
+                            "'media_' prefix). For non-article vehicles, media items are "
+                            "appended to the post — do NOT emit tokens in content."
                         ),
+                        "items": {
+                            "type": "object",
+                            "required": ["id", "tool", "spec"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "pattern": "^media_[a-f0-9]{12}$",
+                                    "description": (
+                                        "'media_' + 12 lowercase hex chars. "
+                                        "Referenced by ![](media:<id>) tokens — "
+                                        "the full id including the 'media_' prefix."
+                                    ),
+                                },
+                                "tool": {
+                                    "type": "string",
+                                    "enum": [
+                                        "nano_banana_pro",
+                                        "mermaid",
+                                        "ray_so",
+                                        "playwright",
+                                        "legacy_upload",
+                                    ],
+                                    "description": (
+                                        "Generation tool. 'legacy_upload' is for "
+                                        "operator-uploaded items only."
+                                    ),
+                                },
+                                "spec": {
+                                    "type": "object",
+                                    "description": (
+                                        "Tool-specific. nano_banana_pro: {prompt}. "
+                                        "mermaid: {diagram}. "
+                                        "ray_so: {code, language?, title?}. "
+                                        "playwright: {url, selector?}. "
+                                        "legacy_upload: {path}."
+                                    ),
+                                },
+                                "caption": {"type": ["string", "null"]},
+                                "user_uploaded": {"type": "boolean", "default": False},
+                            },
+                        },
+                        "default": [],
                     },
                     "reasoning": {
                         "type": "string",
@@ -573,6 +660,12 @@ class ExpertResponseInput(BaseModel):
     refined_content: str | None = None
     refined_media_spec: dict[str, Any] | None = None
     refined_vehicle: str | None = None
+    # Per-part media for thread vehicles. Outer list indexes draft_parts
+    # (one entry per part); inner list is that part's media_specs (same
+    # shape as Draft.media_specs). None leaves existing per-part media
+    # untouched. Used by the change-angle flow ("give each tweet its own
+    # image") — see bot/commands.py::_apply_expert_result.
+    part_media_specs: list[list[MediaSpecItem]] | None = None
     answer: str | None = None
     context_note: str | None = None
 
@@ -610,6 +703,47 @@ class ExpertResponseInput(BaseModel):
                             "For refine_draft: change the content vehicle. "
                             "Use when the user asks to reformat as a thread, single post, or article."
                         ),
+                    },
+                    "part_media_specs": {
+                        "type": "array",
+                        "description": (
+                            "For refine_draft on thread vehicles: per-part media. "
+                            "Outer array indexes draft_parts (one entry per part); "
+                            "each inner array is that part's media_specs (same shape "
+                            "as the top-level media_specs on create_draft). Use when "
+                            "the user asks to give each tweet in a thread its own "
+                            "image. Omit to leave per-part media unchanged."
+                        ),
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["id", "tool", "spec"],
+                                "additionalProperties": False,
+                                "properties": {
+                                    "id": {
+                                        "type": "string",
+                                        "pattern": "^media_[a-f0-9]{12}$",
+                                    },
+                                    "tool": {
+                                        "type": "string",
+                                        "enum": [
+                                            "nano_banana_pro",
+                                            "mermaid",
+                                            "ray_so",
+                                            "playwright",
+                                            "legacy_upload",
+                                        ],
+                                    },
+                                    "spec": {"type": "object"},
+                                    "caption": {"type": ["string", "null"]},
+                                    "user_uploaded": {
+                                        "type": "boolean",
+                                        "default": False,
+                                    },
+                                },
+                            },
+                        },
                     },
                     "answer": {
                         "type": "string",

@@ -28,6 +28,42 @@ def _convert_tool_schema(anthropic_tool: dict) -> dict:
     }
 
 
+def _translate_content_blocks(content: Any) -> Any:
+    """Translate Anthropic-style content blocks into OpenAI format.
+
+    Anthropic text:  {"type": "text", "text": "..."} — identical in OpenAI.
+    Anthropic image: {"type": "image", "source": {"type": "base64",
+                      "media_type": "image/png", "data": "..."}}
+        → OpenAI:    {"type": "image_url",
+                      "image_url": {"url": "data:image/png;base64,..."}}
+
+    String ``content`` passes through unchanged. Unknown block types are
+    passed through verbatim — the OpenAI SDK raises its own error if it
+    cannot parse them.
+    """
+    if not isinstance(content, list):
+        return content
+    translated: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            translated.append(block)
+            continue
+        btype = block.get("type")
+        if btype == "image" and isinstance(block.get("source"), dict):
+            src = block["source"]
+            media_type = src.get("media_type", "image/png")
+            data = src.get("data", "")
+            translated.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{media_type};base64,{data}"},
+                }
+            )
+        else:
+            translated.append(block)
+    return translated
+
+
 class OpenAICompatClient(LLMClient):
     """LLM client for OpenAI-compatible APIs (OpenAI, OpenRouter, Ollama)."""
 
@@ -55,11 +91,17 @@ class OpenAICompatClient(LLMClient):
         # 1. Convert tool schemas: Anthropic -> OpenAI format
         openai_tools = [_convert_tool_schema(t) for t in tools]
 
-        # 2. Build messages (system prompt is a message in OpenAI format)
-        openai_messages = []
+        # 2. Build messages (system prompt is a message in OpenAI format).
+        #    Translate Anthropic-style content-block lists (text + image
+        #    blocks) into OpenAI's image_url data-URL format so vision-
+        #    capable models see images natively.
+        openai_messages: list[dict[str, Any]] = []
         if system:
             openai_messages.append({"role": "system", "content": system})
-        openai_messages.extend(messages)
+        for msg in messages:
+            translated = dict(msg)
+            translated["content"] = _translate_content_blocks(msg.get("content"))
+            openai_messages.append(translated)
 
         # 3. Call API
         try:

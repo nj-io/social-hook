@@ -10,6 +10,8 @@ from social_hook.adapters.models import (
     PostResult,
 )
 from social_hook.vehicle import (
+    check_auto_postable,
+    get_max_media_count,
     materialize_vehicle_artifacts,
     parse_thread_parts,
     post_by_vehicle,
@@ -268,3 +270,112 @@ class TestPostByVehicle:
         result = post_by_vehicle(adapter, draft, None, None)
         assert result.success is True
         adapter.post.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# check_auto_postable — polymorphic input (Draft | dict | SimpleNamespace)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckAutoPostable:
+    def test_accepts_dict(self):
+        assert check_auto_postable({"vehicle": "single", "platform": "x"}) is True
+        assert check_auto_postable({"vehicle": "article", "platform": "x"}) is False
+
+    def test_accepts_simplenamespace(self):
+        assert check_auto_postable(SimpleNamespace(vehicle="single", platform="x")) is True
+        assert check_auto_postable(SimpleNamespace(vehicle="article", platform="x")) is False
+
+    def test_accepts_draft_dataclass(self):
+        from social_hook.models.core import Draft
+
+        d = Draft(
+            id="d1",
+            project_id="p",
+            decision_id="de",
+            platform="x",
+            content="hi",
+            vehicle="article",
+        )
+        assert check_auto_postable(d) is False
+        d2 = Draft(
+            id="d2",
+            project_id="p",
+            decision_id="de",
+            platform="x",
+            content="hi",
+            vehicle="thread",
+        )
+        assert check_auto_postable(d2) is True
+
+    def test_empty_dict_defaults_to_single(self):
+        assert check_auto_postable({}) is True
+
+    def test_missing_platform_treated_as_empty_string(self):
+        # Unknown platform + non-single vehicle: no cap found -> auto_postable
+        # (defensive default: True so the scheduler doesn't swallow drafts).
+        assert check_auto_postable({"vehicle": "thread"}) is True
+
+    def test_vehicle_none_treated_as_single(self):
+        assert check_auto_postable(SimpleNamespace(vehicle=None, platform="x")) is True
+
+    def test_article_on_linkedin_not_auto_postable(self):
+        assert check_auto_postable({"vehicle": "article", "platform": "linkedin"}) is False
+
+
+# ---------------------------------------------------------------------------
+# get_max_media_count
+# ---------------------------------------------------------------------------
+
+
+class TestGetMaxMediaCount:
+    def test_x_single_is_four(self):
+        """X uses SINGLE_X which extends the baseline with MULTI_IMAGE_X(4)."""
+        assert get_max_media_count("single", "x") == 4
+
+    def test_x_thread_is_one(self):
+        assert get_max_media_count("thread", "x") == 1
+
+    def test_x_article_is_twenty(self):
+        assert get_max_media_count("article", "x") == 20
+
+    def test_linkedin_single_is_one(self):
+        """LinkedIn uses the universal SINGLE baseline (one image, one GIF)."""
+        assert get_max_media_count("single", "linkedin") == 1
+
+    def test_linkedin_article_is_twenty(self):
+        assert get_max_media_count("article", "linkedin") == 20
+
+    def test_unknown_platform_defaults_to_one_with_warning(self, caplog):
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        assert get_max_media_count("single", "bluesky") == 1
+        assert any(
+            "Unknown" in rec.getMessage() and "bluesky" in rec.getMessage()
+            for rec in caplog.records
+        )
+
+    def test_unknown_vehicle_defaults_to_one_with_warning(self, caplog):
+        import logging
+
+        caplog.set_level(logging.WARNING)
+        assert get_max_media_count("nonexistent", "x") == 1
+        assert any(
+            "Unknown" in rec.getMessage() and "nonexistent" in rec.getMessage()
+            for rec in caplog.records
+        )
+
+    def test_text_only_capability_returns_zero(self, monkeypatch):
+        """A capability declared with empty media_modes reports zero — a
+        hypothetical text-only platform must not receive generated media.
+
+        This distinct-from-unknown fallback (0 vs 1) keeps the drafter from
+        silently attaching media to a platform that refuses it.
+        """
+        from social_hook.adapters.models import PostCapability
+        from social_hook.config import platforms as plat
+
+        text_only = PostCapability("single", (), "Text-only")
+        monkeypatch.setitem(plat.PLATFORM_VEHICLE_SUPPORT, "textonly", [text_only])
+        assert get_max_media_count("single", "textonly") == 0

@@ -80,8 +80,23 @@ class ClaudeCliClient(LLMClient):
         schema = tools[0]["input_schema"]
         tool_name = tools[0]["name"]
 
-        # 2. Extract user message text
-        user_msg = messages[-1]["content"]
+        # 2. Extract user message. Two shapes:
+        #    * str        — text-only (default path, stdin as plain text).
+        #    * list[dict] — content blocks (text + optional image blocks
+        #                   for vision-capable models). We switch to
+        #                   ``--input-format stream-json`` and serialize
+        #                   the user turn as NDJSON so image blocks flow
+        #                   through natively.
+        raw_content = messages[-1]["content"]
+        content_blocks: list[dict[str, Any]] | None = None
+        user_msg: str
+        if isinstance(raw_content, list):
+            content_blocks = raw_content
+            # Preview text for verbose logging only; the CLI consumes NDJSON.
+            text_parts = [b.get("text", "") for b in raw_content if b.get("type") == "text"]
+            user_msg = " ".join(text_parts).strip() or "<image-only user message>"
+        else:
+            user_msg = raw_content
 
         # 3. Build system prompt with embedded JSON output instructions.
         #    We do NOT use --json-schema because it forces the CLI into a
@@ -131,6 +146,25 @@ class ClaudeCliClient(LLMClient):
             prompt_path,
         ]
 
+        # When the caller passes a content-block list (text + image blocks)
+        # we feed the CLI a stream-json user turn so image blocks are
+        # interpreted natively. Vision capability itself is gated upstream
+        # by the drafter via catalog.get_model_info(); this path trusts
+        # the caller.
+        if content_blocks is not None:
+            cmd.extend(["--input-format", "stream-json"])
+            stdin_payload = (
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {"role": "user", "content": content_blocks},
+                    }
+                )
+                + "\n"
+            )
+        else:
+            stdin_payload = user_msg
+
         # 5. Run subprocess with clean env for CLI auth
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         # Restore real HOME — the E2E harness or other callers may have
@@ -167,7 +201,7 @@ class ClaudeCliClient(LLMClient):
                     start_new_session=True,
                 )
                 try:
-                    stdout, stderr = proc.communicate(input=user_msg, timeout=300)
+                    stdout, stderr = proc.communicate(input=stdin_payload, timeout=300)
                 except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
                     proc.kill()
                     proc.wait()
@@ -200,7 +234,7 @@ class ClaudeCliClient(LLMClient):
         #    Each line is a separate JSON object. Content arrives as
         #    content_block_delta events (text_delta for text, input_json_delta
         #    for tool calls). Parse by block index to accumulate both types.
-        content_blocks: dict[int, list[str]] = {}  # index -> text chunks
+        block_chunks: dict[int, list[str]] = {}  # index -> text chunks
         envelope = {}
 
         for line in result.stdout.strip().split("\n"):
@@ -219,9 +253,9 @@ class ClaudeCliClient(LLMClient):
                     delta = inner.get("delta", {})
                     delta_type = delta.get("type", "")
                     if delta_type == "text_delta":
-                        content_blocks.setdefault(index, []).append(delta.get("text", ""))
+                        block_chunks.setdefault(index, []).append(delta.get("text", ""))
                     elif delta_type == "input_json_delta":
-                        content_blocks.setdefault(index, []).append(delta.get("partial_json", ""))
+                        block_chunks.setdefault(index, []).append(delta.get("partial_json", ""))
                     # thinking_delta, signature_delta — skip (not output content)
 
             # Capture the result envelope for usage data
@@ -229,9 +263,9 @@ class ClaudeCliClient(LLMClient):
                 envelope = event
 
         result_text = ""
-        if content_blocks:
-            for idx in sorted(content_blocks):
-                result_text += "".join(content_blocks[idx])
+        if block_chunks:
+            for idx in sorted(block_chunks):
+                result_text += "".join(block_chunks[idx])
 
         if not result_text:
             # Fallback: try the result field (may be truncated — bug #2904)

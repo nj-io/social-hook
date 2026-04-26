@@ -274,6 +274,77 @@ def combine(
         conn.close()
 
 
+def _validate_upload_file(path: str) -> tuple[bool, str]:
+    """Return (ok, error) for a single upload path.
+
+    Delegates size + format enforcement to ``social_hook.uploads.validate_upload``
+    (single source of truth). Adds the CLI-only check that ``path`` actually
+    resolves to a file on disk.
+    """
+    import os
+
+    from social_hook.errors import ConfigError
+    from social_hook.uploads import validate_upload
+
+    if not path:
+        return False, "empty path"
+    if not os.path.isfile(path):
+        return False, f"not a file: {path}"
+    try:
+        validate_upload(size_bytes=os.path.getsize(path), filename=os.path.basename(path))
+    except ConfigError as e:
+        return False, str(e)
+    return True, ""
+
+
+def _resolve_uploads(
+    uploads_json: str | None,
+    files: list[str] | None,
+    file_contexts: list[str] | None,
+) -> list[dict]:
+    """Resolve operator uploads from --uploads (primary) or --file/--file-context.
+
+    Returns a list of ``{"path": str, "context": str}`` dicts suitable for
+    ``MediaUpload(**d)``. Raises ``typer.Exit(1)`` on any validation failure
+    — with the offending path in the error so the operator can fix quickly.
+    Never contacts the server.
+    """
+    uploads: list[dict] = []
+    if uploads_json:
+        try:
+            parsed = json_mod.loads(uploads_json)
+        except json_mod.JSONDecodeError as e:
+            typer.echo(f"Invalid --uploads JSON: {e}", err=True)
+            raise typer.Exit(1) from None
+        if not isinstance(parsed, list):
+            typer.echo("--uploads must be a JSON array of {path, context} objects.", err=True)
+            raise typer.Exit(1)
+        for i, entry in enumerate(parsed):
+            if not isinstance(entry, dict) or "path" not in entry:
+                typer.echo(f"--uploads[{i}] missing required 'path' field.", err=True)
+                raise typer.Exit(1)
+            uploads.append({"path": str(entry["path"]), "context": str(entry.get("context", ""))})
+
+    if files:
+        if file_contexts is not None and len(file_contexts) != len(files):
+            typer.echo(
+                "--file-context count must match --file count (or omit --file-context "
+                "entirely for empty contexts).",
+                err=True,
+            )
+            raise typer.Exit(1)
+        contexts = file_contexts or [""] * len(files)
+        for path, ctx_text in zip(files, contexts, strict=False):
+            uploads.append({"path": path, "context": ctx_text})
+
+    for entry in uploads:
+        ok, err = _validate_upload_file(entry["path"])
+        if not ok:
+            typer.echo(f"Upload rejected: {entry['path']}: {err}", err=True)
+            raise typer.Exit(1)
+    return uploads
+
+
 @app.command()
 def create(
     ctx: typer.Context,
@@ -282,7 +353,29 @@ def create(
         None, "--vehicle", "-v", help="Content vehicle: single, thread, article (default: auto)"
     ),
     files: list[str] | None = typer.Option(
-        None, "--files", "-f", help="Reference files for context (per-draft, not persisted)"
+        None, "--files", help="Reference text files for context (per-draft, not persisted)"
+    ),
+    uploads_json: str | None = typer.Option(
+        None,
+        "--uploads",
+        help=(
+            'Reference images as JSON: \'[{"path": "a.png", "context": "..."}]\'. '
+            "Each file is guarded: 5 MiB max, formats png/jpg/jpeg/webp/gif. "
+            "Primary path — used by headless agents."
+        ),
+    ),
+    upload_files: list[str] | None = typer.Option(
+        None,
+        "--file",
+        help=(
+            "Single reference image path (repeatable). Pair with --file-context "
+            "per-file in matching order, or omit --file-context for empty context."
+        ),
+    ),
+    file_contexts: list[str] | None = typer.Option(
+        None,
+        "--file-context",
+        help="Per-file context text (must match --file count if provided).",
     ),
     project_path: str | None = typer.Option(
         None, "--project", "-p", help="Repository path (default: cwd)"
@@ -292,15 +385,18 @@ def create(
     """Create content from an idea, bypassing the evaluator.
 
     Constructs a DraftingIntent directly and calls the drafting pipeline.
-    Makes LLM calls. Writes decisions and drafts to the database.
+    Makes LLM calls. Writes decisions and drafts to the database. Reference
+    images flow through as vision content blocks to the drafter (model must
+    advertise supports_vision).
 
-    Example: social-hook content create --idea "Show the new dashboard feature" --vehicle article --files guide.md
+    Example (headless): social-hook content create --idea "Dashboard launch" --vehicle article --uploads '[{"path": "hero.png", "context": "final UI"}]'
+    Example (interactive): social-hook content create --idea "Dashboard launch" --vehicle article --file hero.png --file-context "final UI"
     """
     from social_hook.config.platforms import resolve_platform
     from social_hook.config.project import ProjectConfig, load_project_config
     from social_hook.config.yaml import load_full_config
     from social_hook.db import operations as ops
-    from social_hook.drafting import DraftingIntent, PlatformSpec, draft
+    from social_hook.drafting import DraftingIntent, MediaUpload, PlatformSpec, draft
     from social_hook.errors import ConfigError
     from social_hook.filesystem import generate_id
     from social_hook.llm.dry_run import DryRunContext
@@ -315,6 +411,10 @@ def create(
     if vehicle and vehicle not in ("single", "thread", "article"):
         typer.echo(f"Invalid vehicle: {vehicle}. Must be single, thread, or article.", err=True)
         raise typer.Exit(1)
+
+    # Resolve + pre-validate uploads BEFORE DB/server work so bad uploads
+    # exit 1 with no side effects.
+    upload_entries = _resolve_uploads(uploads_json, upload_files, file_contexts)
 
     conn = _get_conn()
     try:
@@ -343,7 +443,7 @@ def create(
                 typer.echo(msg, err=True)
             raise typer.Exit(1)
 
-        # Read reference files if provided
+        # Read reference files if provided (text content, not image uploads)
         assembled_ref_text = ""
         if files:
             from social_hook.file_reader import read_files_within_budget
@@ -368,6 +468,12 @@ def create(
         )
         ops.insert_decision(conn, decision)
 
+        media_uploads: list[MediaUpload] | None = (
+            [MediaUpload(path=e["path"], context=e["context"]) for e in upload_entries]
+            if upload_entries
+            else None
+        )
+
         intent = DraftingIntent(
             decision="draft",
             vehicle=vehicle,
@@ -379,6 +485,7 @@ def create(
             content_source_context={"reference_files": assembled_ref_text}
             if assembled_ref_text
             else None,
+            uploads=media_uploads,
         )
 
         db = DryRunContext(conn, dry_run=dry_run)

@@ -184,7 +184,7 @@ _MODELS: list[ModelInfo] = [
         context_window=200_000,
         max_output_tokens=32_000,
         supports_tools=True,
-        supports_vision=False,
+        supports_vision=True,
     ),
     ModelInfo(
         id="sonnet",
@@ -196,7 +196,7 @@ _MODELS: list[ModelInfo] = [
         context_window=200_000,
         max_output_tokens=16_000,
         supports_tools=True,
-        supports_vision=False,
+        supports_vision=True,
     ),
     ModelInfo(
         id="haiku",
@@ -208,7 +208,7 @@ _MODELS: list[ModelInfo] = [
         context_window=200_000,
         max_output_tokens=8_192,
         supports_tools=True,
-        supports_vision=False,
+        supports_vision=True,
     ),
     # --- OpenAI ---
     ModelInfo(
@@ -342,8 +342,10 @@ _MODELS: list[ModelInfo] = [
 
 # Index models by provider for fast lookup
 _MODELS_BY_PROVIDER: dict[str, list[ModelInfo]] = {}
+_MODELS_BY_FULL_ID: dict[str, ModelInfo] = {}
 for _m in _MODELS:
     _MODELS_BY_PROVIDER.setdefault(_m.provider, []).append(_m)
+    _MODELS_BY_FULL_ID[_m.full_id] = _m
 
 
 # =============================================================================
@@ -361,6 +363,16 @@ def get_models_for_provider(provider_id: str) -> list[ModelInfo]:
         List of ModelInfo for the provider (empty for unknown/ollama)
     """
     return list(_MODELS_BY_PROVIDER.get(provider_id, []))
+
+
+def get_model_info(full_id: str) -> ModelInfo | None:
+    """Return ModelInfo for a 'provider/model-id' string, or None if unknown.
+
+    Used by the drafter to check ``supports_vision`` before building
+    image content blocks. Unknown model strings (e.g. Ollama models not
+    yet discovered) return None; callers should fail closed.
+    """
+    return _MODELS_BY_FULL_ID.get(full_id)
 
 
 def get_provider_info(provider_id: str) -> ProviderInfo | None:

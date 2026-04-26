@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 20260408120000
+SCHEMA_VERSION = 20260417122744
 
 # All DDL statements for initial schema
 SCHEMA_DDL = """
@@ -90,9 +90,13 @@ CREATE TABLE IF NOT EXISTS drafts (
     status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'scheduled', 'posted', 'rejected', 'failed', 'superseded', 'cancelled', 'deferred', 'advisory')),
     content         TEXT NOT NULL,
     media_paths     TEXT NOT NULL DEFAULT '[]',
-    media_type      TEXT,
-    media_spec      TEXT DEFAULT '{}',
-    media_spec_used TEXT,
+    -- Multi-media parallel arrays, one entry per media item (indexes line
+    -- up across media_paths/media_specs/media_errors/media_specs_used).
+    -- Replaced the singular media_type/media_spec/media_spec_used columns
+    -- via migration 20260417122744_multi_media.sql.
+    media_specs     TEXT NOT NULL DEFAULT '[]',
+    media_errors    TEXT NOT NULL DEFAULT '[]',
+    media_specs_used TEXT NOT NULL DEFAULT '[]',
     suggested_time  TEXT,
     scheduled_time  TEXT,
     reasoning       TEXT,
@@ -121,6 +125,7 @@ CREATE INDEX IF NOT EXISTS idx_drafts_intro ON drafts(project_id) WHERE is_intro
 CREATE INDEX IF NOT EXISTS idx_drafts_reference_post ON drafts(reference_post_id) WHERE reference_post_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_drafts_target ON drafts(target_id) WHERE target_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_drafts_topic_id ON drafts(topic_id) WHERE topic_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_drafts_deferred ON drafts(status, created_at) WHERE status = 'deferred';
 
 -- Draft Parts (Thread/Multi-part Support)
 CREATE TABLE IF NOT EXISTS draft_parts (
@@ -132,12 +137,31 @@ CREATE TABLE IF NOT EXISTS draft_parts (
     external_id TEXT,
     posted_at   TEXT,
     error       TEXT,
+    -- Multi-media parallel arrays for per-part media (change-angle /
+    -- Expert flow). Indexes line up with media_paths.
+    media_specs TEXT NOT NULL DEFAULT '[]',
+    media_errors TEXT NOT NULL DEFAULT '[]',
+    media_specs_used TEXT NOT NULL DEFAULT '[]',
 
     UNIQUE(draft_id, position)
 );
 
 CREATE INDEX IF NOT EXISTS idx_draft_parts_draft ON draft_parts(draft_id, position);
 CREATE INDEX IF NOT EXISTS idx_draft_parts_external ON draft_parts(external_id) WHERE external_id IS NOT NULL;
+
+-- Pending uploads — staged operator-uploaded reference images awaiting
+-- draft creation. Scheduler prunes entries older than 24h (see Agent 3
+-- scheduler hook). Staging dirs for each row live under
+-- media-cache/uploads/_staging/{upload_id}/.
+CREATE TABLE IF NOT EXISTS pending_uploads (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL REFERENCES projects(id),
+    path        TEXT NOT NULL,
+    context     TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_uploads_project ON pending_uploads(project_id, created_at);
 
 -- Draft Changes (Audit Trail)
 CREATE TABLE IF NOT EXISTS draft_changes (

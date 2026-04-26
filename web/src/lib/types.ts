@@ -114,11 +114,42 @@ export interface PlatformIntroduced {
   first_post_date?: string;
 }
 
+/**
+ * A single media item attached to a draft. One parallel array entry per item.
+ * Stable `id` is generated server-side (`media_<12hex>`) and used to address
+ * items from every surface: CLI, bot, web, API. Index is an implementation
+ * detail and never crosses boundaries.
+ */
+export interface MediaSpecItem {
+  id: string;
+  tool: string;
+  spec: Record<string, unknown>;
+  caption: string | null;
+  user_uploaded: boolean;
+}
+
+/** Transient upload record, created by drag/drop before a draft exists. */
+export interface PendingUpload {
+  upload_id: string;
+  path: string;
+  context: string;
+}
+
+/** Operator reference image attached during create-content. */
+export interface MediaUpload {
+  path: string;
+  context: string;
+}
+
 export interface DraftPart {
   id: string;
   draft_id: string;
   position: number;
   content: string;
+  media_paths?: string[];
+  media_specs?: MediaSpecItem[];
+  media_errors?: (string | null)[];
+  media_specs_used?: MediaSpecItem[];
 }
 
 export interface DraftChange {
@@ -138,10 +169,13 @@ export interface Draft {
   content: string;
   status: string;
   suggested_time?: string;
-  media_paths?: string;
-  media_type?: string;
-  media_spec?: string;
-  media_spec_used?: string;
+  media_paths?: string[];
+  /** Parallel array of per-item specs. Index i = same item as media_paths[i]. */
+  media_specs?: MediaSpecItem[];
+  /** Parallel array of per-item generation errors (null when healthy). */
+  media_errors?: (string | null)[];
+  /** Parallel array of the spec snapshot last sent to the adapter. */
+  media_specs_used?: MediaSpecItem[];
   reasoning?: string;
   last_error?: string;
   retry_count?: number;
@@ -157,6 +191,7 @@ export interface Draft {
   changes?: DraftChange[];
   decision_id?: string;
   decision?: Decision;
+  diagnostics?: DiagnosticItem[];
 }
 
 export interface Project {
@@ -472,4 +507,33 @@ export function parseTags(tags: string | string[] | undefined | null): string[] 
     try { return JSON.parse(tags); } catch { return []; }
   }
   return [];
+}
+
+/**
+ * Advisory item detail shape as served by `GET /api/advisory/{id}`.
+ * ``rendered_content`` is populated when the linked draft is an article —
+ * media tokens in the draft content are resolved to their file paths/URLs
+ * so the advisory page can inline `<img>` + `<figcaption>` without
+ * re-implementing token resolution client-side.
+ */
+export interface Advisory {
+  id: string;
+  project_id: string;
+  category: string;
+  title: string;
+  description: string | null;
+  status: string;
+  urgency: string;
+  created_by: string;
+  linked_entity_type: string | null;
+  linked_entity_id: string | null;
+  handler_type: string | null;
+  automation_level: string;
+  verification_method: string | null;
+  due_date: string | null;
+  dismissed_reason: string | null;
+  completed_at: string | null;
+  created_at: string | null;
+  rendered_content?: string;
+  diagnostics?: DiagnosticItem[];
 }

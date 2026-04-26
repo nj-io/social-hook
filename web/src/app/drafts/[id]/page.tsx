@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchChannelsStatus, fetchDraft, fetchEnabledPlatforms, generateMediaSpec, resendDraftNotification } from "@/lib/api";
+import { fetchChannelsStatus, fetchDraft, fetchEnabledPlatforms, resendDraftNotification } from "@/lib/api";
 import { platformLabel } from "@/lib/platform";
 import type { Decision, Draft, DraftPart } from "@/lib/types";
 import { parseTags } from "@/lib/types";
@@ -11,9 +11,6 @@ import { Badge } from "@/components/ui/badge";
 import { MediaSection } from "@/components/media-section";
 import { DraftActionPanel } from "@/components/draft-action-panel";
 import { useDataEvents } from "@/lib/use-data-events";
-import { useBackgroundTasks } from "@/lib/use-background-tasks";
-import { useToast } from "@/lib/toast-context";
-import type { BackgroundTask } from "@/lib/api";
 
 export default function DraftDetailPage() {
   const params = useParams();
@@ -42,23 +39,6 @@ export default function DraftDetailPage() {
   }, [id]);
 
   useDataEvents(["draft"], reload);
-
-  const { addToast } = useToast();
-  const onTaskCompleted = useCallback((task: BackgroundTask) => {
-    if (task.status === "failed") {
-      addToast("Media spec generation failed", { variant: "error", detail: task.error ?? "Unknown error" });
-    }
-    reload();
-  }, [addToast, reload]);
-
-  const { trackTask, isRunning } = useBackgroundTasks(draft?.project_id ?? "", onTaskCompleted);
-
-  const handleGenerateSpec = useCallback(async (draftId: string, mediaType: string) => {
-    const res = await generateMediaSpec(draftId, mediaType);
-    trackTask(res.task_id, draftId, "generate_spec");
-  }, [trackTask]);
-
-  const isGeneratingSpec = draft ? isRunning(draft.id) : false;
 
   const [resending, setResending] = useState(false);
   const handleResend = useCallback(async () => {
@@ -180,7 +160,7 @@ export default function DraftDetailPage() {
       )}
 
       {/* Media section: tool selector, spec form, upload, preview */}
-      <MediaSection draft={draft} onUpdate={reload} onGenerateSpec={handleGenerateSpec} isGeneratingSpec={isGeneratingSpec} />
+      <MediaSection draft={draft} onUpdate={reload} />
 
       {/* Reasoning */}
       {draft.reasoning && (

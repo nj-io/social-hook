@@ -8,6 +8,26 @@ from social_hook.messaging.base import OutboundMessage
 logger = logging.getLogger(__name__)
 
 
+def _format_media_info(media_specs: list[dict], media_paths: list[str]) -> str | None:
+    """Summarize media attached to a draft for the review-notification header.
+
+    Multi-media replaces the singular ``draft.media_type (N file)`` string.
+    We now list the distinct tools (preserving source order) and pluralize
+    the file count, e.g. ``mermaid, nano_banana_pro (3 files)``. Returns
+    None when no media is attached so the caller can omit the field.
+    """
+    if not media_paths:
+        return None
+    seen_tools: list[str] = []
+    for spec in media_specs or []:
+        tool = spec.get("tool") if isinstance(spec, dict) else None
+        if tool and tool not in seen_tools:
+            seen_tools.append(tool)
+    tools_str = ", ".join(seen_tools) if seen_tools else "media"
+    n = len(media_paths)
+    return f"{tools_str} ({n} file{'s' if n != 1 else ''})"
+
+
 def broadcast_notification(
     config: Config,
     message: OutboundMessage,
@@ -120,9 +140,7 @@ def notify_draft_review(
         is_thread = bool(thread_parts)
         part_count = len(thread_parts) if is_thread else None
         suggested_time_str = schedule.datetime.strftime("%Y-%m-%d %H:%M UTC")
-        media_info = (
-            f"{draft.media_type} ({len(draft.media_paths)} file)" if draft.media_paths else None
-        )
+        media_info = _format_media_info(draft.media_specs, draft.media_paths)
 
         msg_text = format_draft_review(
             project_name=project_name,
@@ -185,9 +203,7 @@ def resend_draft_notification(
         commit_hash = decision.commit_hash[:8] if decision else "unknown"
         commit_message = decision.commit_message or "" if decision else ""
 
-        media_info = (
-            f"{draft.media_type} ({len(draft.media_paths)} file)" if draft.media_paths else None
-        )
+        media_info = _format_media_info(draft.media_specs, draft.media_paths)
 
         msg_text = format_draft_review(
             project_name=project_name,

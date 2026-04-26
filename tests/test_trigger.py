@@ -636,8 +636,27 @@ def _make_trigger_mocks(
     draft_result.reasoning = "Short and punchy"
     draft_result.vehicle = "thread" if use_thread else "single"
     draft_result.beat_count = 5 if use_thread else 1
-    draft_result.media_type = drafter_media_type
-    draft_result.media_spec = {"prompt": "a diagram"} if drafter_media_type else None
+    # Multi-media per-draft: the drafter now emits a list of MediaSpecItem
+    # (one per media item). When drafter_media_type is set, translate it
+    # into a single-item list so the downstream _generate_all_media path
+    # exercises. When None, the list is empty — no media generation runs.
+    if drafter_media_type is not None:
+        tool_val = getattr(drafter_media_type, "value", drafter_media_type)
+        # Each adapter expects tool-specific spec fields; provide the right
+        # one (fallback to a generic prompt for any other tool).
+        if tool_val == "mermaid":
+            spec_body = {"diagram": "graph LR\n  A-->B"}
+        elif tool_val == "ray_so":
+            spec_body = {"code": "print('hi')"}
+        elif tool_val == "playwright":
+            spec_body = {"url": "https://example.com"}
+        else:
+            spec_body = {"prompt": "a diagram"}
+        draft_result.media_specs = [
+            {"id": "media_testmock0001", "tool": tool_val, "spec": spec_body}
+        ]
+    else:
+        draft_result.media_specs = []
 
     drafter_instance = MagicMock()
     drafter_instance.create_draft.return_value = draft_result
@@ -1042,7 +1061,10 @@ class TestTriggerMedia:
         assert len(saved_drafts) == 1
         saved_draft = saved_drafts[0]
         assert saved_draft.media_paths == ["/tmp/media/diagram.png"]
-        assert saved_draft.media_type == "mermaid"
+        # Multi-media per-draft: tool lives inside the spec item, not a
+        # separate column.
+        assert len(saved_draft.media_specs) == 1
+        assert saved_draft.media_specs[0]["tool"] == "mermaid"
 
 
 class TestTriggerSendsMediaNotification:
@@ -1659,39 +1681,55 @@ class TestRateLimitGate:
 
 
 class TestGenerateMediaPerTool:
-    """Tests for per-tool media disable in _generate_media()."""
+    """Per-tool gating for multi-media generation.
+
+    Multi-media per-draft: the old ``trigger._generate_media`` helper was
+    replaced by ``drafting._generate_one_media`` as part of the parallel-
+    array rewrite (see drafting.py). The gating semantics below are
+    unchanged; only the symbol name and return shape differ — generation
+    failures now propagate as exceptions rather than ``(empty, None, None,
+    err)`` tuples.
+    """
 
     def test_per_tool_disabled(self):
-        """When a specific tool is disabled in config.media_generation.tools, _generate_media skips it."""
-        from social_hook.trigger import _generate_media
+        """A tool disabled in config.media_generation.tools raises RuntimeError."""
+        from social_hook.drafting import _generate_one_media
 
         cfg = MagicMock()
         cfg.media_generation.enabled = True
         cfg.media_generation.tools = {"mermaid": False, "nano_banana_pro": True}
 
-        paths, mtype, spec, err = _generate_media(
-            cfg, "mermaid", {"diagram": "graph LR\n  A-->B"}, dry_run=False
-        )
-        assert paths == []
-        assert mtype is None
-        assert spec is None
+        with pytest.raises(RuntimeError, match="disabled"):
+            _generate_one_media(
+                cfg,
+                {"id": "media_test00000001", "tool": "mermaid", "spec": {"diagram": "A-->B"}},
+                "mermaid",
+                dry_run=False,
+                verbose=False,
+                project_config=None,
+            )
 
     def test_global_disabled(self):
-        """When media_generation.enabled=False, _generate_media returns empty."""
-        from social_hook.trigger import _generate_media
+        """media_generation.enabled=False short-circuits before the adapter lookup."""
+        from social_hook.drafting import _generate_one_media
 
         cfg = MagicMock()
         cfg.media_generation.enabled = False
         cfg.media_generation.tools = {"mermaid": True}
 
-        paths, mtype, spec, err = _generate_media(cfg, "ray_so", {"code": "x=1"}, dry_run=False)
-        assert paths == []
-        assert mtype is None
-        assert spec is None
+        with pytest.raises(RuntimeError, match="disabled globally"):
+            _generate_one_media(
+                cfg,
+                {"id": "media_test00000001", "tool": "ray_so", "spec": {"code": "x=1"}},
+                "ray_so",
+                dry_run=False,
+                verbose=False,
+                project_config=None,
+            )
 
     def test_project_override_disables(self):
-        """Project-level media_guidance can disable a tool that's globally enabled."""
-        from social_hook.trigger import _generate_media
+        """Project-level media_guidance disables a globally-enabled tool."""
+        from social_hook.drafting import _generate_one_media
 
         cfg = MagicMock()
         cfg.media_generation.enabled = True
@@ -1702,21 +1740,20 @@ class TestGenerateMediaPerTool:
         guidance.enabled = False
         project_config.media_guidance.get.return_value = guidance
 
-        paths, mtype, spec, err = _generate_media(
-            cfg,
-            "mermaid",
-            {"diagram": "graph LR\n  A-->B"},
-            dry_run=False,
-            project_config=project_config,
-        )
-        assert paths == []
-        assert mtype is None
-        assert spec is None
+        with pytest.raises(RuntimeError, match="disabled"):
+            _generate_one_media(
+                cfg,
+                {"id": "media_test00000001", "tool": "mermaid", "spec": {"diagram": "A-->B"}},
+                "mermaid",
+                dry_run=False,
+                verbose=False,
+                project_config=project_config,
+            )
 
     @patch("social_hook.adapters.registry.get_media_adapter")
     def test_rayso_valid_spec_calls_adapter(self, mock_get_adapter):
-        """Valid ray_so spec passes through to adapter and returns media path."""
-        from social_hook.trigger import _generate_media
+        """Valid ray_so spec passes through to the adapter and returns a media path."""
+        from social_hook.drafting import _generate_one_media
 
         cfg = MagicMock()
         cfg.media_generation.enabled = True
@@ -1728,19 +1765,25 @@ class TestGenerateMediaPerTool:
         )
         mock_get_adapter.return_value = mock_adapter
 
-        spec = {"code": "print('hello')", "language": "python", "title": "example.py"}
-        paths, mtype, returned_spec, err = _generate_media(cfg, "ray_so", spec, dry_run=False)
+        spec_body = {"code": "print('hello')", "language": "python", "title": "example.py"}
+        path = _generate_one_media(
+            cfg,
+            {"id": "media_test00000001", "tool": "ray_so", "spec": spec_body},
+            "ray_so",
+            dry_run=False,
+            verbose=False,
+            project_config=None,
+        )
 
-        assert paths == ["/tmp/media/code.png"]
-        assert mtype == "ray_so"
+        assert path == "/tmp/media/code.png"
         mock_adapter.generate.assert_called_once()
         call_kwargs = mock_adapter.generate.call_args
-        assert call_kwargs[1]["spec"] == spec
+        assert call_kwargs[1]["spec"] == spec_body
 
     @patch("social_hook.adapters.registry.get_media_adapter")
     def test_mermaid_valid_spec_calls_adapter(self, mock_get_adapter):
-        """Valid mermaid spec passes through to adapter and returns media path."""
-        from social_hook.trigger import _generate_media
+        """Valid mermaid spec passes through to the adapter."""
+        from social_hook.drafting import _generate_one_media
 
         cfg = MagicMock()
         cfg.media_generation.enabled = True
@@ -1752,19 +1795,25 @@ class TestGenerateMediaPerTool:
         )
         mock_get_adapter.return_value = mock_adapter
 
-        spec = {"diagram": "graph LR\n  A-->B"}
-        paths, mtype, returned_spec, err = _generate_media(cfg, "mermaid", spec, dry_run=False)
+        spec_body = {"diagram": "graph LR\n  A-->B"}
+        path = _generate_one_media(
+            cfg,
+            {"id": "media_test00000002", "tool": "mermaid", "spec": spec_body},
+            "mermaid",
+            dry_run=False,
+            verbose=False,
+            project_config=None,
+        )
 
-        assert paths == ["/tmp/media/diagram.png"]
-        assert mtype == "mermaid"
+        assert path == "/tmp/media/diagram.png"
         mock_adapter.generate.assert_called_once()
         call_kwargs = mock_adapter.generate.call_args
-        assert call_kwargs[1]["spec"] == spec
+        assert call_kwargs[1]["spec"] == spec_body
 
     @patch("social_hook.adapters.registry.get_media_adapter")
     def test_nanabananapro_valid_spec_calls_adapter(self, mock_get_adapter):
-        """Valid nano_banana_pro spec passes through to adapter and returns media path."""
-        from social_hook.trigger import _generate_media
+        """nano_banana_pro pulls the API key from config.env."""
+        from social_hook.drafting import _generate_one_media
 
         cfg = MagicMock()
         cfg.media_generation.enabled = True
@@ -1777,20 +1826,24 @@ class TestGenerateMediaPerTool:
         )
         mock_get_adapter.return_value = mock_adapter
 
-        spec = {"prompt": "abstract code visualization"}
-        paths, mtype, returned_spec, err = _generate_media(
-            cfg, "nano_banana_pro", spec, dry_run=False
+        spec_body = {"prompt": "abstract code visualization"}
+        path = _generate_one_media(
+            cfg,
+            {"id": "media_test00000003", "tool": "nano_banana_pro", "spec": spec_body},
+            "nano_banana_pro",
+            dry_run=False,
+            verbose=False,
+            project_config=None,
         )
 
-        assert paths == ["/tmp/media/visual.png"]
-        assert mtype == "nano_banana_pro"
+        assert path == "/tmp/media/visual.png"
         mock_adapter.generate.assert_called_once()
         mock_get_adapter.assert_called_once_with("nano_banana_pro", api_key="fake-gemini-key")
 
     @patch("social_hook.adapters.registry.get_media_adapter")
     def test_playwright_valid_spec_calls_adapter(self, mock_get_adapter):
-        """Valid playwright spec passes through to adapter and returns media path."""
-        from social_hook.trigger import _generate_media
+        """Valid playwright spec passes through to the adapter."""
+        from social_hook.drafting import _generate_one_media
 
         cfg = MagicMock()
         cfg.media_generation.enabled = True
@@ -1802,40 +1855,63 @@ class TestGenerateMediaPerTool:
         )
         mock_get_adapter.return_value = mock_adapter
 
-        spec = {"url": "https://example.com", "selector": "#main"}
-        paths, mtype, returned_spec, err = _generate_media(cfg, "playwright", spec, dry_run=False)
+        spec_body = {"url": "https://example.com", "selector": "#main"}
+        path = _generate_one_media(
+            cfg,
+            {"id": "media_test00000004", "tool": "playwright", "spec": spec_body},
+            "playwright",
+            dry_run=False,
+            verbose=False,
+            project_config=None,
+        )
 
-        assert paths == ["/tmp/media/screenshot.png"]
-        assert mtype == "playwright"
+        assert path == "/tmp/media/screenshot.png"
         mock_adapter.generate.assert_called_once()
         call_kwargs = mock_adapter.generate.call_args
-        assert call_kwargs[1]["spec"] == spec
+        assert call_kwargs[1]["spec"] == spec_body
 
     def test_empty_spec_returns_empty(self):
-        """Empty media_spec_dict returns ([], None, None) as defense-in-depth."""
-        from social_hook.trigger import _generate_media
+        """Empty adapter-spec body raises (adapters return failure; surfaces as RuntimeError)."""
+        from social_hook.drafting import _generate_one_media
 
         cfg = MagicMock()
         cfg.media_generation.enabled = True
         cfg.media_generation.tools = {"ray_so": True}
 
-        paths, mtype, spec, err = _generate_media(cfg, "ray_so", {}, dry_run=False)
-        assert paths == []
-        assert mtype is None
-        assert spec is None
+        with patch("social_hook.adapters.registry.get_media_adapter") as mock_get_adapter:
+            mock_adapter = MagicMock()
+            mock_adapter.generate.return_value = MagicMock(
+                success=False, file_path=None, error="empty spec"
+            )
+            mock_get_adapter.return_value = mock_adapter
 
-    def test_none_spec_returns_empty(self):
-        """None media_spec_dict returns ([], None, None) as defense-in-depth."""
-        from social_hook.trigger import _generate_media
+            with pytest.raises(RuntimeError):
+                _generate_one_media(
+                    cfg,
+                    {"id": "media_test00000005", "tool": "ray_so", "spec": {}},
+                    "ray_so",
+                    dry_run=False,
+                    verbose=False,
+                    project_config=None,
+                )
+
+    def test_none_tool_rejected(self):
+        """tool=None / tool='none' raises — no silent skip path any more."""
+        from social_hook.drafting import _generate_one_media
 
         cfg = MagicMock()
         cfg.media_generation.enabled = True
         cfg.media_generation.tools = {"ray_so": True}
 
-        paths, mtype, spec, err = _generate_media(cfg, "ray_so", None, dry_run=False)
-        assert paths == []
-        assert mtype is None
-        assert spec is None
+        with pytest.raises(RuntimeError, match="Invalid tool"):
+            _generate_one_media(
+                cfg,
+                {"id": "media_test00000006", "tool": "none", "spec": {}},
+                "none",
+                dry_run=False,
+                verbose=False,
+                project_config=None,
+            )
 
 
 # =============================================================================

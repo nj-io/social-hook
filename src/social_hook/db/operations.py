@@ -725,7 +725,8 @@ def insert_draft(conn: sqlite3.Connection, draft: Draft) -> str:
     conn.execute(
         """
         INSERT INTO drafts (id, project_id, decision_id, platform, status, content,
-            media_paths, media_type, media_spec, media_spec_used, suggested_time, scheduled_time,
+            media_paths, media_specs, media_errors, media_specs_used,
+            suggested_time, scheduled_time,
             reasoning, superseded_by, retry_count, last_error, is_intro, vehicle,
             reference_type, reference_files, reference_post_id,
             target_id, evaluation_cycle_id, topic_id, suggestion_id, pattern_id,
@@ -774,9 +775,9 @@ def update_draft(
     retry_count: int | None = None,
     last_error: str | None = None,
     media_paths: list[str] | None = None,
-    media_type: str | None = None,
-    media_spec: dict | None = None,
-    media_spec_used: dict | None = None,
+    media_specs: list[dict] | None = None,
+    media_errors: list[str | None] | None = None,
+    media_specs_used: list[dict] | None = None,
     is_intro: bool | None = None,
     vehicle: str | None = None,
     reference_type: str | None = None,
@@ -808,15 +809,15 @@ def update_draft(
     if media_paths is not None:
         updates.append("media_paths = ?")
         params.append(json.dumps(media_paths))
-    if media_type is not None:
-        updates.append("media_type = ?")
-        params.append(media_type)
-    if media_spec is not None:
-        updates.append("media_spec = ?")
-        params.append(json.dumps(media_spec))
-    if media_spec_used is not None:
-        updates.append("media_spec_used = ?")
-        params.append(json.dumps(media_spec_used))
+    if media_specs is not None:
+        updates.append("media_specs = ?")
+        params.append(json.dumps(media_specs))
+    if media_errors is not None:
+        updates.append("media_errors = ?")
+        params.append(json.dumps(media_errors))
+    if media_specs_used is not None:
+        updates.append("media_specs_used = ?")
+        params.append(json.dumps(media_specs_used))
     if is_intro is not None:
         updates.append("is_intro = ?")
         params.append(1 if is_intro else 0)
@@ -966,8 +967,10 @@ def insert_draft_part(conn: sqlite3.Connection, part: DraftPart) -> str:
     """
     conn.execute(
         """
-        INSERT INTO draft_parts (id, draft_id, position, content, media_paths, external_id, posted_at, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO draft_parts (id, draft_id, position, content, media_paths,
+            external_id, posted_at, error,
+            media_specs, media_errors, media_specs_used)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         part.to_row(),
     )
@@ -994,8 +997,12 @@ def update_draft_part(
     external_id: str | None = None,
     posted_at: str | None = None,
     error: str | None = None,
+    media_paths: list[str] | None = None,
+    media_specs: list[dict] | None = None,
+    media_errors: list[str | None] | None = None,
+    media_specs_used: list[dict] | None = None,
 ) -> bool:
-    """Update a draft part after posting.
+    """Update a draft part after posting or when per-part media changes.
 
     Args:
         conn: Database connection
@@ -1003,6 +1010,10 @@ def update_draft_part(
         external_id: External ID from platform
         posted_at: ISO datetime when posted
         error: Error message if posting failed
+        media_paths: Replacement media_paths list (JSON-encoded on write)
+        media_specs: Replacement media_specs list
+        media_errors: Replacement media_errors list
+        media_specs_used: Replacement media_specs_used list
 
     Returns:
         True if a row was updated.
@@ -1019,6 +1030,18 @@ def update_draft_part(
     if error is not None:
         updates.append("error = ?")
         params.append(error)
+    if media_paths is not None:
+        updates.append("media_paths = ?")
+        params.append(json.dumps(media_paths))
+    if media_specs is not None:
+        updates.append("media_specs = ?")
+        params.append(json.dumps(media_specs))
+    if media_errors is not None:
+        updates.append("media_errors = ?")
+        params.append(json.dumps(media_errors))
+    if media_specs_used is not None:
+        updates.append("media_specs_used = ?")
+        params.append(json.dumps(media_specs_used))
 
     if not updates:
         return False
@@ -1043,8 +1066,10 @@ def replace_draft_parts(conn: sqlite3.Connection, draft_id: str, parts: list[Dra
     for part in parts:
         conn.execute(
             """
-            INSERT INTO draft_parts (id, draft_id, position, content, media_paths, external_id, posted_at, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO draft_parts (id, draft_id, position, content, media_paths,
+                external_id, posted_at, error,
+                media_specs, media_errors, media_specs_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             part.to_row(),
         )
@@ -1120,7 +1145,11 @@ def sync_media_to_drafts(
     source_draft_id: str,
     target_draft_ids: list[str],
 ) -> int:
-    """Copy media_type, media_spec, media_spec_used, and media_paths from source to targets.
+    """Copy media_specs, media_paths, media_errors, media_specs_used from source to targets.
+
+    Copies all four parallel arrays so index i continues to line up across
+    source and targets. Used by btn_media_sync_siblings to propagate changes
+    to cross-post drafts sharing the same decision_id.
 
     Args:
         source_draft_id: Draft to copy media from
@@ -1138,15 +1167,251 @@ def sync_media_to_drafts(
         updated = update_draft(
             conn,
             target_id,
-            media_type=source.media_type or "",
-            media_spec=source.media_spec,
-            media_spec_used=source.media_spec_used,
+            media_specs=source.media_specs,
             media_paths=source.media_paths,
+            media_errors=source.media_errors,
+            media_specs_used=source.media_specs_used,
         )
         if updated:
             count += 1
 
     return count
+
+
+# =============================================================================
+# Per-item media helpers — all resolve media_id -> index via linear scan and
+# splice, keeping indexes internal. IDs stay stable across splices.
+# =============================================================================
+
+
+def _find_media_index(specs: list[dict], media_id: str) -> int | None:
+    """Return the index of the spec with matching id, or None."""
+    for i, s in enumerate(specs):
+        if isinstance(s, dict) and s.get("id") == media_id:
+            return i
+    return None
+
+
+def update_draft_media(
+    conn: sqlite3.Connection,
+    draft_id: str,
+    media_id: str,
+    *,
+    spec: dict | None = None,
+    path: str | None = None,
+    error: str | None = None,
+    spec_used: dict | None = None,
+) -> bool:
+    """Update a single media slot on a draft by ``media_id``.
+
+    Resolves media_id -> index via linear scan. Only the fields that are not
+    None are changed. To clear an error explicitly, pass ``error=""``.
+
+    Returns True if the draft row was updated.
+    """
+    draft = get_draft(conn, draft_id)
+    if draft is None:
+        logger.warning("update_draft_media: draft %s not found", draft_id)
+        return False
+
+    idx = _find_media_index(draft.media_specs, media_id)
+    if idx is None:
+        logger.warning("update_draft_media: media_id %s not found on draft %s", media_id, draft_id)
+        return False
+
+    specs = list(draft.media_specs)
+    paths = list(draft.media_paths)
+    errors = list(draft.media_errors)
+    used = list(draft.media_specs_used)
+
+    # Pad lists to idx+1 so assignment never IndexErrors on partially
+    # populated arrays (e.g., paths filled lazily after spec is appended).
+    while len(paths) < idx + 1:
+        paths.append("")
+    while len(errors) < idx + 1:
+        errors.append(None)
+    while len(used) < idx + 1:
+        used.append({})
+
+    changed = False
+    if spec is not None:
+        specs[idx] = spec
+        changed = True
+    if path is not None:
+        paths[idx] = path
+        changed = True
+    if error is not None:
+        errors[idx] = error if error != "" else None
+        changed = True
+    if spec_used is not None:
+        used[idx] = spec_used
+        changed = True
+
+    if not changed:
+        return False
+
+    return update_draft(
+        conn,
+        draft_id,
+        media_specs=specs,
+        media_paths=paths,
+        media_errors=errors,
+        media_specs_used=used,
+    )
+
+
+def append_draft_media(
+    conn: sqlite3.Connection,
+    draft_id: str,
+    spec: dict,
+) -> str | None:
+    """Append a new media slot and return the new ``media_id``.
+
+    If ``spec`` already carries an ``id``, it is respected (useful when the
+    drafter supplies IDs). Otherwise a fresh id is generated via
+    ``generate_id("media")``.
+
+    Returns the media_id on success, None if the draft does not exist.
+    """
+    from social_hook.filesystem import generate_id
+
+    draft = get_draft(conn, draft_id)
+    if draft is None:
+        logger.warning("append_draft_media: draft %s not found", draft_id)
+        return None
+
+    new_id = spec.get("id") if isinstance(spec, dict) and spec.get("id") else generate_id("media")
+    new_spec = dict(spec) if isinstance(spec, dict) else {}
+    new_spec["id"] = new_id
+
+    specs = [*draft.media_specs, new_spec]
+    paths = [*draft.media_paths, ""]
+    errors = [*draft.media_errors, None]
+    used = [*draft.media_specs_used, {}]
+
+    update_draft(
+        conn,
+        draft_id,
+        media_specs=specs,
+        media_paths=paths,
+        media_errors=errors,
+        media_specs_used=used,
+    )
+    return new_id
+
+
+def remove_draft_media(
+    conn: sqlite3.Connection,
+    draft_id: str,
+    media_id: str,
+) -> bool:
+    """Remove the media slot with matching id from all four parallel arrays.
+
+    Returns True if a slot was removed.
+    """
+    draft = get_draft(conn, draft_id)
+    if draft is None:
+        logger.warning("remove_draft_media: draft %s not found", draft_id)
+        return False
+
+    idx = _find_media_index(draft.media_specs, media_id)
+    if idx is None:
+        logger.warning("remove_draft_media: media_id %s not found on draft %s", media_id, draft_id)
+        return False
+
+    def splice(lst: list) -> list:
+        return [x for i, x in enumerate(lst) if i != idx]
+
+    return update_draft(
+        conn,
+        draft_id,
+        media_specs=splice(draft.media_specs),
+        media_paths=splice(draft.media_paths),
+        media_errors=splice(draft.media_errors),
+        media_specs_used=splice(draft.media_specs_used),
+    )
+
+
+# =============================================================================
+# Pending uploads — staged reference images awaiting draft creation.
+# Scheduler prunes entries older than 24h (see Agent 3 scheduler hook).
+# =============================================================================
+
+
+def create_pending_upload(
+    conn: sqlite3.Connection,
+    project_id: str,
+    path: str,
+    context: str = "",
+) -> str:
+    """Create a pending_uploads row keyed to the given project.
+
+    Returns the upload_id, prefix ``upl``.
+    """
+    from social_hook.filesystem import generate_id
+
+    upload_id = generate_id("upl")
+    conn.execute(
+        """
+        INSERT INTO pending_uploads (id, project_id, path, context)
+        VALUES (?, ?, ?, ?)
+        """,
+        (upload_id, project_id, path, context),
+    )
+    conn.commit()
+    return upload_id
+
+
+def get_pending_upload(
+    conn: sqlite3.Connection,
+    upload_id: str,
+) -> dict | None:
+    """Fetch a single pending_uploads row by id, or None."""
+    row = conn.execute(
+        "SELECT id, project_id, path, context, created_at FROM pending_uploads WHERE id = ?",
+        (upload_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def get_pending_uploads(
+    conn: sqlite3.Connection,
+    project_id: str,
+) -> list[dict]:
+    """Fetch all pending_uploads rows for a project, oldest first."""
+    rows = conn.execute(
+        """
+        SELECT id, project_id, path, context, created_at
+        FROM pending_uploads
+        WHERE project_id = ?
+        ORDER BY created_at ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_pending_upload(conn: sqlite3.Connection, upload_id: str) -> bool:
+    """Delete a pending_uploads row. Returns True if a row was deleted."""
+    cursor = conn.execute("DELETE FROM pending_uploads WHERE id = ?", (upload_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def prune_stale_pending_uploads(conn: sqlite3.Connection, hours: int = 24) -> int:
+    """Delete pending_uploads rows older than ``hours``. Returns row count.
+
+    The 24h TTL matches the scheduler hook described in the Agent 3 tasks;
+    staged filesystem dirs with no matching DB row are cleaned separately.
+    """
+    cursor = conn.execute(
+        "DELETE FROM pending_uploads WHERE created_at < datetime('now', ?)",
+        (f"-{int(hours)} hours",),
+    )
+    conn.commit()
+    return cursor.rowcount
 
 
 # =============================================================================
