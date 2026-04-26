@@ -252,8 +252,9 @@ def cleanup_orphaned_media(conn, dry_run: bool = False) -> list[str]:
     Returns:
         List of directory paths removed (or that would be removed).
     """
-    import json
     import shutil
+
+    from social_hook.parsing import safe_json_loads
 
     media_root = get_base_path() / "media-cache"
     if not media_root.exists():
@@ -264,10 +265,7 @@ def cleanup_orphaned_media(conn, dry_run: bool = False) -> list[str]:
     referenced: set[str] = set()
     for row in rows:
         raw = row[0] if row[0] else "[]"
-        try:
-            paths = json.loads(raw) if isinstance(raw, str) else raw
-        except (json.JSONDecodeError, TypeError):
-            continue
+        paths = safe_json_loads(raw, "drafts.media_paths", default=[])
         for p in paths:
             # Normalize to absolute and add all parent dirs under media-cache
             pp = Path(p).resolve()

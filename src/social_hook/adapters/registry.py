@@ -42,7 +42,7 @@ def with_adapter_lock(tool: str):
     media caller (drafting batch, regen-all helper) so a single source of
     truth governs which adapters may run concurrently.
     """
-    meta = _media_registry.get_metadata(tool) if _media_registry.has(tool) else {}
+    meta = media_registry.get_metadata(tool) if media_registry.has(tool) else {}
     if meta.get(THREAD_SAFE_KEY, True):
         yield
         return
@@ -59,12 +59,7 @@ def with_adapter_lock(tool: str):
 
 
 # Module-level registry for media adapters
-_media_registry = AdapterRegistry("media")
-
-# Public alias for callers outside this module (e.g. drafting.py). The
-# underscored form remains module-private; external callers should use
-# ``media_registry``.
-media_registry = _media_registry
+media_registry = AdapterRegistry("media")
 
 
 def _create_mermaid(**_kw) -> MediaAdapter:
@@ -94,7 +89,7 @@ def _create_ray_so(**_kw) -> MediaAdapter:
 
 
 # Register at module load (lazy imports inside each factory function)
-_media_registry.register(
+media_registry.register(
     "mermaid",
     _create_mermaid,
     metadata={
@@ -105,7 +100,7 @@ _media_registry.register(
         THREAD_SAFE_KEY: True,
     },
 )
-_media_registry.register(
+media_registry.register(
     "nano_banana_pro",
     _create_nano_banana_pro,
     metadata={
@@ -116,7 +111,7 @@ _media_registry.register(
         THREAD_SAFE_KEY: True,
     },
 )
-_media_registry.register(
+media_registry.register(
     "ray_so",
     _create_ray_so,
     metadata={
@@ -129,7 +124,7 @@ _media_registry.register(
         THREAD_SAFE_KEY: False,
     },
 )
-_media_registry.register(
+media_registry.register(
     "playwright",
     _create_playwright,
     metadata={
@@ -143,7 +138,7 @@ _media_registry.register(
 )
 
 # Backward-compatible constant — derived from registry, not a separate data structure
-MEDIA_ADAPTER_NAMES = _media_registry.names()
+MEDIA_ADAPTER_NAMES = media_registry.names()
 
 
 def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | None:
@@ -159,15 +154,15 @@ def get_media_adapter(name: str, api_key: str | None = None) -> MediaAdapter | N
     Raises:
         ValueError: If nano_banana_pro requested without api_key
     """
-    if not _media_registry.has(name):
+    if not media_registry.has(name):
         logger.warning(
             "Unknown media adapter: %s (available: %s)",
             name,
-            _media_registry.names(),
+            media_registry.names(),
         )
         return None
 
-    result: MediaAdapter = _media_registry.get_or_create(name, api_key=api_key)
+    result: MediaAdapter = media_registry.get_or_create(name, api_key=api_key)
     return result
 
 
@@ -213,7 +208,7 @@ def resolve_media_adapter(tool: str, config: Any) -> MediaAdapter:
 
 def clear_adapter_cache() -> None:
     """Clear the adapter cache. Useful for testing."""
-    _media_registry.clear_cache()
+    media_registry.clear_cache()
 
 
 def get_tool_spec_schema(name: str) -> dict:
@@ -227,7 +222,7 @@ def get_tool_spec_schema(name: str) -> dict:
     Returns:
         Schema dict with "required" and "optional" keys
     """
-    meta = _media_registry.get_metadata(name)
+    meta = media_registry.get_metadata(name)
     class_module = meta.get("class_module")
     class_name = meta.get("class_name")
     if not class_module or not class_name:
@@ -258,8 +253,8 @@ def list_available_tools() -> list[dict]:
         List of dicts with name, display_name, description, required_fields
     """
     result = []
-    for name in _media_registry.names():
-        meta = _media_registry.get_metadata(name)
+    for name in media_registry.names():
+        meta = media_registry.get_metadata(name)
         schema = get_tool_spec_schema(name)
         result.append(
             {

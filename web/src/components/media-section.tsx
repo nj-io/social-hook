@@ -21,14 +21,6 @@ interface MediaSectionProps {
    * supplied. Backend is authoritative; this is purely UX.
    */
   maxCount?: number;
-  /**
-   * Legacy props from the singular-media era. Accepted for caller-signature
-   * compatibility while other surfaces migrate to the multi-media API; no
-   * longer used — per-item regen flows through ``updateMediaItem``, and
-   * batch replanning flows through ``replanMediaSpecs``.
-   */
-  onGenerateSpec?: (draftId: string, mediaType: string) => void;
-  isGeneratingSpec?: boolean;
 }
 
 /**

@@ -106,30 +106,37 @@ export function CreateContentModal({
     setUploading(true);
     setError(null);
     try {
-      const accepted: ReferenceImage[] = [];
-      for (const file of Array.from(files)) {
-        if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-          throw new Error(
-            `${file.name}: ${file.type || "unknown type"} is not a supported image format`,
-          );
-        }
-        if (file.size > MAX_IMAGE_BYTES) {
-          throw new Error(
-            `${file.name}: exceeds 5 MiB limit (${(file.size / 1024 / 1024).toFixed(1)} MiB)`,
-          );
-        }
-        const upload: PendingUpload = await uploadImage(projectId, file, "");
-        accepted.push({
-          uploadId: upload.upload_id,
-          name: file.name,
-          context: "",
-        });
+      const results = await Promise.all(
+        Array.from(files).map(async (file): Promise<ReferenceImage | null> => {
+          try {
+            if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
+              throw new Error(
+                `${file.name}: ${file.type || "unknown type"} is not a supported image format`,
+              );
+            }
+            if (file.size > MAX_IMAGE_BYTES) {
+              throw new Error(
+                `${file.name}: exceeds 5 MiB limit (${(file.size / 1024 / 1024).toFixed(1)} MiB)`,
+              );
+            }
+            const upload: PendingUpload = await uploadImage(projectId, file, "");
+            return {
+              uploadId: upload.upload_id,
+              name: file.name,
+              context: "",
+            };
+          } catch (err) {
+            console.warn("upload failed", file.name, err);
+            const msg = err instanceof Error ? err.message : "Upload failed";
+            addToast("Image upload failed", { variant: "error", detail: msg });
+            return null;
+          }
+        }),
+      );
+      const accepted = results.filter((r): r is ReferenceImage => r !== null);
+      if (accepted.length > 0) {
+        setRefImages((prev) => [...prev, ...accepted]);
       }
-      setRefImages((prev) => [...prev, ...accepted]);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Upload failed";
-      setError(msg);
-      addToast("Image upload failed", { variant: "error", detail: msg });
     } finally {
       setUploading(false);
     }
@@ -153,21 +160,6 @@ export function CreateContentModal({
       if (refDocs.length > 0) {
         await uploadProjectDocs(projectId, refDocs);
         refDocNames = refDocs.map((f) => f.name);
-      }
-
-      // If operator set per-image context AFTER the initial upload, do a
-      // quick re-upload loop using the stored uploadId → no: our API doesn't
-      // have a patch endpoint, and re-upload would create new upload_ids.
-      // Instead, we surface context via the submission by mutating context
-      // in-memory — the backend reads ``context`` from pending_uploads
-      // rows. The upload endpoint stored whatever context was live at drop
-      // time. Future work: PATCH endpoint to update context without re-POST.
-      // For now, if any context changed after drop, warn the operator.
-      const changedContext = refImages.some((r) => r.context.trim().length > 0);
-      if (changedContext) {
-        // Best-effort re-upload path is unavailable; surface the limitation.
-        // The drafter still receives the image; the context just isn't
-        // propagated until the PATCH endpoint lands.
       }
 
       const res = await createContent(projectId, {

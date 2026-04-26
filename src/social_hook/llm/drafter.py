@@ -39,11 +39,7 @@ _ALLOWED_TOOLS = {"nano_banana_pro", "mermaid", "ray_so", "playwright", "legacy_
 # stripped post-validation.
 _REQUIRED_SPEC_FIELDS = {"id", "tool", "spec"}
 
-# Literal placeholder strings the drafter sometimes copies verbatim from
-# schema/prompt examples. Any markdown-image candidate whose URL — after
-# optional ``media:`` prefix stripping and ``<>`` trim — matches one of
-# these is dropped outright. There is no spec id it could possibly
-# refer to. Case-insensitive match.
+# Placeholder URLs the drafter copies from prompt examples; see _auto_repair_content_tokens.
 _LITERAL_PLACEHOLDER_IDS = {
     "id",
     "media_id",
@@ -54,11 +50,7 @@ _LITERAL_PLACEHOLDER_IDS = {
     "xyz",
 }
 
-# Broad markdown image regex — matches ``![caption](url)`` for any URL,
-# not just ``media:`` tokens. The auto-repair pass uses this so it can
-# catch LLM drift modes that drop the ``media:`` delimiter entirely
-# (e.g. ``![x](media_abc...)`` or ``![x](abc...)``). Real URLs that do
-# not resolve to a spec id pass through untouched.
+# Matches any ``![caption](url)``; see _auto_repair_content_tokens.
 _BROAD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 

@@ -976,12 +976,6 @@ async def api_draft_detail(draft_id: str):
         conn.close()
 
 
-# NOTE: `PUT /api/drafts/{draft_id}/media-spec` was removed in feat/multi-media
-# (it wrote to the dropped singular columns media_spec/media_type). Replaced by:
-#   - PUT /api/drafts/{id}/media/{media_id} for per-item spec edits
-#   - POST /api/drafts/{id}/media/replan    for full drafter re-plan
-
-
 @app.post("/api/drafts/{draft_id}/media-upload")
 async def api_upload_draft_media(draft_id: str, file: UploadFile):
     """Upload a media file and APPEND it to a draft as a new media slot.
