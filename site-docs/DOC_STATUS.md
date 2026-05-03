@@ -1,5 +1,5 @@
 <!-- last_run_commit: 615a871d519a1f393af7d56c215e2d9e77d3225e -->
-<!-- last_run_date: 2026-05-02 -->
+<!-- last_run_date: 2026-05-03 -->
 
 # Documentation Status
 
@@ -55,13 +55,13 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `draft unschedule` | ok | Enriched: resulting status, when to use |
 | `advisory *` | ok | New group from content vehicles: list, create, complete, dismiss |
 | `arc *` | ok | Group help enriched; list, create, complete, abandon |
-| `bot *` | ok | start, stop, status |
-| `config *` | ok | show, get, set |
+| `bot *` | ok | Group help enriched; start, stop, status |
+| `config *` | ok | Group help enriched; show, get, set |
 | `journey *` | ok | Group help enriched; on, off, status |
-| `media *` | ok | gc subcommand |
-| `memory *` | ok | list, add, delete, clear |
+| `media *` | ok | Group help enriched; gc subcommand |
+| `memory *` | ok | Group help enriched; list, add, delete, clear |
 | `project *` | ok | Group help enriched; register, unregister, list, evaluate-recent, intro, prompt-docs subgroups |
-| `snapshot *` | ok | New group: save, restore, reset, list, delete |
+| `snapshot *` | ok | Group help enriched; save, restore, reset, list, delete |
 
 ## Conceptual Docs (site-docs/concepts/)
 
@@ -96,16 +96,16 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-05-02 | |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-05-02 | |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-05-02 | |
-| `ruff check src/ tests/` passes | 2026-05-02 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-05-02 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-05-02 | |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-05-02 | |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-05-02 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-05-02 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
-| All CLI command groups have enriched group-level help text (not just terse labels) | 2026-05-02 | All 24 groups have descriptive help |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-05-03 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-05-03 | |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-05-03 | |
+| `ruff check src/ tests/` passes | 2026-05-03 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-05-03 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-05-03 | |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-05-03 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-05-03 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-05-03 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| All CLI command groups have enriched group-level help text (not just terse labels) | 2026-05-03 | 13 remaining terse groups enriched this run (bot, config, decision, draft, inspect, logs, manual, media, memory, setup, snapshot, test, arc); all 24 groups now verified |
 
 ## Backlog (waiting_approval)
 

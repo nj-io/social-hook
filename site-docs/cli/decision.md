@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+View and manage evaluator decisions — the per-strategy draft/skip/hold verdicts from each evaluation cycle.
 
 ---
 
