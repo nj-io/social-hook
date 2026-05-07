@@ -1,5 +1,5 @@
-<!-- last_run_commit: e0675da9f57694de2e6857eec0784bce5137b864 -->
-<!-- last_run_date: 2026-04-16 -->
+<!-- last_run_commit: 615a871d519a1f393af7d56c215e2d9e77d3225e -->
+<!-- last_run_date: 2026-05-07 -->
 
 # Documentation Status
 
@@ -55,19 +55,19 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 | `draft unschedule` | ok | Enriched: resulting status, when to use |
 | `advisory *` | ok | New group from content vehicles: list, create, complete, dismiss |
 | `arc *` | ok | Group help enriched; list, create, complete, abandon |
-| `bot *` | ok | start, stop, status |
-| `config *` | ok | show, get, set |
+| `bot *` | ok | Group help enriched; start, stop, status |
+| `config *` | ok | Group help enriched; show, get, set |
 | `journey *` | ok | Group help enriched; on, off, status |
-| `media *` | ok | gc subcommand |
-| `memory *` | ok | list, add, delete, clear |
+| `media *` | ok | Group help enriched; gc subcommand |
+| `memory *` | ok | Group help enriched; list, add, delete, clear |
 | `project *` | ok | Group help enriched; register, unregister, list, evaluate-recent, intro, prompt-docs subgroups |
-| `snapshot *` | ok | New group: save, restore, reset, list, delete |
+| `snapshot *` | ok | Group help enriched; save, restore, reset, list, delete |
 
 ## Conceptual Docs (site-docs/concepts/)
 
 | Page | Status | Notes |
 |------|--------|-------|
-| pipeline.md | stale | Two-stage eval accurate; missing content vehicles (single/thread/article), advisory flow, and content create/suggest paths |
+| pipeline.md | stale | Two-stage eval accurate; missing content vehicles (single/thread/article), advisory flow (incl. bot schedule→advisory routing from #78), and content create/suggest paths |
 | narrative-arcs.md | complete | Updated: strategy-scoped arcs, `episode_tags` (was `episode_type`) |
 | voice-memory.md | complete | |
 | media-generation.md | complete | |
@@ -96,16 +96,16 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-04-16 | |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-04-16 | |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-04-16 | |
-| `ruff check src/ tests/` passes | 2026-04-16 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-04-16 | 28 errors, all `import-untyped` or `no-any-return` pre-existing; fixed new `assignment` error in `brief.py` |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-04-16 | 16 commands across 6 files enriched |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-04-16 | |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-04-16 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-04-16 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
-| All CLI command groups have enriched group-level help text (not just terse labels) | 2026-04-16 | `project` and `journey` enriched this run; all 24 groups now have descriptive help |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-05-07 | |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-05-07 | 24/24 match |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-05-07 | |
+| `ruff check src/ tests/` passes | 2026-05-07 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-05-07 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-05-07 | |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-05-07 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-05-07 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-05-07 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| All CLI command groups have enriched group-level help text (not just terse labels) | 2026-05-07 | All 24 groups verified |
 
 ## Backlog (waiting_approval)
 
