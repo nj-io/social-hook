@@ -138,7 +138,7 @@ Example: social-hook --dry-run scheduler-tick
 
 ### `social-hook setup`
 
-Configure social-hook.
+Interactive setup wizard for social-hook: platforms, credentials, accounts, targets, and strategies.
 
 **Options:**
 
@@ -152,7 +152,7 @@ Configure social-hook.
 
 ### `social-hook test`
 
-Test commit evaluation.
+Dry-run commit evaluation without creating drafts. Use --output/--compare to test evaluation consistency.
 
 **Options:**
 

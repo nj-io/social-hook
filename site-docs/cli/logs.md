@@ -1,6 +1,6 @@
 # social-hook logs
 
-Log queries, tailing, and health.
+Query structured log entries, tail live output, clear old logs, and check system health.
 
 **Group options:**
 
