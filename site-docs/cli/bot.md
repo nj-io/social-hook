@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Manage the bot daemon — a long-running process that sends draft notifications, handles chat commands, and runs scheduled ticks.
 
 ---
 
