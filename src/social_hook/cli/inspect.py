@@ -2,7 +2,9 @@
 
 import typer
 
-app = typer.Typer()
+app = typer.Typer(
+    help="Inspect pipeline state — query the event log, view pending evaluations, check LLM token usage, and list connected platforms."
+)
 
 
 @app.command()
