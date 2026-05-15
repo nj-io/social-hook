@@ -1,6 +1,6 @@
 # social-hook logs
 
-Log queries, tailing, and health.
+Query and tail system logs, clear stored errors, and check overall health status across the bot, scheduler, and pipeline components.
 
 **Group options:**
 

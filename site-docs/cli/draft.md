@@ -1,6 +1,6 @@
 # social-hook draft
 
-Draft lifecycle management.
+Full draft lifecycle — approve, reject, schedule, edit, redraft, promote, and post. Covers the entire path from LLM-generated content to published post.
 
 ---
 

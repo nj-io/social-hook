@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Manage evaluation decisions — list, delete, retrigger, batch-evaluate, or rewind decisions and their downstream drafts.
 
 ---
 

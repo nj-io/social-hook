@@ -1,6 +1,6 @@
 # social-hook inspect
 
-Inspect system state.
+Inspect system state — view the decision log, pending drafts, token usage, and configured platforms.
 
 ---
 
