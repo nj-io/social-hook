@@ -532,7 +532,11 @@ bot_app = typer.Typer(
     help="Start, stop, and monitor the bot daemon. The daemon listens for platform messages (Telegram, Discord) and surfaces drafts, approvals, and scheduling via chat commands.",
     no_args_is_help=True,
 )
-app.add_typer(bot_app, name="bot")
+app.add_typer(
+    bot_app,
+    name="bot",
+    help="Start, stop, and monitor the bot daemon. The daemon listens for platform messages (Telegram, Discord) and surfaces drafts, approvals, and scheduling via chat commands.",
+)
 
 
 @bot_app.command("start")
