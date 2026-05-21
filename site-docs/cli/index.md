@@ -21,23 +21,23 @@ These options can be placed before any command.
 |-------|-------------|
 | [`account`](account.md) | Manage OAuth-authenticated platform accounts (X, LinkedIn). |
 | [`advisory`](advisory.md) | Manage advisory items — operator action items for manual tasks. |
-| [`arc`](arc.md) | Manage narrative arcs. |
-| [`bot`](bot.md) | Bot daemon management. |
+| [`arc`](arc.md) | Manage narrative arcs — multi-episode story threads the drafter weaves across posts within a strategy. |
+| [`bot`](bot.md) | Start, stop, and check the status of the bot daemon that listens for chat commands. |
 | [`brief`](brief.md) | View and edit the project brief used by the evaluator and drafter. |
-| [`config`](config.md) | View and modify configuration. |
+| [`config`](config.md) | View and modify configuration values. Use 'show' for the full config, 'get' for a single key, or 'set' to update a value. |
 | [`content`](content.md) | Submit content ideas, combine topics, and trigger hero launch drafts. |
 | [`credentials`](credentials.md) | Manage API keys and secrets in ~/.social-hook/.env. |
 | [`cycles`](cycles.md) | Inspect evaluation cycle history and per-strategy outcomes. |
-| [`decision`](decision.md) | Decision management. |
-| [`draft`](draft.md) | Draft lifecycle management. |
-| [`inspect`](inspect.md) | Inspect system state. |
+| [`decision`](decision.md) | View, delete, retrigger, or rewind evaluation decisions from the pipeline log. |
+| [`draft`](draft.md) | Draft lifecycle — approve, reject, schedule, edit, redraft, cancel, and post content drafts. |
+| [`inspect`](inspect.md) | View decision log, pending drafts, LLM token usage, and connected platform capabilities. |
 | [`journey`](journey.md) | Control Development Journey capture. When enabled, Claude Code hooks record session narratives that feed into the evaluation pipeline as rich development context. |
-| [`logs`](logs.md) | Log queries, tailing, and health. |
-| [`manual`](manual.md) | Manual operations. |
-| [`media`](media.md) | Media management. |
-| [`memory`](memory.md) | Manage voice memories. |
+| [`logs`](logs.md) | Query, tail, and clear application event logs. Includes a health check for pipeline and LogBus status. |
+| [`manual`](manual.md) | Manually trigger pipeline stages — evaluate a commit, create a draft, consolidate holds, or post a scheduled draft. |
+| [`media`](media.md) | Manage generated media assets. Use 'gc' to garbage-collect orphaned media files. |
+| [`memory`](memory.md) | Manage voice memories — persistent style and tone notes the drafter references when composing content. |
 | [`project`](project.md) | Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained. |
-| [`snapshot`](snapshot.md) | DB snapshot management. |
+| [`snapshot`](snapshot.md) | Save, restore, list, and delete database snapshots for backup and experimentation. |
 | [`strategy`](strategy.md) | View and customize content strategies (voice, audience, editorial rules). |
 | [`target`](target.md) | Configure where content is distributed (account + destination + strategy). |
 | [`topics`](topics.md) | Manage the prioritised content topic queue per strategy. |
@@ -54,8 +54,8 @@ These options can be placed before any command.
 | [`quickstart`](root-commands.md#social-hook-quickstart) | Run the quickstart flow. |
 | [`rate-limits`](root-commands.md#social-hook-rate-limits) | Show current rate limit status (daily cap, gap timer, queue, cost). |
 | [`scheduler-tick`](root-commands.md#social-hook-scheduler-tick) | Post scheduled drafts whose time has arrived and promote deferred drafts. |
-| [`setup`](root-commands.md#social-hook-setup) | Configure social-hook. |
-| [`test`](root-commands.md#social-hook-test) | Test commit evaluation. |
+| [`setup`](root-commands.md#social-hook-setup) | Run the interactive setup wizard to configure social-hook — credentials, accounts, projects, and strategies. Use --only to configure a single component. |
+| [`test`](root-commands.md#social-hook-test) | Dry-run commit evaluation without creating drafts. Supports --output to save results and --compare to diff against a previous run. |
 | [`trigger`](root-commands.md#social-hook-trigger) | Run the full evaluation-to-draft pipeline for a single commit. |
 | [`version`](root-commands.md#social-hook-version) | Show version information. |
 | [`web`](root-commands.md#social-hook-web) | Start the web dashboard for managing your social-hook workflow visually. |

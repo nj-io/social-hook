@@ -1,6 +1,6 @@
 # social-hook logs
 
-Log queries, tailing, and health.
+Query, tail, and clear application event logs. Includes a health check for pipeline and LogBus status.
 
 **Group options:**
 

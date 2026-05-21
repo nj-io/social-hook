@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+View, delete, retrigger, or rewind evaluation decisions from the pipeline log.
 
 ---
 
