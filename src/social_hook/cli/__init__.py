@@ -528,7 +528,7 @@ def web(
 # =============================================================================
 
 bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
-app.add_typer(bot_app, name="bot")
+app.add_typer(bot_app, name="bot", help="Bot daemon management.")
 
 
 @bot_app.command("start")
