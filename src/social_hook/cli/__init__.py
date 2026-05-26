@@ -527,7 +527,11 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
+bot_app = typer.Typer(
+    name="bot",
+    help="Manage the Telegram bot daemon that delivers draft previews, approval buttons, and scheduling prompts to your chat.",
+    no_args_is_help=True,
+)
 app.add_typer(bot_app, name="bot")
 
 
@@ -970,10 +974,18 @@ app.add_typer(
 )
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(
+    inspect_app,
+    name="inspect",
+    help="Inspect pipeline state and resource usage: view decision logs, pending drafts, LLM token costs, and configured platforms.",
+)
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Run pipeline stages by hand: evaluate a commit, create drafts from a decision, consolidate multiple commits, or post a draft immediately.",
+)
 
 # Setup wizard
 app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
@@ -1001,7 +1013,11 @@ from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="Manage evaluator decisions: list history, delete or rewind decisions, re-evaluate commits, and batch-evaluate deferred items.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
 app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
@@ -1009,7 +1025,11 @@ app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Manage the media cache: garbage-collect orphaned image and video files no longer referenced by any draft.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 

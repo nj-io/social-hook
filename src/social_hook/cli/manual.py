@@ -4,7 +4,9 @@ import typer
 
 from social_hook.models.enums import PENDING_STATUSES
 
-app = typer.Typer()
+app = typer.Typer(
+    help="Run pipeline stages by hand: evaluate a commit, create drafts from a decision, consolidate multiple commits, or post a draft immediately."
+)
 
 
 @app.command()
