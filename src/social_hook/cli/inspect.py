@@ -2,7 +2,9 @@
 
 import typer
 
-app = typer.Typer()
+app = typer.Typer(
+    help="Inspect pipeline state and resource usage: view decision logs, pending drafts, LLM token costs, and configured platforms."
+)
 
 
 @app.command()

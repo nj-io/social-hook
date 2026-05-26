@@ -4,7 +4,11 @@ import json as json_mod
 
 import typer
 
-app = typer.Typer(name="media", help="Media management.", no_args_is_help=True)
+app = typer.Typer(
+    name="media",
+    help="Manage the media cache: garbage-collect orphaned image and video files no longer referenced by any draft.",
+    no_args_is_help=True,
+)
 
 
 @app.command("gc")

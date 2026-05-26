@@ -22,19 +22,19 @@ These options can be placed before any command.
 | [`account`](account.md) | Manage OAuth-authenticated platform accounts (X, LinkedIn). |
 | [`advisory`](advisory.md) | Manage advisory items — operator action items for manual tasks. |
 | [`arc`](arc.md) | Manage narrative arcs. |
-| [`bot`](bot.md) | Bot daemon management. |
+| [`bot`](bot.md) | Manage the Telegram bot daemon that delivers draft previews, approval buttons, and scheduling prompts to your chat. |
 | [`brief`](brief.md) | View and edit the project brief used by the evaluator and drafter. |
 | [`config`](config.md) | View and modify configuration. |
 | [`content`](content.md) | Submit content ideas, combine topics, and trigger hero launch drafts. |
 | [`credentials`](credentials.md) | Manage API keys and secrets in ~/.social-hook/.env. |
 | [`cycles`](cycles.md) | Inspect evaluation cycle history and per-strategy outcomes. |
-| [`decision`](decision.md) | Decision management. |
+| [`decision`](decision.md) | Manage evaluator decisions: list history, delete or rewind decisions, re-evaluate commits, and batch-evaluate deferred items. |
 | [`draft`](draft.md) | Draft lifecycle management. |
-| [`inspect`](inspect.md) | Inspect system state. |
+| [`inspect`](inspect.md) | Inspect pipeline state and resource usage: view decision logs, pending drafts, LLM token costs, and configured platforms. |
 | [`journey`](journey.md) | Control Development Journey capture. When enabled, Claude Code hooks record session narratives that feed into the evaluation pipeline as rich development context. |
 | [`logs`](logs.md) | Log queries, tailing, and health. |
-| [`manual`](manual.md) | Manual operations. |
-| [`media`](media.md) | Media management. |
+| [`manual`](manual.md) | Run pipeline stages by hand: evaluate a commit, create drafts from a decision, consolidate multiple commits, or post a draft immediately. |
+| [`media`](media.md) | Manage the media cache: garbage-collect orphaned image and video files no longer referenced by any draft. |
 | [`memory`](memory.md) | Manage voice memories. |
 | [`project`](project.md) | Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained. |
 | [`snapshot`](snapshot.md) | DB snapshot management. |

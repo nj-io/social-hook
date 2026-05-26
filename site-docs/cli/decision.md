@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Manage evaluator decisions: list history, delete or rewind decisions, re-evaluate commits, and batch-evaluate deferred items.
 
 ---
 
