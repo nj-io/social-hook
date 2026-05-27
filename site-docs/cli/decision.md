@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Browse and manage evaluator decisions: view the verdict history for commits, re-trigger evaluation, rewind decisions, or batch-evaluate deferred items.
 
 ---
 
