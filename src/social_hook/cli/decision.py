@@ -7,7 +7,10 @@ import sqlite3
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    help="Manage evaluator decisions on commits. Delete decisions and their associated drafts, re-trigger evaluation, or batch-evaluate grouped decisions.",
+    no_args_is_help=True,
+)
 
 
 def _get_conn():

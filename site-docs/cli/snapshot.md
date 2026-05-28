@@ -1,6 +1,6 @@
 # social-hook snapshot
 
-DB snapshot management.
+Create, restore, and manage point-in-time database snapshots for backup, recovery, or testing.
 
 ---
 

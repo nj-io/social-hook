@@ -1,6 +1,6 @@
 # social-hook logs
 
-Log queries, tailing, and health.
+Query, tail, and manage application logs. Check system health and clear old log entries.
 
 **Group options:**
 
