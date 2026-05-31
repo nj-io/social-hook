@@ -51,6 +51,9 @@ def approve(
     The scheduler will post it when its scheduled time arrives.
     Preview drafts must be promoted to a platform first.
 
+    Non-auto-postable content vehicles (e.g. articles) are redirected
+    to advisory flow instead of direct approval.
+
     Example: social-hook draft approve draft_abc123
     """
     from social_hook.db import operations as ops
@@ -151,6 +154,9 @@ def schedule(
     With --time, posts at that exact ISO datetime. Without --time,
     automatically picks the next optimal slot based on your configured
     posting limits, time windows, and minimum gap between posts.
+
+    Non-auto-postable content vehicles (e.g. articles) are redirected
+    to advisory flow instead of direct scheduling.
 
     Example: social-hook draft schedule draft_abc123
     Example: social-hook draft schedule draft_abc123 --time 2026-03-25T10:00:00
@@ -528,6 +534,8 @@ def post_now(
     """Post a draft immediately to its platform.
 
     Requires platform credentials in ~/.social-hook/.env.
+    Non-auto-postable content vehicles (e.g. articles) are redirected
+    to advisory flow instead of direct posting.
 
     Example: social-hook draft post-now draft_abc123
     Example: social-hook draft post-now draft_abc123 --yes  (skip confirmation)
@@ -651,6 +659,8 @@ def quick_approve(
 
     Combines approve + schedule. Considers your configured posting limits,
     preferred time windows, and minimum gap between posts to pick the best slot.
+    Non-auto-postable content vehicles (e.g. articles) are redirected
+    to advisory flow instead of direct scheduling.
 
     Example: social-hook draft quick-approve draft_abc123
     """

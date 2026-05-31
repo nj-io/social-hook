@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import click
+import typer.core
 import typer.main
 
 from social_hook.cli import app
@@ -70,13 +71,21 @@ def option_flags(param: click.Option) -> str:
     return ", ".join(parts)
 
 
+def _is_argument(param: click.Parameter) -> bool:
+    return isinstance(param, (click.Argument, typer.core.TyperArgument))
+
+
+def _is_option(param: click.Parameter) -> bool:
+    return isinstance(param, (click.Option, typer.core.TyperOption))
+
+
 def render_params(cmd: click.Command) -> str:
     """Render arguments and options as markdown tables."""
     lines = []
     skip = {"install_completion", "show_completion", "help", "ctx"}
 
     # Arguments
-    args = [p for p in cmd.params if isinstance(p, click.Argument)]
+    args = [p for p in cmd.params if _is_argument(p)]
     if args:
         lines.append("**Arguments:**")
         lines.append("")
@@ -93,7 +102,7 @@ def render_params(cmd: click.Command) -> str:
         lines.append("")
 
     # Options
-    opts = [p for p in cmd.params if isinstance(p, click.Option) and p.name not in skip]
+    opts = [p for p in cmd.params if _is_option(p) and p.name not in skip]
     if opts:
         lines.append("**Options:**")
         lines.append("")
