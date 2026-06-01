@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories that shape content tone and style. Memories persist across drafts and influence how the LLM writes.
 
 ---
 

@@ -21,23 +21,23 @@ These options can be placed before any command.
 |-------|-------------|
 | [`account`](account.md) | Manage OAuth-authenticated platform accounts (X, LinkedIn). |
 | [`advisory`](advisory.md) | Manage advisory items — operator action items for manual tasks. |
-| [`arc`](arc.md) | Manage narrative arcs. |
-| [`bot`](bot.md) | Bot daemon management. |
+| [`arc`](arc.md) | Manage narrative arcs — multi-episode content threads that track a theme or story across posts. Create, complete, resume, or abandon arcs. |
+| [`bot`](bot.md) | Run the Telegram bot daemon for interactive draft review, approval, and posting via chat. |
 | [`brief`](brief.md) | View and edit the project brief used by the evaluator and drafter. |
-| [`config`](config.md) | View and modify configuration. |
+| [`config`](config.md) | View and modify config.yaml settings. Use 'show' for the full file, 'get' for a single key, or 'set' to update a value. |
 | [`content`](content.md) | Submit content ideas, combine topics, and trigger hero launch drafts. |
 | [`credentials`](credentials.md) | Manage API keys and secrets in ~/.social-hook/.env. |
 | [`cycles`](cycles.md) | Inspect evaluation cycle history and per-strategy outcomes. |
-| [`decision`](decision.md) | Decision management. |
-| [`draft`](draft.md) | Draft lifecycle management. |
-| [`inspect`](inspect.md) | Inspect system state. |
+| [`decision`](decision.md) | View and manage evaluation decisions — why commits were drafted, skipped, or held. Supports batch re-evaluation and rewind. |
+| [`draft`](draft.md) | Manage the full draft lifecycle: approve, reject, schedule, edit, redraft, post, cancel, and more. Each draft moves through statuses from pending_review to posted. |
+| [`inspect`](inspect.md) | Inspect system state: view evaluation logs, pending operations, LLM token usage, and connected platform details. |
 | [`journey`](journey.md) | Control Development Journey capture. When enabled, Claude Code hooks record session narratives that feed into the evaluation pipeline as rich development context. |
 | [`logs`](logs.md) | Log queries, tailing, and health. |
-| [`manual`](manual.md) | Manual operations. |
-| [`media`](media.md) | Media management. |
-| [`memory`](memory.md) | Manage voice memories. |
+| [`manual`](manual.md) | Manually trigger pipeline stages: evaluate commits, draft content, consolidate holds, or post a scheduled draft. |
+| [`media`](media.md) | Manage generated media assets. Use 'gc' to clean up orphaned media files not referenced by any draft. |
+| [`memory`](memory.md) | Manage voice memories that shape content tone and style. Memories persist across drafts and influence how the LLM writes. |
 | [`project`](project.md) | Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained. |
-| [`snapshot`](snapshot.md) | DB snapshot management. |
+| [`snapshot`](snapshot.md) | Save, restore, and manage database snapshots for testing and recovery. Includes a full reset option to reinitialize the database. |
 | [`strategy`](strategy.md) | View and customize content strategies (voice, audience, editorial rules). |
 | [`target`](target.md) | Configure where content is distributed (account + destination + strategy). |
 | [`topics`](topics.md) | Manage the prioritised content topic queue per strategy. |

@@ -1,6 +1,6 @@
 # social-hook snapshot
 
-DB snapshot management.
+Save, restore, and manage database snapshots for testing and recovery. Includes a full reset option to reinitialize the database.
 
 ---
 

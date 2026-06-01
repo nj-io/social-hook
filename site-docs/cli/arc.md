@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage narrative arcs — multi-episode content threads that track a theme or story across posts. Create, complete, resume, or abandon arcs.
 
 ---
 
