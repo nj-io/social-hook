@@ -1,5 +1,5 @@
 <!-- last_run_commit: 1afe4f10d28bede2e584ead914465ebe9279dcb9 -->
-<!-- last_run_date: 2026-06-01 -->
+<!-- last_run_date: 2026-06-02 -->
 
 # Documentation Status
 
@@ -96,17 +96,17 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-06-01 | Fixed Typer 0.26.4 compat: `TyperOption`/`TyperArgument` no longer subclass `click.Option`/`click.Argument` |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-06-01 | 24/24 match |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-06-01 | |
-| `ruff check src/ tests/` passes | 2026-06-01 | |
-| `ruff format src/ tests/` passes | 2026-06-01 | New check added this run |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-06-01 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-06-01 | Advisory flow noted on approve, schedule, post-now, quick-approve |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-06-01 | |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-06-01 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-06-01 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
-| All CLI command groups have enriched group-level help text (not just terse labels) | 2026-06-01 | 10 groups enriched this run (arc, bot, config, decision, draft, inspect, manual, media, memory, snapshot); all 24 groups now have descriptive help |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-06-02 | Fixed Typer 0.26.4 compat: `TyperOption`/`TyperArgument` no longer subclass `click.Option`/`click.Argument` |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-06-02 | 24/24 match |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-06-02 | |
+| `ruff check src/ tests/` passes | 2026-06-02 | |
+| `ruff format src/ tests/` passes | 2026-06-02 | New check added this run |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-06-02 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-06-02 | Advisory flow noted on approve, schedule, post-now, quick-approve |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-06-02 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-06-02 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-06-02 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| All CLI command groups have enriched group-level help text (not just terse labels) | 2026-06-02 | 10 groups enriched this run (arc, bot, config, decision, draft, inspect, manual, media, memory, snapshot); all 24 groups now have descriptive help |
 
 ## Backlog (waiting_approval)
 
