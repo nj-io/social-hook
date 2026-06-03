@@ -6,8 +6,8 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from social_hook.cli.quickstart import (
@@ -65,12 +65,12 @@ def mock_project():
 
 class TestErrorExit:
     def test_error_exit_text(self, capsys):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises((typer.Exit, SystemExit)):
             _error_exit("something broke", is_json=False)
         assert "Error: something broke" in capsys.readouterr().err
 
     def test_error_exit_json(self, capsys):
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises((typer.Exit, SystemExit)):
             _error_exit("something broke", is_json=True)
         out = capsys.readouterr().out
         data = json.loads(out)
@@ -137,7 +137,7 @@ class TestAutoConfigure:
                 "social_hook.setup.wizard.discover_providers",
                 return_value=providers,
             ),
-            pytest.raises(click.exceptions.Exit),
+            pytest.raises((typer.Exit, SystemExit)),
         ):
             _auto_configure(
                 temp_dir, api_key=None, strategies=["building-public"], is_json=True, verbose=False
