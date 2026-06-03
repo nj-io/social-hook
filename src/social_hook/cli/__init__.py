@@ -161,6 +161,7 @@ def help_cmd(
     import json as json_mod
 
     import click
+    import typer.core
 
     click_app = typer.main.get_command(app)
     # Handle --json appearing after command path (forgiving flag placement)
@@ -190,7 +191,7 @@ def help_cmd(
 
         args = []
         for param in cmd.params:
-            if isinstance(param, click.Argument):
+            if isinstance(param, (click.Argument, typer.core.TyperArgument)):
                 args.append(
                     {
                         "name": param.name,
@@ -203,7 +204,7 @@ def help_cmd(
         opts = []
         skip_names = {"install_completion", "show_completion", "help", "ctx"}
         for param in cmd.params:
-            if isinstance(param, click.Option):
+            if isinstance(param, (click.Option, typer.core.TyperOption)):
                 if param.name in skip_names:
                     continue
                 opt_info = {
@@ -257,10 +258,13 @@ def help_cmd(
                 json_mod.dumps(_cmd_to_dict(target, command_parts[-1]), indent=2, default=str)
             )
         else:
-            global_options = []
+            global_options: list[dict[str, object]] = []
             skip_names = {"install_completion", "show_completion", "help", "ctx"}
             for param in click_app.params:
-                if isinstance(param, click.Option) and param.name not in skip_names:
+                if (
+                    isinstance(param, (click.Option, typer.core.TyperOption))
+                    and param.name not in skip_names
+                ):
                     opt_info = {
                         "name": param.opts[0] if param.opts else f"--{param.name}",
                     }
@@ -290,16 +294,16 @@ def help_cmd(
     elif command_parts:
         try:
             target, info_name = _resolve_command(command_parts)
-            help_ctx = click.Context(target, info_name=info_name)
-            typer.echo(target.get_help(help_ctx))
+            help_ctx = click.Context(target, info_name=info_name)  # type: ignore[arg-type]
+            typer.echo(target.get_help(help_ctx))  # type: ignore[arg-type]
         except typer.Exit:
             raise
         except Exception as e:
             typer.echo(f"Error: {e}")
             raise typer.Exit(1) from None
     else:
-        help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)
-        typer.echo(click_app.get_help(help_ctx))
+        help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)  # type: ignore[arg-type]
+        typer.echo(click_app.get_help(help_ctx))  # type: ignore[arg-type]
 
 
 @app.command()
@@ -527,7 +531,11 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
+bot_app = typer.Typer(
+    name="bot",
+    help="Run the Telegram bot daemon for interactive draft review, approval, and posting via chat.",
+    no_args_is_help=True,
+)
 app.add_typer(bot_app, name="bot")
 
 
@@ -970,10 +978,18 @@ app.add_typer(
 )
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(
+    inspect_app,
+    name="inspect",
+    help="Inspect system state: view evaluation logs, pending operations, LLM token usage, and connected platform details.",
+)
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Manually trigger pipeline stages: evaluate commits, draft content, consolidate holds, or post a scheduled draft.",
+)
 
 # Setup wizard
 app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
@@ -989,32 +1005,60 @@ app.add_typer(
 )
 
 # Config commands: show, get, set
-app.add_typer(config_app, name="config", help="View and modify configuration.")
+app.add_typer(
+    config_app,
+    name="config",
+    help="View and modify config.yaml settings. Use 'show' for the full file, 'get' for a single key, or 'set' to update a value.",
+)
 
 # Memory commands: list, add, delete, clear
-app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+app.add_typer(
+    memory_app,
+    name="memory",
+    help="Manage voice memories that shape content tone and style. Memories persist across drafts and influence how the LLM writes.",
+)
 
 # Arc commands: list, create, complete, abandon
-app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+app.add_typer(
+    arc_app,
+    name="arc",
+    help="Manage narrative arcs — multi-episode content threads that track a theme or story across posts. Create, complete, resume, or abandon arcs.",
+)
 
 from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="View and manage evaluation decisions — why commits were drafted, skipped, or held. Supports batch re-evaluation and rewind.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
-app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+app.add_typer(
+    draft_app,
+    name="draft",
+    help="Manage the full draft lifecycle: approve, reject, schedule, edit, redraft, post, cancel, and more. Each draft moves through statuses from pending_review to posted.",
+)
 
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Manage generated media assets. Use 'gc' to clean up orphaned media files not referenced by any draft.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
-app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+app.add_typer(
+    snapshot_app,
+    name="snapshot",
+    help="Save, restore, and manage database snapshots for testing and recovery. Includes a full reset option to reinitialize the database.",
+)
 
 from social_hook.cli.account import app as account_app
 from social_hook.cli.advisory import app as advisory_app

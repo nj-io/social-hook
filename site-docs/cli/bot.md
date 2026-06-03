@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Run the Telegram bot daemon for interactive draft review, approval, and posting via chat.
 
 ---
 

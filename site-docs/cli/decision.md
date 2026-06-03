@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+View and manage evaluation decisions — why commits were drafted, skipped, or held. Supports batch re-evaluation and rewind.
 
 ---
 

@@ -1,6 +1,6 @@
 # social-hook media
 
-Media management.
+Manage generated media assets. Use 'gc' to clean up orphaned media files not referenced by any draft.
 
 ---
 

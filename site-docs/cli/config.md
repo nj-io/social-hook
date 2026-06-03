@@ -1,6 +1,6 @@
 # social-hook config
 
-View and modify configuration.
+View and modify config.yaml settings. Use 'show' for the full file, 'get' for a single key, or 'set' to update a value.
 
 ---
 
