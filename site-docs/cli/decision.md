@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+View and manage evaluator decisions — the LLM verdicts that determine whether a commit produces a draft, is held, or is skipped.
 
 ---
 

@@ -1,6 +1,6 @@
 # social-hook manual
 
-Manual operations.
+Manually trigger pipeline steps — evaluate a commit, draft from a decision, run consolidation, or post a scheduled draft — without waiting for automatic tickers.
 
 ---
 

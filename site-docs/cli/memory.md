@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories — persistent feedback notes from rejected drafts that teach the drafter your preferences over time.
 
 ---
 

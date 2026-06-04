@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Start, stop, and monitor the background bot daemon. The daemon runs the scheduler and consolidation tickers on a loop, posting approved drafts and processing holds automatically.
 
 ---
 
