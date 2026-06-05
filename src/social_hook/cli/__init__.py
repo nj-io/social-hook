@@ -527,7 +527,11 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
+bot_app = typer.Typer(
+    name="bot",
+    help="Start, stop, and monitor the background bot daemon. The daemon runs the scheduler and consolidation tickers on a loop, posting approved drafts and processing holds automatically.",
+    no_args_is_help=True,
+)
 app.add_typer(bot_app, name="bot")
 
 
@@ -970,10 +974,18 @@ app.add_typer(
 )
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(
+    inspect_app,
+    name="inspect",
+    help="Query pipeline state: recent evaluation log, pending drafts awaiting action, LLM token usage, and configured platform credentials.",
+)
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Manually trigger pipeline steps — evaluate a commit, draft from a decision, run consolidation, or post a scheduled draft — without waiting for automatic tickers.",
+)
 
 # Setup wizard
 app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
@@ -989,32 +1001,60 @@ app.add_typer(
 )
 
 # Config commands: show, get, set
-app.add_typer(config_app, name="config", help="View and modify configuration.")
+app.add_typer(
+    config_app,
+    name="config",
+    help="View and modify config.yaml settings. Supports dotted key paths for reading and writing individual values.",
+)
 
 # Memory commands: list, add, delete, clear
-app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+app.add_typer(
+    memory_app,
+    name="memory",
+    help="Manage voice memories — persistent feedback notes from rejected drafts that teach the drafter your preferences over time.",
+)
 
 # Arc commands: list, create, complete, abandon
-app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+app.add_typer(
+    arc_app,
+    name="arc",
+    help="Manage narrative arcs — multi-post storylines that thread related commits into a coherent series instead of isolated updates.",
+)
 
 from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="View and manage evaluator decisions — the LLM verdicts that determine whether a commit produces a draft, is held, or is skipped.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
-app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+app.add_typer(
+    draft_app,
+    name="draft",
+    help="Manage the full draft lifecycle: approve, reject, schedule, edit, redraft, post, and manage media attachments for generated content.",
+)
 
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Manage generated media assets. Currently provides garbage collection to remove orphaned files from the media cache.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
-app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+app.add_typer(
+    snapshot_app,
+    name="snapshot",
+    help="Save, restore, and manage database snapshots for backup, recovery, or experimentation with pipeline state.",
+)
 
 from social_hook.cli.account import app as account_app
 from social_hook.cli.advisory import app as advisory_app

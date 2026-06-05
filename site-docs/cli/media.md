@@ -1,6 +1,6 @@
 # social-hook media
 
-Media management.
+Manage generated media assets. Currently provides garbage collection to remove orphaned files from the media cache.
 
 ---
 

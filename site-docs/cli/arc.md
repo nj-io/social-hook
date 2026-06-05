@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage narrative arcs — multi-post storylines that thread related commits into a coherent series instead of isolated updates.
 
 ---
 
