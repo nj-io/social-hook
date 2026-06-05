@@ -1,6 +1,6 @@
 # social-hook config
 
-View and modify configuration.
+View and modify config.yaml settings. Supports dotted key paths for reading and writing individual values.
 
 ---
 

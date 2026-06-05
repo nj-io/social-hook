@@ -24,7 +24,7 @@ These options can be placed before any command.
 | [`arc`](arc.md) | Manage narrative arcs — multi-post storylines that thread related commits into a coherent series instead of isolated updates. |
 | [`bot`](bot.md) | Start, stop, and monitor the background bot daemon. The daemon runs the scheduler and consolidation tickers on a loop, posting approved drafts and processing holds automatically. |
 | [`brief`](brief.md) | View and edit the project brief used by the evaluator and drafter. |
-| [`config`](config.md) | View and modify configuration. |
+| [`config`](config.md) | View and modify config.yaml settings. Supports dotted key paths for reading and writing individual values. |
 | [`content`](content.md) | Submit content ideas, combine topics, and trigger hero launch drafts. |
 | [`credentials`](credentials.md) | Manage API keys and secrets in ~/.social-hook/.env. |
 | [`cycles`](cycles.md) | Inspect evaluation cycle history and per-strategy outcomes. |

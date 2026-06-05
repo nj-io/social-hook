@@ -1001,7 +1001,11 @@ app.add_typer(
 )
 
 # Config commands: show, get, set
-app.add_typer(config_app, name="config", help="View and modify configuration.")
+app.add_typer(
+    config_app,
+    name="config",
+    help="View and modify config.yaml settings. Supports dotted key paths for reading and writing individual values.",
+)
 
 # Memory commands: list, add, delete, clear
 app.add_typer(
