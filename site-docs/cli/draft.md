@@ -10,6 +10,7 @@ Mark a draft as approved for posting.
 
 The scheduler will post it when its scheduled time arrives.
 Preview drafts must be promoted to a platform first.
+Non-auto-postable vehicles (e.g. articles) are redirected to advisory flow.
 
 Example: social-hook draft approve draft_abc123
 
@@ -168,6 +169,7 @@ Example: social-hook draft media-remove draft-abc123
 Post a draft immediately to its platform.
 
 Requires platform credentials in ~/.social-hook/.env.
+Non-auto-postable vehicles (e.g. articles) are redirected to advisory flow.
 
 Example: social-hook draft post-now draft_abc123
 Example: social-hook draft post-now draft_abc123 --yes  (skip confirmation)
@@ -217,6 +219,7 @@ Approve and schedule a draft for the next optimal posting time in one step.
 
 Combines approve + schedule. Considers your configured posting limits,
 preferred time windows, and minimum gap between posts to pick the best slot.
+Non-auto-postable vehicles (e.g. articles) are redirected to advisory flow.
 
 Example: social-hook draft quick-approve draft_abc123
 
@@ -317,6 +320,7 @@ Schedule a draft for posting at a specific or optimal time.
 With --time, posts at that exact ISO datetime. Without --time,
 automatically picks the next optimal slot based on your configured
 posting limits, time windows, and minimum gap between posts.
+Non-auto-postable vehicles (e.g. articles) are redirected to advisory flow.
 
 Example: social-hook draft schedule draft_abc123
 Example: social-hook draft schedule draft_abc123 --time 2026-03-25T10:00:00
