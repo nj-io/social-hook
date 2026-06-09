@@ -20,9 +20,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import click
+import typer.core
 import typer.main
 
 from social_hook.cli import app
+
+# Typer ≥0.26 uses its own TyperOption/TyperArgument that don't extend click.Option/Argument.
+_OPTION_TYPES = (typer.core.TyperOption,)
+_ARGUMENT_TYPES = (typer.core.TyperArgument,)
+if issubclass(typer.core.TyperOption, click.Option):
+    _OPTION_TYPES = (click.Option,)
+    _ARGUMENT_TYPES = (click.Argument,)
 from social_hook.constants import PROJECT_SLUG
 
 DOCS_DIR = Path(__file__).resolve().parent.parent / "site-docs" / "cli"
@@ -76,7 +84,7 @@ def render_params(cmd: click.Command) -> str:
     skip = {"install_completion", "show_completion", "help", "ctx"}
 
     # Arguments
-    args = [p for p in cmd.params if isinstance(p, click.Argument)]
+    args = [p for p in cmd.params if isinstance(p, _ARGUMENT_TYPES)]
     if args:
         lines.append("**Arguments:**")
         lines.append("")
@@ -93,7 +101,7 @@ def render_params(cmd: click.Command) -> str:
         lines.append("")
 
     # Options
-    opts = [p for p in cmd.params if isinstance(p, click.Option) and p.name not in skip]
+    opts = [p for p in cmd.params if isinstance(p, _OPTION_TYPES) and p.name not in skip]
     if opts:
         lines.append("**Options:**")
         lines.append("")
