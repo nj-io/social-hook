@@ -9,7 +9,10 @@ import typer
 
 from social_hook.models.enums import PENDING_STATUSES, TERMINAL_STATUSES
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage the full draft lifecycle — approval, scheduling, posting, media editing, redrafting, and promotion from preview to live accounts.",
+)
 
 
 def _get_conn():

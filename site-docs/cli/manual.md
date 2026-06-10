@@ -1,6 +1,6 @@
 # social-hook manual
 
-Manual operations.
+Trigger evaluation, drafting, consolidation, and posting manually — bypass the automatic pipeline for one-off operations.
 
 ---
 

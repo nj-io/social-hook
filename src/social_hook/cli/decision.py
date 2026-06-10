@@ -7,7 +7,10 @@ import sqlite3
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage evaluator decisions on commits. Delete decisions (cascading to drafts) or re-trigger evaluation with a fresh LLM pass.",
+)
 
 
 def _get_conn():

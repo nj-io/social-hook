@@ -1,6 +1,6 @@
 # social-hook config
 
-View and modify configuration.
+View and modify configuration via dotted-key paths. Reads from config.yaml with project-level overrides.
 
 ---
 

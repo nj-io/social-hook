@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Manage evaluator decisions on commits. Delete decisions (cascading to drafts) or re-trigger evaluation with a fresh LLM pass.
 
 ---
 

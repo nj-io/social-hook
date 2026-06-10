@@ -527,7 +527,11 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
+bot_app = typer.Typer(
+    name="bot",
+    no_args_is_help=True,
+    help="Manage the background bot daemon that monitors git hooks and runs the evaluation pipeline continuously.",
+)
 app.add_typer(bot_app, name="bot")
 
 
@@ -970,10 +974,18 @@ app.add_typer(
 )
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(
+    inspect_app,
+    name="inspect",
+    help="Query system state: recent evaluation decisions, drafts awaiting action, and LLM token usage with cost breakdowns.",
+)
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Trigger evaluation, drafting, consolidation, and posting manually — bypass the automatic pipeline for one-off operations.",
+)
 
 # Setup wizard
 app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
@@ -989,32 +1001,60 @@ app.add_typer(
 )
 
 # Config commands: show, get, set
-app.add_typer(config_app, name="config", help="View and modify configuration.")
+app.add_typer(
+    config_app,
+    name="config",
+    help="View and modify configuration via dotted-key paths. Reads from config.yaml with project-level overrides.",
+)
 
 # Memory commands: list, add, delete, clear
-app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+app.add_typer(
+    memory_app,
+    name="memory",
+    help="Manage voice memories — timestamped feedback that shapes future drafts by teaching the evaluator what works for your voice.",
+)
 
 # Arc commands: list, create, complete, abandon
-app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+app.add_typer(
+    arc_app,
+    name="arc",
+    help="Create and manage narrative arcs — multi-episode story threads that give your content thematic continuity across commits.",
+)
 
 from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="Manage evaluator decisions on commits. Delete decisions (cascading to drafts) or re-trigger evaluation with a fresh LLM pass.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
-app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+app.add_typer(
+    draft_app,
+    name="draft",
+    help="Manage the full draft lifecycle — approval, scheduling, posting, media editing, redrafting, and promotion from preview to live accounts.",
+)
 
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Garbage-collect orphaned media files from the cache to reclaim disk space.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
-app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+app.add_typer(
+    snapshot_app,
+    name="snapshot",
+    help="Save and restore point-in-time database snapshots before major operations, or reset to a clean state.",
+)
 
 from social_hook.cli.account import app as account_app
 from social_hook.cli.advisory import app as advisory_app
@@ -1091,7 +1131,11 @@ app.add_typer(
 )
 
 # Log queries, tailing, and health
-app.add_typer(logs_app, name="logs", help="Log queries, tailing, and health.")
+app.add_typer(
+    logs_app,
+    name="logs",
+    help="Query stored errors by severity and component, tail live log files, clear old entries, and check system health.",
+)
 
 from social_hook.cli.events import events as events_cmd
 from social_hook.cli.quickstart import quickstart as quickstart_cmd

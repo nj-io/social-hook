@@ -2,7 +2,9 @@
 
 import typer
 
-app = typer.Typer()
+app = typer.Typer(
+    help="Query system state: recent evaluation decisions, drafts awaiting action, and LLM token usage with cost breakdowns.",
+)
 
 
 @app.command()

@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Manage the background bot daemon that monitors git hooks and runs the evaluation pipeline continuously.
 
 ---
 
