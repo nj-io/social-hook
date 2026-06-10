@@ -1,6 +1,6 @@
 # social-hook inspect
 
-Inspect system state.
+Query system state: recent evaluation decisions, drafts awaiting action, and LLM token usage with cost breakdowns.
 
 ---
 

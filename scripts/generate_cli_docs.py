@@ -70,13 +70,23 @@ def option_flags(param: click.Option) -> str:
     return ", ".join(parts)
 
 
+def _is_argument(param: click.Parameter) -> bool:
+    """Check if param is an argument (supports both click.Argument and TyperArgument)."""
+    return isinstance(param, click.Argument) or "Argument" in type(param).__name__
+
+
+def _is_option(param: click.Parameter) -> bool:
+    """Check if param is an option (supports both click.Option and TyperOption)."""
+    return isinstance(param, click.Option) or "Option" in type(param).__name__
+
+
 def render_params(cmd: click.Command) -> str:
     """Render arguments and options as markdown tables."""
     lines = []
     skip = {"install_completion", "show_completion", "help", "ctx"}
 
     # Arguments
-    args = [p for p in cmd.params if isinstance(p, click.Argument)]
+    args = [p for p in cmd.params if _is_argument(p)]
     if args:
         lines.append("**Arguments:**")
         lines.append("")
@@ -93,7 +103,7 @@ def render_params(cmd: click.Command) -> str:
         lines.append("")
 
     # Options
-    opts = [p for p in cmd.params if isinstance(p, click.Option) and p.name not in skip]
+    opts = [p for p in cmd.params if _is_option(p) and p.name not in skip]
     if opts:
         lines.append("**Options:**")
         lines.append("")

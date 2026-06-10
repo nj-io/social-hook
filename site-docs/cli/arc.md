@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Create and manage narrative arcs — multi-episode story threads that give your content thematic continuity across commits.
 
 ---
 

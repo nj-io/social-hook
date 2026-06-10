@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories — timestamped feedback that shapes future drafts by teaching the evaluator what works for your voice.
 
 ---
 

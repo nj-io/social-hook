@@ -4,7 +4,10 @@ import os
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Create and manage narrative arcs — multi-episode story threads that give your content thematic continuity across commits.",
+)
 
 
 def _resolve_project(project: str | None = None) -> str:

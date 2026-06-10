@@ -1,6 +1,6 @@
 # social-hook logs
 
-Log queries, tailing, and health.
+Query stored errors by severity and component, tail live log files, clear old entries, and check system health.
 
 **Group options:**
 
