@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Manage evaluator decisions: delete, re-trigger, batch-evaluate, or rewind to undo downstream artifacts.
 
 ---
 

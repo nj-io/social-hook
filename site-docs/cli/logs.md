@@ -1,6 +1,6 @@
 # social-hook logs
 
-Log queries, tailing, and health.
+Query, tail, and clear structured logs, and check logging pipeline health.
 
 **Group options:**
 

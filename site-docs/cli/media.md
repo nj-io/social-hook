@@ -1,6 +1,6 @@
 # social-hook media
 
-Media management.
+Media cache housekeeping — remove orphaned files from local storage.
 
 ---
 
