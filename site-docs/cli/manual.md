@@ -1,6 +1,6 @@
 # social-hook manual
 
-Manual operations.
+Manually evaluate commits, generate drafts, consolidate decisions, or post content without waiting for the scheduler.
 
 ---
 

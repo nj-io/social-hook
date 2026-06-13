@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories — human feedback that trains the drafter LLM to learn from rejection reasons and content preferences.
 
 ---
 

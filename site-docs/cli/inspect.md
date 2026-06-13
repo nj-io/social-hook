@@ -1,6 +1,6 @@
 # social-hook inspect
 
-Inspect system state.
+Read-only views of system state: decision log, pending drafts, token usage, and platform configuration.
 
 ---
 

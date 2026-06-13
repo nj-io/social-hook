@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage multi-post narrative arcs that group related content under a theme with lifecycle tracking.
 
 ---
 

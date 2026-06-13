@@ -1,6 +1,6 @@
 # social-hook config
 
-View and modify configuration.
+View and modify config.yaml settings (scheduling, rate limits, platform settings, logging).
 
 ---
 
