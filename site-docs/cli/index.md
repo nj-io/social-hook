@@ -6,14 +6,6 @@ Automated social media content from development activity.
 
 These options can be placed before any command.
 
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--config`, `-c` | path |  | Override config location |
-| `--dry-run` | boolean | false | Run full pipeline without posting or DB writes (for testing) |
-| `--verbose`, `-v` | boolean | false | Verbose output |
-| `--json` | boolean | false | JSON output for scripting |
 
 ## Command Groups
 
@@ -28,13 +20,13 @@ These options can be placed before any command.
 | [`content`](content.md) | Submit content ideas, combine topics, and trigger hero launch drafts. |
 | [`credentials`](credentials.md) | Manage API keys and secrets in ~/.social-hook/.env. |
 | [`cycles`](cycles.md) | Inspect evaluation cycle history and per-strategy outcomes. |
-| [`decision`](decision.md) | Decision management. |
+| [`decision`](decision.md) | View, delete, retrigger, or rewind evaluation decisions. Decisions record why a commit was drafted or skipped and can be replayed to regenerate content. |
 | [`draft`](draft.md) | Draft lifecycle management. |
 | [`inspect`](inspect.md) | Inspect system state. |
 | [`journey`](journey.md) | Control Development Journey capture. When enabled, Claude Code hooks record session narratives that feed into the evaluation pipeline as rich development context. |
 | [`logs`](logs.md) | Log queries, tailing, and health. |
-| [`manual`](manual.md) | Manual operations. |
-| [`media`](media.md) | Media management. |
+| [`manual`](manual.md) | Run pipeline steps by hand. Evaluate a commit, draft content, consolidate a thread, or post a draft — outside the normal automated flow. |
+| [`media`](media.md) | Manage generated media assets. Run garbage collection to remove orphaned images and other media files that are no longer referenced by any draft. |
 | [`memory`](memory.md) | Manage voice memories. |
 | [`project`](project.md) | Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained. |
 | [`snapshot`](snapshot.md) | DB snapshot management. |
@@ -54,7 +46,7 @@ These options can be placed before any command.
 | [`quickstart`](root-commands.md#social-hook-quickstart) | Run the quickstart flow. |
 | [`rate-limits`](root-commands.md#social-hook-rate-limits) | Show current rate limit status (daily cap, gap timer, queue, cost). |
 | [`scheduler-tick`](root-commands.md#social-hook-scheduler-tick) | Post scheduled drafts whose time has arrived and promote deferred drafts. |
-| [`setup`](root-commands.md#social-hook-setup) | Configure social-hook. |
+| [`setup`](root-commands.md#social-hook-setup) | Run the interactive setup wizard. Walks through API keys, voice, platforms, scheduling, and media configuration. Use --only to configure a single component, or --validate to check existing config. |
 | [`test`](root-commands.md#social-hook-test) | Test commit evaluation. |
 | [`trigger`](root-commands.md#social-hook-trigger) | Run the full evaluation-to-draft pipeline for a single commit. |
 | [`version`](root-commands.md#social-hook-version) | Show version information. |

@@ -13,20 +13,6 @@ built-in template to inherit defaults, then override specific fields.
 
 Example: social-hook strategy add --name dev-community --audience "open-source developers" --voice casual
 
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--name`, `-n` | string |  | Strategy name |
-| `--template`, `-t` | string |  | Built-in template ID to base on |
-| `--audience` | string |  | Target audience |
-| `--voice` | string |  | Voice/tone |
-| `--angle` | string |  | Content angle |
-| `--post-when` | string |  | When to post |
-| `--avoid` | string |  | What to avoid |
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
-
 ---
 
 ### `social-hook strategy delete`
@@ -37,20 +23,6 @@ Fails if any targets reference the strategy (409 Conflict).
 Built-in template strategies cannot be deleted — use 'reset' instead.
 
 Example: social-hook strategy delete dev-community --yes
-
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `name` | yes | Strategy name to delete |
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--yes`, `-y` | boolean | false | Skip confirmation |
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
 
 ---
 
@@ -65,19 +37,6 @@ to the project's content-config.yaml.
 
 Example: social-hook strategy edit building-public
 
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `name` | yes | Strategy name to edit |
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
-
 ---
 
 ### `social-hook strategy list`
@@ -90,13 +49,6 @@ with any project-level customizations.
 
 Example: social-hook strategy list
 
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
-
 ---
 
 ### `social-hook strategy reset`
@@ -107,20 +59,6 @@ Removes the project-level override for the named strategy,
 restoring it to its built-in template values.
 
 Example: social-hook strategy reset building-public --yes
-
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `name` | yes | Strategy name to reset |
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--yes`, `-y` | boolean | false | Skip confirmation |
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
 
 ---
 
@@ -133,18 +71,5 @@ and fields: audience, voice, angle, post_when, avoid, format_preference,
 and media_preference.
 
 Example: social-hook strategy show building-public
-
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `name` | yes | Strategy name |
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
 
 ---
