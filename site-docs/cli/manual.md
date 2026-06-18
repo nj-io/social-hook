@@ -14,6 +14,12 @@ same project. The most recent decision is used as the anchor.
 
 Example: social-hook manual consolidate decision-aaa decision-bbb decision-ccc
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `decision_ids` | yes | Decision IDs to consolidate (at least 2) |
+
 ---
 
 ### `social-hook manual draft`
@@ -26,6 +32,18 @@ content for all enabled platforms, or a single platform with --platform.
 
 Example: social-hook manual draft decision-abc123 --platform x
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `decision_id` | yes | Decision ID to create draft for |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--platform` | string |  | Target platform (default: all enabled) |
+
 ---
 
 ### `social-hook manual evaluate`
@@ -35,6 +53,18 @@ Manually evaluate a commit through the full pipeline.
 Runs the same evaluation and drafting pipeline as the automatic hook trigger.
 
 Example: social-hook manual evaluate abc1234 --repo /path/to/repo
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `commit` | yes | Commit hash to evaluate |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--repo` | string |  | Repository path |
 
 ---
 
@@ -47,5 +77,11 @@ be in a pending status (draft, approved, scheduled, or deferred) and
 have a connected account (not in preview mode).
 
 Example: social-hook manual post draft-abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to post |
 
 ---

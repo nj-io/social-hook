@@ -20,10 +20,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import click
+import typer.core
 import typer.main
 
 from social_hook.cli import app
 from social_hook.constants import PROJECT_SLUG
+
+# Typer >=0.26 uses its own param classes that don't inherit from click.*
+_argument_types = (click.Argument, typer.core.TyperArgument)
+_option_types = (click.Option, typer.core.TyperOption)
 
 DOCS_DIR = Path(__file__).resolve().parent.parent / "site-docs" / "cli"
 
@@ -76,7 +81,7 @@ def render_params(cmd: click.Command) -> str:
     skip = {"install_completion", "show_completion", "help", "ctx"}
 
     # Arguments
-    args = [p for p in cmd.params if isinstance(p, click.Argument)]
+    args = [p for p in cmd.params if isinstance(p, _argument_types)]
     if args:
         lines.append("**Arguments:**")
         lines.append("")
@@ -93,7 +98,7 @@ def render_params(cmd: click.Command) -> str:
         lines.append("")
 
     # Options
-    opts = [p for p in cmd.params if isinstance(p, click.Option) and p.name not in skip]
+    opts = [p for p in cmd.params if isinstance(p, _option_types) and p.name not in skip]
     if opts:
         lines.append("**Options:**")
         lines.append("")

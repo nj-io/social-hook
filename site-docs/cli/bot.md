@@ -8,6 +8,12 @@ Bot daemon management.
 
 Start the bot daemon.
 
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--daemon`, `-d` | boolean | false | Run as background daemon |
+
 ---
 
 ### `social-hook bot status`

@@ -15,6 +15,19 @@ Examples:
     social-hook inspect log
     social-hook inspect log my-project --limit 5 --json
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `project_id` | no | Project ID (optional) |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--limit`, `-n` | integer | 20 | Number of entries |
+| `--json` | boolean | false | Output as JSON |
+
 ---
 
 ### `social-hook inspect pending`
@@ -27,6 +40,18 @@ to see what content is queued and needs review or approval.
 Examples:
     social-hook inspect pending
     social-hook inspect pending my-project --json
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `project_id` | no | Project ID (optional) |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | boolean | false | Output as JSON |
 
 ---
 
@@ -41,6 +66,12 @@ Examples:
     social-hook inspect platforms
     social-hook inspect platforms --json
 
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | boolean | false | Output as JSON |
+
 ---
 
 ### `social-hook inspect usage`
@@ -53,5 +84,13 @@ to see individual operations with timestamps and commit hashes.
 Examples:
     social-hook inspect usage --days 7
     social-hook inspect usage --recent 10
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--days`, `-d` | integer | 30 | Number of days |
+| `--recent`, `-r` | integer |  | Show last N individual operations |
+| `--json` | boolean | false | Output as JSON |
 
 ---

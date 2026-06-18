@@ -6,6 +6,14 @@ Automated social media content from development activity.
 
 These options can be placed before any command.
 
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--config`, `-c` | path |  | Override config location |
+| `--dry-run` | boolean | false | Run full pipeline without posting or DB writes (for testing) |
+| `--verbose`, `-v` | boolean | false | Verbose output |
+| `--json` | boolean | false | JSON output for scripting |
 
 ## Command Groups
 

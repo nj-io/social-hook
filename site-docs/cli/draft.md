@@ -13,6 +13,12 @@ Preview drafts must be promoted to a platform first.
 
 Example: social-hook draft approve draft_abc123
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to approve |
+
 ---
 
 ### `social-hook draft cancel`
@@ -20,6 +26,12 @@ Example: social-hook draft approve draft_abc123
 Cancel a pending draft, removing it from the posting queue.
 
 Example: social-hook draft cancel draft_abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to cancel |
 
 ---
 
@@ -33,6 +45,20 @@ The account's platform must match the draft's platform.
 Example: social-hook draft connect draft-abc123 --account my-x-account
 Example: social-hook draft connect draft-abc123 --account my-x-account --yes  (skip confirmation)
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Preview-mode draft ID to connect |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--account`, `-a` | string |  | Account name to connect (must match draft platform) |
+| `--json` | boolean | false | Output as JSON |
+| `--yes`, `-y` | boolean | false | Skip confirmation |
+
 ---
 
 ### `social-hook draft edit`
@@ -44,6 +70,18 @@ If the draft is a thread, tweet boundaries are automatically re-split.
 
 Example: social-hook draft edit draft-abc123 --content "Updated post text here"
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to edit |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--content`, `-c` | string |  | New content |
+
 ---
 
 ### `social-hook draft list`
@@ -54,6 +92,18 @@ Example: social-hook draft list --pending --json
 Example: social-hook draft list --decision decision-abc123
 Example: social-hook draft list --commit 47a5191
 Example: social-hook draft list --tag auth
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--status`, `-s` | string |  | Filter by status |
+| `--project`, `-i` | string |  | Filter by project ID |
+| `--decision`, `-d` | string |  | Filter by decision ID |
+| `--commit`, `-c` | string |  | Filter by commit hash |
+| `--tag`, `-t` | string |  | Filter by episode tag (matches decision episode_tags) |
+| `--pending` | boolean | false | Show only actionable drafts (draft/approved/scheduled) |
+| `--json` | boolean | false | Output as JSON |
 
 ---
 
@@ -67,6 +117,18 @@ produce a new media file from the updated spec.
 
 Example: social-hook draft media-edit draft-abc123 --spec '{"code": "print(42)", "language": "python"}'
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to edit media spec for |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--spec`, `-s` | string |  | New media spec as JSON string |
+
 ---
 
 ### `social-hook draft media-regen`
@@ -79,6 +141,12 @@ this command to produce a new file from the updated spec.
 
 Example: social-hook draft media-regen draft-abc123
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to regenerate media for |
+
 ---
 
 ### `social-hook draft media-remove`
@@ -86,6 +154,12 @@ Example: social-hook draft media-regen draft-abc123
 Remove media from a draft.
 
 Example: social-hook draft media-remove draft-abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to remove media from |
 
 ---
 
@@ -98,6 +172,19 @@ Requires platform credentials in ~/.social-hook/.env.
 Example: social-hook draft post-now draft_abc123
 Example: social-hook draft post-now draft_abc123 --yes  (skip confirmation)
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to post immediately |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes`, `-y` | boolean | false | Skip confirmation prompt |
+| `--json` | boolean | false | Output as JSON |
+
 ---
 
 ### `social-hook draft promote`
@@ -109,6 +196,19 @@ then marks the preview draft as superseded.
 
 Example: social-hook draft promote draft-abc123 --platform x
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Preview draft ID to promote |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--platform`, `-p` | string |  | Target platform (e.g., x, linkedin) |
+| `--json` | boolean | false | Output as JSON |
+
 ---
 
 ### `social-hook draft quick-approve`
@@ -119,6 +219,12 @@ Combines approve + schedule. Considers your configured posting limits,
 preferred time windows, and minimum gap between posts to pick the best slot.
 
 Example: social-hook draft quick-approve draft_abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to approve and schedule |
 
 ---
 
@@ -132,6 +238,18 @@ in the draft's change history.
 
 Example: social-hook draft redraft draft-abc123 --angle "focus on the performance gains"
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to redraft |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--angle`, `-a` | string |  | New angle or direction for the draft |
+
 ---
 
 ### `social-hook draft reject`
@@ -144,6 +262,18 @@ rejection cascades to re-draft the introduction for that platform.
 
 Example: social-hook draft reject draft-abc123 --reason "too technical for the audience"
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to reject |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--reason`, `-r` | string |  | Rejection reason |
+
 ---
 
 ### `social-hook draft reopen`
@@ -155,6 +285,12 @@ Clears any previous error message on the draft.
 
 Example: social-hook draft reopen draft-abc123
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to reopen |
+
 ---
 
 ### `social-hook draft retry`
@@ -165,6 +301,12 @@ Resets the retry counter and sets status back to scheduled so
 the scheduler will try posting it again.
 
 Example: social-hook draft retry draft_abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to retry |
 
 ---
 
@@ -179,6 +321,18 @@ posting limits, time windows, and minimum gap between posts.
 Example: social-hook draft schedule draft_abc123
 Example: social-hook draft schedule draft_abc123 --time 2026-03-25T10:00:00
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to schedule |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--time`, `-t` | string |  | Schedule time (ISO format) |
+
 ---
 
 ### `social-hook draft show`
@@ -186,6 +340,19 @@ Example: social-hook draft schedule draft_abc123 --time 2026-03-25T10:00:00
 Show full detail for a draft including media spec and change history.
 
 Example: social-hook draft show draft-abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to show |
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--open` | boolean | false | Open media files in default viewer |
+| `--json` | boolean | false | Output as JSON |
 
 ---
 
@@ -198,6 +365,12 @@ edits before scheduling or posting.
 
 Example: social-hook draft unapprove draft-abc123
 
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to unapprove |
+
 ---
 
 ### `social-hook draft unschedule`
@@ -208,5 +381,11 @@ Clears the scheduled time. Use when you need to edit or reschedule
 a draft that was already queued for posting.
 
 Example: social-hook draft unschedule draft-abc123
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `draft_id` | yes | Draft ID to unschedule |
 
 ---

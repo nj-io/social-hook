@@ -13,6 +13,13 @@ Loads the current brief into a temporary file, opens in your editor
 
 Example: social-hook brief edit
 
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--project`, `-p` | string |  | Repository path (default: cwd) |
+| `--json` | boolean | false | Output as JSON |
+
 ---
 
 ### `social-hook brief show`
@@ -24,5 +31,12 @@ for context. Sections: What It Does, Key Capabilities, Technical
 Architecture, Current State.
 
 Example: social-hook brief show
+
+**Options:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--project`, `-p` | string |  | Repository path (default: cwd) |
+| `--json` | boolean | false | Output as JSON |
 
 ---

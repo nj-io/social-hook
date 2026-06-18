@@ -1,5 +1,5 @@
 <!-- last_run_commit: 1afe4f10d28bede2e584ead914465ebe9279dcb9 -->
-<!-- last_run_date: 2026-06-15 -->
+<!-- last_run_date: 2026-06-18 -->
 
 # Documentation Status
 
@@ -96,16 +96,16 @@ Tracks coverage of external docs against the codebase. Used by the docs maintena
 
 | Check | Last passed | Notes |
 |-------|-------------|-------|
-| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-06-15 | Regenerated; options/arguments tables removed by generator update |
-| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-06-15 | |
-| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-06-15 | |
-| `ruff check src/ tests/` passes | 2026-06-15 | |
-| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-06-15 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
-| All CLI commands with poor/partial docstrings have been enriched | 2026-06-15 | |
-| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-06-15 | |
-| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-06-15 | |
-| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-06-15 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
-| All CLI command groups have enriched group-level help text (not just terse labels) | 2026-06-15 | `manual`, `setup`, `decision`, `media` enriched this run; all groups now have descriptive help |
+| CLI docs are fresh (`generate_cli_docs.py` output matches committed) | 2026-06-18 | Fixed Typer 0.26 compat in generator; param tables restored |
+| `mkdocs.yml` nav entries match files in `site-docs/cli/` | 2026-06-18 | |
+| OAuth env vars in config.md use OAuth 2.0 names (`X_CLIENT_ID`, not `CONSUMER_KEY`) | 2026-06-18 | |
+| `ruff check src/ tests/` passes | 2026-06-18 | |
+| `mypy src/social_hook/` has no new errors (only pre-existing library stub issues) | 2026-06-18 | 28 errors, all `import-untyped` or `no-any-return` pre-existing |
+| All CLI commands with poor/partial docstrings have been enriched | 2026-06-18 | |
+| `pipeline.md` accurately describes the two-stage evaluation flow and targets path | 2026-06-18 | |
+| `narrative-arcs.md` uses `episode_tags` (not `episode_type`) and documents strategy-scoped arcs | 2026-06-18 | |
+| All interactive CLI commands (e.g., `credentials add`) have documented non-interactive equivalents for agent/CI use | 2026-06-18 | `credentials add --set`, all destructive commands have `--yes`; `setup` wizard → write config.yaml directly |
+| All CLI command groups have enriched group-level help text (not just terse labels) | 2026-06-18 | `manual`, `setup`, `decision`, `media` enriched this run; all groups now have descriptive help |
 
 ## Backlog (waiting_approval)
 
