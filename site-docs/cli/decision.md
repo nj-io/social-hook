@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+View, delete, retrigger, or rewind evaluation decisions. Decisions record why a commit was drafted or skipped and can be replayed to regenerate content.
 
 ---
 

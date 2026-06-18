@@ -138,7 +138,7 @@ Example: social-hook --dry-run scheduler-tick
 
 ### `social-hook setup`
 
-Configure social-hook.
+Run the interactive setup wizard. Walks through API keys, voice, platforms, scheduling, and media configuration. Use --only to configure a single component, or --validate to check existing config.
 
 **Options:**
 

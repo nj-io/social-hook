@@ -7,7 +7,10 @@ import sqlite3
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="View, delete, retrigger, or rewind evaluation decisions. Decisions record why a commit was drafted or skipped and can be replayed to regenerate content.",
+)
 
 
 def _get_conn():

@@ -973,10 +973,18 @@ app.add_typer(
 app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Run pipeline steps by hand. Evaluate a commit, draft content, consolidate a thread, or post a draft — outside the normal automated flow.",
+)
 
 # Setup wizard
-app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
+app.add_typer(
+    setup_app,
+    name="setup",
+    help="Run the interactive setup wizard. Walks through API keys, voice, platforms, scheduling, and media configuration. Use --only to configure a single component, or --validate to check existing config.",
+)
 
 # Test command
 app.add_typer(test_app, name="test", help="Test commit evaluation.")
@@ -1001,7 +1009,11 @@ from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="View, delete, retrigger, or rewind evaluation decisions. Decisions record why a commit was drafted or skipped and can be replayed to regenerate content.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
 app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
@@ -1009,7 +1021,11 @@ app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Manage generated media assets. Run garbage collection to remove orphaned images and other media files that are no longer referenced by any draft.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 
