@@ -7,7 +7,10 @@ import sqlite3
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Inspect and manage per-commit evaluation decisions. Each commit is evaluated by the LLM pipeline; decisions record whether content was deemed draft-worthy.",
+)
 
 
 def _get_conn():

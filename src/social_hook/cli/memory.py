@@ -4,7 +4,10 @@ import os
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage voice memories — persistent feedback that shapes how the LLM drafts content (tone, style, audience preferences).",
+)
 
 
 def _resolve_project(project: str | None = None) -> str:

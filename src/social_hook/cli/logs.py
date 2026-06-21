@@ -6,7 +6,10 @@ import subprocess
 
 import typer
 
-app = typer.Typer(invoke_without_command=True)
+app = typer.Typer(
+    invoke_without_command=True,
+    help="Query, tail, and manage the structured error log. Use health for a quick system health summary.",
+)
 
 VALID_LOG_COMPONENTS = (
     "trigger",

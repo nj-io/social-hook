@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Start, stop, and monitor the Telegram/Discord bot daemon that delivers draft notifications and inline approval buttons.
 
 ---
 
