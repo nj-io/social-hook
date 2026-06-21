@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories — persistent feedback that shapes how the LLM drafts content (tone, style, audience preferences).
 
 ---
 

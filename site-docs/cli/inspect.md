@@ -1,6 +1,6 @@
 # social-hook inspect
 
-Inspect system state.
+Inspect system internals: recent evaluation log, pending drafts, LLM token usage, and connected platform accounts.
 
 ---
 

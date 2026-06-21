@@ -5,7 +5,10 @@ from typing import Any
 import typer
 import yaml
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="View and modify configuration values in config.yaml. Use show for the full file, get/set for individual keys.",
+)
 
 
 def _parse_value(value: str):

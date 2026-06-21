@@ -2,7 +2,9 @@
 
 import typer
 
-app = typer.Typer()
+app = typer.Typer(
+    help="Inspect system internals: recent evaluation log, pending drafts, LLM token usage, and connected platform accounts.",
+)
 
 
 @app.command()

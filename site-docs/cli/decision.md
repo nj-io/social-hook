@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Inspect and manage per-commit evaluation decisions. Each commit is evaluated by the LLM pipeline; decisions record whether content was deemed draft-worthy.
 
 ---
 

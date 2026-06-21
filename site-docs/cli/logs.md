@@ -1,6 +1,6 @@
 # social-hook logs
 
-Log queries, tailing, and health.
+Query, tail, and manage the structured error log. Use health for a quick system health summary.
 
 **Group options:**
 
