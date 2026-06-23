@@ -8,7 +8,10 @@ import sqlite3
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Save, restore, and reset the SQLite database — useful for testing, backups, and recovering from mistakes.",
+)
 
 _NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 _MAX_NAME_LEN = 64

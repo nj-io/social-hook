@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories — per-project feedback records that train the drafter to match your preferred tone and style.
 
 ---
 

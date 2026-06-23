@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage narrative arcs — multi-post storylines that thread through your content and give the evaluator continuity context.
 
 ---
 

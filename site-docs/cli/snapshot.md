@@ -1,6 +1,6 @@
 # social-hook snapshot
 
-DB snapshot management.
+Save, restore, and reset the SQLite database — useful for testing, backups, and recovering from mistakes.
 
 ---
 

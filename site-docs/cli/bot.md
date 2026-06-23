@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Start, stop, and check the bot daemon that runs the scheduler and posts approved drafts on their schedule.
 
 ---
 

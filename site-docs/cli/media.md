@@ -1,6 +1,6 @@
 # social-hook media
 
-Media management.
+Housekeeping for generated media files — clean up orphaned images from the media cache.
 
 ---
 
