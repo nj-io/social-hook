@@ -4,7 +4,10 @@ import os
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage voice memories — per-project feedback records that train the drafter to match your preferred tone and style.",
+)
 
 
 def _resolve_project(project: str | None = None) -> str:
