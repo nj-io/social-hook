@@ -527,7 +527,11 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
+bot_app = typer.Typer(
+    name="bot",
+    help="Control the background bot daemon that watches for commits and runs the automated pipeline. Start or stop the daemon, or check whether it is running.",
+    no_args_is_help=True,
+)
 app.add_typer(bot_app, name="bot")
 
 
@@ -970,10 +974,18 @@ app.add_typer(
 )
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(
+    inspect_app,
+    name="inspect",
+    help="Read-only views into system state. View the decision log, pending drafts awaiting action, LLM token usage and costs, and configured platform status.",
+)
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Run pipeline stages by hand. Manually evaluate a commit, create drafts from an existing decision, consolidate multiple decisions into one draft, or post a draft immediately.",
+)
 
 # Setup wizard
 app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
@@ -989,32 +1001,60 @@ app.add_typer(
 )
 
 # Config commands: show, get, set
-app.add_typer(config_app, name="config", help="View and modify configuration.")
+app.add_typer(
+    config_app,
+    name="config",
+    help="Read and write the global YAML configuration. Show the full config, get a single value by dotted key path, or set a scalar value.",
+)
 
 # Memory commands: list, add, delete, clear
-app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+app.add_typer(
+    memory_app,
+    name="memory",
+    help="Manage per-project voice memories. Stored feedback snippets (e.g. from rejected drafts) that the LLM drafter uses to learn your preferences over time.",
+)
 
 # Arc commands: list, create, complete, abandon
-app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+app.add_typer(
+    arc_app,
+    name="arc",
+    help="Manage narrative arcs — themed storylines that group related posts into a coherent series. Create, complete, resume, or abandon arcs (max 3 active per strategy).",
+)
 
 from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="Manage evaluator decisions — the LLM's verdict on whether a commit should produce content. List, delete, re-evaluate, batch-evaluate, or rewind a decision to remove downstream drafts.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
-app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+app.add_typer(
+    draft_app,
+    name="draft",
+    help="Manage the full lifecycle of social-media drafts. Approve, reject, schedule, edit content and media, post immediately, or promote preview drafts to a connected account.",
+)
 
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Media cache maintenance. Garbage-collect orphaned files from the media cache that are no longer referenced by any draft.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
-app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+app.add_typer(
+    snapshot_app,
+    name="snapshot",
+    help="Save, restore, and manage named snapshots of the SQLite database. Supports resetting the DB to an empty state. All destructive operations auto-backup first.",
+)
 
 from social_hook.cli.account import app as account_app
 from social_hook.cli.advisory import app as advisory_app
@@ -1038,7 +1078,7 @@ app.add_typer(
 app.add_typer(
     account_app,
     name="account",
-    help="Manage OAuth-authenticated platform accounts (X, LinkedIn).",
+    help="Manage platform accounts and their OAuth credentials. Add new accounts via PKCE OAuth, list connected accounts with token status, validate token expiry, or remove an account.",
 )
 
 # Target management: list, add, disable, enable
@@ -1091,7 +1131,11 @@ app.add_typer(
 )
 
 # Log queries, tailing, and health
-app.add_typer(logs_app, name="logs", help="Log queries, tailing, and health.")
+app.add_typer(
+    logs_app,
+    name="logs",
+    help="Query and tail system error logs, clear old entries, and check overall health. Shows error counts by severity over the last 24 hours.",
+)
 
 from social_hook.cli.events import events as events_cmd
 from social_hook.cli.quickstart import quickstart as quickstart_cmd

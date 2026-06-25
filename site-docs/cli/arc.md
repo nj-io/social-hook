@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage narrative arcs — themed storylines that group related posts into a coherent series. Create, complete, resume, or abandon arcs (max 3 active per strategy).
 
 ---
 

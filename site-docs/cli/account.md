@@ -1,6 +1,6 @@
 # social-hook account
 
-Manage OAuth-authenticated platform accounts (X, LinkedIn).
+Manage platform accounts and their OAuth credentials. Add new accounts via PKCE OAuth, list connected accounts with token status, validate token expiry, or remove an account.
 
 ---
 

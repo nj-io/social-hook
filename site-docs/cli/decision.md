@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Manage evaluator decisions — the LLM's verdict on whether a commit should produce content. List, delete, re-evaluate, batch-evaluate, or rewind a decision to remove downstream drafts.
 
 ---
 
