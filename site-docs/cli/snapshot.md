@@ -1,6 +1,6 @@
 # social-hook snapshot
 
-DB snapshot management.
+Save, restore, and manage named snapshots of the SQLite database. Supports resetting the DB to an empty state. All destructive operations auto-backup first.
 
 ---
 

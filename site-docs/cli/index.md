@@ -19,25 +19,25 @@ These options can be placed before any command.
 
 | Group | Description |
 |-------|-------------|
-| [`account`](account.md) | Manage OAuth-authenticated platform accounts (X, LinkedIn). |
+| [`account`](account.md) | Manage platform accounts and their OAuth credentials. Add new accounts via PKCE OAuth, list connected accounts with token status, validate token expiry, or remove an account. |
 | [`advisory`](advisory.md) | Manage advisory items — operator action items for manual tasks. |
-| [`arc`](arc.md) | Manage narrative arcs. |
-| [`bot`](bot.md) | Bot daemon management. |
+| [`arc`](arc.md) | Manage narrative arcs — themed storylines that group related posts into a coherent series. Create, complete, resume, or abandon arcs (max 3 active per strategy). |
+| [`bot`](bot.md) | Control the background bot daemon that watches for commits and runs the automated pipeline. Start or stop the daemon, or check whether it is running. |
 | [`brief`](brief.md) | View and edit the project brief used by the evaluator and drafter. |
-| [`config`](config.md) | View and modify configuration. |
+| [`config`](config.md) | Read and write the global YAML configuration. Show the full config, get a single value by dotted key path, or set a scalar value. |
 | [`content`](content.md) | Submit content ideas, combine topics, and trigger hero launch drafts. |
 | [`credentials`](credentials.md) | Manage API keys and secrets in ~/.social-hook/.env. |
 | [`cycles`](cycles.md) | Inspect evaluation cycle history and per-strategy outcomes. |
-| [`decision`](decision.md) | Decision management. |
-| [`draft`](draft.md) | Draft lifecycle management. |
-| [`inspect`](inspect.md) | Inspect system state. |
+| [`decision`](decision.md) | Manage evaluator decisions — the LLM's verdict on whether a commit should produce content. List, delete, re-evaluate, batch-evaluate, or rewind a decision to remove downstream drafts. |
+| [`draft`](draft.md) | Manage the full lifecycle of social-media drafts. Approve, reject, schedule, edit content and media, post immediately, or promote preview drafts to a connected account. |
+| [`inspect`](inspect.md) | Read-only views into system state. View the decision log, pending drafts awaiting action, LLM token usage and costs, and configured platform status. |
 | [`journey`](journey.md) | Control Development Journey capture. When enabled, Claude Code hooks record session narratives that feed into the evaluation pipeline as rich development context. |
-| [`logs`](logs.md) | Log queries, tailing, and health. |
-| [`manual`](manual.md) | Manual operations. |
-| [`media`](media.md) | Media management. |
-| [`memory`](memory.md) | Manage voice memories. |
+| [`logs`](logs.md) | Query and tail system error logs, clear old entries, and check overall health. Shows error counts by severity over the last 24 hours. |
+| [`manual`](manual.md) | Run pipeline stages by hand. Manually evaluate a commit, create drafts from an existing decision, consolidate multiple decisions into one draft, or post a draft immediately. |
+| [`media`](media.md) | Media cache maintenance. Garbage-collect orphaned files from the media cache that are no longer referenced by any draft. |
+| [`memory`](memory.md) | Manage per-project voice memories. Stored feedback snippets (e.g. from rejected drafts) that the LLM drafter uses to learn your preferences over time. |
 | [`project`](project.md) | Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained. |
-| [`snapshot`](snapshot.md) | DB snapshot management. |
+| [`snapshot`](snapshot.md) | Save, restore, and manage named snapshots of the SQLite database. Supports resetting the DB to an empty state. All destructive operations auto-backup first. |
 | [`strategy`](strategy.md) | View and customize content strategies (voice, audience, editorial rules). |
 | [`target`](target.md) | Configure where content is distributed (account + destination + strategy). |
 | [`topics`](topics.md) | Manage the prioritised content topic queue per strategy. |

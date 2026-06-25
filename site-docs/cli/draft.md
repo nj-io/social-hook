@@ -1,6 +1,6 @@
 # social-hook draft
 
-Draft lifecycle management.
+Manage the full lifecycle of social-media drafts. Approve, reject, schedule, edit content and media, post immediately, or promote preview drafts to a connected account.
 
 ---
 

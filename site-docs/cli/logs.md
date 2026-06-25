@@ -1,6 +1,6 @@
 # social-hook logs
 
-Log queries, tailing, and health.
+Query and tail system error logs, clear old entries, and check overall health. Shows error counts by severity over the last 24 hours.
 
 **Group options:**
 

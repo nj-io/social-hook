@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage per-project voice memories. Stored feedback snippets (e.g. from rejected drafts) that the LLM drafter uses to learn your preferences over time.
 
 ---
 

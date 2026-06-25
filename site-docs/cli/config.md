@@ -1,6 +1,6 @@
 # social-hook config
 
-View and modify configuration.
+Read and write the global YAML configuration. Show the full config, get a single value by dotted key path, or set a scalar value.
 
 ---
 

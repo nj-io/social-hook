@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Control the background bot daemon that watches for commits and runs the automated pipeline. Start or stop the daemon, or check whether it is running.
 
 ---
 
