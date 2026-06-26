@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories. Add, list, and delete per-project voice memories that guide the LLM's tone, style, and content preferences during drafting.
 
 ---
 

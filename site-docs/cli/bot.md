@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Bot daemon management. Start, stop, and check the status of the Telegram/Discord bot that lets you approve, reject, and schedule drafts from chat.
 
 ---
 

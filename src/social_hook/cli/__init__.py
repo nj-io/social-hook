@@ -161,6 +161,7 @@ def help_cmd(
     import json as json_mod
 
     import click
+    from typer.core import TyperArgument, TyperOption
 
     click_app = typer.main.get_command(app)
     # Handle --json appearing after command path (forgiving flag placement)
@@ -190,7 +191,7 @@ def help_cmd(
 
         args = []
         for param in cmd.params:
-            if isinstance(param, click.Argument):
+            if isinstance(param, (click.Argument, TyperArgument)):
                 args.append(
                     {
                         "name": param.name,
@@ -203,7 +204,7 @@ def help_cmd(
         opts = []
         skip_names = {"install_completion", "show_completion", "help", "ctx"}
         for param in cmd.params:
-            if isinstance(param, click.Option):
+            if isinstance(param, (click.Option, TyperOption)):
                 if param.name in skip_names:
                     continue
                 opt_info = {
@@ -260,7 +261,7 @@ def help_cmd(
             global_options = []
             skip_names = {"install_completion", "show_completion", "help", "ctx"}
             for param in click_app.params:
-                if isinstance(param, click.Option) and param.name not in skip_names:
+                if isinstance(param, (click.Option, TyperOption)) and param.name not in skip_names:
                     opt_info = {
                         "name": param.opts[0] if param.opts else f"--{param.name}",
                     }
@@ -527,7 +528,11 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
+bot_app = typer.Typer(
+    name="bot",
+    help="Bot daemon management. Start, stop, and check the status of the Telegram/Discord bot that lets you approve, reject, and schedule drafts from chat.",
+    no_args_is_help=True,
+)
 app.add_typer(bot_app, name="bot")
 
 
@@ -970,10 +975,18 @@ app.add_typer(
 )
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(
+    inspect_app,
+    name="inspect",
+    help="Inspect system state. View the decision log, pending drafts, configured platforms, and LLM token usage across projects.",
+)
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Manual operations. Evaluate commits, create drafts, consolidate multiple decisions, and post approved drafts outside the automated pipeline.",
+)
 
 # Setup wizard
 app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
@@ -989,32 +1002,60 @@ app.add_typer(
 )
 
 # Config commands: show, get, set
-app.add_typer(config_app, name="config", help="View and modify configuration.")
+app.add_typer(
+    config_app,
+    name="config",
+    help="View and modify configuration. Show the full config as YAML, get individual values by dotted key path, or set values at runtime.",
+)
 
 # Memory commands: list, add, delete, clear
-app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+app.add_typer(
+    memory_app,
+    name="memory",
+    help="Manage voice memories. Add, list, and delete per-project voice memories that guide the LLM's tone, style, and content preferences during drafting.",
+)
 
 # Arc commands: list, create, complete, abandon
-app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+app.add_typer(
+    arc_app,
+    name="arc",
+    help="Manage narrative arcs. Create, complete, abandon, or resume multi-post story arcs that give the drafter thematic continuity across a series of posts.",
+)
 
 from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="Decision management. List, delete, retrigger, or rewind evaluation decisions. Supports batch evaluation and full pipeline re-runs from a commit.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
-app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+app.add_typer(
+    draft_app,
+    name="draft",
+    help="Draft lifecycle management. Approve, reject, schedule, edit, redraft, and post drafts. Covers the full workflow from initial draft through review to publication.",
+)
 
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Media management. Clean up orphaned files from the media cache to reclaim disk space.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
-app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+app.add_typer(
+    snapshot_app,
+    name="snapshot",
+    help="DB snapshot management. Save, restore, reset, list, and delete database snapshots for backup, testing, or recovery.",
+)
 
 from social_hook.cli.account import app as account_app
 from social_hook.cli.advisory import app as advisory_app
