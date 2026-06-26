@@ -1,6 +1,6 @@
 # social-hook inspect
 
-Inspect system state.
+Inspect system state. View the decision log, pending drafts, configured platforms, and LLM token usage across projects.
 
 ---
 

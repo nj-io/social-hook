@@ -4,7 +4,11 @@ import json as json_mod
 
 import typer
 
-app = typer.Typer(name="media", help="Media management.", no_args_is_help=True)
+app = typer.Typer(
+    name="media",
+    help="Media management. Clean up orphaned files from the media cache to reclaim disk space.",
+    no_args_is_help=True,
+)
 
 
 @app.command("gc")

@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Decision management. List, delete, retrigger, or rewind evaluation decisions. Supports batch evaluation and full pipeline re-runs from a commit.
 
 ---
 

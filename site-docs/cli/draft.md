@@ -1,6 +1,6 @@
 # social-hook draft
 
-Draft lifecycle management.
+Draft lifecycle management. Approve, reject, schedule, edit, redraft, and post drafts. Covers the full workflow from initial draft through review to publication.
 
 ---
 

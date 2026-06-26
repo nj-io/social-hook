@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage narrative arcs. Create, complete, abandon, or resume multi-post story arcs that give the drafter thematic continuity across a series of posts.
 
 ---
 

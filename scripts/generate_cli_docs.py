@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import click
 import typer.main
+from typer.core import TyperArgument, TyperOption
 
 from social_hook.cli import app
 from social_hook.constants import PROJECT_SLUG
@@ -76,7 +77,7 @@ def render_params(cmd: click.Command) -> str:
     skip = {"install_completion", "show_completion", "help", "ctx"}
 
     # Arguments
-    args = [p for p in cmd.params if isinstance(p, click.Argument)]
+    args = [p for p in cmd.params if isinstance(p, (click.Argument, TyperArgument))]
     if args:
         lines.append("**Arguments:**")
         lines.append("")
@@ -93,7 +94,7 @@ def render_params(cmd: click.Command) -> str:
         lines.append("")
 
     # Options
-    opts = [p for p in cmd.params if isinstance(p, click.Option) and p.name not in skip]
+    opts = [p for p in cmd.params if isinstance(p, (click.Option, TyperOption)) and p.name not in skip]
     if opts:
         lines.append("**Options:**")
         lines.append("")

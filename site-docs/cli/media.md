@@ -1,6 +1,6 @@
 # social-hook media
 
-Media management.
+Media management. Clean up orphaned files from the media cache to reclaim disk space.
 
 ---
 
