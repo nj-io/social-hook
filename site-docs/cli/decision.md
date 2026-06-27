@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Manage evaluation decisions. Decisions record whether a commit was deemed post-worthy by the LLM evaluator. Use these commands to list, delete, retrigger, rewind, or batch-evaluate decisions.
 
 ---
 

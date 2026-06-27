@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories. Voice memories are persistent style and tone instructions that the LLM drafter uses when generating content, such as 'avoid jargon' or 'use first person plural'.
 
 ---
 

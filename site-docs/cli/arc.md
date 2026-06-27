@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage narrative arcs. Arcs are multi-post storylines that group related content under a theme, giving your audience a coherent thread to follow across posts.
 
 ---
 

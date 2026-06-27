@@ -1,6 +1,6 @@
 # social-hook manual
 
-Manual operations.
+Run pipeline steps manually. Evaluate a commit, create drafts from a decision, consolidate multiple decisions into one draft, or post an approved draft — bypassing the automated scheduler.
 
 ---
 

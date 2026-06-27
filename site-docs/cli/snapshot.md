@@ -1,6 +1,6 @@
 # social-hook snapshot
 
-DB snapshot management.
+Save, restore, and manage database snapshots. Snapshots let you bookmark the full system state and roll back if needed. A safety backup is created automatically before any restore or reset.
 
 ---
 

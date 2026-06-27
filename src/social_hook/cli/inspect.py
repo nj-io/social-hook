@@ -2,7 +2,9 @@
 
 import typer
 
-app = typer.Typer()
+app = typer.Typer(
+    help="Inspect system state. View the event log, list pending drafts awaiting action, check LLM token usage, and see configured platform connections."
+)
 
 
 @app.command()

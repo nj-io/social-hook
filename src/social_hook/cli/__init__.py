@@ -161,6 +161,10 @@ def help_cmd(
     import json as json_mod
 
     import click
+    import typer.core
+
+    _OPTION_TYPES = (click.Option, typer.core.TyperOption)
+    _ARGUMENT_TYPES = (click.Argument, typer.core.TyperArgument)
 
     click_app = typer.main.get_command(app)
     # Handle --json appearing after command path (forgiving flag placement)
@@ -190,7 +194,7 @@ def help_cmd(
 
         args = []
         for param in cmd.params:
-            if isinstance(param, click.Argument):
+            if isinstance(param, _ARGUMENT_TYPES):
                 args.append(
                     {
                         "name": param.name,
@@ -203,7 +207,7 @@ def help_cmd(
         opts = []
         skip_names = {"install_completion", "show_completion", "help", "ctx"}
         for param in cmd.params:
-            if isinstance(param, click.Option):
+            if isinstance(param, _OPTION_TYPES):
                 if param.name in skip_names:
                     continue
                 opt_info = {
@@ -260,7 +264,7 @@ def help_cmd(
             global_options = []
             skip_names = {"install_completion", "show_completion", "help", "ctx"}
             for param in click_app.params:
-                if isinstance(param, click.Option) and param.name not in skip_names:
+                if isinstance(param, _OPTION_TYPES) and param.name not in skip_names:
                     opt_info = {
                         "name": param.opts[0] if param.opts else f"--{param.name}",
                     }
@@ -527,7 +531,11 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
+bot_app = typer.Typer(
+    name="bot",
+    help="Start, stop, and check status of the Telegram/Discord bot daemon. The bot provides an interactive chat interface for reviewing drafts, approving posts, and managing the pipeline.",
+    no_args_is_help=True,
+)
 app.add_typer(bot_app, name="bot")
 
 
@@ -970,10 +978,18 @@ app.add_typer(
 )
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(
+    inspect_app,
+    name="inspect",
+    help="Inspect system state. View the event log, list pending drafts awaiting action, check LLM token usage, and see configured platform connections.",
+)
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Run pipeline steps manually. Evaluate a commit, create drafts from a decision, consolidate multiple decisions into one draft, or post an approved draft — bypassing the automated scheduler.",
+)
 
 # Setup wizard
 app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
@@ -989,32 +1005,60 @@ app.add_typer(
 )
 
 # Config commands: show, get, set
-app.add_typer(config_app, name="config", help="View and modify configuration.")
+app.add_typer(
+    config_app,
+    name="config",
+    help="View and modify the Social Hook configuration. Read the full config as YAML, get individual values by dotted key path, or set scalar values without editing files directly.",
+)
 
 # Memory commands: list, add, delete, clear
-app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+app.add_typer(
+    memory_app,
+    name="memory",
+    help="Manage voice memories. Voice memories are persistent style and tone instructions that the LLM drafter uses when generating content, such as 'avoid jargon' or 'use first person plural'.",
+)
 
 # Arc commands: list, create, complete, abandon
-app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+app.add_typer(
+    arc_app,
+    name="arc",
+    help="Manage narrative arcs. Arcs are multi-post storylines that group related content under a theme, giving your audience a coherent thread to follow across posts.",
+)
 
 from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
-# Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+# Decision management: list, delete, retrigger, rewind, batch-evaluate
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="Manage evaluation decisions. Decisions record whether a commit was deemed post-worthy by the LLM evaluator. Use these commands to list, delete, retrigger, rewind, or batch-evaluate decisions.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
-app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+app.add_typer(
+    draft_app,
+    name="draft",
+    help="Manage the full draft lifecycle. Approve, reject, schedule, edit, redraft, promote, and post drafts. Also manage media attachments and view draft details and change history.",
+)
 
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Manage generated media assets. Run garbage collection to remove orphaned files from the media cache that are no longer referenced by any draft.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
-app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+app.add_typer(
+    snapshot_app,
+    name="snapshot",
+    help="Save, restore, and manage database snapshots. Snapshots let you bookmark the full system state and roll back if needed. A safety backup is created automatically before any restore or reset.",
+)
 
 from social_hook.cli.account import app as account_app
 from social_hook.cli.advisory import app as advisory_app
@@ -1091,7 +1135,11 @@ app.add_typer(
 )
 
 # Log queries, tailing, and health
-app.add_typer(logs_app, name="logs", help="Log queries, tailing, and health.")
+app.add_typer(
+    logs_app,
+    name="logs",
+    help="Query, tail, and manage log entries. View recent errors and warnings, follow live log output, clear old entries, and check overall system health across all pipeline components.",
+)
 
 from social_hook.cli.events import events as events_cmd
 from social_hook.cli.quickstart import quickstart as quickstart_cmd
