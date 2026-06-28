@@ -302,8 +302,8 @@ def help_cmd(
             typer.echo(f"Error: {e}")
             raise typer.Exit(1) from None
     else:
-        help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)
-        typer.echo(click_app.get_help(help_ctx))
+        help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)  # type: ignore[arg-type]
+        typer.echo(click_app.get_help(help_ctx))  # type: ignore[arg-type]
 
 
 @app.command()
