@@ -995,7 +995,16 @@ app.add_typer(
 app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
 
 # Test command
-app.add_typer(test_app, name="test", help="Test commit evaluation.")
+app.add_typer(
+    test_app,
+    name="test",
+    help=(
+        "Dry-run commit evaluation with real LLM calls but no database writes. "
+        "Tests whether the AI considers commits post-worthy, with options to save "
+        "results as JSON (--output) and diff against a previous run for regression "
+        "testing (--compare)."
+    ),
+)
 
 # Journey capture commands: on, off, status
 app.add_typer(

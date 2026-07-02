@@ -55,7 +55,7 @@ These options can be placed before any command.
 | [`rate-limits`](root-commands.md#social-hook-rate-limits) | Show current rate limit status (daily cap, gap timer, queue, cost). |
 | [`scheduler-tick`](root-commands.md#social-hook-scheduler-tick) | Post scheduled drafts whose time has arrived and promote deferred drafts. |
 | [`setup`](root-commands.md#social-hook-setup) | Configure social-hook. |
-| [`test`](root-commands.md#social-hook-test) | Test commit evaluation. |
+| [`test`](root-commands.md#social-hook-test) | Dry-run commit evaluation with real LLM calls but no database writes. Tests whether the AI considers commits post-worthy, with options to save results as JSON (--output) and diff against a previous run for regression testing (--compare). |
 | [`trigger`](root-commands.md#social-hook-trigger) | Run the full evaluation-to-draft pipeline for a single commit. |
 | [`version`](root-commands.md#social-hook-version) | Show version information. |
 | [`web`](root-commands.md#social-hook-web) | Start the web dashboard for managing your social-hook workflow visually. |
