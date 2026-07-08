@@ -9,7 +9,9 @@ from social_hook.constants import PROJECT_SLUG
 app = typer.Typer(
     help="Register and manage projects. A project links a git repository (or folder) to Social Hook so commits are evaluated, content is drafted, and briefs are maintained."
 )
-intro_app = typer.Typer(help="Manage per-platform introduction status.")
+intro_app = typer.Typer(
+    help="Manage per-platform introduction status. Tracks whether a project has posted its first 'introduction' on each platform — the intro post establishes context before regular content begins. Use 'status' to see which platforms have been introduced, 'set' to mark a platform as introduced, and 'reset' to clear introduction state."
+)
 app.add_typer(intro_app, name="intro")
 prompt_docs_app = typer.Typer(help="Manage project prompt documentation files.")
 app.add_typer(prompt_docs_app, name="prompt-docs")
