@@ -73,7 +73,7 @@ Example: social-hook project install-hook /path/to/repo
 
 ### `social-hook project intro`
 
-Manage per-platform introduction status.
+Manage per-platform introduction status. Tracks whether a project has posted its first 'introduction' on each platform — the intro post establishes context before regular content begins. Use 'status' to see which platforms have been introduced, 'set' to mark a platform as introduced, and 'reset' to clear introduction state.
 
 **Options:**
 

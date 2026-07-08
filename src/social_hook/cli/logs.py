@@ -6,7 +6,10 @@ import subprocess
 
 import typer
 
-app = typer.Typer(invoke_without_command=True)
+app = typer.Typer(
+    invoke_without_command=True,
+    help="Query, tail, and manage log entries. View recent errors and warnings, follow live log output, clear old entries, and check overall system health across all pipeline components.",
+)
 
 VALID_LOG_COMPONENTS = (
     "trigger",

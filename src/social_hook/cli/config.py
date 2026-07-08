@@ -5,7 +5,10 @@ from typing import Any
 import typer
 import yaml
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="View and modify the Social Hook configuration. Read the full config as YAML, get individual values by dotted key path, or set scalar values without editing files directly.",
+)
 
 
 def _parse_value(value: str):

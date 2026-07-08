@@ -4,7 +4,10 @@ import os
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage voice memories. Voice memories are persistent style and tone instructions that the LLM drafter uses when generating content, such as 'avoid jargon' or 'use first person plural'.",
+)
 
 
 def _resolve_project(project: str | None = None) -> str:

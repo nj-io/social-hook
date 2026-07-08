@@ -152,7 +152,7 @@ Configure social-hook.
 
 ### `social-hook test`
 
-Test commit evaluation.
+Dry-run commit evaluation with real LLM calls but no database writes. Tests whether the AI considers commits post-worthy, with options to save results as JSON (--output) and diff against a previous run for regression testing (--compare).
 
 **Options:**
 

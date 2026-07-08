@@ -1,6 +1,6 @@
 # social-hook logs
 
-Log queries, tailing, and health.
+Query, tail, and manage log entries. View recent errors and warnings, follow live log output, clear old entries, and check overall system health across all pipeline components.
 
 **Group options:**
 
