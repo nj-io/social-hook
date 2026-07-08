@@ -6,7 +6,8 @@ import pytest
 
 from social_hook.db import operations as ops
 from social_hook.errors import AuthError
-from social_hook.llm.client import ClaudeClient, _calculate_cost_cents
+from social_hook.llm.catalog import estimate_cost_cents
+from social_hook.llm.client import ClaudeClient
 from social_hook.llm.dry_run import DryRunContext
 from social_hook.models.core import Decision, Draft, Project
 from social_hook.models.infra import UsageLog
@@ -17,53 +18,53 @@ from social_hook.models.infra import UsageLog
 
 
 class TestCostCalculation:
-    """T11: Token cost estimation."""
+    """T11: Token cost estimation via the catalog (single pricing source)."""
 
     def test_opus_cost(self):
-        cost = _calculate_cost_cents(
-            "claude-opus-4-5",
+        cost = estimate_cost_cents(
+            "anthropic/claude-opus-4-8",
             input_tokens=1000,
             output_tokens=500,
         )
-        # 1000/1M * 1500 cents + 500/1M * 7500 cents = 1.5 + 3.75 = 5.25
-        assert abs(cost - 5.25) < 0.01
+        # Opus 4.8 $5/$25 per M: 1000/1M*500c + 500/1M*2500c = 0.5 + 1.25 = 1.75
+        assert abs(cost - 1.75) < 0.01
 
     def test_haiku_cost(self):
-        cost = _calculate_cost_cents(
-            "claude-haiku-4-5",
+        cost = estimate_cost_cents(
+            "anthropic/claude-haiku-4-5",
             input_tokens=10000,
             output_tokens=1000,
         )
-        # 10000/1M * 80 + 1000/1M * 400 = 0.8 + 0.4 = 1.2
-        assert abs(cost - 1.2) < 0.01
+        # Haiku 4.5 $1/$5 per M: 10000/1M*100c + 1000/1M*500c = 1.0 + 0.5 = 1.5
+        assert abs(cost - 1.5) < 0.01
 
     def test_with_cache_tokens(self):
-        cost = _calculate_cost_cents(
-            "claude-opus-4-5",
+        cost = estimate_cost_cents(
+            "anthropic/claude-opus-4-8",
             input_tokens=1000,
             output_tokens=500,
             cache_read_tokens=5000,
             cache_creation_tokens=2000,
         )
-        # input: 1.5, output: 3.75, cache_read: 5000/1M*150=0.75, cache_write: 2000/1M*1875=3.75
-        expected = 1.5 + 3.75 + 0.75 + 3.75
+        # base 1.75; cache_read 5000/1M*500c*0.1=0.25; cache_write 2000/1M*500c*1.25=1.25
+        expected = 1.75 + 0.25 + 1.25
         assert abs(cost - expected) < 0.01
 
     def test_unknown_model_returns_zero(self):
-        cost = _calculate_cost_cents("unknown-model", 1000, 500)
+        cost = estimate_cost_cents("anthropic/unknown-model", 1000, 500)
         assert cost == 0.0
 
     def test_sonnet_cost(self):
-        cost = _calculate_cost_cents(
-            "claude-sonnet-4-5",
+        cost = estimate_cost_cents(
+            "anthropic/claude-sonnet-5",
             input_tokens=10000,
             output_tokens=1000,
         )
-        # 10000/1M * 300 + 1000/1M * 1500 = 3.0 + 1.5 = 4.5
+        # Sonnet 5 $3/$15 per M: 10000/1M*300c + 1000/1M*1500c = 3.0 + 1.5 = 4.5
         assert abs(cost - 4.5) < 0.01
 
     def test_zero_tokens(self):
-        cost = _calculate_cost_cents("claude-opus-4-5", 0, 0)
+        cost = estimate_cost_cents("anthropic/claude-opus-4-8", 0, 0)
         assert cost == 0.0
 
 
@@ -156,13 +157,14 @@ class TestClaudeClient:
             input_tokens=1000, output_tokens=500
         )
 
-        client = ClaudeClient(api_key="sk-test", model="claude-opus-4-5")
+        client = ClaudeClient(api_key="sk-test", model="claude-opus-4-8")
         response = client.complete(
             messages=[{"role": "user", "content": "test"}],
             tools=[{"name": "test"}],
         )
 
         assert response.usage.cost_cents > 0
+        assert response.usage.cost_source == "registry"
 
 
 # =============================================================================

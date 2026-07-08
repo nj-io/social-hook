@@ -14,6 +14,7 @@ class NormalizedUsage:
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     cost_cents: float = 0.0  # Set by providers that know pricing
+    cost_source: str = "unknown"  # provider | registry | subscription | unknown
 
 
 class ToolExtractionError(ValueError):

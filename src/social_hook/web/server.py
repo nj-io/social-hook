@@ -3004,6 +3004,26 @@ async def api_detect_providers():
     return {"providers": providers}
 
 
+@app.get("/api/models")
+async def api_get_models():
+    """Return the model catalog (providers + models + current defaults).
+
+    Single source of truth for the settings UI's model pickers. Static
+    catalog only — no live Ollama probe (which could block on a dead server);
+    the settings free-text field still accepts any ``provider/model-id``.
+    """
+    from dataclasses import asdict
+
+    from social_hook.config.yaml import DEFAULT_CONFIG
+    from social_hook.llm import catalog
+
+    return {
+        "providers": [asdict(p) for p in catalog.get_all_providers()],
+        "models": [asdict(m) for m in catalog.get_all_models()],
+        "defaults": DEFAULT_CONFIG["models"],
+    }
+
+
 @app.get("/api/settings/config")
 async def api_get_config():
     """Return current config as JSON."""
@@ -3668,6 +3688,21 @@ async def api_validate_key(body: ValidateKeyRequest):
 
             oai_client = openai.OpenAI(api_key=body.key)
             oai_client.models.list()
+            return {"valid": True, "provider": provider}
+        except Exception as e:
+            return {"valid": False, "provider": provider, "error": str(e)}
+
+    elif provider == "openrouter":
+        try:
+            import requests
+
+            # /api/v1/key is auth-gated (401 for a bad key); /models is public.
+            resp = requests.get(
+                "https://openrouter.ai/api/v1/key",
+                headers={"Authorization": f"Bearer {body.key}"},
+                timeout=10,
+            )
+            resp.raise_for_status()
             return {"valid": True, "provider": provider}
         except Exception as e:
             return {"valid": False, "provider": provider, "error": str(e)}

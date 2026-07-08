@@ -45,8 +45,8 @@ def _detect_default_models() -> dict[str, str]:
             "gatekeeper": "claude-cli/haiku",
         }
     return {
-        "evaluator": "anthropic/claude-opus-4-5",
-        "drafter": "anthropic/claude-opus-4-5",
+        "evaluator": "anthropic/claude-opus-4-8",
+        "drafter": "anthropic/claude-opus-4-8",
         "gatekeeper": "anthropic/claude-haiku-4-5",
     }
 
@@ -469,7 +469,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
         except ConfigError:
             raise ConfigError(
                 f"Invalid model '{value}' for {role}: must use provider/model-id format "
-                f"(e.g., 'anthropic/claude-opus-4-5', 'claude-cli/sonnet')"
+                f"(e.g., 'anthropic/claude-opus-4-8', 'claude-cli/sonnet')"
             ) from None
 
     # Platforms (dynamic registry)
@@ -570,7 +570,7 @@ def _parse_config(data: dict[str, Any]) -> Config:
         except ConfigError:
             raise ConfigError(
                 f"Invalid model '{jc_model}' for journey_capture: must use provider/model-id format "
-                f"(e.g., 'anthropic/claude-opus-4-5', 'claude-cli/sonnet')"
+                f"(e.g., 'anthropic/claude-opus-4-8', 'claude-cli/sonnet')"
             ) from None
     journey_capture = JourneyCaptureConfig(
         enabled=jc_data.get("enabled", False),
