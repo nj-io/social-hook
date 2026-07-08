@@ -81,27 +81,31 @@ class TestCreateClient:
 
     def test_create_ollama_no_key_needed(self):
         """Ollama doesn't require an API key."""
-        pytest.importorskip("openai")
+        pytest.importorskip("litellm")
         config = self._mock_config()
         client = create_client("ollama/llama3.3", config)
-        from social_hook.llm.openai_compat import OpenAICompatClient
+        from social_hook.llm.litellm_client import LiteLLMClient
 
-        assert isinstance(client, OpenAICompatClient)
+        assert isinstance(client, LiteLLMClient)
         assert client.model == "llama3.3"
+        # full_id keeps the social-hook identity, not the litellm model string
+        assert client.full_id == "ollama/llama3.3"
 
     def test_create_openai_client(self):
-        pytest.importorskip("openai")
+        pytest.importorskip("litellm")
         config = self._mock_config(OPENAI_API_KEY="sk-test")
         client = create_client("openai/gpt-4o", config)
-        from social_hook.llm.openai_compat import OpenAICompatClient
+        from social_hook.llm.litellm_client import LiteLLMClient
 
-        assert isinstance(client, OpenAICompatClient)
+        assert isinstance(client, LiteLLMClient)
+        assert client.full_id == "openai/gpt-4o"
 
     def test_create_openrouter_client(self):
-        pytest.importorskip("openai")
+        pytest.importorskip("litellm")
         config = self._mock_config(OPENROUTER_API_KEY="sk-or-test")
-        client = create_client("openrouter/anthropic/claude-sonnet-4.5", config)
-        from social_hook.llm.openai_compat import OpenAICompatClient
+        client = create_client("openrouter/z-ai/glm-5.2", config)
+        from social_hook.llm.litellm_client import LiteLLMClient
 
-        assert isinstance(client, OpenAICompatClient)
-        assert client.model == "anthropic/claude-sonnet-4.5"
+        assert isinstance(client, LiteLLMClient)
+        assert client.model == "z-ai/glm-5.2"
+        assert client.full_id == "openrouter/z-ai/glm-5.2"

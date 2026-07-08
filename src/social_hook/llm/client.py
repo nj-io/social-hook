@@ -1,4 +1,4 @@
-"""Claude API client wrapper with pricing calculation."""
+"""Claude API client wrapper with catalog-based cost estimation."""
 
 from typing import Any
 
@@ -6,65 +6,17 @@ import anthropic
 
 from social_hook.errors import AuthError
 from social_hook.llm.base import LLMClient, NormalizedResponse, NormalizedToolCall, NormalizedUsage
-
-# Pricing per million tokens (in cents) for cost estimation
-# Source: https://docs.anthropic.com/en/docs/about-claude/pricing
-MODEL_PRICING = {
-    "claude-opus-4-5": {
-        "input": 1500,  # $15 / 1M tokens
-        "output": 7500,  # $75 / 1M tokens
-        "cache_read": 150,  # $1.50 / 1M tokens
-        "cache_write": 1875,  # $18.75 / 1M tokens
-    },
-    "claude-sonnet-4-5": {
-        "input": 300,  # $3 / 1M tokens
-        "output": 1500,  # $15 / 1M tokens
-        "cache_read": 30,  # $0.30 / 1M tokens
-        "cache_write": 375,  # $3.75 / 1M tokens
-    },
-    "claude-haiku-4-5": {
-        "input": 80,  # $0.80 / 1M tokens
-        "output": 400,  # $4 / 1M tokens
-        "cache_read": 8,  # $0.08 / 1M tokens
-        "cache_write": 100,  # $1 / 1M tokens
-    },
-}
-
-
-def _calculate_cost_cents(
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
-    cache_read_tokens: int = 0,
-    cache_creation_tokens: int = 0,
-) -> float:
-    """Calculate cost in cents from token counts.
-
-    Args:
-        model: Model name (e.g., "claude-opus-4-5")
-        input_tokens: Non-cached input tokens
-        output_tokens: Output tokens
-        cache_read_tokens: Tokens read from cache
-        cache_creation_tokens: Tokens written to cache
-
-    Returns:
-        Estimated cost in cents
-    """
-    pricing = MODEL_PRICING.get(model)
-    if not pricing:
-        return 0.0
-
-    cost = (
-        (input_tokens / 1_000_000) * pricing["input"]
-        + (output_tokens / 1_000_000) * pricing["output"]
-        + (cache_read_tokens / 1_000_000) * pricing["cache_read"]
-        + (cache_creation_tokens / 1_000_000) * pricing["cache_write"]
-    )
-    return round(cost, 4)
+from social_hook.llm.catalog import estimate_cost_cents
 
 
 class ClaudeClient(LLMClient):
     """Wrapper around Anthropic SDK with usage tracking.
+
+    The Anthropic SDK does not return a per-call dollar cost, so cost is
+    estimated from the model catalog (``catalog.estimate_cost_cents``) — the
+    single source of pricing truth shared with the setup wizard and settings
+    UI. Unknown/unpriced models record ``cost_cents=0`` with
+    ``cost_source="unknown"`` rather than a wrong number.
 
     Args:
         api_key: Anthropic API key
@@ -123,13 +75,14 @@ class ClaudeClient(LLMClient):
         cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
 
-        cost_cents = _calculate_cost_cents(
-            self.model,
+        cost_cents = estimate_cost_cents(
+            self.full_id,
             input_tokens,
             output_tokens,
             cache_read_tokens,
             cache_creation_tokens,
         )
+        cost_source = "registry" if cost_cents > 0 else "unknown"
 
         # Wrap in NormalizedResponse
         normalized_content = []
@@ -147,6 +100,7 @@ class ClaudeClient(LLMClient):
             cache_read_input_tokens=cache_read_tokens,
             cache_creation_input_tokens=cache_creation_tokens,
             cost_cents=cost_cents,
+            cost_source=cost_source,
         )
 
         return NormalizedResponse(
