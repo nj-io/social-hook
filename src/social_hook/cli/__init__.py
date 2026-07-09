@@ -257,7 +257,7 @@ def help_cmd(
                 json_mod.dumps(_cmd_to_dict(target, command_parts[-1]), indent=2, default=str)
             )
         else:
-            global_options = []
+            global_options: list[dict] = []
             skip_names = {"install_completion", "show_completion", "help", "ctx"}
             for param in click_app.params:
                 if isinstance(param, click.Option) and param.name not in skip_names:
@@ -298,8 +298,8 @@ def help_cmd(
             typer.echo(f"Error: {e}")
             raise typer.Exit(1) from None
     else:
-        help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)
-        typer.echo(click_app.get_help(help_ctx))
+        help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)  # type: ignore[arg-type]
+        typer.echo(click_app.get_help(help_ctx))  # type: ignore[arg-type]
 
 
 @app.command()
