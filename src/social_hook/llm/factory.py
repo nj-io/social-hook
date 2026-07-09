@@ -10,9 +10,9 @@ def parse_provider_model(model_str: str) -> tuple[str, str]:
     """Parse 'provider/model-id' into (provider, model_id).
 
     Provider prefix is REQUIRED:
-      'anthropic/claude-opus-4-5' -> ('anthropic', 'claude-opus-4-5')
+      'anthropic/claude-opus-4-8' -> ('anthropic', 'claude-opus-4-8')
       'claude-cli/sonnet' -> ('claude-cli', 'sonnet')
-      'openrouter/anthropic/claude-sonnet-4.5' -> ('openrouter', 'anthropic/claude-sonnet-4.5')
+      'openrouter/anthropic/claude-sonnet-5' -> ('openrouter', 'anthropic/claude-sonnet-5')
       'openai/gpt-4o' -> ('openai', 'gpt-4o')
       'ollama/llama3.3' -> ('ollama', 'llama3.3')
 
@@ -32,7 +32,7 @@ def create_client(model_str: str, config, verbose: bool = False) -> LLMClient:
     """Create the appropriate LLM client from a provider/model string.
 
     Args:
-        model_str: Provider/model-id string (e.g., 'anthropic/claude-opus-4-5')
+        model_str: Provider/model-id string (e.g., 'anthropic/claude-opus-4-8')
         config: Config object with .env dict containing API keys
         verbose: If True, enable verbose logging on the client
 

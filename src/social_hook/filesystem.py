@@ -115,8 +115,8 @@ CONFIG_EXAMPLE_CONTENT = f"""\
 # Copy this file to config.yaml and customize
 
 models:
-  evaluator: anthropic/claude-opus-4-5     # or claude-cli/sonnet ($0 with subscription)
-  drafter: anthropic/claude-opus-4-5       # or claude-cli/sonnet ($0 with subscription)
+  evaluator: anthropic/claude-opus-4-8     # or claude-cli/sonnet ($0 with subscription)
+  drafter: anthropic/claude-opus-4-8       # or claude-cli/sonnet ($0 with subscription)
   gatekeeper: anthropic/claude-haiku-4-5   # or claude-cli/haiku ($0 with subscription)
 
 platforms:
@@ -144,7 +144,7 @@ scheduling:
 # Development journey capture (requires Claude Code)
 journey_capture:
   enabled: false
-  # model: anthropic/claude-sonnet-4-5  # defaults to evaluator model
+  # model: anthropic/claude-sonnet-5  # defaults to evaluator model
 """
 
 
