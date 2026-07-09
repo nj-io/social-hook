@@ -148,6 +148,28 @@ class TestComplete:
         assert abs(resp.usage.cost_cents - 93.0) < 0.01
         assert resp.usage.cost_source == "registry"
 
+    @patch("litellm.completion_cost")
+    @patch("litellm.completion")
+    def test_cached_tokens_not_double_billed(self, mock_completion, mock_cost):
+        # OpenAI-style prompt_tokens INCLUDES cached tokens; the catalog
+        # fallback must bill the cached portion once (at 0.1x), not twice.
+        mock_completion.return_value = _mock_response(
+            tool_calls=[_tool_call("route_action", "{}")],
+            prompt_tokens=100_000,
+            cached_tokens=90_000,
+            completion_tokens=0,
+            response_cost=None,
+        )
+        mock_cost.side_effect = Exception("model not in litellm cost map")
+        resp = self._client().complete(messages=[{"role": "user", "content": "hi"}], tools=[TOOL])
+        # non-cached input = 10k; GLM-5.2 $0.93/M in, cache read at 0.1x:
+        # (10000*0.93 + 90000*0.93*0.1)/1e6*100 = 0.93 + 0.837 = 1.767c
+        assert abs(resp.usage.cost_cents - 1.767) < 0.01
+        assert resp.usage.cost_source == "registry"
+        # input_tokens is normalized to non-cached (Anthropic-style disjoint)
+        assert resp.usage.input_tokens == 10_000
+        assert resp.usage.cache_read_input_tokens == 90_000
+
     @patch("litellm.completion")
     def test_provider_error_wrapped(self, mock_completion):
         from social_hook.errors import MalformedResponseError

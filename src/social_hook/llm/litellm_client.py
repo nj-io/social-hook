@@ -116,10 +116,10 @@ class LiteLLMClient(LLMClient):
             # (token-field naming, reasoning params) instead of erroring.
             "drop_params": True,
         }
-        # The pipeline always passes exactly one tool — force it. (A provider
-        # that rejects forced tool_choice is caught by the JSON-from-text
-        # fallback in _extract_content.) "required" covers the rare multi-tool
-        # case.
+        # The pipeline always passes exactly one tool — force it. drop_params
+        # lets litellm drop a forced tool_choice the model can't honor; a model
+        # that then answers in prose is recovered by the JSON-from-text fallback
+        # in _extract_content. "required" covers the rare multi-tool case.
         if len(tools) == 1:
             kwargs["tool_choice"] = {"type": "function", "function": {"name": tools[0]["name"]}}
         elif tools:
@@ -183,7 +183,8 @@ class LiteLLMClient(LLMClient):
         if blocks:
             return blocks
 
-        text = (getattr(message, "content", None) or "").strip()
+        content = getattr(message, "content", None)
+        text = content.strip() if isinstance(content, str) else ""
         if len(tools) == 1 and text:
             try:
                 parsed = extract_json_object(text)
@@ -197,10 +198,14 @@ class LiteLLMClient(LLMClient):
 
     def _extract_usage(self, response: Any) -> NormalizedUsage:
         usage_obj = getattr(response, "usage", None)
-        input_tokens = int(getattr(usage_obj, "prompt_tokens", 0) or 0)
+        prompt_tokens = int(getattr(usage_obj, "prompt_tokens", 0) or 0)
         output_tokens = int(getattr(usage_obj, "completion_tokens", 0) or 0)
         ptd = getattr(usage_obj, "prompt_tokens_details", None)
         cache_read = int((getattr(ptd, "cached_tokens", 0) if ptd is not None else 0) or 0)
+        # OpenAI-style prompt_tokens INCLUDES cached tokens; normalize to the
+        # Anthropic-style disjoint accounting (non-cached input + separate
+        # cache_read) so cost and usage logging are consistent across providers.
+        input_tokens = max(prompt_tokens - cache_read, 0)
 
         cost_cents, cost_source = self._resolve_cost(
             response, input_tokens, output_tokens, cache_read
