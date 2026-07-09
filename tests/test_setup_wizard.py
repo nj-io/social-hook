@@ -817,8 +817,8 @@ class TestModelSelection:
             ]
             _setup_models(yaml_config, {}, {}, {})
 
-        assert yaml_config["models"]["evaluator"] == "anthropic/claude-opus-4-5"
-        assert yaml_config["models"]["drafter"] == "anthropic/claude-opus-4-5"
+        assert yaml_config["models"]["evaluator"] == "anthropic/claude-opus-4-8"
+        assert yaml_config["models"]["drafter"] == "anthropic/claude-opus-4-8"
         assert yaml_config["models"]["gatekeeper"] == "anthropic/claude-haiku-4-5"
 
     @patch("social_hook.setup.wizard._select")

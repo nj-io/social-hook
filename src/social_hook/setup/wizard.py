@@ -233,7 +233,7 @@ def _keys_needed_for_config(config_data: dict) -> set[str]:
     needed = set()
     models = config_data.get("models", {})
     for role in ("evaluator", "drafter", "gatekeeper"):
-        model_str = models.get(role, "anthropic/claude-opus-4-5")
+        model_str = models.get(role, "anthropic/claude-opus-4-8")
         try:
             provider, _ = parse_provider_model(model_str)
             key = PROVIDER_KEY_MAP.get(provider)
@@ -1745,8 +1745,8 @@ def _setup_models(
             _success("Using Claude CLI (subscription, $0 extra cost)")
         else:
             yaml_config["models"] = {
-                "evaluator": "anthropic/claude-opus-4-5",
-                "drafter": "anthropic/claude-opus-4-5",
+                "evaluator": "anthropic/claude-opus-4-8",
+                "drafter": "anthropic/claude-opus-4-8",
                 "gatekeeper": "anthropic/claude-haiku-4-5",
             }
             _success("Using Anthropic API defaults")

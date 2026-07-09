@@ -269,8 +269,8 @@ def _auto_configure(
             typer.echo("Using Claude CLI (subscription, $0 extra cost)")
     elif api_key or has_anthropic:
         models = {
-            "evaluator": "anthropic/claude-sonnet-4-5",
-            "drafter": "anthropic/claude-sonnet-4-5",
+            "evaluator": "anthropic/claude-sonnet-5",
+            "drafter": "anthropic/claude-sonnet-5",
             "gatekeeper": "anthropic/claude-haiku-4-5",
         }
         if api_key:
@@ -284,8 +284,8 @@ def _auto_configure(
         )
         if has_openrouter:
             models = {
-                "evaluator": "openrouter/anthropic/claude-sonnet-4-5",
-                "drafter": "openrouter/anthropic/claude-sonnet-4-5",
+                "evaluator": "openrouter/anthropic/claude-sonnet-5",
+                "drafter": "openrouter/anthropic/claude-sonnet-5",
                 "gatekeeper": "openrouter/anthropic/claude-haiku-4-5",
             }
             if not is_json:
