@@ -313,11 +313,28 @@ class XAdapter(PlatformAdapter):
         }
 
     def _attach_media(self, body: dict, media_paths: list[str] | None) -> None:
-        """Upload and attach media to a tweet body (in-place)."""
-        if media_paths:
-            media_ids = self._upload_media(media_paths)
-            if media_ids:
-                body["media"] = {"media_ids": media_ids}
+        """Upload and attach media to a tweet body (in-place).
+
+        Enforces the per-(vehicle, platform) cap before upload by reading
+        ``get_max_media_count("single", "x")`` from ``vehicle.py`` — this
+        is the single source of truth (currently 4 via MULTI_IMAGE_X).
+        Thread parts are capped separately by THREAD capability at 1.
+        """
+        if not media_paths:
+            return
+        from social_hook.vehicle import get_max_media_count
+
+        cap = get_max_media_count("single", "x")
+        if len(media_paths) > cap:
+            logger.warning(
+                "X single post received %d media items; cap is %d. Truncating.",
+                len(media_paths),
+                cap,
+            )
+            media_paths = media_paths[:cap]
+        media_ids = self._upload_media(media_paths)
+        if media_ids:
+            body["media"] = {"media_ids": media_ids}
 
     def _post_tweet(self, body: dict) -> PostResult:
         """Internal method to post a tweet.

@@ -397,7 +397,19 @@ class E2EHarness:
         return project
 
     def seed_draft(self, project_id, status="draft", **kwargs):
-        """Insert a draft with supporting decision row."""
+        """Insert a draft with supporting decision row.
+
+        Multi-media kwargs (``media_specs``, ``media_paths``, ``media_errors``,
+        ``media_specs_used``) accept parallel arrays. When more than one is
+        supplied, all must share the same length — this guards against silent
+        index drift across the four arrays. Callers may pass a subset; omitted
+        arrays default to empty lists or index-aligned defaults.
+
+        Legacy bridge: ``media_type`` + ``media_spec`` (singular) are accepted
+        for backward compatibility with pre-multi-media E2E sections. They are
+        converted into a single-item ``media_specs`` entry with a freshly
+        generated id. Passing legacy kwargs AND parallel arrays raises.
+        """
         from social_hook.db import insert_decision, insert_draft
         from social_hook.filesystem import generate_id
         from social_hook.models.core import Decision, Draft
@@ -413,6 +425,75 @@ class E2EHarness:
         )
         insert_decision(self.conn, decision)
 
+        legacy_type = kwargs.pop("media_type", None)
+        legacy_spec = kwargs.pop("media_spec", None)
+        media_specs = kwargs.pop("media_specs", None)
+        media_paths = kwargs.pop("media_paths", None)
+        media_errors = kwargs.pop("media_errors", None)
+        media_specs_used = kwargs.pop("media_specs_used", None)
+
+        has_parallel = any(
+            x is not None for x in (media_specs, media_paths, media_errors, media_specs_used)
+        )
+        has_legacy = legacy_type is not None or legacy_spec is not None
+        if has_legacy and has_parallel:
+            raise TypeError(
+                "seed_draft: pass either legacy media_type/media_spec OR parallel "
+                "arrays (media_specs/media_paths/media_errors/media_specs_used), "
+                "not both."
+            )
+        if has_legacy:
+            tool_name = "legacy_upload" if legacy_type == "custom" else legacy_type
+            if tool_name is None:
+                media_specs = []
+            else:
+                media_specs = [
+                    {
+                        "id": generate_id("media"),
+                        "tool": tool_name,
+                        "spec": legacy_spec or {},
+                        "caption": None,
+                        "user_uploaded": legacy_type == "custom",
+                    }
+                ]
+
+        media_specs = media_specs or []
+        media_paths = media_paths or []
+        media_errors = media_errors or []
+        media_specs_used = media_specs_used or []
+
+        # Parallel-array length invariant: when two or more arrays are non-empty
+        # they must share length. Empty arrays are treated as "unspecified" and
+        # auto-filled to match when another array establishes the cardinality.
+        supplied = {
+            "media_specs": media_specs,
+            "media_paths": media_paths,
+            "media_errors": media_errors,
+            "media_specs_used": media_specs_used,
+        }
+        non_empty = {k: v for k, v in supplied.items() if v}
+        if len(non_empty) >= 2:
+            lengths = {k: len(v) for k, v in non_empty.items()}
+            if len(set(lengths.values())) > 1:
+                raise ValueError(
+                    f"seed_draft: media arrays must share the same length; got {lengths}"
+                )
+            n = next(iter(lengths.values()))
+        elif non_empty:
+            n = len(next(iter(non_empty.values())))
+        else:
+            n = 0
+
+        if n > 0:
+            if not media_specs:
+                media_specs = [{} for _ in range(n)]
+            if not media_paths:
+                media_paths = ["" for _ in range(n)]
+            if not media_errors:
+                media_errors = [None for _ in range(n)]
+            if not media_specs_used:
+                media_specs_used = list(media_specs)
+
         draft = Draft(
             id=kwargs.pop("id", generate_id("draft")),
             project_id=project_id,
@@ -421,9 +502,10 @@ class E2EHarness:
             vehicle=kwargs.pop("vehicle", "single"),
             content=kwargs.pop("content", "E2E test draft content for social media."),
             status=status,
-            media_paths=kwargs.pop("media_paths", []),
-            media_type=kwargs.pop("media_type", None),
-            media_spec=kwargs.pop("media_spec", None),
+            media_paths=media_paths,
+            media_specs=media_specs,
+            media_errors=media_errors,
+            media_specs_used=media_specs_used,
             suggested_time=kwargs.pop("suggested_time", None),
             scheduled_time=kwargs.pop("scheduled_time", None),
             retry_count=kwargs.pop("retry_count", 0),
@@ -434,6 +516,70 @@ class E2EHarness:
         insert_draft(self.conn, draft)
         self.conn.commit()
         return draft
+
+    def upload_file(self, project_id: str, src_path: str, context: str = "") -> dict:
+        """POST a real file to ``/api/projects/{id}/uploads`` via TestClient.
+
+        Returns the endpoint's JSON body: ``{upload_id, path, context}``. The
+        endpoint moves the file to the staging path and creates a
+        ``pending_uploads`` row. Caller is responsible for passing the returned
+        ``upload_id`` into a subsequent create-content request.
+        """
+        from fastapi.testclient import TestClient
+
+        from social_hook.web.server import app
+
+        client = TestClient(app)
+        with open(src_path, "rb") as f:
+            files = {"file": (os.path.basename(src_path), f, "image/png")}
+            data = {"context": context}
+            res = client.post(f"/api/projects/{project_id}/uploads", files=files, data=data)
+        if res.status_code >= 400:
+            raise RuntimeError(f"upload_file failed: {res.status_code} {res.text}")
+        return res.json()
+
+    def wait_for_task(self, task_id: str, *, timeout: float = 60.0, poll: float = 0.5) -> dict:
+        """Poll the ``background_tasks`` DB row for ``task_id`` until terminal.
+
+        Reads directly from ``self.conn`` rather than HTTP, which is (a) faster
+        (no TestClient app re-init), (b) immune to the fact that the web
+        surface exposes ``/api/tasks`` (list only) rather than
+        ``/api/tasks/{id}``, and (c) aligned with how the backend persists
+        task state. Returns the same dict shape the HTTP endpoint would, so
+        callers don't need to change.
+
+        Raises ``RuntimeError`` if the task row never appears (likely a
+        synchronous handler that didn't touch ``background_tasks``).
+        ``TimeoutError`` when the deadline elapses while the task is still
+        running.
+        """
+        import time
+
+        deadline = time.monotonic() + timeout
+        row = None
+        while True:
+            if self.conn is not None:
+                cur = self.conn.execute(
+                    "SELECT id, type, ref_id, project_id, status, result, error, "
+                    "created_at, updated_at FROM background_tasks WHERE id = ?",
+                    (task_id,),
+                )
+                fetched = cur.fetchone()
+                if fetched is not None:
+                    # sqlite3.Row supports dict() conversion
+                    row = dict(fetched)
+                    if row.get("status") != "running":
+                        return row
+            if time.monotonic() >= deadline:
+                if row is None:
+                    raise RuntimeError(
+                        f"Task {task_id} never appeared in background_tasks "
+                        f"after {timeout}s — handler may be synchronous"
+                    )
+                raise TimeoutError(
+                    f"Task {task_id} still running after {timeout}s (status: {row.get('status')})"
+                )
+            time.sleep(poll)
 
     def update_config(self, overrides: dict):
         """Update the global config.yaml with overrides."""

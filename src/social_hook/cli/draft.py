@@ -490,27 +490,50 @@ def redraft(
                 )
 
             if result.refined_media_spec:
-                ops.update_draft(conn, draft_id, media_spec=result.refined_media_spec)
-                ops.insert_draft_change(
-                    conn,
-                    DraftChange(
-                        id=generate_id("change"),
-                        draft_id=draft_id,
-                        field="media_spec",
-                        old_value=json_mod.dumps(draft.media_spec)[:200]
-                        if draft.media_spec
-                        else "null",
-                        new_value=json_mod.dumps(result.refined_media_spec)[:200],
-                        changed_by="expert",
-                    ),
-                )
+                # Target the first media slot; create one if none exists.
+                target_id: str | None = None
+                if draft.media_specs and isinstance(draft.media_specs[0], dict):
+                    target_id = draft.media_specs[0].get("id")
+                if not target_id:
+                    target_id = ops.append_draft_media(
+                        conn,
+                        draft_id,
+                        {"tool": "nano_banana_pro", "spec": {}, "user_uploaded": False},
+                    )
+                if target_id:
+                    d2 = ops.get_draft(conn, draft_id) or draft
+                    current = next(
+                        (
+                            s
+                            for s in (d2.media_specs or [])
+                            if isinstance(s, dict) and s.get("id") == target_id
+                        ),
+                        {"id": target_id, "tool": "nano_banana_pro", "user_uploaded": False},
+                    )
+                    new_item = dict(current)
+                    new_item["spec"] = result.refined_media_spec
+                    ops.update_draft_media(conn, draft_id, target_id, spec=new_item)
+                    ops.insert_draft_change(
+                        conn,
+                        DraftChange(
+                            id=generate_id("change"),
+                            draft_id=draft_id,
+                            field=f"media_spec:{target_id}",
+                            old_value="",
+                            new_value=json_mod.dumps(result.refined_media_spec)[:200],
+                            changed_by="expert",
+                        ),
+                    )
 
             ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
             typer.echo(f"Draft {draft_id} redrafted.")
             if result.refined_content:
                 typer.echo(f"\n{result.refined_content[:500]}")
             if result.refined_media_spec:
-                typer.echo("Media spec updated. Run `social-hook draft media-regen` to regenerate.")
+                typer.echo(
+                    "Media spec updated. Run "
+                    "`social-hook draft media regen --draft <id> --id <media_id>`."
+                )
         else:
             typer.echo(f"Expert could not refine: {result.reasoning}")
             raise typer.Exit(1)
@@ -699,161 +722,436 @@ def quick_approve(
         conn.close()
 
 
-@app.command("media-regen")
-def media_regen(
+# ---------------------------------------------------------------------------
+# Media subcommand group — `social-hook draft media {list,regen,edit,remove,add}`
+# ID-only addressing (media_<12hex>); never accepts --index.
+# ---------------------------------------------------------------------------
+
+
+media_app = typer.Typer(
+    name="media",
+    no_args_is_help=True,
+    help=(
+        "Per-item media operations on a draft. All commands address items by "
+        "stable media_id (media_<12hex>); --index is intentionally rejected. "
+        "Every command supports --json and --project/-p."
+    ),
+)
+
+
+def _merge_json_flag(ctx: typer.Context, json_output: bool) -> bool:
+    """Allow `--json` before or after the subcommand via the global ctx.obj."""
+    return json_output or (ctx.obj.get("json", False) if ctx.obj else False)
+
+
+def _reject_index(index: int | None) -> None:
+    """Force ID-only addressing. --index is reserved at the Typer level; this
+    is a belt-and-braces check for programmatic callers / tests."""
+    if index is not None:
+        typer.echo(
+            "--index is not supported. Use --id media_<12hex> — media items are "
+            "addressed by stable id, not array position.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+
+def _find_draft_media_spec(draft, media_id: str) -> tuple[int, dict] | tuple[None, None]:
+    """Return (index, spec) for the media_id on the draft, or (None, None)."""
+    for i, spec in enumerate(draft.media_specs or []):
+        if isinstance(spec, dict) and spec.get("id") == media_id:
+            return i, spec
+    return None, None
+
+
+@media_app.command("list")
+def media_list(
     ctx: typer.Context,
-    draft_id: str = typer.Argument(..., help="Draft ID to regenerate media for"),
+    draft_id: str = typer.Option(..., "--draft", help="Draft ID to list media for"),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    index: int | None = typer.Option(
+        None, "--index", hidden=True, help="Rejected — addressing is by media_id."
+    ),
 ):
-    """Regenerate media for a draft using its stored media spec.
+    """List all media items on a draft with their ids, tools, paths, and errors.
 
-    The media spec is a JSON object describing what to generate (e.g., code
-    snippet image, diagram). Edit the spec first with media-edit, then run
-    this command to produce a new file from the updated spec.
-
-    Example: social-hook draft media-regen draft-abc123
+    Example: social-hook draft media list --draft draft_abc123 --json
     """
-    from social_hook.adapters.registry import get_media_adapter
-    from social_hook.config.yaml import load_full_config
+    _reject_index(index)
+    from social_hook.cli.utils import resolve_project
     from social_hook.db import operations as ops
-    from social_hook.filesystem import generate_id, get_base_path
-    from social_hook.models.core import DraftChange
 
+    json_output = _merge_json_flag(ctx, json_output)
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
-        if draft.media_spec and draft.media_spec == draft.media_spec_used:
-            typer.echo("Media spec unchanged — edit the spec first (social-hook draft media-edit).")
+        # Project scope check: --project resolves to a repo; if provided, the
+        # draft's project must match. Non-match is user error (exit 1).
+        if project_path:
+            repo = resolve_project(project_path)
+            proj = ops.get_project_by_path(conn, repo)
+            if proj and proj.id != draft.project_id:
+                typer.echo(f"Draft {draft_id} does not belong to project at {repo}.", err=True)
+                raise typer.Exit(1)
+
+        specs = draft.media_specs or []
+        paths = draft.media_paths or []
+        errors = draft.media_errors or []
+        used = draft.media_specs_used or []
+
+        items: list[dict] = []
+        for i, spec in enumerate(specs):
+            items.append(
+                {
+                    "id": spec.get("id") if isinstance(spec, dict) else None,
+                    "tool": spec.get("tool") if isinstance(spec, dict) else None,
+                    "user_uploaded": bool(spec.get("user_uploaded"))
+                    if isinstance(spec, dict)
+                    else False,
+                    "spec": spec.get("spec") if isinstance(spec, dict) else None,
+                    "caption": spec.get("caption") if isinstance(spec, dict) else None,
+                    "path": paths[i] if i < len(paths) else "",
+                    "error": errors[i] if i < len(errors) else None,
+                    "spec_unchanged": (
+                        isinstance(spec, dict)
+                        and i < len(used)
+                        and spec.get("spec") == (used[i] or {}).get("spec")
+                    ),
+                }
+            )
+
+        if json_output:
+            typer.echo(json_mod.dumps({"draft_id": draft_id, "media": items}, indent=2))
+            return
+
+        if not items:
+            typer.echo(f"No media on draft {draft_id}.")
+            return
+        typer.echo(f"{'#':<3} {'ID':<20} {'Tool':<16} {'Err':<4} {'Path'}")
+        typer.echo("-" * 80)
+        for i, item in enumerate(items):
+            err_mark = "!" if item["error"] else ("U" if item["user_uploaded"] else "")
+            typer.echo(
+                f"{i:<3} {(item['id'] or '-'):<20} {(item['tool'] or '-'):<16} {err_mark:<4} {item['path']}"
+            )
+    finally:
+        conn.close()
+
+
+@media_app.command("regen")
+def media_regen(
+    ctx: typer.Context,
+    media_id: str | None = typer.Option(None, "--id", help="Media id to regenerate"),
+    all_items: bool = typer.Option(False, "--all", help="Regenerate every media item on the draft"),
+    draft_id: str = typer.Option(..., "--draft", help="Draft ID"),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    index: int | None = typer.Option(
+        None, "--index", hidden=True, help="Rejected — addressing is by media_id."
+    ),
+):
+    """Regenerate media for a single item (--id) or all items (--all).
+
+    Media addressing is by stable id. Pass --all to regenerate every item on
+    the draft (equivalent to the web Regen All button). LLM-bearing — runs
+    adapter generation synchronously in CLI context.
+
+    Example: social-hook draft media regen --draft draft_abc123 --id media_a1b2c3d4e5f6
+    Example: social-hook draft media regen --draft draft_abc123 --all --json
+    """
+    _reject_index(index)
+    if bool(media_id) == bool(all_items):
+        typer.echo("Provide exactly one of --id MEDIA_ID or --all.", err=True)
+        raise typer.Exit(1)
+
+    from social_hook.config.yaml import load_full_config
+    from social_hook.media_regen import regen_media_item
+
+    json_output = _merge_json_flag(ctx, json_output)
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        specs = list(draft.media_specs or [])
+        if not specs:
+            typer.echo("Draft has no media items.", err=True)
             raise typer.Exit(1)
-        if not draft.media_type or not draft.media_spec:
-            typer.echo("No media spec available for regeneration.")
-            raise typer.Exit(1)
+
+        if media_id:
+            idx, spec = _find_draft_media_spec(draft, media_id)
+            if idx is None or spec is None:
+                typer.echo(f"Media id {media_id!r} not found on draft {draft_id}.", err=True)
+                raise typer.Exit(1)
+            targets = [(idx, spec)]
+        else:
+            targets = list(enumerate(specs))
 
         config_path = ctx.obj.get("config") if ctx.obj else None
         config = load_full_config(str(config_path) if config_path else None)
 
-        api_key = None
-        if draft.media_type == "nano_banana_pro":
-            api_key = config.env.get("GEMINI_API_KEY") if config else None
-            if not api_key:
-                typer.echo("Cannot regenerate: GEMINI_API_KEY not configured.")
-                raise typer.Exit(1)
+        results: list[dict] = []
+        for _idx, spec in targets:
+            if not isinstance(spec, dict):
+                continue
+            if spec.get("user_uploaded"):
+                # Skip uploads — they are not generated.
+                results.append({"id": spec.get("id"), "skipped": "user_uploaded"})
+                continue
+            tool_name = spec.get("tool")
+            if not tool_name or tool_name == "legacy_upload":
+                results.append({"id": spec.get("id"), "skipped": "no_generator"})
+                continue
 
-        media_adapter = get_media_adapter(draft.media_type, api_key=api_key)
-        if not media_adapter:
-            typer.echo(f"Media adapter '{draft.media_type}' not available.")
-            raise typer.Exit(1)
+            outcome = regen_media_item(conn, draft_id, spec["id"], config, changed_by="human")
+            if outcome.success:
+                results.append({"id": spec["id"], "path": outcome.path})
+            else:
+                results.append({"id": spec["id"], "error": outcome.error})
 
-        from social_hook.cli._spinner import spinner
-
-        output_dir = str(get_base_path() / "media-cache" / draft_id)
-        with spinner("Generating media..."):
-            result = media_adapter.generate(spec=draft.media_spec, output_dir=output_dir)
-
-        if result.success and result.file_path:
-            old_paths = draft.media_paths
-            ops.update_draft(
-                conn, draft_id, media_paths=[result.file_path], media_spec_used=draft.media_spec
+        if json_output:
+            typer.echo(
+                json_mod.dumps(
+                    {"draft_id": draft_id, "regenerated": results, "count": len(results)}, indent=2
+                )
             )
-            ops.insert_draft_change(
-                conn,
-                DraftChange(
-                    id=generate_id("change"),
-                    draft_id=draft_id,
-                    field="media_paths",
-                    old_value=json_mod.dumps(old_paths),
-                    new_value=json_mod.dumps([result.file_path]),
-                    changed_by="human",
-                ),
-            )
-            ops.emit_data_event(conn, "draft", "media_regenerated", draft_id, draft.project_id)
-            typer.echo(f"Media regenerated for draft {draft_id}.")
         else:
-            typer.echo(f"Regeneration failed: {result.error}")
-            raise typer.Exit(1)
+            typer.echo(f"Regenerated {len(results)} media item(s) on draft {draft_id}.")
+            for r in results:
+                mark = r.get("error") or r.get("skipped") or r.get("path")
+                typer.echo(f"  {r.get('id')}: {mark}")
     finally:
         conn.close()
 
 
-@app.command("media-remove")
-def media_remove(
-    ctx: typer.Context,
-    draft_id: str = typer.Argument(..., help="Draft ID to remove media from"),
-):
-    """Remove media from a draft.
-
-    Example: social-hook draft media-remove draft-abc123
-    """
-    from social_hook.db import operations as ops
-    from social_hook.filesystem import generate_id
-    from social_hook.models.core import DraftChange
-
-    conn = _get_conn()
-    try:
-        draft = _get_draft_or_exit(conn, draft_id)
-        old_paths = draft.media_paths
-        ops.update_draft(conn, draft_id, media_paths=[])
-        ops.insert_draft_change(
-            conn,
-            DraftChange(
-                id=generate_id("change"),
-                draft_id=draft_id,
-                field="media_paths",
-                old_value=json_mod.dumps(old_paths),
-                new_value="[]",
-                changed_by="human",
-            ),
-        )
-        ops.emit_data_event(conn, "draft", "media_removed", draft_id, draft.project_id)
-        typer.echo(f"Media removed from draft {draft_id}.")
-    finally:
-        conn.close()
-
-
-@app.command("media-edit")
+@media_app.command("edit")
 def media_edit(
     ctx: typer.Context,
-    draft_id: str = typer.Argument(..., help="Draft ID to edit media spec for"),
-    spec: str = typer.Option(..., "--spec", "-s", help="New media spec as JSON string"),
+    media_id: str = typer.Option(..., "--id", help="Media id to edit"),
+    spec_json: str = typer.Option(
+        ..., "--spec", "-s", help="New spec payload (JSON) for this media item"
+    ),
+    draft_id: str = typer.Option(..., "--draft", help="Draft ID"),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    index: int | None = typer.Option(
+        None, "--index", hidden=True, help="Rejected — addressing is by media_id."
+    ),
 ):
-    """Edit the media spec for a draft.
+    """Edit the spec payload of a single media item on a draft.
 
-    The media spec is a JSON object that controls media generation (e.g.,
-    code snippet, language, theme). After editing, run media-regen to
-    produce a new media file from the updated spec.
+    Stores the new spec only; does not regenerate. Run `media regen --id`
+    next to produce a file from the updated spec.
 
-    Example: social-hook draft media-edit draft-abc123 --spec '{"code": "print(42)", "language": "python"}'
+    Example: social-hook draft media edit --draft draft_abc --id media_a1b2c3d4e5f6 --spec '{"code": "print(1)", "language": "python"}'
     """
+    _reject_index(index)
     from social_hook.db import operations as ops
     from social_hook.filesystem import generate_id
     from social_hook.models.core import DraftChange
 
+    json_output = _merge_json_flag(ctx, json_output)
+    try:
+        new_spec_payload = json_mod.loads(spec_json)
+    except json_mod.JSONDecodeError as e:
+        typer.echo(f"Invalid JSON for --spec: {e}", err=True)
+        raise typer.Exit(1) from None
+    if not isinstance(new_spec_payload, dict):
+        typer.echo("--spec must be a JSON object.", err=True)
+        raise typer.Exit(1)
+
     conn = _get_conn()
     try:
         draft = _get_draft_or_exit(conn, draft_id)
+        idx, spec = _find_draft_media_spec(draft, media_id)
+        if idx is None or spec is None:
+            typer.echo(f"Media id {media_id!r} not found on draft {draft_id}.", err=True)
+            raise typer.Exit(1)
 
-        try:
-            parsed_spec = json_mod.loads(spec)
-        except json_mod.JSONDecodeError as e:
-            typer.echo(f"Invalid JSON: {e}")
-            raise typer.Exit(1) from None
+        updated = dict(spec)
+        updated["spec"] = new_spec_payload
 
-        old_spec = draft.media_spec
-        ops.update_draft(conn, draft_id, media_spec=parsed_spec)
+        ops.update_draft_media(conn, draft_id, media_id, spec=updated)
         ops.insert_draft_change(
             conn,
             DraftChange(
                 id=generate_id("change"),
                 draft_id=draft_id,
-                field="media_spec",
-                old_value=json_mod.dumps(old_spec)[:200] if old_spec else "null",
-                new_value=json_mod.dumps(parsed_spec)[:200],
+                field=f"media_spec:{media_id}",
+                old_value=json_mod.dumps(spec.get("spec"))[:200],
+                new_value=json_mod.dumps(new_spec_payload)[:200],
                 changed_by="human",
             ),
         )
-        ops.emit_data_event(conn, "draft", "edited", draft_id, draft.project_id)
-        typer.echo(f"Draft {draft_id} media spec updated.")
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+
+        if json_output:
+            typer.echo(
+                json_mod.dumps(
+                    {"draft_id": draft_id, "media_id": media_id, "spec": new_spec_payload},
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(f"Updated spec for {media_id} on draft {draft_id}.")
     finally:
         conn.close()
+
+
+@media_app.command("remove")
+def media_remove(
+    ctx: typer.Context,
+    media_id: str = typer.Option(..., "--id", help="Media id to remove"),
+    draft_id: str = typer.Option(..., "--draft", help="Draft ID"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    index: int | None = typer.Option(
+        None, "--index", hidden=True, help="Rejected — addressing is by media_id."
+    ),
+):
+    """Remove a single media item from a draft by id.
+
+    Destructive — splices the item out of all four parallel arrays
+    (media_specs, media_paths, media_errors, media_specs_used). --yes
+    skips confirmation and is required for non-interactive use.
+
+    Example: social-hook draft media remove --draft draft_abc --id media_a1b2c3d4e5f6 --yes
+    """
+    _reject_index(index)
+    from social_hook.db import operations as ops
+    from social_hook.filesystem import generate_id
+    from social_hook.models.core import DraftChange
+
+    json_output = _merge_json_flag(ctx, json_output)
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        idx, spec = _find_draft_media_spec(draft, media_id)
+        if idx is None or spec is None:
+            typer.echo(f"Media id {media_id!r} not found on draft {draft_id}.", err=True)
+            raise typer.Exit(1)
+
+        if not yes:
+            typer.confirm(
+                f"Remove media {media_id} (tool={spec.get('tool')}) from draft {draft_id[:12]}?",
+                abort=True,
+            )
+
+        if not ops.remove_draft_media(conn, draft_id, media_id):
+            typer.echo(f"Failed to remove {media_id} from draft {draft_id}.", err=True)
+            raise typer.Exit(2)
+
+        ops.insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft_id,
+                field=f"media_spec:{media_id}",
+                old_value=json_mod.dumps(spec)[:200],
+                new_value="null",
+                changed_by="human",
+            ),
+        )
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+
+        if json_output:
+            typer.echo(
+                json_mod.dumps({"draft_id": draft_id, "removed_media_id": media_id}, indent=2)
+            )
+        else:
+            typer.echo(f"Removed {media_id} from draft {draft_id}.")
+    finally:
+        conn.close()
+
+
+@media_app.command("add")
+def media_add(
+    ctx: typer.Context,
+    tool: str = typer.Option(
+        ..., "--tool", help="Generator tool (nano_banana_pro, mermaid, ray_so, legacy_upload)"
+    ),
+    spec_json: str = typer.Option(
+        ..., "--spec", "-s", help="Spec payload (JSON) for the new media item"
+    ),
+    draft_id: str = typer.Option(..., "--draft", help="Draft ID"),
+    caption: str | None = typer.Option(None, "--caption", help="Optional caption text"),
+    project_path: str | None = typer.Option(
+        None, "--project", "-p", help="Repository path (default: cwd)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    index: int | None = typer.Option(
+        None, "--index", hidden=True, help="Rejected — addressing is by media_id."
+    ),
+):
+    """Append a new media slot to a draft and print its fresh media_id.
+
+    Does not generate. Run `media regen --id <new_id>` afterwards to produce
+    the file. Useful for adding a slot the drafter missed before an article
+    is ready for review.
+
+    Example: social-hook draft media add --draft draft_abc --tool mermaid --spec '{"diagram": "graph TD; A-->B"}'
+    """
+    _reject_index(index)
+    from social_hook.db import operations as ops
+    from social_hook.filesystem import generate_id
+    from social_hook.models.core import DraftChange
+
+    json_output = _merge_json_flag(ctx, json_output)
+    try:
+        new_spec_payload = json_mod.loads(spec_json)
+    except json_mod.JSONDecodeError as e:
+        typer.echo(f"Invalid JSON for --spec: {e}", err=True)
+        raise typer.Exit(1) from None
+    if not isinstance(new_spec_payload, dict):
+        typer.echo("--spec must be a JSON object.", err=True)
+        raise typer.Exit(1)
+
+    conn = _get_conn()
+    try:
+        draft = _get_draft_or_exit(conn, draft_id)
+        new_spec = {
+            "tool": tool,
+            "spec": new_spec_payload,
+            "caption": caption,
+            "user_uploaded": tool == "legacy_upload",
+        }
+        new_id = ops.append_draft_media(conn, draft_id, new_spec)
+        if new_id is None:
+            typer.echo(f"Failed to append media to draft {draft_id}.", err=True)
+            raise typer.Exit(2)
+
+        ops.insert_draft_change(
+            conn,
+            DraftChange(
+                id=generate_id("change"),
+                draft_id=draft_id,
+                field=f"media_spec:{new_id}",
+                old_value="null",
+                new_value=json_mod.dumps({"tool": tool})[:200],
+                changed_by="human",
+            ),
+        )
+        ops.emit_data_event(conn, "draft", "updated", draft_id, draft.project_id)
+
+        if json_output:
+            typer.echo(
+                json_mod.dumps({"draft_id": draft_id, "media_id": new_id, "tool": tool}, indent=2)
+            )
+        else:
+            typer.echo(f"Added media slot {new_id} ({tool}) to draft {draft_id}.")
+    finally:
+        conn.close()
+
+
+app.add_typer(media_app, name="media")
 
 
 @app.command("list")
@@ -910,7 +1208,8 @@ def list_cmd(
             content_preview = d.content[:35].replace("\n", " ") if d.content else ""
             intro = "[INTRO]" if getattr(d, "is_intro", False) else ""
             fmt = getattr(d, "vehicle", "single") or "single"
-            media = d.media_type[:5] if d.media_type else "-"
+            media_count = len(d.media_specs or [])
+            media = str(media_count) if media_count else "-"
 
             # Build tags from linked decision
             tags = []
@@ -972,26 +1271,32 @@ def show(
         typer.echo(f"Updated:    {draft.updated_at}")
         if draft.scheduled_time:
             typer.echo(f"Scheduled:  {draft.scheduled_time}")
-        if draft.media_type:
-            typer.echo(f"Media type: {draft.media_type}")
-        if draft.media_paths:
-            typer.echo(f"Media:      {', '.join(draft.media_paths)}")
-            for mp in draft.media_paths:
-                url = _media_url(mp)
+        specs = draft.media_specs or []
+        paths = draft.media_paths or []
+        errors = draft.media_errors or []
+        if specs:
+            typer.echo(f"Media:      {len(specs)} item(s)")
+            for i, spec in enumerate(specs):
+                sid = spec.get("id") if isinstance(spec, dict) else "?"
+                tool = spec.get("tool") if isinstance(spec, dict) else "?"
+                marker = "U" if isinstance(spec, dict) and spec.get("user_uploaded") else ""
+                path = paths[i] if i < len(paths) else ""
+                err = errors[i] if i < len(errors) else None
+                status = err if err else (path or "(pending)")
+                typer.echo(f"  [{i}] {sid} {tool}{marker}: {status}")
+                url = _media_url(path) if path else None
                 if url:
-                    typer.echo(f"  View:     {url}")
+                    typer.echo(f"       View: {url}")
             if open_media:
                 import platform as plat
                 import subprocess
 
-                for mp in draft.media_paths:
-                    if Path(mp).exists():
+                for mp in paths:
+                    if mp and Path(mp).exists():
                         cmd = "open" if plat.system() == "Darwin" else "xdg-open"
                         subprocess.Popen(
                             [cmd, mp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                         )
-        if draft.media_spec:
-            typer.echo(f"Media spec: {json_mod.dumps(draft.media_spec, indent=2)}")
         if draft.last_error:
             typer.echo(f"Error:      {draft.last_error}")
         typer.echo(f"\nContent:\n{draft.content}")

@@ -21,9 +21,12 @@ Example: social-hook content combine --topics topic_abc --topics topic_def
 Create content from an idea, bypassing the evaluator.
 
 Constructs a DraftingIntent directly and calls the drafting pipeline.
-Makes LLM calls. Writes decisions and drafts to the database.
+Makes LLM calls. Writes decisions and drafts to the database. Reference
+images flow through as vision content blocks to the drafter (model must
+advertise supports_vision).
 
-Example: social-hook content create --idea "Show the new dashboard feature" --vehicle article --files guide.md
+Example (headless): social-hook content create --idea "Dashboard launch" --vehicle article --uploads '[{"path": "hero.png", "context": "final UI"}]'
+Example (interactive): social-hook content create --idea "Dashboard launch" --vehicle article --file hero.png --file-context "final UI"
 
 ---
 

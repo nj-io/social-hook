@@ -48,6 +48,46 @@ def _convert_tool_schema(anthropic_tool: dict) -> dict:
     }
 
 
+def _translate_content_blocks(content: Any) -> Any:
+    """Translate Anthropic-style content blocks into OpenAI format.
+
+    The pipeline builds Anthropic-shaped messages (the default provider is
+    Anthropic). LiteLLM expects OpenAI-format input and handles OpenAI ->
+    per-provider translation itself, so this only bridges Anthropic -> OpenAI
+    for vision-capable models:
+
+    Anthropic text:  {"type": "text", "text": "..."} — identical in OpenAI.
+    Anthropic image: {"type": "image", "source": {"type": "base64",
+                      "media_type": "image/png", "data": "..."}}
+        -> OpenAI:   {"type": "image_url",
+                      "image_url": {"url": "data:image/png;base64,..."}}
+
+    String ``content`` passes through unchanged. Unknown block types pass
+    through verbatim — LiteLLM raises its own error if it cannot parse them.
+    """
+    if not isinstance(content, list):
+        return content
+    translated: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            translated.append(block)
+            continue
+        btype = block.get("type")
+        if btype == "image" and isinstance(block.get("source"), dict):
+            src = block["source"]
+            media_type = src.get("media_type", "image/png")
+            data = src.get("data", "")
+            translated.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{media_type};base64,{data}"},
+                }
+            )
+        else:
+            translated.append(block)
+    return translated
+
+
 def _litellm_model_string(provider: str, model_id: str) -> str:
     """Map a social-hook ``provider`` + ``model_id`` to a LiteLLM model string."""
     if provider == "openrouter":
@@ -102,10 +142,16 @@ class LiteLLMClient(LLMClient):
 
         openai_tools = [_convert_tool_schema(t) for t in tools]
 
+        # Translate Anthropic-style content-block lists (text + image blocks)
+        # into OpenAI's image_url data-URL format so vision-capable models see
+        # images natively; LiteLLM then maps OpenAI -> the target provider.
         openai_messages: list[dict[str, Any]] = []
         if system:
             openai_messages.append({"role": "system", "content": system})
-        openai_messages.extend(messages)
+        for msg in messages:
+            translated = dict(msg)
+            translated["content"] = _translate_content_blocks(msg.get("content"))
+            openai_messages.append(translated)
 
         kwargs: dict[str, Any] = {
             "model": self._litellm_model,

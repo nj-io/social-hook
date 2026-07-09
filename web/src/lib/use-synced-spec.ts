@@ -1,27 +1,31 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * Local state that stays in sync with draft.media_spec from the server.
+ * Local state that stays in sync with a ``MediaSpecItem.spec`` object from
+ * the server.
  *
- * Returns [parsed, setParsed] — behaves like useState but resets whenever
- * the upstream `mediaSpec` prop changes (e.g. after a background task
+ * Returns ``[parsed, setParsed]`` — behaves like ``useState`` but resets
+ * whenever the upstream ``spec`` prop changes (e.g. after a background task
  * writes a new spec and the draft reloads via WebSocket).
+ *
+ * The signature expects an object, not a JSON string: multi-media specs are
+ * stored and served as structured ``Record<string, unknown>`` values, so no
+ * ``JSON.parse`` happens at the boundary. Pass ``undefined`` for a brand-new
+ * item with no spec yet.
  */
 export function useSyncedSpec(
-  mediaSpec: string | Record<string, unknown> | null | undefined,
+  spec: Record<string, unknown> | null | undefined,
 ): [Record<string, unknown>, React.Dispatch<React.SetStateAction<Record<string, unknown>>>] {
-  const parse = (raw: typeof mediaSpec): Record<string, unknown> =>
-    typeof raw === "string" ? JSON.parse(raw) : raw ?? {};
-
-  const [spec, setSpec] = useState<Record<string, unknown>>(() => parse(mediaSpec));
-  const prevRef = useRef(mediaSpec);
+  const initial = spec ?? {};
+  const [value, setValue] = useState<Record<string, unknown>>(initial);
+  const prevRef = useRef(spec);
 
   useEffect(() => {
-    if (mediaSpec !== prevRef.current) {
-      prevRef.current = mediaSpec;
-      setSpec(parse(mediaSpec));
+    if (spec !== prevRef.current) {
+      prevRef.current = spec;
+      setValue(spec ?? {});
     }
-  }, [mediaSpec]);
+  }, [spec]);
 
-  return [spec, setSpec];
+  return [value, setValue];
 }

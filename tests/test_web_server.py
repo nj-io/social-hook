@@ -44,14 +44,20 @@ def tmp_env(tmp_path):
             content TEXT,
             status TEXT DEFAULT 'draft',
             media_paths TEXT DEFAULT '[]',
-            media_type TEXT,
-            media_spec TEXT,
+            media_specs TEXT NOT NULL DEFAULT '[]',
+            media_errors TEXT NOT NULL DEFAULT '[]',
+            media_specs_used TEXT NOT NULL DEFAULT '[]',
             suggested_time TEXT,
             scheduled_time TEXT,
             reasoning TEXT,
             superseded_by TEXT,
             retry_count INTEGER DEFAULT 0,
             last_error TEXT,
+            is_intro INTEGER DEFAULT 0,
+            vehicle TEXT DEFAULT 'single',
+            reference_type TEXT,
+            reference_files TEXT,
+            reference_post_id TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
@@ -2359,7 +2365,9 @@ class TestStaleTaskCleanup:
 
 
 def _seed_draft_with_media_type(db_path, draft_id="draft_1", project_id="proj_1"):
-    """Seed a project, decision, and draft with media_type set."""
+    """Seed a project, decision, and draft. Multi-media schema — no slot yet;
+    the generate-spec endpoint creates one on first use.
+    """
     conn = sqlite3.connect(str(db_path))
     existing = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
     if not existing:
@@ -2375,8 +2383,8 @@ def _seed_draft_with_media_type(db_path, draft_id="draft_1", project_id="proj_1"
             (project_id,),
         )
     conn.execute(
-        "INSERT INTO drafts (id, project_id, decision_id, platform, content, media_type)"
-        " VALUES (?, ?, 'dec_spec', 'x', 'Test draft about CI pipelines', 'mermaid')",
+        "INSERT INTO drafts (id, project_id, decision_id, platform, content)"
+        " VALUES (?, ?, 'dec_spec', 'x', 'Test draft about CI pipelines')",
         (draft_id, project_id),
     )
     conn.commit()
@@ -2443,11 +2451,13 @@ class TestGenerateSpecEndpoint:
             resp = client.post("/api/drafts/draft_1/generate-spec", json={"tool_name": "mermaid"})
             self._wait_for_task(tmp_env["db_path"], resp.json()["task_id"])
 
-        # Verify draft updated
+        # Verify draft's first media slot has the generated spec payload.
         conn = sqlite3.connect(str(tmp_env["db_path"]))
-        row = conn.execute("SELECT media_spec FROM drafts WHERE id='draft_1'").fetchone()
+        row = conn.execute("SELECT media_specs FROM drafts WHERE id='draft_1'").fetchone()
         conn.close()
-        assert json.loads(row[0])["diagram"] == "graph TD"
+        specs = json.loads(row[0])
+        assert specs, "generate-spec should have created/populated a media slot"
+        assert specs[0]["spec"]["diagram"] == "graph TD"
 
     def test_generate_spec_missing_tool_name(self, client, tmp_env):
         resp = client.post("/api/drafts/draft_1/generate-spec", json={})

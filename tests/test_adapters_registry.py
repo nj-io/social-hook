@@ -3,13 +3,17 @@
 Source: WS3_ADAPTERS.md T13 (lines 245-252)
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from social_hook.adapters.registry import (
     MEDIA_ADAPTER_NAMES,
     clear_adapter_cache,
     get_media_adapter,
+    resolve_media_adapter,
 )
+from social_hook.errors import ConfigError
 
 # =============================================================================
 # T13: Media Adapter Registry
@@ -82,3 +86,48 @@ class TestMediaAdapterRegistry:
         clear_adapter_cache()
         adapter2 = get_media_adapter("mermaid")
         assert adapter1 is not adapter2
+
+
+# =============================================================================
+# A1#3: resolve_media_adapter centralizes credential lookup + error translation
+# =============================================================================
+
+
+class TestResolveMediaAdapter:
+    """Covers the 4-site consolidation helper: bot/web/cli/drafting use this
+    instead of reimplementing the nano_banana_pro/GEMINI_API_KEY branch +
+    legacy_upload rejection + unknown-tool fallback.
+    """
+
+    def setup_method(self):
+        clear_adapter_cache()
+
+    def test_nano_banana_pro_with_key_returns_adapter(self):
+        from social_hook.adapters.media.nanabananapro import NanaBananaAdapter
+
+        config = SimpleNamespace(env={"GEMINI_API_KEY": "test_key"})
+        adapter = resolve_media_adapter("nano_banana_pro", config)
+        assert isinstance(adapter, NanaBananaAdapter)
+
+    def test_nano_banana_pro_missing_key_raises_configerror(self):
+        config = SimpleNamespace(env={})
+        with pytest.raises(ConfigError, match="GEMINI_API_KEY not configured"):
+            resolve_media_adapter("nano_banana_pro", config)
+
+    def test_legacy_upload_rejected(self):
+        config = SimpleNamespace(env={})
+        with pytest.raises(ConfigError, match="legacy_upload items cannot be regenerated"):
+            resolve_media_adapter("legacy_upload", config)
+
+    def test_unknown_tool_raises_configerror(self):
+        config = SimpleNamespace(env={})
+        with pytest.raises(ConfigError, match="Unknown media adapter"):
+            resolve_media_adapter("not_a_real_tool", config)
+
+    def test_mermaid_requires_no_credentials(self):
+        """Non-credential adapters work with an empty config."""
+        from social_hook.adapters.media.mermaid import MermaidAdapter
+
+        config = SimpleNamespace(env={})
+        adapter = resolve_media_adapter("mermaid", config)
+        assert isinstance(adapter, MermaidAdapter)

@@ -36,6 +36,7 @@ SECTION_MAP = {
     "crosspost": "S",
     "ratelimits": "T",
     "platform-posting": "U",
+    "vehicles": "V",
 }
 
 # Provider presets: maps --provider flag to model configs

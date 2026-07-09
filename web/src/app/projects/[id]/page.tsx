@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useToast } from "@/lib/toast-context";
 import { useParams } from "next/navigation";
 import Link from "next/link";
@@ -10,7 +10,6 @@ import {
   fetchProjectPosts,
   fetchProjectUsage,
   createDraftFromDecision,
-  createContent,
   deleteDecision,
   retriggerDecision,
   batchEvaluateDecisions,
@@ -22,7 +21,6 @@ import {
   importCommits,
   fetchTasks,
   fetchTopics,
-  uploadProjectDocs,
   type BackgroundTask,
 } from "@/lib/api";
 import type { Decision, Memory, PostRecord, ProjectDetail, Topic, UsageSummary } from "@/lib/types";
@@ -40,6 +38,7 @@ import { TopicQueue } from "@/components/topic-queue";
 import { BriefEditor } from "@/components/brief-editor";
 import { ContentSuggestions } from "@/components/content-suggestions";
 import { AsyncButton } from "@/components/async-button";
+import { CreateContentModal } from "@/components/create-content-modal";
 
 const DECISIONS_PER_PAGE = 10;
 
@@ -90,13 +89,7 @@ export default function ProjectDetailPage() {
     }
     return "cycles";
   });
-  // Create content modal state
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [createIdea, setCreateIdea] = useState("");
-  const [createVehicle, setCreateVehicle] = useState<string>("");
-  const [createRefFiles, setCreateRefFiles] = useState<File[]>([]);
-  const createRefInputRef = useRef<HTMLInputElement>(null);
-  const CREATE_REF = "__create_content__";
 
   // Consolidate uses a special ref_id key since it spans multiple decisions
   const CONSOLIDATE_REF = "__consolidate__";
@@ -117,12 +110,6 @@ export default function ProjectDetailPage() {
         const count = (task.result as Record<string, unknown>).count as number | undefined;
         setConsolidateResult({ count });
         setSelectedDecisions(new Set());
-      } else if (task.type === "create_content") {
-        setCreateModalOpen(false);
-        setCreateIdea("");
-        setCreateVehicle("");
-        setCreateRefFiles([]);
-        reload();
       } else if (task.type === "import_commits") {
         setImportModalOpen(false);
         setImportLoading(false);
@@ -137,8 +124,6 @@ export default function ProjectDetailPage() {
       if (task.type === "create_draft") {
         setDraftResult((prev) => ({ ...prev, [task.ref_id]: { error } }));
         addToast("Draft creation failed", { variant: "error", detail: error });
-      } else if (task.type === "create_content") {
-        addToast("Content creation failed", { variant: "error", detail: error });
       } else if (task.type === "consolidate") {
         setConsolidateResult({ error });
         addToast("Consolidation failed", { variant: "error", detail: error });
@@ -312,16 +297,12 @@ export default function ProjectDetailPage() {
             <h1 className="text-2xl font-bold">{project.name}</h1>
             {!!project.paused && <Badge value="paused" variant="status" />}
           </div>
-          <AsyncButton
-            loading={isTaskRunning(CREATE_REF)}
-            startTime={getTask(CREATE_REF)?.created_at}
-            loadingText="Creating"
-            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
-            disabled={isTaskRunning(CREATE_REF)}
+          <button
             onClick={() => setCreateModalOpen(true)}
+            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent/80"
           >
             Create Content
-          </AsyncButton>
+          </button>
         </div>
         <p className="mt-1 truncate text-sm text-muted-foreground">{project.repo_path}</p>
 
@@ -1010,109 +991,12 @@ export default function ProjectDetailPage() {
         );
       })()}
 
-      {/* Create content modal */}
-      <Modal open={createModalOpen} onClose={() => !isTaskRunning(CREATE_REF) && setCreateModalOpen(false)} maxWidth="max-w-sm">
-        <h3 className="text-sm font-semibold">Create Content</h3>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Draft content from an idea — bypasses the evaluator.
-        </p>
-        <div className="mt-3">
-          <label className="text-xs text-muted-foreground">Idea *</label>
-          <textarea
-            className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-            rows={3}
-            placeholder="Describe what you want to post about..."
-            value={createIdea}
-            onChange={(e) => setCreateIdea(e.target.value)}
-          />
-        </div>
-        <div className="mt-3">
-          <label className="text-xs text-muted-foreground">Vehicle</label>
-          <select
-            className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground"
-            value={createVehicle}
-            onChange={(e) => setCreateVehicle(e.target.value)}
-          >
-            <option value="">Auto</option>
-            <option value="single">Single</option>
-            <option value="thread">Thread</option>
-            <option value="article">Article</option>
-          </select>
-        </div>
-        <div className="mt-3">
-          <label className="text-xs text-muted-foreground">Reference files (optional)</label>
-          <div
-            onClick={() => createRefInputRef.current?.click()}
-            className="mt-1 cursor-pointer rounded-md border-2 border-dashed border-border p-3 text-center text-sm text-muted-foreground transition-colors hover:border-accent/50"
-          >
-            <input
-              ref={createRefInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                const selected = Array.from(e.target.files || []);
-                if (selected.length > 0) {
-                  setCreateRefFiles((prev) => [...prev, ...selected]);
-                }
-                e.target.value = "";
-              }}
-            />
-            Click to select files
-          </div>
-          {createRefFiles.length > 0 && (
-            <div className="mt-2 space-y-1">
-              {createRefFiles.map((f, i) => (
-                <div key={i} className="flex items-center justify-between rounded border border-border px-2 py-1 text-xs">
-                  <span className="truncate">{f.name}</span>
-                  <button
-                    onClick={() => setCreateRefFiles((prev) => prev.filter((_, j) => j !== i))}
-                    className="ml-2 shrink-0 text-muted-foreground hover:text-destructive"
-                  >
-                    x
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            onClick={() => setCreateModalOpen(false)}
-            disabled={isTaskRunning(CREATE_REF)}
-            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <AsyncButton
-            loading={isTaskRunning(CREATE_REF)}
-            startTime={getTask(CREATE_REF)?.created_at}
-            loadingText="Creating"
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/80 disabled:opacity-50"
-            disabled={!createIdea.trim() || isTaskRunning(CREATE_REF)}
-            onClick={async () => {
-              try {
-                // Upload reference files first, then pass their names as paths
-                let refFiles: string[] | undefined;
-                if (createRefFiles.length > 0) {
-                  await uploadProjectDocs(id, createRefFiles);
-                  refFiles = createRefFiles.map((f) => f.name);
-                }
-                const res = await createContent(id, {
-                  idea: createIdea.trim(),
-                  vehicle: createVehicle || undefined,
-                  reference_files: refFiles,
-                });
-                trackTask(res.task_id, CREATE_REF, "create_content");
-              } catch (e) {
-                setActionError(e instanceof Error ? e.message : "Create failed");
-              }
-            }}
-          >
-            Create
-          </AsyncButton>
-        </div>
-      </Modal>
+      <CreateContentModal
+        open={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        projectId={id}
+        onCreated={reload}
+      />
 
       {/* Import history modal */}
       <Modal open={importModalOpen} onClose={() => !importLoading && setImportModalOpen(false)} maxWidth="max-w-sm">

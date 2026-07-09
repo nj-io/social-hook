@@ -33,6 +33,7 @@ def intent_from_routed_targets(
 
     Resolves content sources per strategy.
     Used by: commit trigger (targets), suggestion eval, topic maturity, consolidation.
+    Never carries uploads — auto-triggered drafts never have operator reference images.
     """
     from social_hook.content_sources import content_sources as default_registry
     from social_hook.drafting import DraftingIntent, PlatformSpec
@@ -162,6 +163,7 @@ def intent_from_platforms(
     """Builds from config.platforms when no targets configured.
 
     Used by: commit trigger (no targets), summary trigger.
+    Never carries uploads — auto-triggered drafts never have operator reference images.
     """
     from social_hook.drafting import DraftingIntent, PlatformSpec
 
@@ -203,11 +205,17 @@ def intent_from_decision(
     config: Config,
     conn: sqlite3.Connection,
     target_platform: str | None = None,
+    uploads: list[Any] | None = None,
 ) -> DraftingIntent:
     """Reads Decision fields directly into DraftingIntent.
 
     Sets include_project_docs=True so callers get project context in drafts.
     Used by: web Create Draft, Telegram redraft, CLI redraft, intro lifecycle.
+
+    ``uploads`` carries operator-uploaded reference images (list of
+    ``MediaUpload``) through to the drafter. Create-content is the only
+    caller that passes a non-None list today; web redraft, CLI redraft,
+    Telegram redraft, and the intro lifecycle all pass ``None``.
     """
     from social_hook.drafting import DraftingIntent, PlatformSpec
 
@@ -246,6 +254,7 @@ def intent_from_decision(
         media_tool=getattr(decision, "media_tool", None),
         include_project_docs=True,
         decision_id=decision.id,
+        uploads=uploads,
     )
 
 
@@ -259,6 +268,7 @@ def intent_from_merge(
     """Builds from merge group data.
 
     Used by: merge execution in trigger_side_effects.py.
+    Never carries uploads — merge consolidates existing drafts, not new operator uploads.
     """
     from social_hook.drafting import DraftingIntent, PlatformSpec
 

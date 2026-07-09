@@ -211,7 +211,7 @@ _MODELS: list[ModelInfo] = [
         context_window=200_000,
         max_output_tokens=64_000,
         supports_tools=True,
-        supports_vision=False,
+        supports_vision=True,
     ),
     ModelInfo(
         id="sonnet",
@@ -223,7 +223,7 @@ _MODELS: list[ModelInfo] = [
         context_window=200_000,
         max_output_tokens=64_000,
         supports_tools=True,
-        supports_vision=False,
+        supports_vision=True,
     ),
     ModelInfo(
         id="haiku",
@@ -235,7 +235,7 @@ _MODELS: list[ModelInfo] = [
         context_window=200_000,
         max_output_tokens=32_000,
         supports_tools=True,
-        supports_vision=False,
+        supports_vision=True,
     ),
     # --- OpenAI ---
     ModelInfo(

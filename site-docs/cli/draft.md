@@ -57,35 +57,9 @@ Example: social-hook draft list --tag auth
 
 ---
 
-### `social-hook draft media-edit`
+### `social-hook draft media`
 
-Edit the media spec for a draft.
-
-The media spec is a JSON object that controls media generation (e.g.,
-code snippet, language, theme). After editing, run media-regen to
-produce a new media file from the updated spec.
-
-Example: social-hook draft media-edit draft-abc123 --spec '{"code": "print(42)", "language": "python"}'
-
----
-
-### `social-hook draft media-regen`
-
-Regenerate media for a draft using its stored media spec.
-
-The media spec is a JSON object describing what to generate (e.g., code
-snippet image, diagram). Edit the spec first with media-edit, then run
-this command to produce a new file from the updated spec.
-
-Example: social-hook draft media-regen draft-abc123
-
----
-
-### `social-hook draft media-remove`
-
-Remove media from a draft.
-
-Example: social-hook draft media-remove draft-abc123
+Per-item media operations on a draft. All commands address items by stable media_id (media_<12hex>); --index is intentionally rejected. Every command supports --json and --project/-p.
 
 ---
 

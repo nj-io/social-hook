@@ -53,10 +53,25 @@ def db_env(tmp_path):
         "deferred",
     ]
     for status in statuses:
-        media_spec = json.dumps({"prompt": "test"}) if status == "draft" else None
-        media_type = "nano_banana_pro" if status == "draft" else None
+        # Multi-media schema: a single MediaSpecItem in media_specs for drafts.
+        # Other statuses get an empty list.
+        media_specs_json = (
+            json.dumps(
+                [
+                    {
+                        "id": f"media_{status[:6]:0<6}abc",
+                        "tool": "nano_banana_pro",
+                        "spec": {"prompt": "test"},
+                        "caption": None,
+                        "user_uploaded": False,
+                    }
+                ]
+            )
+            if status == "draft"
+            else "[]"
+        )
         conn.execute(
-            "INSERT INTO drafts (id, project_id, decision_id, platform, status, content, media_paths, media_type, media_spec) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO drafts (id, project_id, decision_id, platform, status, content, media_paths, media_specs, media_errors, media_specs_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 f"draft_{status}",
                 "proj_test1",
@@ -65,8 +80,9 @@ def db_env(tmp_path):
                 status,
                 f"Content for {status} draft",
                 "[]",
-                media_type,
-                media_spec,
+                media_specs_json,
+                "[]",
+                "[]",
             ),
         )
 
@@ -318,52 +334,106 @@ class TestDraftEdit:
 
 
 class TestDraftMediaRemove:
-    def test_remove_media(self, db_env):
-        # First set some media paths
+    """`social-hook draft media remove --draft <id> --id <media_id> --yes` —
+    the legacy `draft media-remove <draft_id>` verb is deleted.
+    """
+
+    def test_remove_media_splices_slot(self, db_env):
+        # db_env seeds draft_draft with one media slot (see fixture).
         conn = sqlite3.connect(str(db_env["db_path"]))
-        conn.execute(
-            "UPDATE drafts SET media_paths = ? WHERE id = ?",
-            (json.dumps(["/tmp/test.png"]), "draft_draft"),
-        )
-        conn.commit()
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT media_specs FROM drafts WHERE id = 'draft_draft'").fetchone()
         conn.close()
+        specs = json.loads(row["media_specs"])
+        media_id = specs[0]["id"]
 
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["draft", "media-remove", "draft_draft"])
-            assert result.exit_code == 0
-            assert "removed" in result.output
+            result = runner.invoke(
+                app,
+                [
+                    "draft",
+                    "media",
+                    "remove",
+                    "--draft",
+                    "draft_draft",
+                    "--id",
+                    media_id,
+                    "--yes",
+                ],
+            )
+            assert result.exit_code == 0, result.output
+            assert "Removed" in result.output
 
         conn = sqlite3.connect(str(db_env["db_path"]))
         conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT media_paths FROM drafts WHERE id = ?", ("draft_draft",)
-        ).fetchone()
+        row = conn.execute("SELECT media_specs FROM drafts WHERE id = 'draft_draft'").fetchone()
         conn.close()
-        assert json.loads(row["media_paths"]) == []
+        assert json.loads(row["media_specs"]) == []
 
     def test_remove_media_creates_change(self, db_env):
-        with _patch_paths(db_env):
-            runner.invoke(app, ["draft", "media-remove", "draft_draft"])
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT media_specs FROM drafts WHERE id = 'draft_draft'").fetchone()
+        conn.close()
+        media_id = json.loads(row["media_specs"])[0]["id"]
 
+        with _patch_paths(db_env):
+            runner.invoke(
+                app,
+                [
+                    "draft",
+                    "media",
+                    "remove",
+                    "--draft",
+                    "draft_draft",
+                    "--id",
+                    media_id,
+                    "--yes",
+                ],
+            )
+
+        # DraftChange field format: "media_spec:{media_id}"
         conn = sqlite3.connect(str(db_env["db_path"]))
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT * FROM draft_changes WHERE draft_id = ? AND field = ?",
-            ("draft_draft", "media_paths"),
+            ("draft_draft", f"media_spec:{media_id}"),
         ).fetchone()
         conn.close()
         assert row is not None
-        assert row["new_value"] == "[]"
+        assert row["new_value"] == "null"
 
     def test_remove_media_not_found(self, db_env):
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["draft", "media-remove", "draft_missing"])
+            result = runner.invoke(
+                app,
+                [
+                    "draft",
+                    "media",
+                    "remove",
+                    "--draft",
+                    "draft_missing",
+                    "--id",
+                    "media_xxx",
+                    "--yes",
+                ],
+            )
             assert result.exit_code == 1
-            assert "not found" in result.output
+            assert "not found" in result.output.lower()
 
 
 class TestDraftMediaRegen:
+    """`social-hook draft media regen --draft <id> --id <media_id>` — the
+    legacy `draft media-regen <draft_id>` verb is deleted.
+    """
+
     def test_media_regen_success(self, db_env):
+        conn = sqlite3.connect(str(db_env["db_path"]))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT media_specs FROM drafts WHERE id = 'draft_draft'").fetchone()
+        conn.close()
+        media_id = json.loads(row["media_specs"])[0]["id"]
+
         mock_adapter = MagicMock()
         mock_adapter.generate.return_value = MagicMock(
             success=True, file_path="/tmp/test.png", error=None
@@ -375,15 +445,30 @@ class TestDraftMediaRegen:
             patch("social_hook.adapters.registry.get_media_adapter", return_value=mock_adapter),
         ):
             mock_config.return_value = MagicMock()
-            result = runner.invoke(app, ["draft", "media-regen", "draft_draft"])
-            assert result.exit_code == 0
-            assert "regenerated" in result.output
+            result = runner.invoke(
+                app,
+                ["draft", "media", "regen", "--draft", "draft_draft", "--id", media_id],
+            )
+            assert result.exit_code == 0, result.output
+            assert "Regenerated" in result.output
 
-    def test_media_regen_missing_spec(self, db_env):
+    def test_media_regen_missing_slot(self, db_env):
+        """Unknown media_id on a real draft returns exit 1."""
         with _patch_paths(db_env):
-            result = runner.invoke(app, ["draft", "media-regen", "draft_approved"])
+            result = runner.invoke(
+                app,
+                [
+                    "draft",
+                    "media",
+                    "regen",
+                    "--draft",
+                    "draft_draft",
+                    "--id",
+                    "media_missing",
+                ],
+            )
             assert result.exit_code == 1
-            assert "No media spec" in result.output
+            assert "not found" in result.output.lower()
 
 
 class TestDraftList:

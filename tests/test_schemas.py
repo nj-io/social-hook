@@ -66,7 +66,9 @@ class TestCreateDraftInput:
         )
         assert result.content == "Just shipped a new feature!"
         assert result.platform == "x"
-        assert result.media_type is None
+        # Multi-media per-draft: a text-only draft carries an empty list,
+        # not the old singular media_type=None.
+        assert result.media_specs == []
 
     def test_valid_with_media(self):
         result = CreateDraftInput.validate(
@@ -74,12 +76,18 @@ class TestCreateDraftInput:
                 "content": "Architecture overview",
                 "platform": "linkedin",
                 "reasoning": "Technical deep-dive",
-                "media_type": "mermaid",
-                "media_spec": {"diagram": "graph LR; A-->B"},
+                "media_specs": [
+                    {
+                        "id": "media_a1b2c3d4e5f6",
+                        "tool": "mermaid",
+                        "spec": {"diagram": "graph LR; A-->B"},
+                    }
+                ],
             }
         )
-        assert result.media_type == MediaTool.mermaid
-        assert result.media_spec == {"diagram": "graph LR; A-->B"}
+        assert len(result.media_specs) == 1
+        assert result.media_specs[0].tool == "mermaid"
+        assert result.media_specs[0].spec == {"diagram": "graph LR; A-->B"}
 
     def test_custom_platform_accepted(self):
         """Platform is now a free-form string — custom platforms are valid."""

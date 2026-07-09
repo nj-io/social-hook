@@ -1104,9 +1104,6 @@ def _run_targets_path(
 
 
 # Backward-compatible re-exports — tests import these from trigger.py
-from social_hook.drafting import (  # noqa: E402, F401
-    _generate_media,
-)
 from social_hook.trigger_secondary import (  # noqa: E402, F401
     run_suggestion_trigger,
     run_summary_trigger,
