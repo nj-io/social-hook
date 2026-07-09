@@ -35,6 +35,63 @@ def safe_json_loads(
         return default
 
 
+def extract_json_object(text: str) -> dict:
+    """Extract a JSON object from model text output.
+
+    Handles raw JSON, markdown code-fenced JSON, or JSON embedded in
+    surrounding text. Always returns a dict — if the parsed value is a list
+    or scalar, falls through to brace-extraction to find the enclosing object.
+
+    Used at the LLM boundary to recover structured output when a provider
+    returns prose/JSON in the message body instead of a native tool call.
+
+    Args:
+        text: Raw model text output.
+
+    Returns:
+        The extracted JSON object as a dict.
+
+    Raises:
+        MalformedResponseError: If no JSON object can be extracted.
+    """
+    import re
+
+    from social_hook.errors import MalformedResponseError
+
+    text = text.strip()
+
+    # 1. Try direct parse (must be a dict)
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Try extracting from a markdown code block
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+    if match:
+        try:
+            parsed = json.loads(match.group(1).strip())
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Find outermost { ... } boundaries
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        try:
+            result = json.loads(text[first_brace : last_brace + 1])
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    raise MalformedResponseError(f"Could not extract JSON object from text: {text[:200]}")
+
+
 def safe_int(
     value: Any,
     default: int,

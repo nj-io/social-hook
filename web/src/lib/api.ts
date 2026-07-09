@@ -1,4 +1,4 @@
-import type { Advisory, Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PendingUpload, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent, PlatformCredential, Account, Target, Strategy, Topic, Brief, ContentSuggestion, EvaluationCycle, SystemError, SystemHealth, PlatformSettings } from "./types";
+import type { Advisory, Config, ChannelsStatusResponse, Decision, Draft, EnvVars, InstallationsStatus, Memory, PendingUpload, PostRecord, Project, ProjectDetail, RateLimitStatus, StrategyTemplate, UsageSummary, Arc, WebEvent, PlatformCredential, Account, Target, Strategy, Topic, Brief, ContentSuggestion, EvaluationCycle, SystemError, SystemHealth, PlatformSettings, ModelsCatalog } from "./types";
 import { getSessionId } from "./session";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -23,6 +23,11 @@ export async function updateConfig(data: Partial<Config>): Promise<{ status: str
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
+}
+
+// Model catalog (providers + models + defaults) for the settings model pickers
+export async function fetchModels(): Promise<ModelsCatalog> {
+  return apiFetch("/api/models");
 }
 
 // Env

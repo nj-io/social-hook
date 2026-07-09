@@ -25,6 +25,37 @@ export interface ModelsConfig {
   gatekeeper: string;
 }
 
+export interface ModelCatalogInfo {
+  id: string;
+  provider: string;
+  full_id: string;
+  name: string;
+  description: string;
+  tier: string;
+  context_window: number;
+  max_output_tokens: number;
+  cost_input: number;
+  cost_output: number;
+  supports_tools: boolean;
+  supports_vision: boolean;
+  supports_cache: boolean;
+}
+
+export interface ProviderCatalogInfo {
+  id: string;
+  name: string;
+  description: string;
+  env_key: string;
+  base_url: string;
+  api_format: string;
+}
+
+export interface ModelsCatalog {
+  providers: ProviderCatalogInfo[];
+  models: ModelCatalogInfo[];
+  defaults: ModelsConfig;
+}
+
 export interface SchedulingConfig {
   timezone: string;
   max_posts_per_day: number;

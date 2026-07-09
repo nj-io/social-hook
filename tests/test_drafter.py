@@ -239,7 +239,7 @@ class TestDrafterVisionUploads:
     def test_vision_content_blocks_assembled_for_vision_model(self, mock_prompt, tmp_path):
         """With a vision model and uploads, the user content is a list of blocks (not a str)."""
         client, commit, ctx, decision, db = _make_drafter_mocks()
-        client.full_id = "anthropic/claude-sonnet-4-5"
+        client.full_id = "anthropic/claude-sonnet-5"
         drafter = Drafter(client)
 
         img = tmp_path / "ref.png"
@@ -690,7 +690,7 @@ class TestUploadPreseedAndReconcile:
         Vision-capable model (sonnet) exercises the full path.
         """
         client, commit, ctx, decision, db = _make_drafter_mocks()
-        client.full_id = "anthropic/claude-sonnet-4-5"
+        client.full_id = "anthropic/claude-sonnet-5"
 
         # Give the LLM-returned tool_input an empty media_specs so
         # reconciliation MUST re-inject all pre-seeded uploads.

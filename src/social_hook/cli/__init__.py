@@ -190,7 +190,7 @@ def help_cmd(
 
         args = []
         for param in cmd.params:
-            if isinstance(param, click.Argument):
+            if param.param_type_name == "argument":
                 args.append(
                     {
                         "name": param.name,
@@ -203,7 +203,7 @@ def help_cmd(
         opts = []
         skip_names = {"install_completion", "show_completion", "help", "ctx"}
         for param in cmd.params:
-            if isinstance(param, click.Option):
+            if param.param_type_name == "option":
                 if param.name in skip_names:
                     continue
                 opt_info = {
@@ -257,17 +257,18 @@ def help_cmd(
                 json_mod.dumps(_cmd_to_dict(target, command_parts[-1]), indent=2, default=str)
             )
         else:
-            global_options = []
+            global_options: list[dict] = []
             skip_names = {"install_completion", "show_completion", "help", "ctx"}
             for param in click_app.params:
-                if isinstance(param, click.Option) and param.name not in skip_names:
+                if param.param_type_name == "option" and param.name not in skip_names:
                     opt_info = {
                         "name": param.opts[0] if param.opts else f"--{param.name}",
                     }
                     if len(param.opts) > 1:
                         opt_info["short"] = param.opts[1]
-                    if param.help:
-                        opt_info["help"] = param.help
+                    param_help = getattr(param, "help", None)
+                    if param_help:
+                        opt_info["help"] = param_help
                     type_name = param.type.name if hasattr(param.type, "name") else str(param.type)
                     opt_info["type"] = type_name.upper()
                     if param.default is not None:
@@ -298,8 +299,8 @@ def help_cmd(
             typer.echo(f"Error: {e}")
             raise typer.Exit(1) from None
     else:
-        help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)
-        typer.echo(click_app.get_help(help_ctx))
+        help_ctx = click.Context(click_app, info_name=PROJECT_SLUG)  # type: ignore[arg-type]
+        typer.echo(click_app.get_help(help_ctx))  # type: ignore[arg-type]
 
 
 @app.command()

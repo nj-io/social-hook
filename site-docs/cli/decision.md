@@ -15,20 +15,6 @@ All decisions must belong to the same project and have status
 
 Example: social-hook decision batch-evaluate dec_abc123 dec_def456
 
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `decision_ids` | yes | Decision IDs to evaluate as a batch |
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--project`, `-p` | string |  | Project path (default: cwd) |
-| `--yes`, `-y` | boolean | false | Skip confirmation |
-| `--json` | boolean | false | Output as JSON |
-
 ---
 
 ### `social-hook decision delete`
@@ -41,19 +27,6 @@ database. This action cannot be undone.
 
 Example: social-hook decision delete decision-abc123
 Example: social-hook decision delete decision-abc123 --yes  (skip confirmation)
-
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `decision_id` | yes | Decision ID to delete |
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--yes`, `-y` | boolean | false | Skip confirmation |
-| `--json` | boolean | false | Output as JSON |
 
 ---
 
@@ -69,14 +42,6 @@ Examples:
     social-hook decision list --project .
     social-hook decision list --limit 50 --json
 
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--project`, `-p` | string |  | Project path (default: cwd) |
-| `--limit`, `-n` | integer | 20 | Max decisions to show |
-| `--json` | boolean | false | Output as JSON |
-
 ---
 
 ### `social-hook decision retrigger`
@@ -88,19 +53,6 @@ episode type, or even skip the commit entirely.
 
 Example: social-hook decision retrigger decision-abc123
 Example: social-hook decision retrigger decision-abc123 --yes  (skip confirmation)
-
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `decision_id` | yes | Decision ID to re-evaluate |
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--yes`, `-y` | boolean | false | Skip confirmation |
-| `--json` | boolean | false | Output as JSON |
 
 ---
 
@@ -118,20 +70,5 @@ the decision ID directly.
 Example: social-hook decision rewind abc1234
 Example: social-hook decision rewind decision_abc123
 Example: social-hook decision rewind abc1234 --yes  (skip confirmation)
-
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `identifier` | yes | Decision ID or commit hash (full or short prefix) |
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--project`, `-p` | string |  | Project path (default: cwd) |
-| `--yes`, `-y` | boolean | false | Skip confirmation |
-| `--force`, `-f` | boolean | false | Allow rewind even with posted drafts |
-| `--json` | boolean | false | Output as JSON |
 
 ---

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from social_hook.config.yaml import MediaGenerationConfig
 from social_hook.llm._usage_logger import log_usage
 from social_hook.llm.base import LLMClient, extract_tool_call
-from social_hook.llm.catalog import get_model_info
+from social_hook.llm.catalog import get_model_by_full_id
 from social_hook.llm.prompts import assemble_drafter_prompt, load_prompt
 from social_hook.llm.schemas import CreateDraftInput  # re-exported types
 from social_hook.models.context import ProjectContext
@@ -350,12 +350,12 @@ class Drafter:
         preseeded_specs: list[dict[str, Any]] = []
         if uploads:
             full_id = getattr(self.client, "full_id", None)
-            info = get_model_info(full_id) if full_id else None
+            info = get_model_by_full_id(full_id) if full_id else None
             if info is None or not info.supports_vision:
                 raise ConfigError(
                     f"Drafter model {full_id!r} does not support image inputs. "
                     f"Use a vision-capable model "
-                    f"(e.g. anthropic/claude-sonnet-4-5, claude-cli/sonnet, "
+                    f"(e.g. anthropic/claude-sonnet-5, claude-cli/sonnet, "
                     f"openai/gpt-4o) or remove reference images."
                 )
             preseeded_specs = _preseed_upload_specs(uploads)

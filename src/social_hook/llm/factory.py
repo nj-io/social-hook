@@ -24,7 +24,7 @@ def parse_provider_model(model_str: str) -> tuple[str, str]:
 
     raise ConfigError(
         f"Invalid model '{model_str}': must use provider/model-id format "
-        f"(e.g., 'anthropic/claude-opus-4-5', 'claude-cli/sonnet')"
+        f"(e.g., 'anthropic/claude-opus-4-8', 'claude-cli/sonnet')"
     )
 
 
@@ -58,30 +58,36 @@ def create_client(model_str: str, config, verbose: bool = False) -> LLMClient:
         return ClaudeCliClient(model=model_id, verbose=verbose)
 
     elif provider == "openai":
-        from social_hook.llm.openai_compat import OpenAICompatClient
+        from social_hook.llm.litellm_client import LiteLLMClient
 
         api_key = config.env.get("OPENAI_API_KEY", "")
         if not api_key:
             raise ConfigError("OPENAI_API_KEY required for openai/ models")
-        return OpenAICompatClient(
-            api_key, model_id, "https://api.openai.com/v1", provider_name="openai"
-        )
+        return LiteLLMClient(model_id, "openai", api_key=api_key, verbose=verbose)
 
     elif provider == "openrouter":
-        from social_hook.llm.openai_compat import OpenAICompatClient
+        from social_hook.constants import GITHUB_REPO, PROJECT_NAME
+        from social_hook.llm.litellm_client import LiteLLMClient
 
         api_key = config.env.get("OPENROUTER_API_KEY", "")
         if not api_key:
             raise ConfigError("OPENROUTER_API_KEY required for openrouter/ models")
-        return OpenAICompatClient(
-            api_key, model_id, "https://openrouter.ai/api/v1", provider_name="openrouter"
+        return LiteLLMClient(
+            model_id,
+            "openrouter",
+            api_key=api_key,
+            referer=f"https://github.com/{GITHUB_REPO}",
+            app_title=PROJECT_NAME,
+            verbose=verbose,
         )
 
     elif provider == "ollama":
-        from social_hook.llm.openai_compat import OpenAICompatClient
+        from social_hook.llm.litellm_client import LiteLLMClient
 
         base_url = config.env.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-        return OpenAICompatClient("unused", model_id, base_url, provider_name="ollama")
+        return LiteLLMClient(
+            model_id, "ollama", api_key="ollama", api_base=base_url, verbose=verbose
+        )
 
     else:
         raise ConfigError(f"Unknown provider '{provider}' in model string '{model_str}'")

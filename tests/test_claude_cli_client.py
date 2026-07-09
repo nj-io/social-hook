@@ -9,7 +9,8 @@ import pytest
 
 from social_hook.errors import ConfigError, MalformedResponseError
 from social_hook.llm.base import NormalizedResponse, NormalizedToolCall
-from social_hook.llm.claude_cli import ClaudeCliClient, _extract_json
+from social_hook.llm.claude_cli import ClaudeCliClient
+from social_hook.parsing import extract_json_object as _extract_json
 
 SAMPLE_TOOL = {
     "name": "log_decision",

@@ -14,14 +14,6 @@ This is an LLM operation.
 
 Example: social-hook content combine --topics topic_abc --topics topic_def
 
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--topics`, `-t` | string |  | Topic IDs to combine (at least 2) |
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
-
 ---
 
 ### `social-hook content create`
@@ -33,16 +25,6 @@ Makes LLM calls. Writes decisions and drafts to the database.
 
 Example: social-hook content create --idea "Show the new dashboard feature" --vehicle article --files guide.md
 
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--idea`, `-i` | string |  | Content idea or topic to create |
-| `--vehicle`, `-v` | string |  | Content vehicle: single, thread, article (default: auto) |
-| `--files`, `-f` | string |  | Reference files for context (per-draft, not persisted) |
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
-
 ---
 
 ### `social-hook content dismiss`
@@ -52,20 +34,6 @@ Dismiss a content suggestion.
 Marks the suggestion as dismissed. This is a destructive operation.
 
 Example: social-hook content dismiss suggestion_abc123 --yes
-
-**Arguments:**
-
-| Name | Required | Description |
-|------|----------|-------------|
-| `suggestion_id` | yes | Suggestion ID to dismiss |
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--yes`, `-y` | boolean | false | Skip confirmation |
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
 
 ---
 
@@ -79,13 +47,6 @@ This is an LLM operation.
 
 Example: social-hook content hero-launch --project /path/to/repo
 
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
-
 ---
 
 ### `social-hook content list`
@@ -96,13 +57,6 @@ Shows all content suggestions for the project with their current status
 (pending, evaluated, drafted, dismissed).
 
 Example: social-hook content list
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
 
 ---
 
@@ -116,14 +70,5 @@ the evaluator runs.
 
 Example: social-hook content suggest --idea "Show the new dashboard feature"
 Example: social-hook content suggest --strategy brand-primary --idea "Launch announcement"
-
-**Options:**
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--idea`, `-i` | string |  | Content idea to suggest |
-| `--strategy`, `-s` | string |  | Strategy to suggest for (omit to let evaluator decide) |
-| `--project`, `-p` | string |  | Repository path (default: cwd) |
-| `--json` | boolean | false | Output as JSON |
 
 ---

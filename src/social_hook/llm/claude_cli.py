@@ -4,52 +4,13 @@ import contextlib
 import json
 import os
 import pwd
-import re
 import subprocess
 import tempfile
 from typing import Any
 
 from social_hook.errors import ConfigError, MalformedResponseError
 from social_hook.llm.base import LLMClient, NormalizedResponse, NormalizedToolCall, NormalizedUsage
-
-
-def _extract_json(text: str) -> dict:
-    """Extract a JSON object from model text output.
-
-    Handles: raw JSON, markdown code-fenced JSON, or JSON embedded in text.
-    Always returns a dict — if the parsed result is a list or scalar, falls
-    through to brace-extraction to find the enclosing object.
-    """
-    text = text.strip()
-
-    # 1. Try direct parse (must be a dict)
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-
-    # 2. Try extracting from markdown code block
-    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
-    if match:
-        try:
-            parsed = json.loads(match.group(1).strip())
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-
-    # 3. Find outermost { ... } boundaries
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace > first_brace:
-        try:
-            return json.loads(text[first_brace : last_brace + 1])  # type: ignore[no-any-return]
-        except json.JSONDecodeError:
-            pass
-
-    raise MalformedResponseError(f"Could not extract JSON from CLI output: {text}")
+from social_hook.parsing import extract_json_object
 
 
 class ClaudeCliClient(LLMClient):
@@ -149,7 +110,7 @@ class ClaudeCliClient(LLMClient):
         # When the caller passes a content-block list (text + image blocks)
         # we feed the CLI a stream-json user turn so image blocks are
         # interpreted natively. Vision capability itself is gated upstream
-        # by the drafter via catalog.get_model_info(); this path trusts
+        # by the drafter via catalog.get_model_by_full_id(); this path trusts
         # the caller.
         if content_blocks is not None:
             cmd.extend(["--input-format", "stream-json"])
@@ -273,7 +234,7 @@ class ClaudeCliClient(LLMClient):
         if not result_text:
             raise MalformedResponseError("No text content in CLI response")
 
-        structured_output = _extract_json(result_text)
+        structured_output = extract_json_object(result_text)
 
         usage_data = envelope.get("usage", {})
 
@@ -315,11 +276,18 @@ class ClaudeCliClient(LLMClient):
 
         # 7. Build normalized response
         tool_call = NormalizedToolCall(name=tool_name, input=structured_output)
+        # `claude -p` spends a Claude Code subscription seat, so the marginal
+        # cost is $0 regardless of the underlying model (true as of now — if
+        # Anthropic begins billing subscription CLI calls, change it here, the
+        # single place the subscription assumption lives). cost_source keeps
+        # these out of cross-model cost comparisons (like a metered provider).
         usage = NormalizedUsage(
             input_tokens=usage_data.get("input_tokens", 0),
             output_tokens=usage_data.get("output_tokens", 0),
             cache_read_input_tokens=usage_data.get("cache_read_input_tokens", 0),
             cache_creation_input_tokens=usage_data.get("cache_creation_input_tokens", 0),
+            cost_cents=0.0,
+            cost_source="subscription",
         )
 
         return NormalizedResponse(content=[tool_call], usage=usage, raw=envelope)

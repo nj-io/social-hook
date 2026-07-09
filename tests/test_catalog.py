@@ -7,8 +7,11 @@ from social_hook.llm.catalog import (
     ProviderCompat,
     ProviderInfo,
     discover_ollama_models,
+    estimate_cost_cents,
     format_model_choice,
+    get_all_models,
     get_all_providers,
+    get_model_by_full_id,
     get_models_for_provider,
     get_provider_compat,
     get_provider_info,
@@ -300,3 +303,40 @@ class TestProviderIdConsistency:
             assert get_provider_compat(p.id) is not None, (
                 f"Provider {p.id} has no ProviderCompat entry"
             )
+
+
+# =============================================================================
+# get_all_models / get_model_by_full_id / estimate_cost_cents
+# =============================================================================
+
+
+class TestCatalogLookups:
+    """New catalog helpers: full model list, full_id lookup, cost estimate."""
+
+    def test_get_all_models_covers_static_providers(self):
+        models = get_all_models()
+        assert len(models) >= 10
+        providers = {m.provider for m in models}
+        assert {"anthropic", "claude-cli", "openai", "openrouter"} <= providers
+
+    def test_glm_5_2_present_and_priced(self):
+        m = get_model_by_full_id("openrouter/z-ai/glm-5.2")
+        assert m is not None
+        assert m.provider == "openrouter"
+        assert m.cost_input > 0 and m.cost_output > 0
+        assert m.supports_tools is True
+
+    def test_get_model_by_full_id_unknown(self):
+        assert get_model_by_full_id("openrouter/does-not/exist") is None
+
+    def test_estimate_cost_cents_known_model(self):
+        # Opus 4.8 $5/$25 per M: 1000/1M*500c + 500/1M*2500c = 1.75
+        cents = estimate_cost_cents("anthropic/claude-opus-4-8", 1000, 500)
+        assert abs(cents - 1.75) < 0.01
+
+    def test_estimate_cost_cents_unknown_model_zero(self):
+        assert estimate_cost_cents("openrouter/does-not/exist", 1000, 500) == 0.0
+
+    def test_estimate_cost_cents_cli_has_no_price(self):
+        # claude-cli models carry no per-token price (subscription) → 0 estimate
+        assert estimate_cost_cents("claude-cli/opus", 1000, 500) == 0.0
