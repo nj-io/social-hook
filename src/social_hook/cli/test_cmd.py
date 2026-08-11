@@ -6,7 +6,10 @@ from pathlib import Path
 
 import typer
 
-app = typer.Typer(invoke_without_command=True)
+app = typer.Typer(
+    invoke_without_command=True,
+    help="Dry-run commit evaluation without creating drafts. Use --output and --compare for regression testing.",
+)
 
 
 @app.callback()

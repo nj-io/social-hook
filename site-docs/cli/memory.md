@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories — persistent style notes that shape how the drafter writes (tone, preferences, pet peeves).
 
 ---
 
