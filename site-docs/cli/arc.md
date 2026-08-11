@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage narrative arcs — multi-post story threads that give the evaluator and drafter continuity across related commits.
 
 ---
 

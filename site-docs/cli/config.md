@@ -1,6 +1,6 @@
 # social-hook config
 
-View and modify configuration.
+View and modify config.yaml via dotted key paths (e.g., scheduling.optimal_hours). Changes persist to disk immediately.
 
 ---
 

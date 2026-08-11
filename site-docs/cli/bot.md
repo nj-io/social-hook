@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Start, stop, and monitor the bot daemon. The daemon listens for platform messages (Telegram, Discord) and surfaces drafts, approvals, and scheduling via chat commands.
 
 ---
 
