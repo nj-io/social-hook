@@ -1,6 +1,6 @@
 # social-hook snapshot
 
-DB snapshot management.
+Save, restore, and manage database snapshots for backup, testing, or rollback.
 
 ---
 

@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Start, stop, and check status of the messaging bot daemon (Telegram, Discord).
 
 ---
 
