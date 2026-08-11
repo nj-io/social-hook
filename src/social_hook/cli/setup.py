@@ -2,7 +2,9 @@
 
 import typer
 
-app = typer.Typer()
+app = typer.Typer(
+    help="Configure Social Hook interactively — credentials, accounts, targets, and scheduling. Use --only to run a single section."
+)
 
 
 @app.callback(invoke_without_command=True)

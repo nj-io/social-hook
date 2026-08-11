@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+View and manage evaluation decisions — the evaluator's per-commit verdicts on what to draft and how.
 
 ---
 

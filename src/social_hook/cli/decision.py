@@ -7,7 +7,10 @@ import sqlite3
 
 import typer
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(
+    no_args_is_help=True,
+    help="View and manage evaluation decisions — the evaluator's per-commit verdicts on what to draft and how.",
+)
 
 
 def _get_conn():

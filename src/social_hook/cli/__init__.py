@@ -528,7 +528,11 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
+bot_app = typer.Typer(
+    name="bot",
+    help="Manage the bot daemon — a long-running process that sends draft notifications, handles chat commands, and runs scheduled ticks.",
+    no_args_is_help=True,
+)
 app.add_typer(bot_app, name="bot")
 
 
@@ -971,16 +975,32 @@ app.add_typer(
 )
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(
+    inspect_app,
+    name="inspect",
+    help="Inspect pipeline state — query the event log, view pending evaluations, check LLM token usage, and list connected platforms.",
+)
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Run pipeline stages manually — evaluate commits, draft content, or post to a platform without automated triggers.",
+)
 
 # Setup wizard
-app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
+app.add_typer(
+    setup_app,
+    name="setup",
+    help=f"Configure {PROJECT_SLUG} interactively — credentials, accounts, targets, and scheduling. Use --only to run a single section.",
+)
 
 # Test command
-app.add_typer(test_app, name="test", help="Test commit evaluation.")
+app.add_typer(
+    test_app,
+    name="test",
+    help="Dry-run commit evaluation without creating drafts. Use --output and --compare for regression testing.",
+)
 
 # Journey capture commands: on, off, status
 app.add_typer(
@@ -990,32 +1010,60 @@ app.add_typer(
 )
 
 # Config commands: show, get, set
-app.add_typer(config_app, name="config", help="View and modify configuration.")
+app.add_typer(
+    config_app,
+    name="config",
+    help="View and modify configuration — show the resolved config tree, get individual keys, or set values.",
+)
 
 # Memory commands: list, add, delete, clear
-app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+app.add_typer(
+    memory_app,
+    name="memory",
+    help="Manage voice memories — persistent style notes that shape how the drafter writes (tone, preferences, pet peeves).",
+)
 
 # Arc commands: list, create, complete, abandon
-app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+app.add_typer(
+    arc_app,
+    name="arc",
+    help="Manage narrative arcs — multi-episode story threads that give your content thematic continuity across posts.",
+)
 
 from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="View and manage evaluation decisions — the evaluator's per-commit verdicts on what to draft and how.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
-app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+app.add_typer(
+    draft_app,
+    name="draft",
+    help="Manage the full draft lifecycle — approve, reject, schedule, edit, redraft, post, and more.",
+)
 
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Manage generated media — garbage-collect orphaned image files no longer referenced by any draft.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
-app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+app.add_typer(
+    snapshot_app,
+    name="snapshot",
+    help="Save and restore database snapshots for testing, debugging, or reverting to a known state.",
+)
 
 from social_hook.cli.account import app as account_app
 from social_hook.cli.advisory import app as advisory_app
