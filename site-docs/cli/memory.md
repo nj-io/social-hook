@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Store and manage voice memories — short feedback snippets and editorial preferences that guide the drafting LLM's tone and style.
 
 ---
 

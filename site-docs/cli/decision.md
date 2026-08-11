@@ -1,6 +1,6 @@
 # social-hook decision
 
-Decision management.
+Manage evaluator decisions on commits. Delete decisions and their associated drafts, re-trigger evaluation, or batch-evaluate grouped decisions.
 
 ---
 

@@ -1,6 +1,6 @@
 # social-hook config
 
-View and modify configuration.
+View and edit the YAML configuration. Use dotted key paths to read or update individual settings (e.g., social-hook config set posting.interval_hours 4).
 
 ---
 

@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Control the background bot daemon that continuously runs scheduler-tick and consolidation-tick to automate posting.
 
 ---
 

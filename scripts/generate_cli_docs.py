@@ -20,10 +20,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import click
+import typer.core
 import typer.main
 
 from social_hook.cli import app
 from social_hook.constants import PROJECT_SLUG
+
+_OPTION_TYPES = (click.Option,)
+_ARGUMENT_TYPES = (click.Argument,)
+if hasattr(typer.core, "TyperOption"):
+    _OPTION_TYPES = (click.Option, typer.core.TyperOption)
+if hasattr(typer.core, "TyperArgument"):
+    _ARGUMENT_TYPES = (click.Argument, typer.core.TyperArgument)
 
 DOCS_DIR = Path(__file__).resolve().parent.parent / "site-docs" / "cli"
 
@@ -60,7 +68,7 @@ def format_default(param: click.Parameter) -> str:
     return str(param.default)
 
 
-def option_flags(param: click.Option) -> str:
+def option_flags(param: click.Parameter) -> str:
     """Format option flags like --name, -n."""
     parts = []
     for opt in param.opts:
@@ -76,7 +84,7 @@ def render_params(cmd: click.Command) -> str:
     skip = {"install_completion", "show_completion", "help", "ctx"}
 
     # Arguments
-    args = [p for p in cmd.params if isinstance(p, click.Argument)]
+    args = [p for p in cmd.params if isinstance(p, _ARGUMENT_TYPES)]
     if args:
         lines.append("**Arguments:**")
         lines.append("")
@@ -93,7 +101,7 @@ def render_params(cmd: click.Command) -> str:
         lines.append("")
 
     # Options
-    opts = [p for p in cmd.params if isinstance(p, click.Option) and p.name not in skip]
+    opts = [p for p in cmd.params if isinstance(p, _OPTION_TYPES) and p.name not in skip]
     if opts:
         lines.append("**Options:**")
         lines.append("")
