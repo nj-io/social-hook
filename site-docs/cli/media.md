@@ -1,6 +1,6 @@
 # social-hook media
 
-Media management.
+Manage the media cache: garbage-collect orphaned image and video files no longer referenced by any draft.
 
 ---
 

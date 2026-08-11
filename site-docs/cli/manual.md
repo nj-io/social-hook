@@ -1,6 +1,6 @@
 # social-hook manual
 
-Manual operations.
+Run pipeline stages by hand: evaluate a commit, create drafts from a decision, consolidate multiple commits, or post a draft immediately.
 
 ---
 
