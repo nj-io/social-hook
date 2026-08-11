@@ -1,6 +1,6 @@
 # social-hook bot
 
-Bot daemon management.
+Start, stop, and check the status of the bot daemon that listens for chat commands.
 
 ---
 

@@ -1,6 +1,6 @@
 # social-hook manual
 
-Manual operations.
+Manually trigger pipeline stages — evaluate a commit, create a draft, consolidate holds, or post a scheduled draft.
 
 ---
 

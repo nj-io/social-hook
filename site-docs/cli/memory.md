@@ -1,6 +1,6 @@
 # social-hook memory
 
-Manage voice memories.
+Manage voice memories — persistent style and tone notes the drafter references when composing content.
 
 ---
 

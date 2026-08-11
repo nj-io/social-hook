@@ -1,6 +1,6 @@
 # social-hook arc
 
-Manage narrative arcs.
+Manage narrative arcs — multi-episode story threads the drafter weaves across posts within a strategy.
 
 ---
 

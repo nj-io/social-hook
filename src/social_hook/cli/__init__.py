@@ -528,7 +528,11 @@ def web(
 # Bot subcommand group
 # =============================================================================
 
-bot_app = typer.Typer(name="bot", help="Bot daemon management.", no_args_is_help=True)
+bot_app = typer.Typer(
+    name="bot",
+    help="Start, stop, and check the status of the bot daemon that listens for chat commands.",
+    no_args_is_help=True,
+)
 app.add_typer(bot_app, name="bot")
 
 
@@ -971,16 +975,32 @@ app.add_typer(
 )
 
 # Inspection commands: log, pending, usage
-app.add_typer(inspect_app, name="inspect", help="Inspect system state.")
+app.add_typer(
+    inspect_app,
+    name="inspect",
+    help="View decision log, pending drafts, LLM token usage, and connected platform capabilities.",
+)
 
 # Manual commands: evaluate, draft, post
-app.add_typer(manual_app, name="manual", help="Manual operations.")
+app.add_typer(
+    manual_app,
+    name="manual",
+    help="Manually trigger pipeline stages — evaluate a commit, create a draft, consolidate holds, or post a scheduled draft.",
+)
 
 # Setup wizard
-app.add_typer(setup_app, name="setup", help=f"Configure {PROJECT_SLUG}.")
+app.add_typer(
+    setup_app,
+    name="setup",
+    help=f"Run the interactive setup wizard to configure {PROJECT_SLUG} — credentials, accounts, projects, and strategies. Use --only to configure a single component.",
+)
 
 # Test command
-app.add_typer(test_app, name="test", help="Test commit evaluation.")
+app.add_typer(
+    test_app,
+    name="test",
+    help="Dry-run commit evaluation without creating drafts. Supports --output to save results and --compare to diff against a previous run.",
+)
 
 # Journey capture commands: on, off, status
 app.add_typer(
@@ -990,32 +1010,60 @@ app.add_typer(
 )
 
 # Config commands: show, get, set
-app.add_typer(config_app, name="config", help="View and modify configuration.")
+app.add_typer(
+    config_app,
+    name="config",
+    help="View and modify configuration values. Use 'show' for the full config, 'get' for a single key, or 'set' to update a value.",
+)
 
 # Memory commands: list, add, delete, clear
-app.add_typer(memory_app, name="memory", help="Manage voice memories.")
+app.add_typer(
+    memory_app,
+    name="memory",
+    help="Manage voice memories — persistent style and tone notes the drafter references when composing content.",
+)
 
 # Arc commands: list, create, complete, abandon
-app.add_typer(arc_app, name="arc", help="Manage narrative arcs.")
+app.add_typer(
+    arc_app,
+    name="arc",
+    help="Manage narrative arcs — multi-episode story threads the drafter weaves across posts within a strategy.",
+)
 
 from social_hook.cli.decision import app as decision_app
 from social_hook.cli.draft import app as draft_app
 
 # Decision management: list, delete
-app.add_typer(decision_app, name="decision", help="Decision management.")
+app.add_typer(
+    decision_app,
+    name="decision",
+    help="View, delete, retrigger, or rewind evaluation decisions from the pipeline log.",
+)
 
 # Draft lifecycle: approve, reject, schedule, cancel, retry, edit, etc.
-app.add_typer(draft_app, name="draft", help="Draft lifecycle management.")
+app.add_typer(
+    draft_app,
+    name="draft",
+    help="Draft lifecycle — approve, reject, schedule, edit, redraft, cancel, and post content drafts.",
+)
 
 from social_hook.cli.media import app as media_app
 
 # Media commands: gc
-app.add_typer(media_app, name="media", help="Media management.")
+app.add_typer(
+    media_app,
+    name="media",
+    help="Manage generated media assets. Use 'gc' to garbage-collect orphaned media files.",
+)
 
 from social_hook.cli.snapshot import app as snapshot_app
 
 # DB snapshot management: save, restore, reset, list, delete
-app.add_typer(snapshot_app, name="snapshot", help="DB snapshot management.")
+app.add_typer(
+    snapshot_app,
+    name="snapshot",
+    help="Save, restore, list, and delete database snapshots for backup and experimentation.",
+)
 
 from social_hook.cli.account import app as account_app
 from social_hook.cli.advisory import app as advisory_app
@@ -1092,7 +1140,11 @@ app.add_typer(
 )
 
 # Log queries, tailing, and health
-app.add_typer(logs_app, name="logs", help="Log queries, tailing, and health.")
+app.add_typer(
+    logs_app,
+    name="logs",
+    help="Query, tail, and clear application event logs. Includes a health check for pipeline and LogBus status.",
+)
 
 from social_hook.cli.events import events as events_cmd
 from social_hook.cli.quickstart import quickstart as quickstart_cmd

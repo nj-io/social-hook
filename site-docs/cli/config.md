@@ -1,6 +1,6 @@
 # social-hook config
 
-View and modify configuration.
+View and modify configuration values. Use 'show' for the full config, 'get' for a single key, or 'set' to update a value.
 
 ---
 

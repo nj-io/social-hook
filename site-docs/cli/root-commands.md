@@ -94,13 +94,13 @@ Example: social-hook --dry-run scheduler-tick
 
 ### `social-hook setup`
 
-Configure social-hook.
+Run the interactive setup wizard to configure social-hook — credentials, accounts, projects, and strategies. Use --only to configure a single component.
 
 ---
 
 ### `social-hook test`
 
-Test commit evaluation.
+Dry-run commit evaluation without creating drafts. Supports --output to save results and --compare to diff against a previous run.
 
 ---
 
